@@ -45,6 +45,7 @@ The `main` branch does not yet contain runnable components. Once the first basel
 
 Contributions to deployment baselines, hardware support, benchmarking, routing and autoscaling algorithms, tests, and documentation are welcome.
 Performance-related changes should include the test setup, raw results, and reproducible commands.
+See [Contributing to Foretoken](CONTRIBUTING.md) for development principles, collaboration expectations, and the pull request workflow.
 
 ## License
 

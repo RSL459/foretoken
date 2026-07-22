@@ -46,6 +46,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个推理实例组织成�
 
 欢迎贡献部署基线、硬件适配、Benchmark、路由算法、扩缩容算法、测试和文档。
 性能相关变更需要附上测试条件、原始结果和可重复执行的命令。
+开发原则、协作约定和 Pull Request 流程见[《为 Foretoken 做贡献》](CONTRIBUTING_zh.md)。
 
 ## 许可证
 
