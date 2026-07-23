@@ -30,6 +30,7 @@
 - 控制台可读的汇总结果
 - 本地保存的配置、原始结果和指标，方便事后复查
 - 可选的 Weights & Biases（W&B）实验记录与图表，方便跨 run 对比和选配置
+<<<<<<< HEAD
 
 ## 示例
 
@@ -54,3 +55,5 @@ foretoken bench \
   --parallel 2 \
   --number 200
 ```
+=======
+>>>>>>> b94b34f (feat: update README_zh.md)
