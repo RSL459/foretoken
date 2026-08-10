@@ -16,8 +16,7 @@ from benchmarks.metrics.aggregator import compute_tpot
 
 
 def _base_url(url: str) -> str:
-    u = url.rstrip("/")
-    return u.removesuffix("/chat/completions") or u
+    return url.rstrip("/").removesuffix("/chat/completions")
 
 
 def derive_max_connections(
@@ -28,7 +27,7 @@ def derive_max_connections(
     Closed-loop: in-flight ≤ ``parallel``.
     Open-loop: up to ``number`` may be in flight (gather / paced fire).
     """
-    return max(number if open_loop else parallel, 1)
+    return number if open_loop else parallel
 
 
 class OpenAICompatClient:
@@ -47,7 +46,7 @@ class OpenAICompatClient:
         # same concurrency budget; the client is closed at end of each run.
         self.client = AsyncOpenAI(
             base_url=_base_url(url),
-            api_key=api_key or "EMPTY",
+            api_key=api_key,
             max_retries=2,
             http_client=httpx.AsyncClient(
                 timeout=timeout,
@@ -57,9 +56,6 @@ class OpenAICompatClient:
                 ),
             ),
         )
-
-    async def start(self) -> None:
-        """No-op; client is ready after ``__init__`` (kept for runner API)."""
 
     async def close(self) -> None:
         await self.client.close()
@@ -90,7 +86,7 @@ class OpenAICompatClient:
 
         t0 = time.perf_counter()
         ttft: Optional[float] = None
-        in_tok = out_tok = n_content = 0
+        in_tok = out_tok = 0
         status: Optional[int] = None
         error: Optional[str] = None
         success = True
@@ -98,23 +94,21 @@ class OpenAICompatClient:
             resp = await self.client.chat.completions.create(**kwargs)
             status = httpx.codes.OK
             async for chunk in resp:
-                if chunk.usage:
-                    in_tok = int(chunk.usage.prompt_tokens or in_tok)
-                    out_tok = int(chunk.usage.completion_tokens or out_tok)
+                if chunk.usage is not None:
+                    in_tok = int(chunk.usage.prompt_tokens)
+                    out_tok = int(chunk.usage.completion_tokens)
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
                 if delta.content or delta.tool_calls:
-                    ttft = ttft if ttft is not None else time.perf_counter() - t0
-                    if delta.content:
-                        n_content += 1
+                    if ttft is None:
+                        ttft = time.perf_counter() - t0
         except Exception as e:
             success = False
-            status = getattr(e, "status_code", status)
+            status = getattr(e, "status_code", None)
             error = str(e)
 
         latency = time.perf_counter() - t0
-        out_tok = out_tok or n_content
         return {
             "success": success,
             "status_code": status,

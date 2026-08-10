@@ -25,6 +25,7 @@ from benchmarks.metrics.aggregator import (
     attach_user_throughput,
 )
 from benchmarks.report.summary import log_summary
+from benchmarks.report.wandb_logger import WandbLogger
 from benchmarks.storage.result_writer import ResultWriter
 
 logger = logging.getLogger(__name__)
@@ -50,8 +51,8 @@ class Runner(ABC):
             timeout=t.timeout,
             api_key=t.api_key,
             max_connections=derive_max_connections(
-                parallel=load.primary_parallel,
-                number=load.primary_number,
+                parallel=load.parallel[0],
+                number=load.number[0],
                 open_loop=load.open_loop,
             ),
         )
@@ -60,15 +61,36 @@ class Runner(ABC):
         """Create a timestamped result writer under ``config.output``."""
         return ResultWriter(root_dir=self.config.output.outputs_dir)
 
-    def primary_load(self) -> dict[str, Any]:
-        """Return primary load-point fields from ``config.load``."""
+    def make_wandb_logger(
+        self,
+        writer: ResultWriter,
+        load: dict[str, Any],
+        *,
+        name_suffix: Optional[str] = None,
+        group: Optional[str] = None,
+        config: Optional[BenchConfig] = None,
+    ) -> WandbLogger:
+        """Start W&B logging when ``config.wandb.enabled``."""
+        wb = WandbLogger()
+        wb.start(
+            config if config is not None else self.config,
+            output_dir=writer.output_dir,
+            parallel=int(load["resolved_parallel"]),
+            rate=float(load["rate"]),
+            name_suffix=name_suffix,
+            group=group,
+        )
+        return wb
+
+    def default_load(self) -> dict[str, Any]:
+        """Return the first load-point fields from ``config.load``."""
         load = self.config.load
-        parallel = load.primary_parallel
+        parallel = load.parallel[0]
         open_loop = load.open_loop
         return {
             "parallel": parallel,
-            "number": load.primary_number,
-            "rate": load.primary_rate,
+            "number": load.number[0],
+            "rate": float(load.rate[0]),
             "open_loop": open_loop,
             "resolved_parallel": -1 if open_loop else parallel,
         }
@@ -100,17 +122,17 @@ class Runner(ABC):
         parallel: int,
         rate: float,
         open_loop: bool,
+        wandb_logger: Optional[WandbLogger] = None,
     ) -> dict[str, Any]:
         """Dispatch requests with closed/open-loop concurrency and optional rate pacing."""
         gen = self.config.generation
         max_tokens = gen.max_tokens
         temperature = gen.temperature
 
-        await client.start()
         n = len(requests)
         has_pacing = rate != -1 and rate > 0
         sem: Optional[asyncio.Semaphore] = (
-            None if open_loop else asyncio.Semaphore(max(parallel, 1))
+            None if open_loop else asyncio.Semaphore(parallel)
         )
         results: list[Optional[dict[str, Any]]] = [None] * n
         start = time.perf_counter()
@@ -128,6 +150,8 @@ class Runner(ABC):
                     temperature=temperature,
                 )
                 results[i] = result
+                if wandb_logger is not None and wandb_logger.enabled:
+                    await asyncio.to_thread(wandb_logger.log_result, result)
             finally:
                 if sem is not None:
                     sem.release()
@@ -156,8 +180,10 @@ class Runner(ABC):
 
         end = time.perf_counter()
         logger.info("Benchmark finished!")
+        if any(r is None for r in results):
+            raise RuntimeError("dispatch finished with missing request results")
         return {
-            "results": [r for r in results if r is not None],
+            "results": results,
             "total_time": end - start,
         }
 
@@ -182,12 +208,23 @@ class Runner(ABC):
         run_config: dict[str, Any],
         raw: dict[str, Any],
         metrics: dict[str, Any],
+        *,
+        wandb_logger: Optional[WandbLogger] = None,
+        config_snapshot: Optional[dict[str, Any]] = None,
     ) -> None:
         """Log summary and persist config / raw / metrics JSON artifacts."""
         log_summary(run_config, metrics)
-        writer.save_json(
-            "config.json", {**self.config.to_dict(), **run_config}
+        base = (
+            config_snapshot
+            if config_snapshot is not None
+            else self.config.to_dict()
         )
+        writer.save_json("config.json", {**base, **run_config})
         writer.save_json("raw_output.json", raw["results"])
         writer.save_json("metrics.json", metrics)
+        if wandb_logger is not None:
+            try:
+                wandb_logger.log_metrics(metrics)
+            finally:
+                wandb_logger.finish()
         logger.info("Results saved: %s", writer.output_dir)

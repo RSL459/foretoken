@@ -42,7 +42,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --prompt "hello" \
   --parallel 2 \
-  --number 200
+  --number 5
 ```
 
 数据集文件：
@@ -51,9 +51,50 @@ foretoken bench \
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
-  --dataset-path /home/wshiah/code/zhuting/foretoken/conversation.jsonl \
-  --parallel 2 \
-  --number 200
+  --dataset /home/wshiah/code/zhuting/foretoken/conversation.jsonl,/home/wshiah/code/zhuting/foretoken/mooncake.jsonl \
+  --parallel 4 \
+  --number 20 \
+  --wandb
+```
+
+随机数据压测（需指定 tokenizer）：
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset random \
+  --tokenizer-path /exportr/zxcpu2/shiweijie/cache/models--Qwen--Qwen3.6-27B/snapshots/6a9e13bd6fc8f0983b9b99948120bc37f49c13e9 \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --parallel 4 --number 20 --max-tokens 64 \
+  --rate 5 \
+  --wandb
+```
+
+HuggingFace 数据集（行格式：`messages` / `prompt` / `user`[+`system`]）：
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset weijiezz/foretoken-trace:conversation \
+  --parallel 4 \
+  --number 20 \
+  --wandb
+```
+
+多个 JSONL / HuggingFace 数据源（逗号分隔）。`--number` 是**所有数据集的合计**
+请求数（尽量均分）；各数据源顺序压测，再合并 raw 并重算指标。开启 `--wandb` 时，
+一次实验对应一个 W&B **group**，每个数据集各自一个 **run**：
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset /path/a.jsonl,org/name:train,/path/b.jsonl \
+  --parallel 4 \
+  --number 30 \
+  --wandb
 ```
 =======
 >>>>>>> b94b34f (feat: update README_zh.md)

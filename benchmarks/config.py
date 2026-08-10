@@ -34,62 +34,62 @@ class LoadConfig:
     def is_sweep(self) -> bool:
         return len(self.parallel) > 1 or len(self.number) > 1 or len(self.rate) > 1
 
-    @property
-    def primary_parallel(self) -> int:
-        return self.parallel[0]
-
-    @property
-    def primary_number(self) -> int:
-        return self.number[0]
-
-    @property
-    def primary_rate(self) -> float:
-        return float(self.rate[0])
-
-    def number_for(self, index: int) -> int:
-        if len(self.number) == 1:
-            return self.number[0]
-        return self.number[index] if index < len(self.number) else self.number[-1]
-
-    def rate_for(self, index: int) -> float:
-        if len(self.rate) == 1:
-            return float(self.rate[0])
-        return float(self.rate[index] if index < len(self.rate) else self.rate[-1])
-
     def sweep_points(self) -> list[tuple[int, int, float]]:
-        """``(parallel, number, rate)`` triples; rate list wins over parallel."""
-        base_parallel = self.primary_parallel
-        base_rate = self.primary_rate
+        """``(parallel, number, rate)`` triples for each load point."""
         if len(self.rate) > 1:
+            if len(self.number) == len(self.rate):
+                return [
+                    (self.parallel[0], number, float(rate))
+                    for number, rate in zip(self.number, self.rate)
+                ]
             return [
-                (base_parallel, self.number_for(i), self.rate_for(i))
-                for i in range(len(self.rate))
+                (self.parallel[0], self.number[0], float(rate))
+                for rate in self.rate
             ]
         if len(self.parallel) > 1:
+            if len(self.number) == len(self.parallel):
+                return [
+                    (parallel, number, float(self.rate[0]))
+                    for parallel, number in zip(self.parallel, self.number)
+                ]
             return [
-                (parallel, self.number_for(i), base_rate)
-                for i, parallel in enumerate(self.parallel)
+                (parallel, self.number[0], float(self.rate[0]))
+                for parallel in self.parallel
             ]
         if len(self.number) > 1:
-            return [(base_parallel, number, base_rate) for number in self.number]
-        return [(base_parallel, self.primary_number, base_rate)]
+            return [
+                (self.parallel[0], number, float(self.rate[0]))
+                for number in self.number
+            ]
+        return [(self.parallel[0], self.number[0], float(self.rate[0]))]
 
     def validate(self) -> None:
         """Reject incompatible open-loop / multi-list sweep combinations."""
         if self.open_loop and len(self.parallel) > 1:
             raise ValueError(
-                "--open-loop uses unlimited concurrency (EvalScope "
-                "parallel=-1); do not combine with a multi-value "
-                "--parallel list. Use a single --parallel or sweep "
-                "--number / --rate instead."
+                "--open-loop uses unlimited concurrency; do not "
+                "combine with a multi-value --parallel list. Use a "
+                "single --parallel or sweep --number / --rate instead."
             )
         if len(self.rate) > 1 and len(self.parallel) > 1:
             raise ValueError(
-                "Cannot sweep both --rate and --parallel lists at once; "
-                "sweep_points prioritizes --rate and would silently ignore "
-                "all but the first --parallel value. Pass one multi-value "
-                "list at a time."
+                "Cannot sweep both --rate and --parallel at once; "
+                "pass one multi-value list at a time."
             )
+        if len(self.rate) > 1 and len(self.number) > 1:
+            if len(self.number) != len(self.rate):
+                raise ValueError(
+                    "--number list must match --rate length when both "
+                    f"are multi-value; got number={len(self.number)}, "
+                    f"rate={len(self.rate)}."
+                )
+        elif len(self.parallel) > 1 and len(self.number) > 1:
+            if len(self.number) != len(self.parallel):
+                raise ValueError(
+                    "--number list must match --parallel length when both "
+                    f"are multi-value; got number={len(self.number)}, "
+                    f"parallel={len(self.parallel)}."
+                )
 
 
 @dataclass
@@ -101,12 +101,31 @@ class GenerationConfig:
     stream: bool = True
 
 
+def allocate_dataset_counts(total: int, n: int) -> list[int]:
+    """Split ``total`` requests across ``n`` datasets as evenly as possible."""
+    if n <= 0:
+        raise ValueError("dataset count must be > 0")
+    if total < 0:
+        raise ValueError("total request count must be >= 0")
+    base, rem = divmod(total, n)
+    return [base + (1 if i < rem else 0) for i in range(n)]
+
+
 @dataclass
 class DatasetConfig:
-    """Dataset plugin, paths, and prompt shaping."""
+    """Workload source and prompt shaping.
 
-    dataset: str = "openqa"
-    dataset_path: list[str] = field(default_factory=list)
+    ``dataset`` is a list of unified source selectors:
+    - ``random``: synthetic prompts (requires ``tokenizer_path``; alone only)
+    - local JSONL path: one messages/prompt object per line
+    - HuggingFace id: ``org/name:split`` (same row shape; split required,
+      and may be a non-standard split/config name)
+
+    Multiple JSONL/HF sources run sequentially; ``LoadConfig.number`` is the
+    total request count across all of them.
+    """
+
+    dataset: list[str] = field(default_factory=list)
     dataset_offset: int = 0
     tokenizer_path: str = ""
     min_prompt_length: int = 0
@@ -117,9 +136,14 @@ class DatasetConfig:
     max_turns: Optional[int] = None
 
     @property
-    def primary_dataset_path(self) -> str:
-        return self.dataset_path[0] if self.dataset_path else ""
+    def is_multi(self) -> bool:
+        return len(self.dataset) > 1
 
+    def resolve_apply_chat_template(self, url: str) -> bool:
+        """Default to chat template when the URL is a chat/completions endpoint."""
+        if self.apply_chat_template is not None:
+            return self.apply_chat_template
+        return url.rstrip("/").endswith("chat/completions")
 
 @dataclass
 class OutputConfig:
@@ -182,14 +206,48 @@ class BenchConfig:
     def validate(self) -> None:
         """Validate nested configs before a run starts."""
         self.load.validate()
+        ds = self.dataset
+        if not ds.prompt and not ds.dataset:
+            raise ValueError(
+                "No workload source. Pass --prompt or --dataset "
+                "(random | local JSONL path | HuggingFace id)."
+            )
+        if ds.prompt and ds.is_multi:
+            raise ValueError(
+                "--prompt cannot be combined with multiple --dataset values"
+            )
+        if ds.is_multi and "random" in ds.dataset:
+            raise ValueError(
+                "--dataset random cannot be combined with other dataset sources"
+            )
+        if ds.dataset == ["random"] and not ds.tokenizer_path:
+            raise ValueError(
+                "--tokenizer-path is required when --dataset random"
+            )
+        if (
+            ds.dataset == ["random"]
+            and ds.max_prompt_length < ds.min_prompt_length
+        ):
+            raise ValueError(
+                "--max-prompt-length must be >= --min-prompt-length"
+            )
 
     def summary(self) -> str:
         """Human-readable config banner for the console."""
-        path = (
-            f" path={self.dataset.primary_dataset_path}"
-            if self.dataset.dataset_path
-            else ""
-        )
+        ds = self.dataset
+        if ds.prompt:
+            dataset_s = "prompt=<fixed>"
+        elif ds.dataset == ["random"]:
+            dataset_s = (
+                f"random "
+                f"(prefix={ds.prefix_length}, "
+                f"min={ds.min_prompt_length}, "
+                f"max={ds.max_prompt_length})"
+            )
+        elif ds.is_multi:
+            dataset_s = f"{ds.dataset} (total number across all)"
+        else:
+            dataset_s = ds.dataset[0] if ds.dataset else "<none>"
         open_loop = self.load.open_loop
         if open_loop:
             parallel_s = "unlimited (open-loop)"
@@ -207,9 +265,9 @@ class BenchConfig:
             rate_s = str(self.load.rate)
 
         return (
-            "\n==============================\n"
+            "\n============================================\n"
             " Foretoken Benchmark\n"
-            "==============================\n"
+            "============================================\n"
             f"Configuration:\n"
             f"  URL        : {self.target.url}\n"
             f"  Model      : {self.target.model}\n"
@@ -218,7 +276,7 @@ class BenchConfig:
             f"  Rate       : {rate_s}\n"
             f"  Open Loop  : {open_loop}\n"
             f"  Stream     : {self.generation.stream}\n"
-            f"  Dataset    : mode={self.dataset.dataset}{path}\n"
+            f"  Dataset    : {dataset_s}\n"
         )
 
     def to_dict(self) -> dict[str, Any]:

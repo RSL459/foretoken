@@ -71,7 +71,10 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
         "--number",
         type=lambda s: [int(x.strip()) for x in s.split(",") if x.strip()],
         default=_default(LoadConfig, "number"),
-        help="Request count; list aligns with parallel",
+        help=(
+            "Request count (total across all --dataset values when multiple); "
+            "list aligns with parallel"
+        ),
     )
     bench.add_argument(
         "--rate",
@@ -87,8 +90,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
         action="store_true",
         default=_default(LoadConfig, "open_loop"),
         help=(
-            "Open-loop: no concurrency limit (EvalScope parallel=-1); "
-            "optionally pace with --rate"
+            "Open-loop: no concurrency limit; optionally pace with --rate"
         ),
     )
 
@@ -115,23 +117,20 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
     # Dataset
     bench.add_argument(
         "--dataset",
+        type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
         default=_default(DatasetConfig, "dataset"),
         help=(
-            "Dataset mode: EvalScope plugin or sequential|mixed with "
-            "multiple --dataset-path. Not a file path."
+            "Workload source(s), comma-separated: 'random', local JSONL "
+            "path(s), and/or HuggingFace id(s) ('org/name:split'). "
+            "Multiple JSONL/HF sources run sequentially and metrics are "
+            "merged; --number is the total across all"
         ),
-    )
-    bench.add_argument(
-        "--dataset-path",
-        type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
-        default=_default(DatasetConfig, "dataset_path"),
-        help="Dataset path(s), comma-separated",
     )
     bench.add_argument(
         "--dataset-offset",
         type=int,
         default=_default(DatasetConfig, "dataset_offset"),
-        help="Global token-sequence offset for random datasets",
+        help="Skip first N samples (JSONL/HF) or token-sequence offset (random)",
     )
     bench.add_argument(
         "--tokenizer-path",
@@ -142,19 +141,19 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
         "--min-prompt-length",
         type=int,
         default=_default(DatasetConfig, "min_prompt_length"),
-        help="Minimum prompt length",
+        help="Minimum prompt length in tokens (random: sampled inner length)",
     )
     bench.add_argument(
         "--max-prompt-length",
         type=int,
         default=_default(DatasetConfig, "max_prompt_length"),
-        help="Maximum prompt length",
+        help="Maximum prompt length in tokens (random: sampled inner length)",
     )
     bench.add_argument(
         "--prefix-length",
         type=int,
         default=_default(DatasetConfig, "prefix_length"),
-        help="Prefix length (random dataset only)",
+        help="Shared prefix token length (random dataset only)",
     )
     bench.add_argument(
         "--apply-chat-template",
@@ -179,7 +178,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
         "--sla-auto-tune",
         action=argparse.BooleanOptionalAction,
         default=_default(OutputConfig, "sla_auto_tune"),
-        help="Enable SLA search (Phase 2 — not implemented)",
+        help="Enable SLA auto-tune search",
     )
     bench.add_argument(
         "--gpu-count",
@@ -190,7 +189,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
     bench.add_argument(
         "--eval-suite",
         default=_default(OutputConfig, "eval_suite"),
-        help="none | general | tool | both (Phase 0.5 — not implemented)",
+        help="Correctness suite: none | general | tool | both",
     )
     bench.add_argument(
         "--outputs-dir",
@@ -226,7 +225,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
         "--collect-engine-metrics",
         action=argparse.BooleanOptionalAction,
         default=_default(EngineMetricsConfig, "collect"),
-        help="Collect vLLM engine metrics (Phase M1)",
+        help="Collect engine Prometheus /metrics during the run",
     )
     bench.add_argument(
         "--engine-metrics-url",
@@ -292,7 +291,6 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
         ),
         dataset=DatasetConfig(
             dataset=ns.dataset,
-            dataset_path=ns.dataset_path,
             dataset_offset=ns.dataset_offset,
             tokenizer_path=ns.tokenizer_path,
             min_prompt_length=ns.min_prompt_length,
