@@ -9,7 +9,7 @@ mod pipeline;
 mod pipeline_router;
 mod session;
 
-pub use candidate::{RouteCandidate, RouteScore, RouteTargetLoad, ScoredCandidate};
+pub use candidate::{CandidateIndex, RouteCandidate, RouteScore, RouteTargetLoad, ScoredCandidate};
 pub use config::{FilterAlgorithm, PickerAlgorithm, RouterPipelineConfig, ScorerAlgorithm};
 pub use pipeline::RouterPipeline;
 pub use pipeline_router::PipelineRouter;

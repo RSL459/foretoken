@@ -7,15 +7,15 @@ mod allow_all_filter;
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
-use crate::{RouteCandidate, RouteTargetStatsReader, RouterRequest};
+use crate::{CandidateIndex, RouteCandidate, RouteTargetStatsReader, RouterRequest};
 
 pub use allow_all_filter::AllowAllFilter;
 
 /// Filters the complete compatible, healthy route target snapshot for one routing round.
 ///
-/// Implementations may only remove input candidates; retained candidates preserve their identity
-/// and metadata, and filters must not introduce or fabricate candidates. The pipeline owns
-/// eligibility and later stage/domain narrowing.
+/// A filter returns positions from `candidates`, which permits it to retain any subset without
+/// returning candidate identities or metadata. The pipeline owns eligibility and later
+/// stage/domain narrowing.
 ///
 /// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `candidates`: routable ModelGroups with ID, scaling target, role, model, revision, and current load.
@@ -24,14 +24,15 @@ pub use allow_all_filter::AllowAllFilter;
 ///   `Duration`.
 /// - `customized_context`: user-defined `C`, created per request and shared by Prefill and Decode.
 ///
-/// Returns the candidates that may continue to scoring.
+/// Returns indexes of candidates that may continue to scoring. Out-of-range or duplicate indexes
+/// are reported as routing errors.
 pub trait RouteFilter<C: Send + 'static = ()>: Send + Sync {
     fn filter(
         &self,
         request: &RouterRequest,
-        candidates: Vec<RouteCandidate>,
+        candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
         route_target_stats_reader: &dyn RouteTargetStatsReader,
         customized_context: &mut C,
-    ) -> Vec<RouteCandidate>;
+    ) -> Vec<CandidateIndex>;
 }

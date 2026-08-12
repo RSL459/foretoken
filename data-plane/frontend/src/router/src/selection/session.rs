@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Request-local routing session contract and selection errors.
+//! Request-local routing session behavior and selection errors.
 
 use thiserror::Error;
 
@@ -40,9 +40,21 @@ pub enum RouteError {
         /// Requested logical model.
         model: String,
     },
-    /// Picker returned a route target outside the scored candidates for this stage.
-    #[error("route picker returned no candidate from this selection round")]
-    InvalidPickerResult,
+    /// Filter selected a position that is not present in its input snapshot.
+    #[error("route filter selected out-of-range candidate index {index}")]
+    InvalidFilterIndex { index: usize },
+    /// Filter selected a position more than once.
+    #[error("route filter selected candidate index {index} more than once")]
+    DuplicateFilterIndex { index: usize },
+    /// Scorer did not return exactly one score for each filtered candidate.
+    #[error("route scorer returned {actual} scores for {expected} candidates")]
+    InvalidScorerResult { expected: usize, actual: usize },
+    /// Picker returned no selection despite having candidates available.
+    #[error("route picker returned no candidate from a nonempty selection round")]
+    EmptyPickerResult,
+    /// Picker selected a position that is not present in its current scored slice.
+    #[error("route picker selected out-of-range candidate index {index}")]
+    InvalidPickerIndex { index: usize },
     /// Prefill selection was requested before an Encoder route target was selected.
     #[error("prefill selection requires a selected encoder route target")]
     PrefillBeforeEncoder,

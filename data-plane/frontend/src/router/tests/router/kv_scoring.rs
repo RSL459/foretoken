@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Public KV scorer contract tests.
+//! Public KV scorer behavior tests.
 
 use foretoken_kv_indexer::{
     KvPrefixIndexer, KvPrefixLookup, KvPrefixMatch, KvPrefixMatches, KvPrefixQueryResult,
@@ -82,26 +82,34 @@ fn candidate(id: &str, role: ModelServerRole, load: u64) -> RouteCandidate {
 
 #[test]
 fn kv_scoring_is_prefix_tier_locality_load_and_keeps_unavailable_candidates() {
+    let candidates = vec![
+        candidate("remote", ModelServerRole::Aggregate, 1),
+        candidate("local", ModelServerRole::Aggregate, 8),
+        candidate("longer-disk", ModelServerRole::Aggregate, 99),
+        candidate("unspecified", ModelServerRole::Aggregate, 0),
+        candidate("unavailable", ModelServerRole::Aggregate, 0),
+        candidate("decode", ModelServerRole::Decode, 0),
+    ];
     let scored = KvLeastLoadedScorer.score(
         &request(),
-        vec![
-            candidate("remote", ModelServerRole::Aggregate, 1),
-            candidate("local", ModelServerRole::Aggregate, 8),
-            candidate("longer-disk", ModelServerRole::Aggregate, 99),
-            candidate("unspecified", ModelServerRole::Aggregate, 0),
-            candidate("unavailable", ModelServerRole::Aggregate, 0),
-            candidate("decode", ModelServerRole::Decode, 0),
-        ],
+        &candidates,
         &PrefixFacts,
         &NoopRouteTargetStatsReader,
         &mut (),
     );
     let score = |id: &str| {
-        scored
-            .iter()
-            .find(|candidate| candidate.candidate.route_target_id == RouteTargetId::new(id))
-            .expect("each scorer input remains available to the picker")
-            .score
+        let index = [
+            "remote",
+            "local",
+            "longer-disk",
+            "unspecified",
+            "unavailable",
+            "decode",
+        ]
+        .iter()
+        .position(|candidate_id| *candidate_id == id)
+        .expect("known scorer input");
+        scored[index]
     };
 
     assert!(score("longer-disk") > score("local"));
@@ -128,17 +136,18 @@ fn prefill_downstream_load_is_scoped_to_its_execution_domain() {
     };
 
     let request = request();
+    let candidates = candidates();
     let scored = [
         LeastLoadedScorer.score(
             &request,
-            candidates(),
+            &candidates,
             &PrefixFacts,
             &NoopRouteTargetStatsReader,
             &mut (),
         ),
         KvLeastLoadedScorer.score(
             &request,
-            candidates(),
+            &candidates,
             &PrefixFacts,
             &NoopRouteTargetStatsReader,
             &mut (),
@@ -147,11 +156,14 @@ fn prefill_downstream_load_is_scoped_to_its_execution_domain() {
 
     for round in scored {
         let score = |id: &str| {
-            round
-                .iter()
-                .find(|candidate| candidate.candidate.route_target_id == RouteTargetId::new(id))
-                .expect("each scorer input remains available")
-                .score
+            let index = match id {
+                "prefill-a" => 0,
+                "decode-a" => 1,
+                "prefill-b" => 2,
+                "decode-b" => 3,
+                _ => panic!("unknown scorer input"),
+            };
+            round[index]
         };
         assert!(score("prefill-b") > score("prefill-a"));
     }

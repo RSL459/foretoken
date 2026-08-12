@@ -7,9 +7,11 @@ Router 为每个执行阶段选择一个可路由的 ModelGroup 和精确 DP ran
 
 Filter–Scorer–Picker 是候选列表级接口：
 
-- **Filter** 接收兼容且健康的候选快照。它可以移除候选，但不能新增或修改候选。
-- **Scorer** 为每个保留候选返回一个 `ScoredCandidate`。内置 KV 评分比较 prompt 命中长度、存储层级、locality 和负载。
-- **Picker** 从评分列表中原样返回一个候选。Router 随后输出 `RouteDecision`，其中包含 ModelGroup RouteTarget、执行角色、模型 revision 和精确 DP rank。
+- **Filter** 接收兼容且健康的候选快照，返回保留子集的索引。它不能新增或修改候选；越界或重复索引会成为明确的路由错误。
+- **Scorer** 按保留候选的原有顺序为每项返回一个 `RouteScore`。Router 持有 candidate/score 视图；数量不匹配会成为明确的路由错误。内置 KV 评分比较 prompt 命中长度、存储层级、locality 和负载。
+- **Picker** 从当前评分列表选择一个索引，而不是回传候选。非空列表返回 `None` 或越界索引都会成为明确的路由错误。Router 随后输出 `RouteDecision`，其中包含 ModelGroup RouteTarget、执行角色、模型 revision 和精确 DP rank。
+
+执行阶段和 E/P/D domain 收窄仍由 Router 负责，在评分后、Picker 前执行。算法可比较完整的兼容健康快照，但不能选择当前阶段收窄范围以外的候选。
 
 `data_parallel_size: 1` 的 RouteTarget 只产生 rank `0` 候选，最终决策仍显式返回 `data_parallel_rank: 0`。更大的 RouteTarget 会为每个 rank 产生一个候选。
 
@@ -25,9 +27,9 @@ ModelGroups：
   2f48f8e1-7f89-4eb8-bf31-e6d482504f66 / rank 1  KV 命中：512 tokens
   8c88ee9a-c10f-41fd-98ef-a09d256b5213 / rank 0  KV 命中：256 tokens
 
-Filter：保留三个健康且兼容的候选
-Scorer：第一个 Group/rank 0 → 0，第一个 Group/rank 1 → 512，第二个 Group/rank 0 → 256
-Picker：选择第一个 Group 的 rank 1
+Filter：保留索引 0、1、2
+Scorer：索引 0 → 0，1 → 512，2 → 256
+Picker：选择索引 1
 
 RouteDecision：
   route_target_id: 2f48f8e1-7f89-4eb8-bf31-e6d482504f66

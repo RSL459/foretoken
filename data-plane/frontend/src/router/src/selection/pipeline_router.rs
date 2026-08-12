@@ -3,6 +3,7 @@
 
 //! Fixed Aggregate, P/D, and E/P/D physical route-target selection.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use foretoken_kv_indexer::{KvPrefixIndexer, NoopKvPrefixIndexer};
@@ -11,7 +12,7 @@ use foretoken_model_protocol::ModelServerRole;
 use crate::inventory::supports_request;
 use crate::{
     NoopRouteTargetStatsReader, RouteCandidate, RouteDecision, RouteError, RouteInventory,
-    RouteSession, RouteTargetStatsReader, Router, RouterPipeline, RouterRequest,
+    RouteSession, RouteTargetStatsReader, Router, RouterPipeline, RouterRequest, ScoredCandidate,
 };
 
 /// Router implementation that runs one Filter-Scorer-Picker pipeline per selection round.
@@ -86,42 +87,68 @@ impl<C: Send + 'static> PipelineRouter<C> {
         &self,
         request: &RouterRequest,
         customized_context: &mut C,
-        eligible: impl Fn(&RouteCandidate, &[crate::ScoredCandidate]) -> bool,
+        eligible: impl Fn(&RouteCandidate, &[ScoredCandidate]) -> bool,
         error: RouteError,
     ) -> Result<RouteCandidate, RouteError> {
         // Filter and Scorer receive the complete compatible, healthy snapshot so decisions such as
         // downstream Decode cost can compare every viable route target. Stage/domain narrowing follows
         // scoring and immediately precedes Picker, without hiding information from extensions.
-        let filtered = self.pipeline.filter.filter(
+        let candidates = self.candidates(request);
+        let filtered_indexes = self.pipeline.filter.filter(
             request,
-            self.candidates(request),
+            &candidates,
             self.kv_prefix_indexer.as_ref(),
             self.route_target_stats_reader.as_ref(),
             customized_context,
         );
-        let scored = self.pipeline.scorer.score(
+        let mut seen_indexes = BTreeSet::new();
+        let filtered = filtered_indexes
+            .into_iter()
+            .map(|index| {
+                if !seen_indexes.insert(index) {
+                    return Err(RouteError::DuplicateFilterIndex { index: index.0 });
+                }
+                candidates
+                    .get(index.0)
+                    .cloned()
+                    .ok_or(RouteError::InvalidFilterIndex { index: index.0 })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let scores = self.pipeline.scorer.score(
             request,
-            filtered,
+            &filtered,
             self.kv_prefix_indexer.as_ref(),
             self.route_target_stats_reader.as_ref(),
             customized_context,
         );
+        if scores.len() != filtered.len() {
+            return Err(RouteError::InvalidScorerResult {
+                expected: filtered.len(),
+                actual: scores.len(),
+            });
+        }
+        let scored = filtered
+            .into_iter()
+            .zip(scores)
+            .map(|(candidate, score)| ScoredCandidate { candidate, score })
+            .collect::<Vec<_>>();
         let selectable = scored
             .iter()
             .filter(|candidate| eligible(&candidate.candidate, &scored))
             .cloned()
             .collect::<Vec<_>>();
+        if selectable.is_empty() {
+            return Err(error);
+        }
         let picked = self
             .pipeline
             .picker
             .pick(request, &selectable, customized_context)
-            .ok_or(error)?;
-        // Pickers cannot create candidates or alter their identity; reject an out-of-set result.
+            .ok_or(RouteError::EmptyPickerResult)?;
         selectable
-            .into_iter()
-            .find(|candidate| candidate.candidate == picked)
-            .map(|candidate| candidate.candidate)
-            .ok_or(RouteError::InvalidPickerResult)
+            .get(picked.0)
+            .map(|candidate| candidate.candidate.clone())
+            .ok_or(RouteError::InvalidPickerIndex { index: picked.0 })
     }
 
     fn domain_has_encoder(&self, request: &RouterRequest, domain: &str) -> bool {

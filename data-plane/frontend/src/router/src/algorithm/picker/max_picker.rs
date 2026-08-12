@@ -3,7 +3,7 @@
 
 //! Picker for the highest-scored candidate.
 
-use crate::{RouteCandidate, RoutePicker, RouterRequest, ScoredCandidate};
+use crate::{CandidateIndex, RoutePicker, RouterRequest, ScoredCandidate};
 
 /// Selects the maximum score, breaking ties by the smallest route target ID.
 #[derive(Default)]
@@ -16,10 +16,11 @@ impl RoutePicker for MaxPicker {
         request: &RouterRequest,
         scored_candidates: &[ScoredCandidate],
         customized_context: &mut (),
-    ) -> Option<RouteCandidate> {
+    ) -> Option<CandidateIndex> {
         scored_candidates
             .iter()
-            .max_by(|left, right| {
+            .enumerate()
+            .max_by(|(_, left), (_, right)| {
                 left.score.cmp(&right.score).then_with(|| {
                     right
                         .candidate
@@ -27,6 +28,6 @@ impl RoutePicker for MaxPicker {
                         .cmp(&left.candidate.route_target_id)
                 })
             })
-            .map(|scored_candidate| scored_candidate.candidate.clone())
+            .map(|(index, _)| CandidateIndex(index))
     }
 }

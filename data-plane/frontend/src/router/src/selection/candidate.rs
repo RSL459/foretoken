@@ -7,6 +7,13 @@ use foretoken_model_protocol::ModelServerRole;
 
 use crate::{RouteTargetId, ScalingTarget};
 
+/// Position in the candidate slice passed to a routing algorithm.
+///
+/// Filters retain positions from their input snapshot and Pickers select positions from their
+/// current scored slice. Algorithms cannot manufacture or modify a candidate through this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CandidateIndex(pub usize);
+
 /// Current load attached to a candidate snapshot.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RouteTargetLoad {
@@ -61,7 +68,7 @@ pub struct RouteScore {
     pub load: i64,
 }
 
-/// One candidate paired with the score produced by a `RouteScorer`.
+/// Router-owned view of a candidate and the parallel score produced by a `RouteScorer`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScoredCandidate {
     /// Routable ModelGroup scored in the current routing round.

@@ -7,7 +7,7 @@ use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 
 use super::{decode_loads_by_domain, load};
-use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScoredCandidate};
+use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest};
 
 /// Prefers longer confirmed-locality KV-prefix matches, then lower current and downstream Decode load.
 #[derive(Default)]
@@ -17,14 +17,14 @@ impl RouteScorer for KvLeastLoadedScorer {
     fn score(
         &self,
         request: &RouterRequest,
-        candidates: Vec<RouteCandidate>,
+        candidates: &[RouteCandidate],
         kv: &dyn KvPrefixIndexer,
         _: &dyn crate::RouteTargetStatsReader,
         _: &mut (),
-    ) -> Vec<ScoredCandidate> {
-        let decode_loads = decode_loads_by_domain(&candidates);
+    ) -> Vec<RouteScore> {
+        let decode_loads = decode_loads_by_domain(candidates);
         candidates
-            .into_iter()
+            .iter()
             .map(|candidate| {
                 let (tokens, tier, locality) = if matches!(
                     candidate.role,
@@ -75,14 +75,11 @@ impl RouteScorer for KvLeastLoadedScorer {
                 } else {
                     0
                 };
-                ScoredCandidate {
-                    score: RouteScore {
-                        matched_tokens: i64::try_from(tokens).unwrap_or(i64::MAX),
-                        tier_preference: tier,
-                        locality_preference: locality,
-                        load: load(&candidate).saturating_add(downstream).saturating_neg(),
-                    },
-                    candidate,
+                RouteScore {
+                    matched_tokens: i64::try_from(tokens).unwrap_or(i64::MAX),
+                    tier_preference: tier,
+                    locality_preference: locality,
+                    load: load(candidate).saturating_add(downstream).saturating_neg(),
                 }
             })
             .collect()

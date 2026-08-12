@@ -5,7 +5,7 @@
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
-use crate::{RouteCandidate, RouteFilter, RouterRequest};
+use crate::{CandidateIndex, RouteCandidate, RouteFilter, RouterRequest};
 
 /// Keeps every candidate produced by the Router's health and compatibility checks.
 #[derive(Default)]
@@ -16,11 +16,11 @@ impl RouteFilter for AllowAllFilter {
     fn filter(
         &self,
         request: &RouterRequest,
-        candidates: Vec<RouteCandidate>,
+        candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
         route_target_stats_reader: &dyn crate::RouteTargetStatsReader,
         customized_context: &mut (),
-    ) -> Vec<RouteCandidate> {
-        candidates
+    ) -> Vec<CandidateIndex> {
+        (0..candidates.len()).map(CandidateIndex).collect()
     }
 }
