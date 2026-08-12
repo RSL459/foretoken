@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Built-in picker for the highest-scored candidate.
+//! Picker for the highest-scored candidate.
 
 use crate::{RouteCandidate, RoutePicker, RouterRequest, ScoredCandidate};
 

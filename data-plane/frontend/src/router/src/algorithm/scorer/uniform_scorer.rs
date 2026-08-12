@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Built-in scorer that assigns every candidate the same score.
+//! Scorer that assigns every candidate the same score.
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 

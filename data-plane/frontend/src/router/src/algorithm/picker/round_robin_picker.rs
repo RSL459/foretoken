@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Built-in round-robin tie breaking among highest-scored candidates.
+//! Round-robin tie breaking among highest-scored candidates.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 

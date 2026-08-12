@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Built-in Filter, Scorer, and Picker selection.
+//! Configured Filter, Scorer, and Picker selection.
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -43,11 +43,11 @@ macro_rules! algorithm_names {
 }
 
 algorithm_names!(
-    /// Built-in Filter selection.
+    /// Configured Filter selection.
     FilterAlgorithm { AllowAll => "allow_all" } default AllowAll
 );
 algorithm_names!(
-    /// Built-in Scorer selection.
+    /// Configured Scorer selection.
     ScorerAlgorithm {
         Uniform => "uniform",
         LeastLoaded => "least_loaded",
@@ -56,7 +56,7 @@ algorithm_names!(
     default KvLeastLoaded
 );
 algorithm_names!(
-    /// Built-in Picker selection.
+    /// Configured Picker selection.
     PickerAlgorithm {
         Max => "max",
         RoundRobin => "round_robin",
@@ -64,7 +64,7 @@ algorithm_names!(
     default RoundRobin
 );
 
-/// Built-in algorithms selected for each Router pipeline stage.
+/// Configured algorithms selected for each Router pipeline stage.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RouterPipelineConfig {
     /// Filter used before scoring.
@@ -76,8 +76,11 @@ pub struct RouterPipelineConfig {
 }
 
 impl RouterPipelineConfig {
-    /// Builds the selected built-in Filter, Scorer, and Picker implementations.
+    /// Builds the selected Filter, Scorer, and Picker implementations.
     pub fn build(self) -> RouterPipeline {
+        let filter = match self.filter {
+            FilterAlgorithm::AllowAll => Arc::new(AllowAllFilter),
+        };
         let scorer: Arc<dyn RouteScorer> = match self.scorer {
             ScorerAlgorithm::Uniform => Arc::new(UniformScorer),
             ScorerAlgorithm::LeastLoaded => Arc::new(LeastLoadedScorer),
@@ -87,6 +90,6 @@ impl RouterPipelineConfig {
             PickerAlgorithm::Max => Arc::new(MaxPicker),
             PickerAlgorithm::RoundRobin => Arc::new(RoundRobinPicker::default()),
         };
-        RouterPipeline::new(Arc::new(AllowAllFilter), scorer, picker)
+        RouterPipeline::new(filter, scorer, picker)
     }
 }

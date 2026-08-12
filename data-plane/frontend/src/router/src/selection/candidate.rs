@@ -57,7 +57,7 @@ pub struct RouteScore {
     pub tier_preference: i8,
     /// Placement locality after equal prefix and tier: Local > Remote.
     pub locality_preference: i8,
-    /// Final tie breaker; built-ins negate load so less-loaded route targets rank higher.
+    /// Final tie breaker; the provided load scorers negate load so lower values rank higher.
     pub load: i64,
 }
 

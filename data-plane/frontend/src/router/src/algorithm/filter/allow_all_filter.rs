@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Built-in filter that preserves every eligible candidate.
+//! Filter that preserves every eligible candidate.
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 

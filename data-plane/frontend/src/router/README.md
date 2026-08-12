@@ -8,7 +8,7 @@ The Router selects one routable ModelGroup and DP rank for each execution stage.
 Its pipeline has three list-level contracts:
 
 - **Filter** receives the compatible, healthy candidate snapshot. It may remove candidates but cannot create or modify them.
-- **Scorer** returns one `ScoredCandidate` for every retained candidate. Built-in KV scoring compares matched prompt tokens, storage tier, locality, and load.
+- **Scorer** returns one `ScoredCandidate` for every retained candidate. `KvLeastLoadedScorer` compares matched prompt tokens, storage tier, locality, and load.
 - **Picker** returns one unchanged candidate from the scored list. The Router then exposes a `RouteDecision` containing the ModelGroup route target, execution role, model revision, and exact DP rank.
 
 A RouteTarget with `data_parallel_size: 1` contributes only rank `0`, so its decision explicitly returns `data_parallel_rank: 0`. Larger targets contribute one candidate per rank.
@@ -36,4 +36,4 @@ RouteDecision:
 
 ModelGroup names follow `<pool-name>-<revision>-<ordinal>`. Router identity uses the Kubernetes ModelGroup UID rather than `metadata.name`; the name is used by the Deployment, Service, and service DNS endpoint.
 
-For Aggregate and Prefill, built-in KV scoring is lexicographic: longest complete matched prompt prefix first, then `Device > HostPinned > Disk > External`, then `Local > Remote`, then lower load. Decode prefix, tier, and locality scores are zero. Unavailable KV facts never become a confirmed miss.
+For Aggregate and Prefill, `KvLeastLoadedScorer` is lexicographic: longest complete matched prompt prefix first, then `Device > HostPinned > Disk > External`, then `Local > Remote`, then lower load. Decode prefix, tier, and locality scores are zero. Unavailable KV facts never become a confirmed miss.
