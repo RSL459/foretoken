@@ -55,3 +55,9 @@ RouteDecision:
 ModelGroup names follow `<pool-name>-<revision>-<ordinal>`. Router identity uses the Kubernetes ModelGroup UID rather than `metadata.name`; the name is used by the Deployment, Service, and service DNS endpoint.
 
 For Aggregate and Prefill, `KvLeastLoadedScorer` is lexicographic: longest complete matched prompt prefix first, then `Device > HostPinned > Disk > External`, then `Local > Remote`, then lower load. Decode prefix, tier, and locality scores are zero. Unavailable KV facts never become a confirmed miss.
+
+## Compiled algorithm registry
+
+Filter, Scorer, and Picker implementations register themselves at compile time with `inventory::submit!`. Pipeline configuration uses stable lower-snake-case names: the built-ins are `allow_all`; `uniform`, `least_loaded`, and `kv_least_loaded`; and `max` and `round_robin`. The Router validates compiled descriptors and configuration during startup. Empty, duplicate, or unknown names are explicit errors; it never falls back silently.
+
+To add a community algorithm, add its Rust implementation in the appropriate `src/algorithm/{filter,scorer,picker}/` directory, implement the category trait, and place an `inventory::submit!` descriptor with its stable name and factory in that file. Add one `mod my_algorithm;` line to that category's `mod.rs` so Rust compiles the module. No central configuration catalog, source scanning, runtime plugin loader, `build.rs`, or code generation is involved.

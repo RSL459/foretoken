@@ -39,3 +39,9 @@ RouteDecision：
 ModelGroup 名称遵循 `<pool-name>-<revision>-<ordinal>`。Router 使用 Kubernetes ModelGroup UID 作为路由身份，而不是使用 `metadata.name`；Deployment、Service 和 Service DNS endpoint 使用 ModelGroup 名称。
 
 Aggregate 和 Prefill 的内置 KV 评分按以下顺序做字典序比较：完整 prompt prefix 命中长度、`Device > HostPinned > Disk > External`、`Local > Remote`，最后比较负载。Decode 的 prefix、tier 和 locality 分数为零。Unavailable KV facts 不会被当作确认 miss。
+
+## 编译期算法注册
+
+Filter、Scorer 和 Picker 实现通过 `inventory::submit!` 在编译期自行注册。Pipeline 配置使用稳定的 lower_snake_case 名称：内置 Filter 是 `allow_all`；Scorer 是 `uniform`、`least_loaded` 和 `kv_least_loaded`；Picker 是 `max` 和 `round_robin`。Router 在启动时校验编译进二进制的 descriptor 与配置；空名、重名和未知名称都是明确错误，绝不静默回退。
+
+社区算法只需在对应的 `src/algorithm/{filter,scorer,picker}/` 目录增加 Rust 实现、实现该类别 trait，并在文件中放置带稳定名称和 factory 的 `inventory::submit!` descriptor。再在该类别的 `mod.rs` 加一行 `mod my_algorithm;`，让 Rust 编译该模块。无需修改中央配置目录，不使用源码扫描、runtime plugin loader、`build.rs` 或 codegen。

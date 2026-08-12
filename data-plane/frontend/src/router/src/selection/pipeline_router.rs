@@ -240,7 +240,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
 impl PipelineRouter<()> {
     /// Creates a Router with the default pipeline and no-op data readers.
     pub fn new(inventory: Arc<dyn RouteInventory>) -> Self {
-        Self::with_pipeline(inventory, crate::RouterPipelineConfig::default().build())
+        Self::with_pipeline(
+            inventory,
+            crate::RouterPipelineConfig::default()
+                .build()
+                .expect("built-in Router pipeline configuration must be valid"),
+        )
     }
 }
 
