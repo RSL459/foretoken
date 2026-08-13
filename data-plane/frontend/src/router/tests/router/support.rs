@@ -86,6 +86,7 @@ pub(super) fn request() -> RouterRequest {
             trace_headers: None,
             priority: 0,
             data_parallel_rank: None,
+            session_id: None,
             reasoning_parser_kwargs: None,
             lora_request: None,
         }),
