@@ -48,48 +48,48 @@ class _RunningAverages:
 
     concurrency: int = 0
     rate: float = -1.0
-    start: float = field(default_factory=time.perf_counter)
-    n_total: int = 0
-    n_success: int = 0
-    n_failed: int = 0
+    start_time: float = field(default_factory=time.perf_counter)
+    total_count: int = 0
+    success_count: int = 0
+    failed_count: int = 0
     total_latency: float = 0.0
     total_ttft: float = 0.0
-    n_ttft: int = 0
+    ttft_count: int = 0
     total_tpot: float = 0.0
-    n_tpot: int = 0
+    tpot_count: int = 0
     total_input_tokens: int = 0
     total_output_tokens: int = 0
 
     def update(self, result: dict[str, Any]) -> dict[str, Any]:
-        self.n_total += 1
+        self.total_count += 1
         if not result["success"]:
-            self.n_failed += 1
+            self.failed_count += 1
             return self.to_message()
 
-        self.n_success += 1
+        self.success_count += 1
         self.total_latency += float(result["latency"])
         self.total_input_tokens += int(result["input_tokens"])
         self.total_output_tokens += int(result["output_tokens"])
         ttft = result["ttft"]
         if ttft is not None:
             self.total_ttft += float(ttft)
-            self.n_ttft += 1
+            self.ttft_count += 1
         tpot = result["tpot"]
         if tpot is not None:
             self.total_tpot += float(tpot)
-            self.n_tpot += 1
+            self.tpot_count += 1
         return self.to_message()
 
     def to_message(self, ndigits: int = 4) -> dict[str, Any]:
-        elapsed = time.perf_counter() - self.start
+        elapsed = time.perf_counter() - self.start_time
         message: dict[str, Any] = {
             _TIME_TAKEN: round(elapsed, ndigits),
             _CONCURRENCY: self.concurrency,
             _REQUEST_RATE: self.rate,
-            _TOTAL_REQUESTS: self.n_total,
-            _SUCCEED_REQUESTS: self.n_success,
-            _FAILED_REQUESTS: self.n_failed,
-            _REQUEST_THROUGHPUT: round(self.n_total / elapsed, ndigits),
+            _TOTAL_REQUESTS: self.total_count,
+            _SUCCEED_REQUESTS: self.success_count,
+            _FAILED_REQUESTS: self.failed_count,
+            _REQUEST_THROUGHPUT: round(self.total_count / elapsed, ndigits),
             _OUTPUT_TOKEN_THROUGHPUT: round(
                 self.total_output_tokens / elapsed, ndigits
             ),
@@ -98,21 +98,23 @@ class _RunningAverages:
                 ndigits,
             ),
         }
-        if self.n_success:
-            n = self.n_success
-            message[_AVERAGE_LATENCY] = round(self.total_latency / n, ndigits)
+        if self.success_count:
+            success_count = self.success_count
+            message[_AVERAGE_LATENCY] = round(
+                self.total_latency / success_count, ndigits
+            )
             message[_AVERAGE_INPUT_TOKENS] = round(
-                self.total_input_tokens / n, ndigits
+                self.total_input_tokens / success_count, ndigits
             )
             message[_AVERAGE_OUTPUT_TOKENS] = round(
-                self.total_output_tokens / n, ndigits
+                self.total_output_tokens / success_count, ndigits
             )
-        if self.n_ttft:
+        if self.ttft_count:
             message[_AVERAGE_TTFT] = round(
-                self.total_ttft / self.n_ttft * 1000, 2
+                self.total_ttft / self.ttft_count * 1000, 2
             )
-        if self.n_tpot:
-            avg_tpot_ms = round(self.total_tpot / self.n_tpot * 1000, 2)
+        if self.tpot_count:
+            avg_tpot_ms = round(self.total_tpot / self.tpot_count * 1000, 2)
             message[_AVERAGE_TPOT] = avg_tpot_ms
             message[_AVERAGE_ITL] = avg_tpot_ms
         return message
@@ -120,8 +122,8 @@ class _RunningAverages:
 
 def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
     """Map Foretoken ``metrics.json`` to W&B chart keys."""
-    thr = metrics["throughput"]
-    lat = metrics["latency"]
+    throughput = metrics["throughput"]
+    latency = metrics["latency"]
     ttft = metrics["ttft"]
     tpot = metrics["tpot"]
     return {
@@ -131,11 +133,11 @@ def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
         _TOTAL_REQUESTS: int(metrics["request_num"]),
         _SUCCEED_REQUESTS: int(metrics["success_num"]),
         _FAILED_REQUESTS: int(metrics["failed_num"]),
-        _REQUEST_THROUGHPUT: round(float(thr["request/s"]), 4),
-        _AVERAGE_LATENCY: round(float(lat["mean"]), 4),
+        _REQUEST_THROUGHPUT: round(float(throughput["request/s"]), 4),
+        _AVERAGE_LATENCY: round(float(latency["mean"]), 4),
         _AVERAGE_INPUT_TOKENS: round(float(metrics["avg_input_tokens"]), 4),
-        _OUTPUT_TOKEN_THROUGHPUT: round(float(thr["token/s"]), 4),
-        _TOTAL_TOKEN_THROUGHPUT: round(float(thr["total_token/s"]), 4),
+        _OUTPUT_TOKEN_THROUGHPUT: round(float(throughput["token/s"]), 4),
+        _TOTAL_TOKEN_THROUGHPUT: round(float(throughput["total_token/s"]), 4),
         _AVERAGE_TTFT: round(float(ttft["mean"]) * 1000, 2),
         _AVERAGE_TPOT: round(float(tpot["mean"]) * 1000, 2),
         _AVERAGE_ITL: round(float(metrics["itl"]["mean"]) * 1000, 2),
@@ -172,17 +174,21 @@ class WandbLogger:
         runs share the group and the name base is the group id; ``name_suffix``
         then yields ``{group}_{suffix}`` per dataset run.
         """
-        wb: WandbConfig = config.wandb
-        if not wb.enabled:
+        wandb_config: WandbConfig = config.wandb
+        if not wandb_config.enabled:
             return
 
         os.environ["WANDB_SILENT"] = "true"
         os.environ["WANDB_DIR"] = output_dir
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = group or wb.run_name or f"{config.target.model}_{stamp}"
+        base = (
+            group
+            or wandb_config.run_name
+            or f"{config.target.model}_{stamp}"
+        )
         name = f"{base}_{name_suffix}" if name_suffix else base
         init_kwargs: dict[str, Any] = {
-            "project": wb.project,
+            "project": wandb_config.project,
             "name": name,
             "config": config.to_dict(),
             "dir": output_dir,
@@ -192,8 +198,8 @@ class WandbLogger:
         }
         if group:
             init_kwargs["group"] = group
-        if wb.entity:
-            init_kwargs["entity"] = wb.entity
+        if wandb_config.entity:
+            init_kwargs["entity"] = wandb_config.entity
         wandb.init(**init_kwargs)
         self._enabled = True
         self._running = _RunningAverages(
@@ -202,7 +208,7 @@ class WandbLogger:
         )
         logger.info(
             "W&B logging enabled: project=%s name=%s group=%s",
-            wb.project,
+            wandb_config.project,
             name,
             group or "-",
         )

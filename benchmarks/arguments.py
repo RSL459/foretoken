@@ -24,11 +24,11 @@ from benchmarks.config import (
 
 
 def _default(cls: type, name: str) -> Any:
-    f = next(x for x in fields(cls) if x.name == name)
-    if f.default_factory is not MISSING:
-        return f.default_factory()
-    if f.default is not MISSING:
-        return f.default
+    field_info = next(item for item in fields(cls) if item.name == name)
+    if field_info.default_factory is not MISSING:
+        return field_info.default_factory()
+    if field_info.default is not MISSING:
+        return field_info.default
     raise KeyError(name)
 
 
@@ -58,6 +58,12 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
         type=int,
         default=_default(TargetConfig, "timeout"),
         help="Request timeout seconds",
+    )
+    bench.add_argument(
+        "--max-retries",
+        type=int,
+        default=_default(TargetConfig, "max_retries"),
+        help="OpenAI client max retries on transient failures",
     )
 
     # Load
@@ -276,7 +282,11 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
     ns = parser.parse_args(argv)
     return BenchConfig(
         target=TargetConfig(
-            url=ns.url, model=ns.model, api_key=ns.api_key, timeout=ns.timeout
+            url=ns.url,
+            model=ns.model,
+            api_key=ns.api_key,
+            timeout=ns.timeout,
+            max_retries=ns.max_retries,
         ),
         load=LoadConfig(
             parallel=ns.parallel,

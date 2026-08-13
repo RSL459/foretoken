@@ -58,5 +58,5 @@ def iter_hf_rows(spec: str) -> Iterator[tuple[int, Any]]:
     """Yield ``(row_index, row_dict)`` from a HuggingFace dataset spec."""
     dataset_id, split = parse_hf_dataset_spec(spec)
     data = _load_hf_data(dataset_id, split)
-    for idx, row in enumerate(data):
-        yield idx, dict(row)
+    for row_index, row in enumerate(data):
+        yield row_index, dict(row)

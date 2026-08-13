@@ -18,6 +18,7 @@ class TargetConfig:
     model: str
     api_key: str = ""
     timeout: int = 300
+    max_retries: int = 2
 
 
 @dataclass
@@ -206,27 +207,27 @@ class BenchConfig:
     def validate(self) -> None:
         """Validate nested configs before a run starts."""
         self.load.validate()
-        ds = self.dataset
-        if not ds.prompt and not ds.dataset:
+        dataset = self.dataset
+        if not dataset.prompt and not dataset.dataset:
             raise ValueError(
                 "No workload source. Pass --prompt or --dataset "
                 "(random | local JSONL path | HuggingFace id)."
             )
-        if ds.prompt and ds.is_multi:
+        if dataset.prompt and dataset.is_multi:
             raise ValueError(
                 "--prompt cannot be combined with multiple --dataset values"
             )
-        if ds.is_multi and "random" in ds.dataset:
+        if dataset.is_multi and "random" in dataset.dataset:
             raise ValueError(
                 "--dataset random cannot be combined with other dataset sources"
             )
-        if ds.dataset == ["random"] and not ds.tokenizer_path:
+        if dataset.dataset == ["random"] and not dataset.tokenizer_path:
             raise ValueError(
                 "--tokenizer-path is required when --dataset random"
             )
         if (
-            ds.dataset == ["random"]
-            and ds.max_prompt_length < ds.min_prompt_length
+            dataset.dataset == ["random"]
+            and dataset.max_prompt_length < dataset.min_prompt_length
         ):
             raise ValueError(
                 "--max-prompt-length must be >= --min-prompt-length"
@@ -234,35 +235,37 @@ class BenchConfig:
 
     def summary(self) -> str:
         """Human-readable config banner for the console."""
-        ds = self.dataset
-        if ds.prompt:
-            dataset_s = "prompt=<fixed>"
-        elif ds.dataset == ["random"]:
-            dataset_s = (
+        dataset = self.dataset
+        if dataset.prompt:
+            dataset_label = "prompt=<fixed>"
+        elif dataset.dataset == ["random"]:
+            dataset_label = (
                 f"random "
-                f"(prefix={ds.prefix_length}, "
-                f"min={ds.min_prompt_length}, "
-                f"max={ds.max_prompt_length})"
+                f"(prefix={dataset.prefix_length}, "
+                f"min={dataset.min_prompt_length}, "
+                f"max={dataset.max_prompt_length})"
             )
-        elif ds.is_multi:
-            dataset_s = f"{ds.dataset} (total number across all)"
+        elif dataset.is_multi:
+            dataset_label = f"{dataset.dataset} (total number across all)"
         else:
-            dataset_s = ds.dataset[0] if ds.dataset else "<none>"
+            dataset_label = (
+                dataset.dataset[0] if dataset.dataset else "<none>"
+            )
         open_loop = self.load.open_loop
         if open_loop:
-            parallel_s = "unlimited (open-loop)"
+            parallel_label = "unlimited (open-loop)"
         else:
-            parallel_s = str(self.load.parallel)
+            parallel_label = str(self.load.parallel)
 
         if len(self.load.rate) == 1:
             rate = float(self.load.rate[0])
             if rate > 0:
                 mode = "open-loop" if open_loop else "closed-loop"
-                rate_s = f"{rate:g} req/s ({mode}, Poisson pacing)"
+                rate_label = f"{rate:g} req/s ({mode}, Poisson pacing)"
             else:
-                rate_s = "INF (no pacing)"
+                rate_label = "INF (no pacing)"
         else:
-            rate_s = str(self.load.rate)
+            rate_label = str(self.load.rate)
 
         return (
             "\n============================================\n"
@@ -271,12 +274,12 @@ class BenchConfig:
             f"Configuration:\n"
             f"  URL        : {self.target.url}\n"
             f"  Model      : {self.target.model}\n"
-            f"  Parallel   : {parallel_s}\n"
+            f"  Parallel   : {parallel_label}\n"
             f"  Number     : {self.load.number}\n"
-            f"  Rate       : {rate_s}\n"
+            f"  Rate       : {rate_label}\n"
             f"  Open Loop  : {open_loop}\n"
             f"  Stream     : {self.generation.stream}\n"
-            f"  Dataset    : {dataset_s}\n"
+            f"  Dataset    : {dataset_label}\n"
         )
 
     def to_dict(self) -> dict[str, Any]:

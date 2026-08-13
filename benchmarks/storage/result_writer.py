@@ -31,6 +31,6 @@ class ResultWriter:
 
     def save_json(self, filename: str, data: Any) -> str:
         path = os.path.join(self.output_dir, filename)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=4, ensure_ascii=False)
         return path

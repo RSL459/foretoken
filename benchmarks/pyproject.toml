@@ -17,6 +17,7 @@ dependencies = [
     "datasets>=2.14",
     "evalscope>=1.10",
     "httpx>=0.27",
+    "huggingface_hub>=0.23",
     "matplotlib>=3.7",
     "numpy>=1.24",
     "openai>=1.40",
@@ -37,7 +38,6 @@ foretoken = "benchmarks.main:main"
 packages = [
     "benchmarks",
     "benchmarks.client",
-    "benchmarks.deps",
     "benchmarks.metrics",
     "benchmarks.report",
     "benchmarks.runner",

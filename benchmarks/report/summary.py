@@ -39,9 +39,9 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
     throughput = metrics["throughput"]
 
     if int(parallel) < 0:
-        parallel_s = "unlimited (open-loop)"
+        parallel_label = "unlimited (open-loop)"
     else:
-        parallel_s = str(parallel)
+        parallel_label = str(parallel)
 
     number = resolved["number"]
     rate = resolved["rate"]
@@ -50,7 +50,7 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
         "======== Foretoken Benchmark Result ========",
         f"  Model      : {config['model']}",
         f"  Requests   : {number}",
-        f"  Parallel   : {parallel_s}",
+        f"  Parallel   : {parallel_label}",
     ]
     if config.get("datasets"):
         lines.append(f"  Datasets   : {config['datasets']}")

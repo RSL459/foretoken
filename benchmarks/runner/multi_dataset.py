@@ -49,8 +49,8 @@ class MultiDatasetRunner(Runner):
             or f"{self.config.target.model}_{stamp}"
         )
 
-        raws: list[dict[str, Any]] = []
-        for i, (source, count) in enumerate(zip(sources, counts)):
+        raw_outputs: list[dict[str, Any]] = []
+        for index, (source, count) in enumerate(zip(sources, counts)):
             if count == 0:
                 logger.info(
                     "Skipping dataset %s (allocated 0 of total %s)",
@@ -61,7 +61,7 @@ class MultiDatasetRunner(Runner):
 
             logger.info(
                 "Dataset %s/%s: %s (number=%s)",
-                i + 1,
+                index + 1,
                 len(sources),
                 source,
                 count,
@@ -69,12 +69,12 @@ class MultiDatasetRunner(Runner):
             requests = load_requests(
                 self.config, source=source, number=count
             )
-            child_name = _child_dir_name(i, source)
+            child_name = _child_dir_name(index, source)
             child = writer.child(child_name)
             child_config = {
-                k: v
-                for k, v in run_config.items()
-                if k not in ("datasets", "dataset_numbers")
+                key: value
+                for key, value in run_config.items()
+                if key not in ("datasets", "dataset_numbers")
             }
             child_config.update(
                 {
@@ -86,7 +86,7 @@ class MultiDatasetRunner(Runner):
                     },
                 }
             )
-            per_ds_config = replace(
+            per_dataset_config = replace(
                 self.config,
                 dataset=replace(self.config.dataset, dataset=[source]),
             )
@@ -95,10 +95,10 @@ class MultiDatasetRunner(Runner):
                 load,
                 name_suffix=child_name,
                 group=wandb_group,
-                config=per_ds_config,
+                config=per_dataset_config,
             )
             try:
-                raw = await self.dispatch(
+                raw_output = await self.dispatch(
                     self.make_client(),
                     requests,
                     parallel=load["parallel"],
@@ -107,7 +107,7 @@ class MultiDatasetRunner(Runner):
                     wandb_logger=wandb_logger,
                 )
                 metrics = self.aggregate_metrics(
-                    raw,
+                    raw_output,
                     rate=load["rate"],
                     number=count,
                     resolved_parallel=load["resolved_parallel"],
@@ -115,26 +115,26 @@ class MultiDatasetRunner(Runner):
                 log_summary(child_config, metrics)
                 child.save_json(
                     "config.json",
-                    {**per_ds_config.to_dict(), **child_config},
+                    {**per_dataset_config.to_dict(), **child_config},
                 )
-                child.save_json("raw_output.json", raw["results"])
+                child.save_json("raw_output.json", raw_output["results"])
                 child.save_json("metrics.json", metrics)
                 if wandb_logger.enabled:
                     wandb_logger.log_metrics(metrics)
-                raws.append(raw)
+                raw_outputs.append(raw_output)
             except Exception:
                 wandb_logger.finish()
                 raise
             else:
                 wandb_logger.finish()
 
-        if not raws:
+        if not raw_outputs:
             raise ValueError(
                 f"No requests dispatched for datasets={sources} "
                 f"with total number={total}"
             )
 
-        merged = merge_raw_outputs(raws)
+        merged = merge_raw_outputs(raw_outputs)
         metrics = self.aggregate_metrics(
             merged,
             rate=load["rate"],

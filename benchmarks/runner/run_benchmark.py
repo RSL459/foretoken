@@ -29,7 +29,7 @@ class RunBenchmark(Runner):
         wandb_logger = self.make_wandb_logger(writer, load)
 
         try:
-            raw = await self.dispatch(
+            raw_output = await self.dispatch(
                 self.make_client(),
                 requests,
                 parallel=load["parallel"],
@@ -38,13 +38,17 @@ class RunBenchmark(Runner):
                 wandb_logger=wandb_logger,
             )
             metrics = self.aggregate_metrics(
-                raw,
+                raw_output,
                 rate=load["rate"],
                 number=load["number"],
                 resolved_parallel=load["resolved_parallel"],
             )
             self.save_results(
-                writer, run_config, raw, metrics, wandb_logger=wandb_logger
+                writer,
+                run_config,
+                raw_output,
+                metrics,
+                wandb_logger=wandb_logger,
             )
         except Exception:
             wandb_logger.finish()

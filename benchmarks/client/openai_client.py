@@ -40,6 +40,7 @@ class OpenAICompatClient:
         timeout: int,
         api_key: str,
         max_connections: int,
+        max_retries: int,
     ):
         self.model = model
         # Keepalive matches max so finished requests can be reused under the
@@ -47,7 +48,7 @@ class OpenAICompatClient:
         self.client = AsyncOpenAI(
             base_url=_base_url(url),
             api_key=api_key,
-            max_retries=2,
+            max_retries=max_retries,
             http_client=httpx.AsyncClient(
                 timeout=timeout,
                 limits=httpx.Limits(
@@ -84,38 +85,38 @@ class OpenAICompatClient:
         if tools:
             kwargs["tools"] = tools
 
-        t0 = time.perf_counter()
+        start_time = time.perf_counter()
         ttft: Optional[float] = None
-        in_tok = out_tok = 0
+        input_tokens = output_tokens = 0
         status: Optional[int] = None
-        error: Optional[str] = None
+        error_message: Optional[str] = None
         success = True
         try:
-            resp = await self.client.chat.completions.create(**kwargs)
+            response = await self.client.chat.completions.create(**kwargs)
             status = httpx.codes.OK
-            async for chunk in resp:
+            async for chunk in response:
                 if chunk.usage is not None:
-                    in_tok = int(chunk.usage.prompt_tokens)
-                    out_tok = int(chunk.usage.completion_tokens)
+                    input_tokens = int(chunk.usage.prompt_tokens)
+                    output_tokens = int(chunk.usage.completion_tokens)
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
                 if delta.content or delta.tool_calls:
                     if ttft is None:
-                        ttft = time.perf_counter() - t0
-        except Exception as e:
+                        ttft = time.perf_counter() - start_time
+        except Exception as exc:
             success = False
-            status = getattr(e, "status_code", None)
-            error = str(e)
+            status = getattr(exc, "status_code", None)
+            error_message = str(exc)
 
-        latency = time.perf_counter() - t0
+        latency = time.perf_counter() - start_time
         return {
             "success": success,
             "status_code": status,
             "latency": latency,
             "ttft": ttft,
-            "tpot": compute_tpot(latency, ttft, out_tok),
-            "input_tokens": in_tok,
-            "output_tokens": out_tok,
-            "error": error,
+            "tpot": compute_tpot(latency, ttft, output_tokens),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "error": error_message,
         }
