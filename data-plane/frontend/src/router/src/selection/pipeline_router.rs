@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use foretoken_kv_indexer::{KvPrefixIndexer, NoopKvPrefixIndexer};
 use foretoken_model_protocol::ModelServerRole;
@@ -14,6 +15,9 @@ use crate::{
     NoopRouteTargetStatsReader, RouteCandidate, RouteDecision, RouteError, RouteInventory,
     RouteSession, RouteTargetStatsReader, Router, RouterPipeline, RouterRequest, ScoredCandidate,
 };
+
+/// Observation window used for every route target in one routing round.
+const ROUTE_TARGET_STATS_WINDOW: Duration = Duration::from_secs(60);
 
 /// Router implementation that runs one Filter-Scorer-Picker pipeline per selection round.
 pub struct PipelineRouter<C: Send + 'static = ()> {
@@ -39,7 +43,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
         self
     }
 
-    /// Replaces the route-target statistics reader used by Filter and Scorer.
+    /// Replaces the Router-owned reader used to construct candidate observations.
     pub fn with_route_target_stats_reader(
         mut self,
         route_target_stats_reader: Arc<dyn RouteTargetStatsReader>,
@@ -66,9 +70,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 )
             })
             .flat_map(|route| {
-                // Runtime telemetry is currently route-target aggregate only; duplicate that
-                // snapshot across rank candidates rather than claiming rank-specific load.
-                let load = self.inventory.route_target_load(&route.route_target_id);
+                // Statistics are route-target aggregate telemetry. Read once with the core-owned
+                // window, then share the same immutable observation across all rank candidates.
+                let stats = self
+                    .route_target_stats_reader
+                    .stats(&route.route_target_id, ROUTE_TARGET_STATS_WINDOW)
+                    .map(Arc::new);
                 (0..route.data_parallel_size).map(move |data_parallel_rank| RouteCandidate {
                     route_target_id: route.route_target_id.clone(),
                     target: route.target.clone(),
@@ -77,7 +84,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     revision: route.revision.clone(),
                     domain_id: route.domain_id.clone(),
                     data_parallel_rank,
-                    route_target_load: load.clone(),
+                    route_target_stats: stats.clone(),
                 })
             })
             .collect()
@@ -98,7 +105,6 @@ impl<C: Send + 'static> PipelineRouter<C> {
             request,
             &candidates,
             self.kv_prefix_indexer.as_ref(),
-            self.route_target_stats_reader.as_ref(),
             customized_context,
         );
         let mut seen_indexes = BTreeSet::new();
@@ -118,7 +124,6 @@ impl<C: Send + 'static> PipelineRouter<C> {
             request,
             &filtered,
             self.kv_prefix_indexer.as_ref(),
-            self.route_target_stats_reader.as_ref(),
             customized_context,
         );
         if scores.len() != filtered.len() {
@@ -306,8 +311,8 @@ impl<C: Send + 'static> RouteSession for Session<C> {
     }
 
     fn select_decode(&mut self) -> Result<RouteDecision, RouteError> {
-        // Decode selection calls `select` again, intentionally reading a fresh healthy snapshot
-        // rather than reusing candidates observed for the earlier Prefill choice.
+        // Decode selection builds a fresh healthy and telemetry snapshot rather than reusing
+        // candidates observed for the earlier Prefill choice.
         let SessionStage::Prefill { domain_id } = &self.stage else {
             return Err(RouteError::DecodeBeforePrefill);
         };

@@ -7,7 +7,7 @@ mod allow_all_filter;
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
-use crate::{CandidateIndex, RouteCandidate, RouteTargetStatsReader, RouterRequest};
+use crate::{CandidateIndex, RouteCandidate, RouterRequest};
 
 pub use allow_all_filter::AllowAllFilter;
 
@@ -18,10 +18,9 @@ pub use allow_all_filter::AllowAllFilter;
 /// stage/domain narrowing.
 ///
 /// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
-/// - `candidates`: routable ModelGroups with ID, scaling target, role, model, revision, and current load.
+/// - `candidates`: routable ModelGroups with route metadata and the Router's immutable current-round
+///   aggregate target observation, when telemetry is available.
 /// - `kv_prefix_indexer`: query local or offloaded matched prompt tokens for any candidate.
-/// - `route_target_stats_reader`: query load, scheduler, KV usage, throughput, and latency for a chosen
-///   `Duration`.
 /// - `customized_context`: user-defined `C`, created per request and shared by Prefill and Decode.
 ///
 /// Returns indexes of candidates that may continue to scoring. Out-of-range or duplicate indexes
@@ -32,7 +31,6 @@ pub trait RouteFilter<C: Send + 'static = ()>: Send + Sync {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
-        route_target_stats_reader: &dyn RouteTargetStatsReader,
         customized_context: &mut C,
     ) -> Vec<CandidateIndex>;
 }

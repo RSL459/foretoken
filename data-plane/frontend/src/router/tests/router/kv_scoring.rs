@@ -3,6 +3,9 @@
 
 //! Public KV scorer behavior tests.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use foretoken_kv_indexer::{
     KvPrefixIndexer, KvPrefixLookup, KvPrefixMatch, KvPrefixMatches, KvPrefixQueryResult,
     KvPrefixUnavailableReason,
@@ -10,11 +13,12 @@ use foretoken_kv_indexer::{
 use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier, ModelServerRole};
 use foretoken_router::algorithm::LeastLoadedScorer;
 use foretoken_router::{
-    KvLeastLoadedScorer, NoopRouteTargetStatsReader, PipelineRouter, RouteCandidate, RouteScorer,
-    RouteTargetId, RouteTargetLoad, Router,
+    CandidateIndex, KvLeastLoadedScorer, PipelineRouter, RouteCandidate, RouteFilter, RoutePicker,
+    RouteScore, RouteScorer, RouteTargetId, RouteTargetStats, Router, RouterPipeline,
+    RouterRequest, ScoredCandidate,
 };
 
-use super::support::{inventory, request, route};
+use super::support::{TestStatsReader, inventory, request, route, stats};
 
 struct PrefixFacts;
 
@@ -64,6 +68,23 @@ fn prefix(tokens: usize, tier: KvStorageTier, locality: KvCacheLocality) -> KvPr
     }
 }
 
+fn target_stats(running_requests: u64) -> Arc<RouteTargetStats> {
+    Arc::new(RouteTargetStats {
+        collected_at_unix_ms: 1,
+        observed_window: Duration::from_secs(60),
+        running_requests,
+        max_concurrent_requests: 8,
+        scheduler_running_requests: None,
+        scheduler_waiting_requests: None,
+        kv_cache_usage: None,
+        prompt_tokens_per_second: None,
+        generation_tokens_per_second: None,
+        ttft: None,
+        tpot: None,
+        e2e_latency: None,
+    })
+}
+
 fn candidate(id: &str, role: ModelServerRole, load: u64) -> RouteCandidate {
     let route = route(id, role);
     RouteCandidate {
@@ -74,9 +95,7 @@ fn candidate(id: &str, role: ModelServerRole, load: u64) -> RouteCandidate {
         revision: route.revision,
         domain_id: route.domain_id,
         data_parallel_rank: 0,
-        route_target_load: Some(RouteTargetLoad {
-            running_requests: Some(load),
-        }),
+        route_target_stats: Some(target_stats(load)),
     }
 }
 
@@ -90,13 +109,7 @@ fn kv_scoring_is_prefix_tier_locality_load_and_keeps_unavailable_candidates() {
         candidate("unavailable", ModelServerRole::Aggregate, 0),
         candidate("decode", ModelServerRole::Decode, 0),
     ];
-    let scored = KvLeastLoadedScorer.score(
-        &request(),
-        &candidates,
-        &PrefixFacts,
-        &NoopRouteTargetStatsReader,
-        &mut (),
-    );
+    let scored = KvLeastLoadedScorer.score(&request(), &candidates, &PrefixFacts, &mut ());
     let score = |id: &str| {
         let index = [
             "remote",
@@ -138,20 +151,8 @@ fn prefill_downstream_load_is_scoped_to_its_execution_domain() {
     let request = request();
     let candidates = candidates();
     let scored = [
-        LeastLoadedScorer.score(
-            &request,
-            &candidates,
-            &PrefixFacts,
-            &NoopRouteTargetStatsReader,
-            &mut (),
-        ),
-        KvLeastLoadedScorer.score(
-            &request,
-            &candidates,
-            &PrefixFacts,
-            &NoopRouteTargetStatsReader,
-            &mut (),
-        ),
+        LeastLoadedScorer.score(&request, &candidates, &PrefixFacts, &mut ()),
+        KvLeastLoadedScorer.score(&request, &candidates, &PrefixFacts, &mut ()),
     ];
 
     for round in scored {
@@ -186,13 +187,97 @@ impl KvPrefixIndexer for RankFacts {
     }
 }
 
+struct SnapshotFilter;
+
+impl RouteFilter for SnapshotFilter {
+    fn filter(
+        &self,
+        _: &RouterRequest,
+        candidates: &[RouteCandidate],
+        _: &dyn KvPrefixIndexer,
+        _: &mut (),
+    ) -> Vec<CandidateIndex> {
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            candidates[0]
+                .route_target_stats
+                .as_ref()
+                .map(|stats| stats.running_requests),
+            Some(7)
+        );
+        assert!(Arc::ptr_eq(
+            candidates[0].route_target_stats.as_ref().unwrap(),
+            candidates[1].route_target_stats.as_ref().unwrap(),
+        ));
+        vec![CandidateIndex(0), CandidateIndex(1)]
+    }
+}
+
+struct SnapshotScorer;
+
+impl RouteScorer for SnapshotScorer {
+    fn score(
+        &self,
+        _: &RouterRequest,
+        candidates: &[RouteCandidate],
+        _: &dyn KvPrefixIndexer,
+        _: &mut (),
+    ) -> Vec<RouteScore> {
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            candidates[0]
+                .route_target_stats
+                .as_ref()
+                .map(|stats| stats.running_requests),
+            Some(7)
+        );
+        assert!(Arc::ptr_eq(
+            candidates[0].route_target_stats.as_ref().unwrap(),
+            candidates[1].route_target_stats.as_ref().unwrap(),
+        ));
+        vec![RouteScore::default(); candidates.len()]
+    }
+}
+
+struct FirstPicker;
+
+impl RoutePicker for FirstPicker {
+    fn pick(&self, _: &RouterRequest, _: &[ScoredCandidate], _: &mut ()) -> Option<CandidateIndex> {
+        Some(CandidateIndex(0))
+    }
+}
+
+#[test]
+fn data_parallel_candidates_share_one_target_observation_and_preserve_rank() {
+    let mut aggregate = route("dp-two", ModelServerRole::Aggregate);
+    aggregate.data_parallel_size = 2;
+    let stat_values = stats();
+    stat_values
+        .lock()
+        .unwrap()
+        .insert(RouteTargetId::new("dp-two"), (*target_stats(7)).clone());
+    let router = PipelineRouter::with_pipeline(
+        inventory(vec![aggregate]),
+        RouterPipeline::new(
+            Arc::new(SnapshotFilter),
+            Arc::new(SnapshotScorer),
+            Arc::new(FirstPicker),
+        ),
+    )
+    .with_route_target_stats_reader(Arc::new(TestStatsReader::new(stat_values)));
+
+    let selected = router.start(request()).select_initial().unwrap();
+
+    assert_eq!(selected.route_target_id, RouteTargetId::new("dp-two"));
+    assert_eq!(selected.data_parallel_rank, 0);
+}
+
 #[test]
 fn data_parallel_kv_rank_winner_is_selected_from_an_exact_rank_query() {
     let mut aggregate = route("dp-two", ModelServerRole::Aggregate);
     aggregate.data_parallel_size = 2;
-    let (inventory, _) = inventory(vec![aggregate]);
-    let router =
-        PipelineRouter::new(inventory).with_kv_prefix_indexer(std::sync::Arc::new(RankFacts));
+    let router = PipelineRouter::new(inventory(vec![aggregate]))
+        .with_kv_prefix_indexer(std::sync::Arc::new(RankFacts));
 
     let selected = router.start(request()).select_initial().unwrap();
 

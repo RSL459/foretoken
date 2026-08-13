@@ -11,7 +11,7 @@ Its pipeline has three list-level contracts:
 - **Scorer** returns one `RouteScore` for every retained candidate, in the same order. The Router owns the candidate/score view; a score-count mismatch is an explicit routing error. `KvLeastLoadedScorer` compares matched prompt tokens, storage tier, locality, and load.
 - **Picker** selects an index in the current scored list rather than returning a candidate. An out-of-range index, or `None` for a nonempty list, is an explicit routing error. The Router then exposes a `RouteDecision` containing the ModelGroup route target, execution role, model revision, and exact DP rank.
 
-Stage and E/P/D-domain narrowing remain Router-owned and run after scoring, before Picker. Algorithms can compare the complete compatible, healthy snapshot but cannot choose outside the stage's narrowed candidates.
+Stage and E/P/D-domain narrowing remain Router-owned and run after scoring, before Picker. Algorithms can compare the complete compatible, healthy snapshot but cannot choose outside the stage's narrowed candidates. Each candidate also carries the Router's immutable observation for that routing round: current admitted load and concurrency, optional scheduler/KV gauges, and throughput and latency statistics over the Router-owned observation window. Filter and Scorer consume that snapshot rather than querying target statistics; only request-dependent KV-prefix lookup remains an algorithm query.
 
 A RouteTarget with `data_parallel_size: 1` contributes only rank `0`, so its decision explicitly returns `data_parallel_rank: 0`. Larger targets contribute one candidate per rank.
 

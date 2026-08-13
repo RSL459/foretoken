@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! One routable ModelGroup candidate and its current routing load.
+//! One routable ModelGroup candidate and its immutable routing-round observation.
+
+use std::sync::Arc;
 
 use foretoken_model_protocol::ModelServerRole;
 
-use crate::{RouteTargetId, ScalingTarget};
+use crate::{RouteTargetId, RouteTargetStats, ScalingTarget};
 
 /// Position in the candidate slice passed to a routing algorithm.
 ///
@@ -13,13 +15,6 @@ use crate::{RouteTargetId, ScalingTarget};
 /// current scored slice. Algorithms cannot manufacture or modify a candidate through this type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CandidateIndex(pub usize);
-
-/// Current load attached to a candidate snapshot.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct RouteTargetLoad {
-    /// Requests currently executing on the route target, or `None` when unavailable.
-    pub running_requests: Option<u64>,
-}
 
 /// One selectable routable ModelGroup. It never represents a P-D or E-P-D combination.
 #[derive(Debug, Clone, PartialEq)]
@@ -38,8 +33,9 @@ pub struct RouteCandidate {
     pub domain_id: Option<String>,
     /// Exact data-parallel replica selected within the route target.
     pub data_parallel_rank: u32,
-    /// Latest route-target aggregate load snapshot. This is not per-rank telemetry.
-    pub route_target_load: Option<RouteTargetLoad>,
+    /// Latest route-target observation for this routing round, when telemetry covers the Router
+    /// observation window. It is aggregate telemetry shared by every DP rank of this target.
+    pub route_target_stats: Option<Arc<RouteTargetStats>>,
 }
 
 impl RouteCandidate {

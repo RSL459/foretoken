@@ -12,8 +12,7 @@ use super::support::{inventory, request, route};
 use foretoken_router::algorithm::{AllowAllFilter, UniformScorer};
 use foretoken_router::{
     CandidateIndex, PipelineRouter, RouteCandidate, RouteError, RouteFilter, RoutePicker,
-    RouteScore, RouteScorer, RouteTargetStatsReader, Router, RouterPipeline, RouterRequest,
-    ScoredCandidate,
+    RouteScore, RouteScorer, Router, RouterPipeline, RouterRequest, ScoredCandidate,
 };
 
 struct InvalidPicker;
@@ -53,7 +52,6 @@ impl RouteFilter for InvalidFilter {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
-        route_target_stats_reader: &dyn RouteTargetStatsReader,
         customized_context: &mut (),
     ) -> Vec<CandidateIndex> {
         vec![CandidateIndex(candidates.len())]
@@ -69,7 +67,6 @@ impl RouteFilter for DuplicateFilter {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
-        route_target_stats_reader: &dyn RouteTargetStatsReader,
         customized_context: &mut (),
     ) -> Vec<CandidateIndex> {
         vec![CandidateIndex(0), CandidateIndex(0)]
@@ -85,7 +82,6 @@ impl RouteScorer for InvalidScorer {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
-        route_target_stats_reader: &dyn RouteTargetStatsReader,
         customized_context: &mut (),
     ) -> Vec<RouteScore> {
         vec![]
@@ -95,7 +91,7 @@ impl RouteScorer for InvalidScorer {
 #[test]
 fn malformed_algorithm_outputs_are_explicit_errors() {
     let make_router = |filter: Arc<dyn RouteFilter>, scorer: Arc<dyn RouteScorer>, picker| {
-        let (inventory, _) = inventory(vec![route("a", ModelServerRole::Aggregate)]);
+        let inventory = inventory(vec![route("a", ModelServerRole::Aggregate)]);
         PipelineRouter::with_pipeline(inventory, RouterPipeline::new(filter, scorer, picker))
     };
 

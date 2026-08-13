@@ -11,7 +11,7 @@ Filter–Scorer–Picker 是候选列表级接口：
 - **Scorer** 按保留候选的原有顺序为每项返回一个 `RouteScore`。Router 持有 candidate/score 视图；数量不匹配会成为明确的路由错误。内置 KV 评分比较 prompt 命中长度、存储层级、locality 和负载。
 - **Picker** 从当前评分列表选择一个索引，而不是回传候选。非空列表返回 `None` 或越界索引都会成为明确的路由错误。Router 随后输出 `RouteDecision`，其中包含 ModelGroup RouteTarget、执行角色、模型 revision 和精确 DP rank。
 
-执行阶段和 E/P/D domain 收窄仍由 Router 负责，在评分后、Picker 前执行。算法可比较完整的兼容健康快照，但不能选择当前阶段收窄范围以外的候选。
+执行阶段和 E/P/D domain 收窄仍由 Router 负责，在评分后、Picker 前执行。算法可比较完整的兼容健康快照，但不能选择当前阶段收窄范围以外的候选。每个 candidate 还携带 Router 在该轮构造的不可变观测：当前 admitted load 和并发上限、可选 scheduler/KV gauge，以及 Router 统一观测窗口上的吞吐和延迟统计。Filter 和 Scorer 只消费该快照，不再查询 target stats；只有与 request prompt 相关的 KV-prefix lookup 仍是算法查询。
 
 `data_parallel_size: 1` 的 RouteTarget 只产生 rank `0` 候选，最终决策仍显式返回 `data_parallel_rank: 0`。更大的 RouteTarget 会为每个 rank 产生一个候选。
 

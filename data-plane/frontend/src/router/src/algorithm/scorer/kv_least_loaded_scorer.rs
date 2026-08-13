@@ -28,7 +28,6 @@ impl RouteScorer for KvLeastLoadedScorer {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv: &dyn KvPrefixIndexer,
-        _: &dyn crate::RouteTargetStatsReader,
         _: &mut (),
     ) -> Vec<RouteScore> {
         let decode_loads = decode_loads_by_domain(candidates);

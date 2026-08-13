@@ -29,7 +29,6 @@ impl RouteScorer for LeastLoadedScorer {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
-        route_target_stats_reader: &dyn crate::RouteTargetStatsReader,
         customized_context: &mut (),
     ) -> Vec<RouteScore> {
         // A Prefill candidate includes the lightest Decode load in its own execution domain. The

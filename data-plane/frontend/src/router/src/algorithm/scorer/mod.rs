@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 
-use crate::{RouteCandidate, RouteScore, RouteTargetStatsReader, RouterRequest};
+use crate::{RouteCandidate, RouteScore, RouterRequest};
 
 pub use kv_least_loaded_scorer::KvLeastLoadedScorer;
 pub use least_loaded_scorer::LeastLoadedScorer;
@@ -25,10 +25,9 @@ pub use uniform_scorer::UniformScorer;
 /// applies stage/domain eligibility only after scores are available.
 ///
 /// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
-/// - `candidates`: Filter output with route target ID, target, role, model, revision, and current load.
+/// - `candidates`: Filter output with route metadata and the Router's immutable current-round
+///   aggregate target observation, when telemetry is available.
 /// - `kv_prefix_indexer`: query local or offloaded matched prompt tokens for any candidate.
-/// - `route_target_stats_reader`: query load, scheduler, KV usage, throughput, and latency for a chosen
-///   `Duration`.
 /// - `customized_context`: user-defined `C`, created per request and shared by Prefill and Decode.
 ///
 /// Returns one score for every input candidate. A length mismatch is reported as a routing error.
@@ -38,17 +37,15 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
-        route_target_stats_reader: &dyn RouteTargetStatsReader,
         customized_context: &mut C,
     ) -> Vec<RouteScore>;
 }
 
 pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
     candidate
-        .route_target_load
+        .route_target_stats
         .as_ref()
-        .and_then(|value| value.running_requests)
-        .and_then(|value| i64::try_from(value).ok())
+        .and_then(|stats| i64::try_from(stats.running_requests).ok())
         .unwrap_or(0)
 }
 

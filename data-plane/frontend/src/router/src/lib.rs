@@ -20,7 +20,7 @@ pub use route_target_stats::{
 };
 pub use selection::{
     AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, PickerAlgorithm,
-    PickerDescriptor, PipelineRouter, RouteCandidate, RouteError, RouteScore, RouteSession,
-    RouteTargetLoad, Router, RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError,
-    ScoredCandidate, ScorerAlgorithm, ScorerDescriptor, validate_descriptor_names,
+    PickerDescriptor, PipelineRouter, RouteCandidate, RouteError, RouteScore, RouteSession, Router,
+    RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError, ScoredCandidate,
+    ScorerAlgorithm, ScorerDescriptor, validate_descriptor_names,
 };

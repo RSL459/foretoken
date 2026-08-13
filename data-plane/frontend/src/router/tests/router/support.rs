@@ -5,20 +5,20 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use foretoken_model_protocol::ModelServerRole;
 use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 
 use foretoken_router::{
-    ModelRouteTable, RouteInventory, RouteTarget, RouteTargetId, RouteTargetLoad, RouterRequest,
+    ModelRouteTable, RouteInventory, RouteTarget, RouteTargetId, RouteTargetStats, RouterRequest,
     ScalingTarget, ScalingTargetKind,
 };
 
-pub(super) type Loads = Arc<Mutex<BTreeMap<RouteTargetId, RouteTargetLoad>>>;
+pub(super) type Stats = Arc<Mutex<BTreeMap<RouteTargetId, RouteTargetStats>>>;
 
 pub(super) struct TestInventory {
     model_routes: ModelRouteTable,
-    loads: Loads,
     unhealthy: BTreeSet<RouteTargetId>,
 }
 
@@ -30,9 +30,21 @@ impl RouteInventory for TestInventory {
     fn is_route_target_healthy(&self, route_target_id: &RouteTargetId) -> bool {
         !self.unhealthy.contains(route_target_id)
     }
+}
 
-    fn route_target_load(&self, route_target_id: &RouteTargetId) -> Option<RouteTargetLoad> {
-        self.loads.lock().unwrap().get(route_target_id).cloned()
+pub(super) struct TestStatsReader {
+    stats: Stats,
+}
+
+impl TestStatsReader {
+    pub(super) fn new(stats: Stats) -> Self {
+        Self { stats }
+    }
+}
+
+impl foretoken_router::RouteTargetStatsReader for TestStatsReader {
+    fn stats(&self, route_target_id: &RouteTargetId, _: Duration) -> Option<RouteTargetStats> {
+        self.stats.lock().unwrap().get(route_target_id).cloned()
     }
 }
 
@@ -80,21 +92,20 @@ pub(super) fn request() -> RouterRequest {
     )
 }
 
-pub(super) fn inventory(routes: Vec<RouteTarget>) -> (Arc<TestInventory>, Loads) {
+pub(super) fn inventory(routes: Vec<RouteTarget>) -> Arc<TestInventory> {
     inventory_with_unhealthy(routes, BTreeSet::new())
 }
 
 pub(super) fn inventory_with_unhealthy(
     routes: Vec<RouteTarget>,
     unhealthy: BTreeSet<RouteTargetId>,
-) -> (Arc<TestInventory>, Loads) {
-    let loads = Arc::new(Mutex::new(BTreeMap::new()));
-    (
-        Arc::new(TestInventory {
-            model_routes: ModelRouteTable::new(routes),
-            loads: loads.clone(),
-            unhealthy,
-        }),
-        loads,
-    )
+) -> Arc<TestInventory> {
+    Arc::new(TestInventory {
+        model_routes: ModelRouteTable::new(routes),
+        unhealthy,
+    })
+}
+
+pub(super) fn stats() -> Stats {
+    Arc::new(Mutex::new(BTreeMap::new()))
 }
