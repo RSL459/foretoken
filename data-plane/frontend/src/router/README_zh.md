@@ -11,7 +11,7 @@ Filter–Scorer–Picker 是候选路由项（eligible route option，candidate�
 - **Scorer** 按保留候选路由项的原有顺序为每项返回一个 `RouteScore`。Router 持有 candidate/score 视图；数量不匹配会成为明确的路由错误。内置 KV 评分比较 prompt 命中长度、存储层级、locality 和负载。
 - **Picker** 从当前评分列表选择一个索引，而不是回传候选路由项。非空列表返回 `None` 或越界索引都会成为明确的路由错误。Router 随后输出 `RouteDecision`，其中包含 ModelGroup `RouteTarget`（模型服务器路由目标）、执行角色、模型 revision 和精确 DP rank。
 
-执行阶段和 E/P/D 路由组收窄仍由 Router 负责，在评分后、Picker 前执行。算法可比较完整的兼容健康快照，但不能选择当前阶段收窄范围以外的候选路由项。每个候选路由项还携带 Router 在该轮构造的不可变观测：当前 admitted load 和并发上限、可选 scheduler/KV gauge，以及 Router 统一观测窗口上的吞吐和延迟统计。Filter 和 Scorer 只消费该快照，不再查询 target stats；只有与 request prompt 相关的 KV-prefix lookup 仍是算法查询。
+执行阶段和 E/P/D 关联路由组件集收窄（同一组关联的 Encoder、Prefill 和 Decode 路由组件）仍由 Router 负责，在评分后、Picker 前执行。算法可比较完整的兼容健康快照，但不能选择当前阶段收窄范围以外的候选路由项。每个候选路由项还携带 Router 在该轮构造的不可变观测：当前 admitted load 和并发上限、可选 scheduler/KV gauge，以及 Router 统一观测窗口上的吞吐和延迟统计。Filter 和 Scorer 只消费该快照，不再查询 target stats；只有与 request prompt 相关的 KV-prefix lookup 仍是算法查询。
 
 `data_parallel_size: 1` 的 `RouteTarget`（模型服务器路由目标） 只产生 rank `0` 候选路由项，最终决策仍显式返回 `data_parallel_rank: 0`。更大的 RouteTarget 会为每个 rank 产生一个候选路由项。
 
@@ -55,6 +55,34 @@ RouteDecision：
 ModelGroup 名称遵循 `<pool-name>-<revision>-<ordinal>`。Router 使用 Kubernetes ModelGroup UID 作为路由身份，而不是使用 `metadata.name`；Deployment、Service 和 Service DNS endpoint 使用 ModelGroup 名称。
 
 Aggregate 和 Prefill 的内置 KV 评分按以下顺序做字典序比较：完整 prompt prefix 命中长度、`Device > HostPinned > Disk > External`、`Local > Remote`，最后比较负载。Decode 的 prefix、tier 和 locality 分数为零。Unavailable KV facts 不会被当作确认 miss。
+
+## 使用 KV prefix indexer
+
+Filter 和 Scorer 都会接收 `&dyn KvPrefixIndexer`。KV 感知算法需要使用候选项的精确 ModelGroup identity 和 DP rank，为每个 candidate 构造查询：
+
+```rust
+use foretoken_kv_indexer::{KvPrefixLookup, KvPrefixQueryResult};
+
+let result = KvPrefixLookup::from_generate_request(
+    candidate.route_target_id.as_str(),
+    candidate.data_parallel_rank,
+    request.generate_request.as_ref(),
+)
+.map_or_else(KvPrefixQueryResult::Unavailable, |lookup| {
+    kv_prefix_indexer.prefix_matches(lookup)
+});
+
+let matched_tokens = match result {
+    KvPrefixQueryResult::Matches(matches) => matches
+        .into_iter()
+        .map(|matched| matched.matched_tokens)
+        .max()
+        .unwrap_or(0),
+    KvPrefixQueryResult::Unavailable(_) => 0,
+};
+```
+
+`Unavailable` 不是确认的 cache miss，不能仅据此删除 candidate。Filter 返回输入 candidate 列表中的索引；Scorer 必须按原顺序为每个输入 candidate 返回一个 `RouteScore`。内置的 tier、locality 和负载策略可参考 `src/algorithm/scorer/kv_least_loaded_scorer.rs`。
 
 ## 编译期算法注册
 

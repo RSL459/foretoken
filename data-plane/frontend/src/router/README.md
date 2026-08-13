@@ -11,7 +11,7 @@ Its pipeline has three list-level interfaces:
 - **Scorer** returns one `RouteScore` for every retained eligible route option, in the same order. The Router owns the candidate/score view; a score-count mismatch is an explicit routing error. `KvLeastLoadedScorer` compares matched prompt tokens, storage tier, locality, and load.
 - **Picker** selects an index in the current scored list rather than returning an eligible route option. An out-of-range index, or `None` for a nonempty list, is an explicit routing error. The Router then exposes a `RouteDecision` containing the ModelGroup `RouteTarget` (the model-server route destination), execution role, model revision, and exact DP rank.
 
-Stage and E/P/D route-set narrowing remain Router-owned and run after scoring, before Picker. Algorithms can compare the complete compatible, healthy snapshot but cannot choose outside the stage's narrowed eligible route options. Each eligible route option also carries the Router's immutable observation for that routing round: current admitted load and concurrency, optional scheduler/KV gauges, and throughput and latency statistics over the Router-owned observation window. Filter and Scorer consume that snapshot rather than querying target statistics; only request-dependent KV-prefix lookup remains an algorithm query.
+Stage and E/P/D linked route-set narrowing (the same group of associated Encoder, Prefill, and Decode route components) remain Router-owned and run after scoring, before Picker. Algorithms can compare the complete compatible, healthy snapshot but cannot choose outside the stage's narrowed eligible route options. Each eligible route option also carries the Router's immutable observation for that routing round: current admitted load and concurrency, optional scheduler/KV gauges, and throughput and latency statistics over the Router-owned observation window. Filter and Scorer consume that snapshot rather than querying target statistics; only request-dependent KV-prefix lookup remains an algorithm query.
 
 A `RouteTarget` (a model-server route destination) with `data_parallel_size: 1` contributes only rank `0`, so its decision explicitly returns `data_parallel_rank: 0`. Larger targets contribute one eligible route option per rank.
 
@@ -55,6 +55,34 @@ RouteDecision:
 ModelGroup names follow `<pool-name>-<revision>-<ordinal>`. Router identity uses the Kubernetes ModelGroup UID rather than `metadata.name`; the name is used by the Deployment, Service, and service DNS endpoint.
 
 For Aggregate and Prefill, `KvLeastLoadedScorer` is lexicographic: longest complete matched prompt prefix first, then `Device > HostPinned > Disk > External`, then `Local > Remote`, then lower load. Decode prefix, tier, and locality scores are zero. Unavailable KV facts never become a confirmed miss.
+
+## Using the KV prefix indexer
+
+Filter and Scorer receive a `&dyn KvPrefixIndexer`. A KV-aware algorithm constructs one lookup for each candidate from the candidate's exact ModelGroup identity and DP rank:
+
+```rust
+use foretoken_kv_indexer::{KvPrefixLookup, KvPrefixQueryResult};
+
+let result = KvPrefixLookup::from_generate_request(
+    candidate.route_target_id.as_str(),
+    candidate.data_parallel_rank,
+    request.generate_request.as_ref(),
+)
+.map_or_else(KvPrefixQueryResult::Unavailable, |lookup| {
+    kv_prefix_indexer.prefix_matches(lookup)
+});
+
+let matched_tokens = match result {
+    KvPrefixQueryResult::Matches(matches) => matches
+        .into_iter()
+        .map(|matched| matched.matched_tokens)
+        .max()
+        .unwrap_or(0),
+    KvPrefixQueryResult::Unavailable(_) => 0,
+};
+```
+
+`Unavailable` is not a confirmed cache miss, so it must not by itself remove a candidate. A Filter returns indexes into its input candidate list. A Scorer returns one `RouteScore` for every input candidate in the same order. See `src/algorithm/scorer/kv_least_loaded_scorer.rs` for the built-in tier, locality, and load policy.
 
 ## Compiled algorithm registry
 
