@@ -12,7 +12,7 @@ foretoken bench \
   --wandb
 ```
 
-![image-20260813171943416](imgs\image-20260813171943416.png)
+![Random dataset benchmark output](imgs/random-dataset-benchmark-output.png)
 
 ![image-20260813172129573](imgs\image-20260813172129573.png)
 
