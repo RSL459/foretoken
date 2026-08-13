@@ -42,16 +42,16 @@ foretoken bench \
   --model Qwen3.6-27B \
   --prompt "hello" \
   --parallel 2 \
-  --number 5
+  --number 20
 ```
 
-数据集文件：
+本地数据集文件：
 
 ```bash
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
-  --dataset /home/wshiah/code/zhuting/foretoken/conversation.jsonl,/home/wshiah/code/zhuting/foretoken/mooncake.jsonl \
+  --dataset foretoken/conversation.jsonl \
   --parallel 4 \
   --number 20 \
   --wandb
@@ -64,7 +64,7 @@ foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
   --dataset random \
-  --tokenizer-path /exportr/zxcpu2/shiweijie/cache/models--Qwen--Qwen3.6-27B/snapshots/6a9e13bd6fc8f0983b9b99948120bc37f49c13e9 \
+  --tokenizer-path Qwen/Qwen3.6-27B \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
   --rate 5 \
@@ -77,7 +77,7 @@ HuggingFace 数据集（行格式：`messages` / `prompt` / `user`[+`system`]）
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
-  --dataset weijiezz/foretoken-trace:conversation \
+  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
   --parallel 4 \
   --number 20 \
   --wandb
@@ -96,5 +96,3 @@ foretoken bench \
   --number 30 \
   --wandb
 ```
-=======
->>>>>>> b94b34f (feat: update README_zh.md)

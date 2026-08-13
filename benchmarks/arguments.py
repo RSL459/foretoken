@@ -231,7 +231,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
         "--collect-engine-metrics",
         action=argparse.BooleanOptionalAction,
         default=_default(EngineMetricsConfig, "collect"),
-        help="Collect engine Prometheus /metrics during the run",
+        help="Collect foretoken metrics through /metrics gate",
     )
     bench.add_argument(
         "--engine-metrics-url",
