@@ -14,7 +14,7 @@ foretoken bench \
 
 ![Random dataset benchmark output](imgs/random-dataset-benchmark-output.png)
 
-![image-20260813172129573](imgs\image-20260813172129573.png)
+![Random dataset W&B dashboard](imgs/random-dataset-wandb-dashboard.png)
 
 # HuggingFace dataset
 
@@ -28,9 +28,9 @@ foretoken bench \
   --wandb
 ```
 
-![image-20260810161340097](imgs\image-20260810161340097.png)
+![Hugging Face dataset benchmark output](imgs/huggingface-dataset-benchmark-output.png)
 
-![image-20260810161813655](imgs\image-20260810161813655.png)
+![Hugging Face dataset W&B dashboard](imgs/huggingface-dataset-wandb-dashboard.png)
 
 # Local dataset
 
@@ -44,9 +44,9 @@ foretoken bench \
   --wandb
 ```
 
-![image-20260810161420515](imgs\image-20260810161420515.png)
+![Local dataset benchmark output](imgs/local-dataset-benchmark-output.png)
 
-![image-20260810161928838](imgs\image-20260810161928838.png)
+![Local dataset W&B dashboard](imgs/local-dataset-wandb-dashboard.png)
 
 # Multi-dataset
 
@@ -60,6 +60,6 @@ foretoken bench \
   --wandb
 ```
 
-![image-20260810162231036](imgs\image-20260810162231036.png)
+![Multi-dataset W&B comparison](imgs/multi-dataset-wandb-comparison.png)
 
-![image-20260810162132897](imgs\image-20260810162132897.png)
+![Multi-dataset benchmark output](imgs/multi-dataset-benchmark-output.png)
