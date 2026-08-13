@@ -63,11 +63,11 @@ pub(super) fn route(id: &str, role: ModelServerRole) -> RouteTarget {
         max_input_tokens: None,
         ready: true,
         role,
-        domain_id: matches!(
+        pipeline_scope_id: matches!(
             role,
             ModelServerRole::Prefill | ModelServerRole::Decode | ModelServerRole::Encoder
         )
-        .then(|| "domain-a".into()),
+        .then(|| "pipeline-scope-a".into()),
         data_parallel_size: 1,
     }
 }

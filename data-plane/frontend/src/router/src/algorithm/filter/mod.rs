@@ -15,7 +15,7 @@ pub use allow_all_filter::AllowAllFilter;
 ///
 /// A filter returns positions from `candidates`, which permits it to retain any subset without
 /// returning candidate identities or metadata. The pipeline owns eligibility and later
-/// stage/domain narrowing.
+/// stage/pipeline-scope narrowing.
 ///
 /// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `candidates`: routable ModelGroups with route metadata and the Router's immutable current-round

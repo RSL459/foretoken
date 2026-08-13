@@ -93,7 +93,7 @@ fn candidate(id: &str, role: ModelServerRole, load: u64) -> RouteCandidate {
         role,
         model: route.model,
         revision: route.revision,
-        domain_id: route.domain_id,
+        pipeline_scope_id: route.pipeline_scope_id,
         data_parallel_rank: 0,
         route_target_stats: Some(target_stats(load)),
     }
@@ -135,16 +135,16 @@ fn kv_scoring_is_prefix_tier_locality_load_and_keeps_unavailable_candidates() {
 }
 
 #[test]
-fn prefill_downstream_load_is_scoped_to_its_execution_domain() {
+fn prefill_downstream_load_is_scoped_to_its_pipeline_scope() {
     let candidates = || {
         let mut prefill_a = candidate("prefill-a", ModelServerRole::Prefill, 0);
         let mut decode_a = candidate("decode-a", ModelServerRole::Decode, 100);
         let mut prefill_b = candidate("prefill-b", ModelServerRole::Prefill, 10);
         let mut decode_b = candidate("decode-b", ModelServerRole::Decode, 1);
-        prefill_a.domain_id = Some("domain-a".into());
-        decode_a.domain_id = Some("domain-a".into());
-        prefill_b.domain_id = Some("domain-b".into());
-        decode_b.domain_id = Some("domain-b".into());
+        prefill_a.pipeline_scope_id = Some("pipeline-scope-a".into());
+        decode_a.pipeline_scope_id = Some("pipeline-scope-a".into());
+        prefill_b.pipeline_scope_id = Some("pipeline-scope-b".into());
+        decode_b.pipeline_scope_id = Some("pipeline-scope-b".into());
         vec![prefill_a, decode_a, prefill_b, decode_b]
     };
 

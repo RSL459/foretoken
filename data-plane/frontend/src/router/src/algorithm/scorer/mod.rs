@@ -22,7 +22,7 @@ pub use uniform_scorer::UniformScorer;
 ///
 /// The returned score slice is parallel to `candidates`: position `n` scores candidate `n`. This
 /// lets a scorer express ranking without echoing candidate identity or metadata. The pipeline
-/// applies stage/domain eligibility only after scores are available.
+/// applies stage/pipeline-scope eligibility only after scores are available.
 ///
 /// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `candidates`: Filter output with route metadata and the Router's immutable current-round
@@ -49,8 +49,8 @@ pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
         .unwrap_or(0)
 }
 
-/// Returns the least route-target load among Decode candidates in each execution domain.
-pub(crate) fn decode_loads_by_domain(
+/// Returns the least model-server route load among Decode eligible route options in each linked route set.
+pub(crate) fn decode_loads_by_pipeline_scope(
     candidates: &[RouteCandidate],
 ) -> BTreeMap<Option<String>, i64> {
     let mut loads = BTreeMap::new();
@@ -59,7 +59,7 @@ pub(crate) fn decode_loads_by_domain(
         .filter(|candidate| candidate.role == ModelServerRole::Decode)
     {
         loads
-            .entry(candidate.domain_id.clone())
+            .entry(candidate.pipeline_scope_id.clone())
             .and_modify(|current: &mut i64| *current = (*current).min(load(candidate)))
             .or_insert_with(|| load(candidate));
     }

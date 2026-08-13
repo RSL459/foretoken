@@ -17,12 +17,14 @@ use foretoken_router::{
     ScoredCandidate,
 };
 
+type CandidateObservations = Vec<Vec<(Option<u64>, Option<usize>)>>;
+
 #[derive(Default)]
 struct ContextTrace {
     events: Mutex<Vec<String>>,
     scorer_roles: Mutex<Vec<Vec<ModelServerRole>>>,
-    filter_observations: Mutex<Vec<Vec<(Option<u64>, Option<usize>)>>>,
-    scorer_observations: Mutex<Vec<Vec<(Option<u64>, Option<usize>)>>>,
+    filter_observations: Mutex<CandidateObservations>,
+    scorer_observations: Mutex<CandidateObservations>,
     picker_roles: Mutex<Vec<Vec<ModelServerRole>>>,
 }
 

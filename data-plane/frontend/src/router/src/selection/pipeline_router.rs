@@ -82,7 +82,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     role: route.role,
                     model: route.model.clone(),
                     revision: route.revision.clone(),
-                    domain_id: route.domain_id.clone(),
+                    pipeline_scope_id: route.pipeline_scope_id.clone(),
                     data_parallel_rank,
                     route_target_stats: stats.clone(),
                 })
@@ -98,7 +98,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
         error: RouteError,
     ) -> Result<RouteCandidate, RouteError> {
         // Filter and Scorer receive the complete compatible, healthy snapshot so decisions such as
-        // downstream Decode cost can compare every viable route target. Stage/domain narrowing follows
+        // downstream Decode cost can compare every viable route target. Stage/pipeline-scope narrowing follows
         // scoring and immediately precedes Picker, without hiding information from extensions.
         let candidates = self.candidates(request);
         let filtered_indexes = self.pipeline.filter.filter(
@@ -156,13 +156,14 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .ok_or(RouteError::InvalidPickerIndex { index: picked.0 })
     }
 
-    fn domain_has_encoder(&self, request: &RouterRequest, domain: &str) -> bool {
+    fn pipeline_scope_has_encoder(&self, request: &RouterRequest, pipeline_scope_id: &str) -> bool {
         self.inventory
             .model_routes()
             .candidates(request)
             .into_iter()
             .any(|route| {
-                route.role == ModelServerRole::Encoder && route.domain_id.as_deref() == Some(domain)
+                route.role == ModelServerRole::Encoder
+                    && route.pipeline_scope_id.as_deref() == Some(pipeline_scope_id)
             })
     }
 
@@ -176,22 +177,35 @@ impl<C: Send + 'static> PipelineRouter<C> {
             context,
             |candidate, scored| match candidate.role {
                 ModelServerRole::Aggregate => true,
-                ModelServerRole::Prefill => candidate.domain_id.as_ref().is_some_and(|domain| {
-                    !self.domain_has_encoder(request, domain)
-                        && scored.iter().any(|other| {
-                            other.candidate.domain_id.as_ref() == Some(domain)
-                                && other.candidate.role == ModelServerRole::Decode
+                ModelServerRole::Prefill => {
+                    candidate
+                        .pipeline_scope_id
+                        .as_ref()
+                        .is_some_and(|pipeline_scope_id| {
+                            !self.pipeline_scope_has_encoder(request, pipeline_scope_id)
+                                && scored.iter().any(|other| {
+                                    other.candidate.pipeline_scope_id.as_ref()
+                                        == Some(pipeline_scope_id)
+                                        && other.candidate.role == ModelServerRole::Decode
+                                })
                         })
-                }),
-                ModelServerRole::Encoder => candidate.domain_id.as_ref().is_some_and(|domain| {
-                    scored.iter().any(|other| {
-                        other.candidate.domain_id.as_ref() == Some(domain)
-                            && other.candidate.role == ModelServerRole::Prefill
-                    }) && scored.iter().any(|other| {
-                        other.candidate.domain_id.as_ref() == Some(domain)
-                            && other.candidate.role == ModelServerRole::Decode
-                    })
-                }),
+                }
+                ModelServerRole::Encoder => {
+                    candidate
+                        .pipeline_scope_id
+                        .as_ref()
+                        .is_some_and(|pipeline_scope_id| {
+                            scored.iter().any(|other| {
+                                other.candidate.pipeline_scope_id.as_ref()
+                                    == Some(pipeline_scope_id)
+                                    && other.candidate.role == ModelServerRole::Prefill
+                            }) && scored.iter().any(|other| {
+                                other.candidate.pipeline_scope_id.as_ref()
+                                    == Some(pipeline_scope_id)
+                                    && other.candidate.role == ModelServerRole::Decode
+                            })
+                        })
+                }
                 ModelServerRole::Decode => false,
             },
             RouteError::NoMatchingRouteTarget {
@@ -200,21 +214,22 @@ impl<C: Send + 'static> PipelineRouter<C> {
         )
     }
 
-    fn select_prefill_in_domain(
+    fn select_prefill_in_pipeline_scope(
         &self,
         request: &RouterRequest,
         context: &mut C,
-        domain: &str,
+        pipeline_scope_id: &str,
     ) -> Result<RouteCandidate, RouteError> {
         self.select(
             request,
             context,
             |candidate, scored| {
                 candidate.role == ModelServerRole::Prefill
-                    && candidate.domain_id.as_deref() == Some(domain)
+                    && candidate.pipeline_scope_id.as_deref() == Some(pipeline_scope_id)
                     && scored.iter().any(|other| {
                         other.candidate.role == ModelServerRole::Decode
-                            && other.candidate.domain_id.as_deref() == Some(domain)
+                            && other.candidate.pipeline_scope_id.as_deref()
+                                == Some(pipeline_scope_id)
                     })
             },
             RouteError::NoMatchingRouteTarget {
@@ -223,18 +238,18 @@ impl<C: Send + 'static> PipelineRouter<C> {
         )
     }
 
-    fn select_decode_in_domain(
+    fn select_decode_in_pipeline_scope(
         &self,
         request: &RouterRequest,
         context: &mut C,
-        domain: &str,
+        pipeline_scope_id: &str,
     ) -> Result<RouteCandidate, RouteError> {
         self.select(
             request,
             context,
             |candidate, _| {
                 candidate.role == ModelServerRole::Decode
-                    && candidate.domain_id.as_deref() == Some(domain)
+                    && candidate.pipeline_scope_id.as_deref() == Some(pipeline_scope_id)
             },
             RouteError::NoMatchingDecode {
                 model: request.model.clone(),
@@ -257,8 +272,8 @@ impl PipelineRouter<()> {
 #[derive(Clone)]
 enum SessionStage {
     Initial,
-    Encoder { domain_id: String },
-    Prefill { domain_id: String },
+    Encoder { pipeline_scope_id: String },
+    Prefill { pipeline_scope_id: String },
     Complete,
 }
 
@@ -275,16 +290,16 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             .select_initial(&self.request, &mut self.customized_context)?;
         self.stage = match candidate.role {
             ModelServerRole::Encoder => SessionStage::Encoder {
-                domain_id: candidate
-                    .domain_id
+                pipeline_scope_id: candidate
+                    .pipeline_scope_id
                     .clone()
-                    .expect("eligible encoder has a domain"),
+                    .expect("eligible encoder has a pipeline scope"),
             },
             ModelServerRole::Prefill => SessionStage::Prefill {
-                domain_id: candidate
-                    .domain_id
+                pipeline_scope_id: candidate
+                    .pipeline_scope_id
                     .clone()
-                    .expect("eligible prefill has a domain"),
+                    .expect("eligible prefill has a pipeline scope"),
             },
             ModelServerRole::Aggregate => SessionStage::Complete,
             ModelServerRole::Decode => unreachable!("initial eligibility rejects Decode"),
@@ -293,19 +308,19 @@ impl<C: Send + 'static> RouteSession for Session<C> {
     }
 
     fn select_prefill(&mut self) -> Result<RouteDecision, RouteError> {
-        let SessionStage::Encoder { domain_id } = &self.stage else {
+        let SessionStage::Encoder { pipeline_scope_id } = &self.stage else {
             return Err(RouteError::PrefillBeforeEncoder);
         };
-        let prefill = self.router.select_prefill_in_domain(
+        let prefill = self.router.select_prefill_in_pipeline_scope(
             &self.request,
             &mut self.customized_context,
-            domain_id,
+            pipeline_scope_id,
         )?;
         self.stage = SessionStage::Prefill {
-            domain_id: prefill
-                .domain_id
+            pipeline_scope_id: prefill
+                .pipeline_scope_id
                 .clone()
-                .expect("eligible prefill has a domain"),
+                .expect("eligible prefill has a pipeline scope"),
         };
         Ok(prefill.decision())
     }
@@ -313,13 +328,13 @@ impl<C: Send + 'static> RouteSession for Session<C> {
     fn select_decode(&mut self) -> Result<RouteDecision, RouteError> {
         // Decode selection builds a fresh healthy and telemetry snapshot rather than reusing
         // candidates observed for the earlier Prefill choice.
-        let SessionStage::Prefill { domain_id } = &self.stage else {
+        let SessionStage::Prefill { pipeline_scope_id } = &self.stage else {
             return Err(RouteError::DecodeBeforePrefill);
         };
-        let decode = self.router.select_decode_in_domain(
+        let decode = self.router.select_decode_in_pipeline_scope(
             &self.request,
             &mut self.customized_context,
-            domain_id,
+            pipeline_scope_id,
         )?;
         self.stage = SessionStage::Complete;
         Ok(decode.decision())

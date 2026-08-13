@@ -6,7 +6,7 @@
 use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 
-use super::{decode_loads_by_domain, load};
+use super::{decode_loads_by_pipeline_scope, load};
 use std::sync::Arc;
 
 use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescriptor};
@@ -31,15 +31,18 @@ impl RouteScorer for LeastLoadedScorer {
         kv_prefix_indexer: &dyn KvPrefixIndexer,
         customized_context: &mut (),
     ) -> Vec<RouteScore> {
-        // A Prefill candidate includes the lightest Decode load in its own execution domain. The
-        // score compares domains without prematurely binding to one Decode rank.
-        let decode_loads = decode_loads_by_domain(candidates);
+        // A Prefill eligible route option includes the lightest Decode load in its own linked route set.
+        // The score compares linked route sets without prematurely binding to one Decode rank.
+        let decode_loads = decode_loads_by_pipeline_scope(candidates);
 
         candidates
             .iter()
             .map(|candidate| {
                 let downstream_load = if candidate.role == ModelServerRole::Prefill {
-                    decode_loads.get(&candidate.domain_id).copied().unwrap_or(0)
+                    decode_loads
+                        .get(&candidate.pipeline_scope_id)
+                        .copied()
+                        .unwrap_or(0)
                 } else {
                     0
                 };

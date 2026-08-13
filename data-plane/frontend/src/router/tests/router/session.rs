@@ -58,7 +58,7 @@ fn prefill_is_not_selected_without_an_available_decode() {
 }
 
 #[test]
-fn encoder_prefill_decode_stays_in_its_domain_and_never_falls_back_without_encoder() {
+fn encoder_prefill_decode_stays_in_its_pipeline_scope_and_never_falls_back_without_encoder() {
     let router = PipelineRouter::new(inventory(vec![
         route("e", ModelServerRole::Encoder),
         route("p", ModelServerRole::Prefill),

@@ -27,7 +27,7 @@ pub enum ModelServerRole {
 
 /// Model-server wire execution stage selected for a routed request.
 ///
-/// This is distinct from Router's session stage and route target execution role; it is the typed value
+/// This is distinct from Router's per-request routing stage and route target execution role; it is the typed value
 /// consumed by the model-server HTTP contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,7 +44,7 @@ pub enum RouteStage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GenerateInput {
-    /// Model-server execution stage selected by the router, not Router's session stage.
+    /// Model-server execution stage selected by the router, not Router's per-request routing stage.
     #[serde(default)]
     pub stage: RouteStage,
     pub request_id: String,
@@ -183,11 +183,6 @@ impl From<TokenOutput> for GenerateOutput {
     }
 }
 
-/// The vLLM source revision compiled into Foretoken model-server images.
-pub const VLLM_SOURCE_REVISION: &str = env!(
-    "FORETOKEN_VLLM_SOURCE_REVISION",
-    "build through the repository entrypoints with a local vLLM build source",
-);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeModelIdentity {
@@ -200,7 +195,6 @@ pub struct RuntimeEcTransferMetadata {
     pub role: String,
     pub profile: String,
     pub connector: String,
-    pub fingerprint: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -209,7 +203,6 @@ pub struct RuntimeMetadataResponse {
     pub model: RuntimeModelIdentity,
     pub model_dtype: ModelDtype,
     pub effective_max_model_len: u32,
-    pub vllm_source_revision: String,
     pub vllm_version: String,
     pub ec_transfer: Option<RuntimeEcTransferMetadata>,
     #[serde(default)]

@@ -3,21 +3,21 @@
 
 # Router
 
-The Router selects one routable ModelGroup and DP rank for each execution stage.
+For each execution stage, the Router selects one routable ModelGroup (that is, an engine-core-server) and an exact DP rank.
 
-Its pipeline has three list-level contracts:
+Its pipeline has three list-level interfaces:
 
-- **Filter** receives the compatible, healthy candidate snapshot and returns indexes for a retained subset. It cannot create or modify candidates. Out-of-range or duplicate indexes are explicit routing errors.
-- **Scorer** returns one `RouteScore` for every retained candidate, in the same order. The Router owns the candidate/score view; a score-count mismatch is an explicit routing error. `KvLeastLoadedScorer` compares matched prompt tokens, storage tier, locality, and load.
-- **Picker** selects an index in the current scored list rather than returning a candidate. An out-of-range index, or `None` for a nonempty list, is an explicit routing error. The Router then exposes a `RouteDecision` containing the ModelGroup route target, execution role, model revision, and exact DP rank.
+- **Filter** receives the compatible, healthy eligible route-option snapshot (a candidate) and returns indexes for a retained subset. It cannot create or modify candidates. Out-of-range or duplicate indexes are explicit routing errors.
+- **Scorer** returns one `RouteScore` for every retained eligible route option, in the same order. The Router owns the candidate/score view; a score-count mismatch is an explicit routing error. `KvLeastLoadedScorer` compares matched prompt tokens, storage tier, locality, and load.
+- **Picker** selects an index in the current scored list rather than returning an eligible route option. An out-of-range index, or `None` for a nonempty list, is an explicit routing error. The Router then exposes a `RouteDecision` containing the ModelGroup `RouteTarget` (the model-server route destination), execution role, model revision, and exact DP rank.
 
-Stage and E/P/D-domain narrowing remain Router-owned and run after scoring, before Picker. Algorithms can compare the complete compatible, healthy snapshot but cannot choose outside the stage's narrowed candidates. Each candidate also carries the Router's immutable observation for that routing round: current admitted load and concurrency, optional scheduler/KV gauges, and throughput and latency statistics over the Router-owned observation window. Filter and Scorer consume that snapshot rather than querying target statistics; only request-dependent KV-prefix lookup remains an algorithm query.
+Stage and E/P/D linked route-set narrowing (the same group of associated Encoder, Prefill, and Decode route components) remain Router-owned and run after scoring, before Picker. Algorithms can compare the complete compatible, healthy snapshot but cannot choose outside the stage's narrowed eligible route options. Each eligible route option also carries the Router's immutable observation for that routing round: current admitted load and concurrency, optional scheduler/KV gauges, and throughput and latency statistics over the Router-owned observation window. Filter and Scorer consume that snapshot rather than querying target statistics; only request-dependent KV-prefix lookup remains an algorithm query.
 
-A RouteTarget with `data_parallel_size: 1` contributes only rank `0`, so its decision explicitly returns `data_parallel_rank: 0`. Larger targets contribute one candidate per rank.
+A `RouteTarget` (a model-server route destination) with `data_parallel_size: 1` contributes only rank `0`, so its decision explicitly returns `data_parallel_rank: 0`. Larger targets contribute one eligible route option per rank.
 
 ## Customized Context case
 
-`RouterPipeline::with_customized_context` creates one owned `C` when `Router::start` creates a session. The Router passes `&mut C` to Filter, Scorer, and Picker in each round; the same value lives through the initial, Prefill, and Decode selections, then is dropped with that session. It is not shared with another request.
+`RouterPipeline::with_customized_context` creates one owned `C` for each request. The Router passes `&mut C` to Filter, Scorer, and Picker in every selection round; the same value lives through the initial, Prefill, and Decode selections, then is dropped when request processing ends. It is not shared with another request.
 
 ```rust
 let pipeline = RouterPipeline::with_customized_context(
@@ -29,7 +29,7 @@ let pipeline = RouterPipeline::with_customized_context(
 let router = PipelineRouter::with_pipeline(inventory, pipeline);
 ```
 
-For example, Filter increments `rounds`, Scorer reads that round to attach scoring policy, and Picker consumes the same state to make its final choice. The executable contract is `tests/router/pipeline.rs`; the default `RouterPipeline::new` remains the `()` convenience for algorithms that need no request-local state.
+For example, Filter increments `rounds`, Scorer reads that round to attach scoring policy, and Picker consumes the same state to make its final choice. The executable behavior is covered by `tests/router/pipeline.rs`; the default `RouterPipeline::new` remains the `()` convenience for algorithms that need no request-local state.
 
 ## Example
 
