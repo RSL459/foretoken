@@ -21,8 +21,8 @@ pub use uniform_scorer::UniformScorer;
 /// Scores the complete filtered compatible, healthy route target snapshot for one routing round.
 ///
 /// The returned score slice is parallel to `candidates`: position `n` scores candidate `n`. This
-/// lets a scorer express ranking without echoing candidate identity or metadata. The pipeline
-/// applies stage/pipeline-scope eligibility only after scores are available.
+/// lets a scorer express ranking without echoing candidate identity or metadata. The Router
+/// applies execution-stage and linked E/P/D route-set eligibility only after scores are available.
 ///
 /// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `candidates`: Filter output with route metadata and the Router's immutable current-round

@@ -7,7 +7,8 @@ use thiserror::Error;
 
 use crate::{RouteDecision, RouterRequest};
 
-/// Holds routing state for one generation request. Aggregate completes directly; P/D executes P→fresh D and E/P/D executes E→P→fresh D.
+/// Holds request-local routing state for one generation request. Aggregate completes directly;
+/// P/D executes P→a fresh D choice, and E/P/D executes E→P→a fresh D choice within one linked route set.
 pub trait RouteSession: Send {
     /// Selects one Aggregate, ordinary Prefill, or E/P/D Encoder from the current snapshot.
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError>;

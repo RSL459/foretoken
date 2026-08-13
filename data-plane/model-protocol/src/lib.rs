@@ -27,8 +27,8 @@ pub enum ModelServerRole {
 
 /// Model-server wire execution stage selected for a routed request.
 ///
-/// This is distinct from Router's per-request routing stage and route target execution role; it is the typed value
-/// consumed by the model-server HTTP contract.
+/// This typed value is sent to the model-server HTTP endpoint. It is distinct from the Router's
+/// request-local routing state and from a route target's execution role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RouteStage {
