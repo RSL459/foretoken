@@ -86,27 +86,16 @@ type ModelPoolSpec struct {
 	Template NormalizedPoolTemplate `json:"template"`
 }
 
-// ModelPoolPhase summarizes the Pool lifecycle.
-// +enum
-// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded;Terminating
-type ModelPoolPhase string
-
-const (
-	ModelPoolPhasePending     ModelPoolPhase = "Pending"
-	ModelPoolPhaseProgressing ModelPoolPhase = "Progressing"
-	ModelPoolPhaseReady       ModelPoolPhase = "Ready"
-	ModelPoolPhaseDegraded    ModelPoolPhase = "Degraded"
-	ModelPoolPhaseTerminating ModelPoolPhase = "Terminating"
-)
-
 // ModelPoolStatus defines the observed state of a ModelPool.
 type ModelPoolStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// ActiveRevision is the Group revision currently admitted to routing.
 	// +optional
-	Phase ModelPoolPhase `json:"phase,omitempty"`
+	// +kubebuilder:validation:MaxLength=63
+	ActiveRevision string `json:"activeRevision,omitempty"`
 
 	// +optional
 	// +listType=map
@@ -121,7 +110,6 @@ type ModelPoolStatus struct {
 // +kubebuilder:printcolumn:name="Role",type=string,JSONPath=".spec.template.role"
 // +kubebuilder:printcolumn:name="Desired",type=integer,JSONPath=".spec.desiredGroups"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
-// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // ModelPool is a read-only execution fleet materialized from ModelService intent.
