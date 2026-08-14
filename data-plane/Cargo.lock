@@ -521,7 +521,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "vllm-llm",
 ]
 
 [[package]]

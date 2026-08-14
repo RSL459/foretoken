@@ -3,41 +3,83 @@
 
 # KV prefix index
 
-The KV prefix index records which KV cache blocks are available on each model server. The Router uses it to determine how many prompt tokens a specific ModelGroup and DP rank can reuse instead of computing them again.
+An inference backend creates KV cache while processing a prompt. A later request with the same prompt prefix can reuse that cache instead of computing the prefix again.
 
-This component reports KV cache availability. It does not select a route.
+The KV prefix index acts as a cache directory: it records which model instance has each prompt prefix. The inference backend still owns the KV cache itself; the index stores only the information needed for routing queries.
 
-## How it works
+## Where it fits in Foretoken
 
-1. Model servers report KV block store, remove, and clear events.
-2. The index keeps blocks from each event source, ModelGroup, and DP rank separate, so data from different model instances cannot be mixed.
-3. The Router queries a specific route and DP rank with the request's prompt tokens.
-4. The index returns only storage placements that the route can read.
+The KV prefix index sits between inference backends and the Router:
+
+```text
+Inference backend ──KV block events──> KV prefix index ──prefix matches──> Router
+```
+
+- A backend adapter converts backend-specific KV cache events into Foretoken's common events.
+- The KV prefix index maintains cache information for each route target and DP rank.
+- The Router queries the `KvPrefixIndexer` and combines cache matches with load and other routing signals.
+
+The index does not store or transfer KV cache, and it does not select a route.
+
+## A simple example
+
+Suppose a request contains 1,000 prompt tokens:
+
+- route target A has cached the first 800 tokens;
+- route target B has cached the first 200 tokens.
+
+The index reports both matches. The Router may prefer A, or it may select B because of load or another routing condition.
+
+## Query interface
+
+A `KvPrefixLookup` contains:
+
+- `route_target_id`: the route target to query;
+- `data_parallel_rank`: the exact DP rank within that target;
+- `prompt_token_ids`: the request's prompt tokens.
 
 A query returns one of the following results:
 
-- `Matches`: the query completed and includes the matched prompt-token count and storage placements.
-- `Unavailable`: the index cannot answer the query, for example because the request has no token IDs or the event source has not finished synchronizing. This does not mean a confirmed KV cache miss.
+- `Matches`: the query completed. The result contains reusable prompt-token counts and cache placements; no match is also a valid result.
+- `Unavailable`: the index cannot provide a reliable answer, for example because the event source has not synchronized or the request does not support prefix lookup. This is not the same as a cache miss.
 
-## KV block events
+## Common KV block events
 
-- `BlockStored` records a newly stored block and its relationship to the previous block.
-- `BlockRemoved` removes the referenced block. If the index cannot identify it, it does not guess or remove another record.
-- `AllBlocksCleared` removes all records for the corresponding event source and DP rank.
+Foretoken maintains the index from three common event types:
 
-Events from each source have a continuous sequence starting at zero. If events are missing or reordered, or the epoch changes, the index does not expose incomplete data to the Router. Queries become available again after synchronization recovers.
+- `BlockStored`: a new KV block was stored;
+- `BlockRemoved`: a KV block was removed;
+- `AllBlocksCleared`: all KV blocks for an event source and DP rank were cleared.
 
-## Storage placements
+Records from different event sources, route targets, and DP ranks remain separate, so cache information from different model instances cannot be mixed.
 
-Foretoken maps vLLM storage types to four placements:
+## Cache placements
 
-- `GPU` and `DEVICE` → `Device`
-- `CPU` and `CPU_PINNED` → `HostPinned`
-- `STORAGE`, `DISK`, and `NVME` → `Disk`
-- `REMOTE`, `EXTERNAL`, `NETWORK`, and `SHARED` → `External`
+| Placement | Meaning |
+| --- | --- |
+| `Device` | Cache on the current compute device, available for direct use |
+| `HostPinned` | Cache in host memory that must be restored to the compute device |
+| `Disk` | Cache on local storage that must be restored from disk |
+| `External` | Cache on remote or shared storage that must be transferred over the network |
 
-`Device` is directly readable by the current device. `HostPinned`, `Disk`, and `External` require the corresponding restore or transfer capability; otherwise, the index does not return them as reusable placements.
+The index returns `HostPinned`, `Disk`, or `External` entries only when the route has the corresponding restore or transfer capability.
 
-## vLLM event conversion
+## Event synchronization
 
-The model-server adapter converts vLLM KV events, block identifiers, and parent relationships into Foretoken's common format. Remove events carry only vLLM block hashes, so the adapter retains the mapping needed to find blocks reported by earlier store events. Foretoken does not directly compare raw vLLM hashes with request-side block identifiers.
+Each event source has its own epoch and continuous sequence. If events are missing or reordered, or the epoch changes, the index temporarily returns `Unavailable` instead of exposing incomplete data. Queries become available again after synchronization recovers.
+
+## Supporting another inference backend
+
+Backend-specific behavior belongs in an adapter. The adapter converts the backend's events, block identifiers, and storage types into Foretoken's common types; `KvPrefixIndexer` itself should not depend on a particular inference backend.
+
+To support another backend, add or extend its adapter instead of adding backend-specific branches to the index implementations.
+
+## Index implementations
+
+This crate provides:
+
+- `PositionalHashIndex`, which matches blocks by prompt position;
+- `RadixTreeIndex`, which finds matching prefixes with a compressed prefix tree;
+- `NoopKvPrefixIndexer`, which returns `Unavailable` when KV prefix lookup is disabled.
+
+All implementations use the `KvPrefixIndexer` interface, so the Router does not need to know which index structure is active.
