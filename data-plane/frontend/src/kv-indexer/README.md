@@ -1,33 +1,43 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# KV locality index
+# KV prefix index
 
-This crate tracks KV prefix locality from normalized lifecycle events emitted by model servers.
+The KV prefix index records which KV cache blocks are available on each model server. The Router uses it to determine how many prompt tokens a specific ModelGroup and DP rank can reuse instead of computing them again.
 
-Records are isolated by event source, ModelGroup, epoch, DP rank, partition, and storage placement. A route binding resolves an exact event source and rank, then returns only placements that route can read. HostPinned, Disk, and External placements also require the corresponding restore or transfer capability.
+This component reports KV cache availability. It does not select a route.
 
-## Event handling
+## How it works
 
-- `BlockStored` provides the authoritative parent chain.
-- `BlockRemoved` carries hashes only. The index resolves them through retained reverse metadata and fails closed when a hash is unknown.
-- `AllBlocksCleared` clears the matching event-source and rank stream.
+1. Model servers report KV block store, remove, and clear events.
+2. The index keeps blocks from each event source, ModelGroup, and DP rank separate, so data from different model instances cannot be mixed.
+3. The Router queries a specific route and DP rank with the request's prompt tokens.
+4. The index returns only storage placements that the route can read.
 
-Device, HostPinned, Disk, and External records remain separate throughout indexing and lookup.
+A query returns one of the following results:
 
-## vLLM normalization
+- `Matches`: the query completed and includes the matched prompt-token count and storage placements.
+- `Unavailable`: the index cannot answer the query, for example because the request has no token IDs or the event source has not finished synchronizing. This does not mean a confirmed KV cache miss.
 
-The request-side hash contract is `normalized_keyed_blake3_v1`. The model-server adapter converts vLLM Store hashes and parent chains to this format and retains the reverse mapping needed by Remove events. Foretoken does not treat raw vLLM hashes as normalized hashes.
+## KV block events
 
-Storage mappings are:
+- `BlockStored` records a newly stored block and its relationship to the previous block.
+- `BlockRemoved` removes the referenced block. If the index cannot identify it, it does not guess or remove another record.
+- `AllBlocksCleared` removes all records for the corresponding event source and DP rank.
 
-- `GPU` and `DEVICE` → Device
-- `CPU` and `CPU_PINNED` → HostPinned
-- `STORAGE`, `DISK`, and `NVME` → Disk
-- `REMOTE`, `EXTERNAL`, `NETWORK`, and `SHARED` → External
+Events from each source have a continuous sequence starting at zero. If events are missing or reordered, or the epoch changes, the index does not expose incomplete data to the Router. Queries become available again after synchronization recovers.
 
-## Synchronization
+## Storage placements
 
-The synchronizer validates zero-based sequence continuity before marking a source healthy. Duplicates, gaps, reordered events, and epoch changes are handled without publishing partial state.
+Foretoken maps vLLM storage types to four placements:
 
-Both index implementations share this lifecycle contract. The radix implementation uses `patricia_tree` for compressed-prefix storage; Foretoken adds event, ownership, rank, and placement semantics around it.
+- `GPU` and `DEVICE` → `Device`
+- `CPU` and `CPU_PINNED` → `HostPinned`
+- `STORAGE`, `DISK`, and `NVME` → `Disk`
+- `REMOTE`, `EXTERNAL`, `NETWORK`, and `SHARED` → `External`
+
+`Device` is directly readable by the current device. `HostPinned`, `Disk`, and `External` require the corresponding restore or transfer capability; otherwise, the index does not return them as reusable placements.
+
+## vLLM event conversion
+
+The model-server adapter converts vLLM KV events, block identifiers, and parent relationships into Foretoken's common format. Remove events carry only vLLM block hashes, so the adapter retains the mapping needed to find blocks reported by earlier store events. Foretoken does not directly compare raw vLLM hashes with request-side block identifiers.
