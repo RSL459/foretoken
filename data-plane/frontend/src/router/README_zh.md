@@ -27,6 +27,13 @@ RouteDecision
 
 Router 从 `RouteInventory` 获取路由目标。只有模型、revision、输入限制和请求能力兼容且当前健康的目标才会成为候选项。执行角色会保留在候选项中，供后续执行阶段筛选。
 
+动态能力感知匹配会深度检查目标节点的 `capabilities` 以满足高级请求：
+
+- 模型与基础限制：严格匹配请求的 `model` 和 `revision`，确保请求的 Token 数不超过节点的 `max_input_tokens`。
+- LoRA & 推理：精准识别目标节点是否具备对应的 `lora` 或 `reasoning` 解析能力。
+- 多模态：自动提取请求中的多模态特征，并严格匹配节点是否支持相应的子模态。
+- 结构化输出 (Structured Output)：感知并匹配强制输出约束。
+
 一个 `RouteTarget` 会按 `data_parallel_size` 展开为候选项：
 
 - `data_parallel_size: 1` 产生 rank `0`；
@@ -39,10 +46,36 @@ Router 从 `RouteInventory` 获取路由目标。只有模型、revision、输�
 路由流程由三个可替换的接口组成：
 
 - **Filter** 返回要保留的候选项索引，用于排除不满足策略要求的候选项。
-- **Scorer** 按原顺序为每个保留候选项返回一个 `RouteScore`。
+- **Scorer** 按原顺序为每个保留候选项返回一个严格用于比较大小的得分集 `RouteScore`。
 - **Picker** 从当前评分列表中选择一个索引。
 
 三个接口都使用索引，而不是创建或返回新的候选项。候选项始终由 Router 持有，因此算法不能修改路由身份或选择列表之外的目标。重复索引、越界索引和分数数量不匹配都会成为明确的路由错误。
+
+### 内置路由算法策略（计划中）
+
+系统内置了以下编译就绪的策略实现：
+
+**Filters:**
+
+- `allow_all`：默认直通过滤器。保留所有健康的、基础兼容的候选节点进入打分阶段，不进行额外拦截。
+
+**Scorers:**
+
+- `kv_least_loaded`：KV Cache 本地性与低负载优先策略。评估维度按优先级依次为：
+  1. **匹配的 Token 数**：优先选择 KV 命中前缀最长者。
+  2. **存储层级优先**：Device (4) > HostPinned (3) > Disk (2) > External (1)。
+  3. **物理位置优先**：Local (2) > Remote (1)。
+  4. **当前负载**：前缀条件相同时，优先选择总体负载（含下游 Decode）最轻的节点。
+- `least_loaded`：绝对低负载优先策略。仅根据节点的当前处理负载进行打分，并自动累加上下游关联负载。
+- `uniform`：均匀打分策略。给予所有候选节点相同的分数，通常搭配 `round_robin` 实现随机或轮询路由。
+- `weighted_round_robin`：基于预设的节点权重（GPU 算力大小、显存容量等）进行加权轮询，让性能更强的节点承担更多请求。
+- `lowest_latency`：基于目标节点近期的平均响应延迟（如 TTFT - 首字延迟，或 TPOT - 每个 Token 输出延迟）进行打分，优先路由给响应最快的节点。
+- `multi_tenant`：多租户流控，计划通过 Filter 和 Scorer 组合实现。
+
+**Pickers:**
+
+- `max`：选择得分最高的节点。出现同分时，以 `route_target_id` 最小的节点作为确定性平局决胜条件。
+- `round_robin`：在所有得分最高的节点中进行轮询，利用原子操作确保高并发下请求能均匀分布到同样优秀的同分节点上。
 
 ## 一个完整示例
 
@@ -134,6 +167,8 @@ Router 为每个请求创建独立的 Context，并在该请求的每轮选择�
 
 ## E/P/D 多阶段路由
 
-一个请求可能由关联的 Encoder、Prefill 和 Decode 路由组件共同完成。Router 会为每个需要的执行阶段分别选择目标，并确保这些目标属于同一个 pipeline scope。
+一个请求可能由关联的 Encoder、Prefill 和 Decode 路由组件共同完成。Router 会为每个需要的执行阶段分别选择目标，并确保这些目标属于同一个 pipeline scope (`pipeline_scope_id`)。
+
+内置的负载感知打分器具备流水线视野：当为 Prefill 阶段进行评分时，打分器会自动将该 E/P/D 链路中负载最轻的 Decode 节点的负载计算在内，从而实现整条流水线的负载均衡。
 
 算法可以为完整的兼容健康候选快照评分。Router 在评分后、Picker 前根据当前执行阶段和已选择的 pipeline scope 收窄候选范围，因此 Picker 不能选择关联组件集之外的目标。同一个请求级 Context 会贯穿这些选择阶段。
