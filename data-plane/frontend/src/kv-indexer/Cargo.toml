@@ -2,19 +2,22 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [package]
-name = "foretoken-router"
+name = "foretoken-kv-indexer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-foretoken-kv-indexer = { path = "../kv-indexer" }
+base64 = "0.22.1"
+futures.workspace = true
+blake3 = "1.8.2"
+patricia_tree = "0.10.1"
 foretoken-model-protocol.workspace = true
-inventory.workspace = true
+reqwest.workspace = true
 serde.workspace = true
-thiserror.workspace = true
-vllm-engine-core-client.workspace = true
-vllm-llm.workspace = true
+tokio.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
 serde_json.workspace = true

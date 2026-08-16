@@ -13,8 +13,11 @@ __pycache__/
 # Local environment
 .env.local
 
-# Vendored upstream sources
+# Manually downloaded upstream references
 reference/
+
+# Rust
+target/
 
 # Experiment records
 results/
