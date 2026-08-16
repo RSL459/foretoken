@@ -27,6 +27,13 @@ RouteDecision
 
 The Router obtains route targets from the `RouteInventory`. A target becomes a candidate only when its model, revision, input limit, and request capabilities are compatible and the target is healthy. Its execution role remains part of the candidate for later stage selection.
 
+Dynamic capability-aware matching deeply inspects target node `capabilities` to satisfy advanced requests:
+
+- **Model & Basic Limits**: Strictly matches the request's `model` and `revision`, ensuring the request's token count does not exceed the node's `max_input_tokens`.
+- **LoRA & Reasoning**: Accurately identifies whether target nodes possess the corresponding `lora` or `reasoning` parsing capabilities.
+- **Multimodal**: Automatically extracts multimodal features from requests and strictly matches whether nodes support the corresponding sub-modalities.
+- **Structured Output**: Perceives and matches mandatory output constraints.
+
 A `RouteTarget` expands according to its `data_parallel_size`:
 
 - `data_parallel_size: 1` produces rank `0`;
@@ -43,6 +50,32 @@ The routing pipeline has three replaceable interfaces:
 - **Picker** selects an index from the current scored list.
 
 All three interfaces use indexes instead of creating or returning new candidates. The Router keeps ownership of the candidates, so an algorithm cannot change route identity or select a target outside the current list. Duplicate or out-of-range indexes and score-count mismatches are explicit routing errors.
+
+### Built-in routing algorithm policies (Planned)
+
+The system includes or plans the following compile-ready policy implementations:
+
+**Filters:**
+
+- `allow_all`: Default pass-through filter. Retains all healthy, basically compatible candidate nodes to enter the scoring stage without extra interception.
+
+**Scorers:**
+
+- `kv_least_loaded`: KV Cache locality and low-load priority policy. Evaluation dimensions in priority order:
+  - Matched token count: Prefers the longest KV matched prefix.
+  - Storage tier preference: Device (4) > HostPinned (3) > Disk (2) > External (1).
+  - Physical locality preference: Local (2) > Remote (1).
+  - Current load: When prefix conditions match, prefers lower overall load (including downstream Decode nodes).
+- `least_loaded`: Absolute low-load priority policy. Scores solely based on nodes' current processing load and automatically aggregates downstream associated loads.
+- `uniform`: Uniform scoring policy. Assigns the same score to all candidate nodes, typically paired with `round_robin` for random or round-robin routing.
+- `weighted_round_robin`: Weighted round-robin based on preset node weights (GPU compute power, VRAM size, etc.), allowing higher-performance nodes to handle more requests.
+- `lowest_latency`: Scores based on target nodes' recent average response latencies (such as TTFT - Time to First Token, or TPOT - Time Per Output Token), prioritizing the fastest responding nodes.
+- `multi_tenant`: Multi-tenant rate limiting, planned to be implemented via a combination of Filter and Scorer.
+
+**Pickers:**
+
+- `max`: Selects the node with the highest score. In case of ties, uses the smallest `route_target_id` as a deterministic tie-breaking condition.
+- `round_robin`: Rotates among all nodes tied for the maximum score, utilizing atomic operations to ensure requests are evenly distributed across equally excellent tied nodes under high concurrency.
 
 ## A complete example
 
@@ -135,5 +168,7 @@ The Router creates one Context for each request and passes it through Filter, Sc
 ## E/P/D multi-stage routing
 
 A request may be served by associated Encoder, Prefill, and Decode route components. The Router selects a target for each required execution stage and keeps those targets within the same pipeline scope.
+
+Built-in load-aware scorers possess pipeline visibility: when scoring for the Prefill stage, the scorer automatically factors in the load of the lightest Decode node within that E/P/D path, achieving load balancing across the entire pipeline.
 
 Algorithms may score the complete compatible and healthy candidate snapshot. After scoring and before Picker, the Router narrows the list for the current execution stage and the selected pipeline scope. Picker therefore cannot select a target outside the associated component set. The same request-local Context remains available across these selection stages.
