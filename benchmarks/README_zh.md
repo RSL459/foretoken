@@ -110,3 +110,26 @@ foretoken bench \
   --number 30 \
   --output local,wandb
 ```
+
+### 参数扫描
+
+将组合写入 JSONL（见 `examples/bench_params.jsonl`）。`parallel` 可写成列表以扫描并发。例如：
+
+```jsonl
+{"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
+{"_benchmark_name": "n20", "parallel": [1, 2], "number": 20, "max_tokens": 128}
+```
+
+结束后会生成 Pareto 图（横轴 Tok/s/user，纵轴 Tok/s/GPU）：
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset random \
+  --tokenizer-path Qwen/Qwen3.6-27B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --bench-params examples/bench_params.jsonl \
+  --output local,wandb
+```
+

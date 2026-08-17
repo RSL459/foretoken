@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Build request list from prompt, random, JSONL path, or HuggingFace dataset id."""
+"""Build request list from prompt, random, JSONL, or Hugging Face sources."""
 
 from __future__ import annotations
 
@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from benchmarks.config import BenchConfig, DatasetConfig
-from benchmarks.workload.hf_dataset import iter_hf_rows
+from benchmarks.workload.hf_dataset import (
+    is_hf_file_uri,
+    iter_hf_rows,
+    resolve_hf_file_uri,
+)
 
 
 def load_jsonl(path: Path | str) -> Iterator[tuple[int, Any]]:
@@ -118,13 +122,14 @@ def load_requests(
     source: Optional[str] = None,
     number: Optional[int] = None,
 ) -> list[dict[str, Any]]:
-    """Load requests from prompt, random, local JSONL, or HuggingFace dataset id.
+    """Load requests from prompt, random, local JSONL, or Hugging Face sources.
 
     ``source`` / ``number`` override the config when a multi-dataset runner
     loads one share of the total request count.
     """
     dataset: DatasetConfig = config.dataset
-    count = config.load.number[0] if number is None else number
+    count = config.load.number if number is None else number
+    offset = int(dataset.dataset_offset)
 
     if dataset.prompt and source is None:
         return [{"prompt": dataset.prompt} for _ in range(count)]
@@ -133,7 +138,8 @@ def load_requests(
         if not dataset.dataset:
             raise ValueError(
                 "No workload source. Pass --prompt or --dataset "
-                "(random | local JSONL path | HuggingFace id)."
+                "(random | local JSONL | org/name:split | "
+                "hf://datasets/...)."
             )
         if len(dataset.dataset) != 1:
             raise ValueError(
@@ -142,7 +148,7 @@ def load_requests(
         source = dataset.dataset[0]
 
     if source == "random":
-        if number is not None and number != config.load.number[0]:
+        if number is not None and number != config.load.number:
             raise ValueError(
                 "number override is not supported for --dataset random"
             )
@@ -150,12 +156,12 @@ def load_requests(
 
         return generate_random_requests(config)
 
+    if is_hf_file_uri(source) or source.startswith("hf://"):
+        local_path = resolve_hf_file_uri(source)
+        return _load_jsonl_requests(local_path, number=count, offset=offset)
+
     path = Path(source)
     if path.is_file():
-        return _load_jsonl_requests(
-            str(path), number=count, offset=int(dataset.dataset_offset)
-        )
+        return _load_jsonl_requests(str(path), number=count, offset=offset)
 
-    return _load_hf_requests(
-        source, number=count, offset=int(dataset.dataset_offset)
-    )
+    return _load_hf_requests(source, number=count, offset=offset)

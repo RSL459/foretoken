@@ -110,3 +110,25 @@ foretoken bench \
   --number 30 \
   --output local,wandb
 ```
+
+### Parameter sweep
+
+Put combinations in a JSONL file (`examples/bench_params.jsonl`). You can set `parallel` as a list to sweep concurrency. For example:
+
+```jsonl
+{"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
+{"_benchmark_name": "n20", "parallel": [1, 2], "number": 20, "max_tokens": 128}
+```
+
+After the run, a Pareto chart is written (`Tok/s/user` vs `Tok/s/GPU`):
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset random \
+  --tokenizer-path Qwen/Qwen3.6-27B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --bench-params examples/bench_params.jsonl \
+  --output local,wandb
+```

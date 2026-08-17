@@ -18,12 +18,14 @@ dependencies = [
     "evalscope>=1.10",
     "httpx>=0.27",
     "huggingface_hub>=0.23",
-    "matplotlib>=3.7",
     "numpy>=1.24",
     "openai>=1.40",
+    "pandas>=2.0",
     "PyYAML>=6.0",
+    "seaborn>=0.13",
     "tqdm>=4.65",
     "transformers>=4.40",
+    "vllm>=0.18",
     "wandb>=0.16",
 ]
 
@@ -45,6 +47,7 @@ packages = [
     "benchmarks.report",
     "benchmarks.runner",
     "benchmarks.storage",
+    "benchmarks.utils",
     "benchmarks.workload",
 ]
 

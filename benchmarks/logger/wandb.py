@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Weights & Biases logging for final benchmark results."""
+"""Weights & Biases logging for per-request benchmark history."""
 
 from __future__ import annotations
 
@@ -35,40 +35,59 @@ _AVERAGE_ITL = "Avg ITL"
 _AVERAGE_OUTPUT_TOKENS = "Avg Output Tokens"
 
 
-def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
-    """Map final Foretoken metrics to stable W&B chart keys."""
-    throughput = metrics["throughput"]
-    message = {
-        _TIME_TAKEN: round(float(metrics["benchmark_time"]), 4),
-        _CONCURRENCY: int(metrics["parallel"]),
-        _REQUEST_RATE: float(metrics["rate"]),
-        _TOTAL_REQUESTS: int(metrics["request_num"]),
-        _SUCCEED_REQUESTS: int(metrics["success_num"]),
-        _FAILED_REQUESTS: int(metrics["failed_num"]),
-        _REQUEST_THROUGHPUT: round(float(throughput["request/s"]), 4),
-        _OUTPUT_TOKEN_THROUGHPUT: round(float(throughput["token/s"]), 4),
-        _TOTAL_TOKEN_THROUGHPUT: round(float(throughput["total_token/s"]), 4),
-    }
-    optional = (
-        ("avg_input_tokens", _AVERAGE_INPUT_TOKENS, 1.0, 4),
-        ("avg_output_tokens", _AVERAGE_OUTPUT_TOKENS, 1.0, 4),
-        ("latency", _AVERAGE_LATENCY, 1.0, 4),
-        ("ttft", _AVERAGE_TTFT, 1000.0, 2),
-        ("tpot", _AVERAGE_TPOT, 1000.0, 2),
+def wandb_timestamp() -> str:
+    """Return ``YYYYMMDD_HHMMSS`` for W&B names / groups."""
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def wandb_run_base(config: BenchConfig) -> str:
+    """Name/group base: ``--wandb-run-name`` if set, else ``{model}_{time}``."""
+    run_name = config.wandb.run_name.strip()
+    if run_name:
+        return run_name
+    return f"{config.endpoint.model}_{wandb_timestamp()}"
+
+
+def running_to_wandb_message(
+    results: list[dict[str, Any]],
+    *,
+    parallel: int,
+    rate: float,
+) -> dict[str, Any]:
+    """Aggregate ``results[:step+1]`` into W&B chart keys for one history step."""
+    success = [result for result in results if result["success"]]
+    n_success = len(success)
+    elapsed = max(float(result["end_time"]) for result in results)
+    out_tokens = sum(int(result["output_tokens"]) for result in success)
+    in_tokens = sum(int(result["input_tokens"]) for result in success)
+    tpot_ms = round(
+        sum(float(result["tpot"]) for result in success) / n_success * 1000.0, 2
     )
-    for source, destination, scale, digits in optional:
-        value = metrics[source]
-        if isinstance(value, dict):
-            value = value["mean"]
-        if value is not None:
-            message[destination] = round(float(value) * scale, digits)
-    if _AVERAGE_TPOT in message:
-        message[_AVERAGE_ITL] = message[_AVERAGE_TPOT]
-    return message
+    return {
+        _TIME_TAKEN: round(elapsed, 4),
+        _CONCURRENCY: int(parallel),
+        _REQUEST_RATE: float(rate),
+        _TOTAL_REQUESTS: len(results),
+        _SUCCEED_REQUESTS: n_success,
+        _FAILED_REQUESTS: len(results) - n_success,
+        _REQUEST_THROUGHPUT: round(len(results) / elapsed, 4),
+        _OUTPUT_TOKEN_THROUGHPUT: round(out_tokens / elapsed, 4),
+        _TOTAL_TOKEN_THROUGHPUT: round((in_tokens + out_tokens) / elapsed, 4),
+        _AVERAGE_INPUT_TOKENS: round(in_tokens / n_success, 4),
+        _AVERAGE_OUTPUT_TOKENS: round(out_tokens / n_success, 4),
+        _AVERAGE_LATENCY: round(
+            sum(float(result["latency"]) for result in success) / n_success, 4
+        ),
+        _AVERAGE_TTFT: round(
+            sum(float(result["ttft"]) for result in success) / n_success * 1000.0, 2
+        ),
+        _AVERAGE_TPOT: tpot_ms,
+        _AVERAGE_ITL: tpot_ms,
+    }
 
 
 class WandbLogger:
-    """Optional W&B session that publishes one final benchmark summary."""
+    """Optional W&B session: one history step per request."""
 
     def __init__(self) -> None:
         self._active = False
@@ -95,8 +114,7 @@ class WandbLogger:
         os.makedirs(output_dir, exist_ok=True)
         os.environ["WANDB_SILENT"] = "true"
         os.environ["WANDB_DIR"] = output_dir
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = group or wandb_config.run_name or f"{config.endpoint.model}_{stamp}"
+        base = group or wandb_run_base(config)
         name = f"{base}_{name_suffix}" if name_suffix else base
         init_kwargs: dict[str, Any] = {
             "project": wandb_config.project,
@@ -122,10 +140,23 @@ class WandbLogger:
             rate,
         )
 
-    def log_metrics(self, metrics: dict[str, Any]) -> None:
-        """Publish the final aggregated benchmark metrics."""
-        if self._active:
-            wandb.log(metrics_to_wandb_message(metrics))
+    def log_metrics(
+        self,
+        metrics: dict[str, Any],
+        results: list[dict[str, Any]],
+    ) -> None:
+        """Log running aggregates; ``step`` is the request index (0 .. number-1)."""
+        if not self._active:
+            return
+        parallel = int(metrics["parallel"])
+        rate = float(metrics["rate"])
+        for step in range(len(results)):
+            wandb.log(
+                running_to_wandb_message(
+                    results[: step + 1], parallel=parallel, rate=rate
+                ),
+                step=step,
+            )
 
     def finish(self) -> None:
         if self._active:

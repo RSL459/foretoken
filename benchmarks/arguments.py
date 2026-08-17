@@ -12,10 +12,11 @@ from collections.abc import Sequence
 from dataclasses import MISSING, dataclass, fields
 from typing import Any
 
+from evalscope.perf.arguments import Arguments
+
 from benchmarks.config import (
     BenchConfig,
     DatasetConfig,
-    EngineMetricsConfig,
     GenerationConfig,
     LoadConfig,
     OutputConfig,
@@ -89,32 +90,26 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     # Load
     parser.add_argument(
         "--parallel",
-        type=lambda value: [
-            int(item.strip()) for item in value.split(",") if item.strip()
-        ],
+        type=int,
         default=_default(LoadConfig, "parallel"),
-        help="Concurrency; list like 1,2,4,8 triggers sweep",
+        help="Concurrency (closed-loop). Sweep via --bench-params list values",
     )
     parser.add_argument(
         "--number",
-        type=lambda value: [
-            int(item.strip()) for item in value.split(",") if item.strip()
-        ],
+        type=int,
         default=_default(LoadConfig, "number"),
         help=(
-            "Request count (total across all --dataset values when multiple); "
-            "list aligns with parallel"
+            "Request count (total across all --dataset values when multiple). "
+            "Sweep via --bench-params list values"
         ),
     )
     parser.add_argument(
         "--rate",
-        type=lambda value: [
-            float(item.strip()) for item in value.split(",") if item.strip()
-        ],
+        type=float,
         default=_default(LoadConfig, "rate"),
         help=(
-            "Arrival rate (req/s). -1 = no pacing; >0 = Poisson pacing. "
-            "Still closed-loop unless --open-loop. List e.g. 5,10,20 for sweep"
+            "Arrival rate (req/s). Must be -1 (no pacing) or > 0 (Poisson). "
+            "Still closed-loop unless --open-loop. Sweep via --bench-params"
         ),
     )
     parser.add_argument(
@@ -128,8 +123,12 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-tokens",
         type=int,
+        nargs="+",
         default=_default(GenerationConfig, "max_tokens"),
-        help="Max generation tokens",
+        help=(
+            "Max generation tokens: one value (fixed) or two values "
+            "MIN MAX for uniform sampling per request"
+        ),
     )
     sampling = parser.add_argument_group("sampling parameters")
     sampling.add_argument(
@@ -184,7 +183,10 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "--stream",
         action=argparse.BooleanOptionalAction,
         default=_default(GenerationConfig, "stream"),
-        help="Use streaming to measure TTFT/TPOT",
+        help=(
+            "Stream responses (default). --no-stream sends non-streaming "
+            "requests and reports latency only (no TTFT/TPOT)"
+        ),
     )
 
     # Dataset
@@ -194,9 +196,10 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         default=_default(DatasetConfig, "dataset"),
         help=(
             "Workload source(s), comma-separated: 'random', local JSONL "
-            "path(s), and/or HuggingFace id(s) ('org/name:split'). "
-            "Multiple JSONL/HF sources run sequentially and metrics are "
-            "merged; --number is the total across all"
+            "path(s), Hugging Face id(s) ('org/name:split'), and/or "
+            "HF file URIs ('hf://datasets/org/name[@rev]/path/to.jsonl'). "
+            "Multiple sources run sequentially; --number is the total "
+            "across all"
         ),
     )
     parser.add_argument(
@@ -254,12 +257,6 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         help="Enable SLA auto-tune search",
     )
     parser.add_argument(
-        "--gpu-count",
-        type=int,
-        default=_default(OutputConfig, "gpu_count"),
-        help="GPU count for Pareto tokens/s/GPU axis",
-    )
-    parser.add_argument(
         "--eval-suite",
         default=_default(OutputConfig, "eval_suite"),
         help="Correctness suite: none | general | tool | both",
@@ -290,55 +287,31 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--wandb-run-name",
         default=_default(WandbConfig, "run_name"),
-        help="W&B run name; default {model}_{YYYYMMDD_HHMMSS}",
-    )
-
-    # Engine metrics
-    parser.add_argument(
-        "--collect-engine-metrics",
-        action=argparse.BooleanOptionalAction,
-        default=_default(EngineMetricsConfig, "collect"),
-        help="Collect Foretoken metrics through the /metrics endpoint",
-    )
-    parser.add_argument(
-        "--engine-metrics-url",
-        default=_default(EngineMetricsConfig, "url"),
-        help="Prometheus /metrics URL",
-    )
-    parser.add_argument(
-        "--engine-metrics-interval",
-        type=float,
-        default=_default(EngineMetricsConfig, "interval"),
-        help="Engine /metrics polling interval seconds",
+        help="W&B name base; default {model}_{YYYYMMDD_HHMMSS}; "
+        "runs become {base}_{config}",
     )
 
     # Param sweep
     parser.add_argument(
-        "--serve-params",
-        default=_default(ParamSweepConfig, "serve_params"),
-        help="JSON path of serve parameter combinations",
-    )
-    parser.add_argument(
         "--bench-params",
         default=_default(ParamSweepConfig, "bench_params"),
-        help="JSON path of bench parameter combinations",
-    )
-    parser.add_argument(
-        "--link-vars",
-        default=_default(ParamSweepConfig, "link_vars"),
-        help="Comma-separated serve_key=bench_key product filters",
+        help=(
+            "JSONL path of bench parameter combinations that change request "
+            "execution (load/generation/dataset/endpoint). "
+            "parallel/number/rate may be lists"
+        ),
     )
     parser.add_argument(
         "--num-runs",
         type=int,
         default=_default(ParamSweepConfig, "num_runs"),
-        help="Repeats per serve×bench combination",
+        help="Repeats per bench-params combination",
     )
     parser.add_argument(
         "--dry-run",
         action=argparse.BooleanOptionalAction,
         default=_default(ParamSweepConfig, "dry_run"),
-        help="Print serve×bench plan without executing",
+        help="Print bench-params plan without executing",
     )
     parser.add_argument(
         "--experiment-name",
@@ -363,7 +336,7 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
             open_loop=namespace.open_loop,
         ),
         generation=GenerationConfig(
-            max_tokens=namespace.max_tokens,
+            max_tokens=Arguments._validate_max_tokens(namespace.max_tokens),
             stream=namespace.stream,
             top_p=namespace.top_p,
             top_k=namespace.top_k,
@@ -388,7 +361,6 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
         output=OutputConfig(
             destinations=namespace.output,
             output_dir=namespace.output_dir,
-            gpu_count=namespace.gpu_count,
             eval_suite=namespace.eval_suite,
             sla_auto_tune=namespace.sla_auto_tune,
         ),
@@ -397,15 +369,8 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
             entity=namespace.wandb_entity,
             run_name=namespace.wandb_run_name,
         ),
-        engine=EngineMetricsConfig(
-            collect=namespace.collect_engine_metrics,
-            url=namespace.engine_metrics_url,
-            interval=namespace.engine_metrics_interval,
-        ),
         param_sweep=ParamSweepConfig(
-            serve_params=namespace.serve_params,
             bench_params=namespace.bench_params,
-            link_vars=namespace.link_vars,
             num_runs=namespace.num_runs,
             dry_run=namespace.dry_run,
             experiment_name=namespace.experiment_name,

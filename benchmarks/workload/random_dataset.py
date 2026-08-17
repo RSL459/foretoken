@@ -63,9 +63,9 @@ def _build_perf_arguments(
         api_key=config.endpoint.api_key,
         dataset="random",
         tokenizer_path=tokenizer_path,
-        number=config.load.number[0],
-        parallel=config.load.parallel[0],
-        rate=float(config.load.rate[0]),
+        number=config.load.number,
+        parallel=config.load.parallel,
+        rate=float(config.load.rate),
         open_loop=config.load.open_loop,
         min_prompt_length=dataset.min_prompt_length,
         max_prompt_length=dataset.max_prompt_length,
@@ -109,7 +109,7 @@ def generate_random_requests(config: BenchConfig) -> list[dict[str, Any]]:
     arguments = _build_perf_arguments(config, tokenizer_path=tokenizer_path)
     plugin = RandomDatasetPlugin(arguments)
 
-    number = config.load.number[0]
+    number = config.load.number
     requests: list[dict[str, Any]] = []
     for message in plugin.build_messages():
         requests.append(_to_request(message))

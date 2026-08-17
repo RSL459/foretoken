@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
+from evalscope.perf.multi_turn_args import IntOrRange
+
 
 @dataclass
 class EndpointConfig:
@@ -26,79 +28,35 @@ class EndpointConfig:
 class LoadConfig:
     """Concurrency, request count, arrival rate, and open/closed loop."""
 
-    parallel: list[int] = field(default_factory=lambda: [1])
-    number: list[int] = field(default_factory=lambda: [100])
+    parallel: int = 1
+    number: int = 100
     # -1 = no pacing; >0 = Poisson pacing. Open-loop needs open_loop=True.
-    rate: list[float] = field(default_factory=lambda: [-1.0])
+    rate: float = -1.0
     open_loop: bool = False
 
-    @property
-    def is_sweep(self) -> bool:
-        return len(self.parallel) > 1 or len(self.number) > 1 or len(self.rate) > 1
-
-    def sweep_points(self) -> list[tuple[int, int, float]]:
-        """``(parallel, number, rate)`` triples for each load point."""
-        if len(self.rate) > 1:
-            if len(self.number) == len(self.rate):
-                return [
-                    (self.parallel[0], number, float(rate))
-                    for number, rate in zip(self.number, self.rate)
-                ]
-            return [
-                (self.parallel[0], self.number[0], float(rate))
-                for rate in self.rate
-            ]
-        if len(self.parallel) > 1:
-            if len(self.number) == len(self.parallel):
-                return [
-                    (parallel, number, float(self.rate[0]))
-                    for parallel, number in zip(self.parallel, self.number)
-                ]
-            return [
-                (parallel, self.number[0], float(self.rate[0]))
-                for parallel in self.parallel
-            ]
-        if len(self.number) > 1:
-            return [
-                (self.parallel[0], number, float(self.rate[0]))
-                for number in self.number
-            ]
-        return [(self.parallel[0], self.number[0], float(self.rate[0]))]
+    @staticmethod
+    def validate_point(*, parallel: int, rate: float) -> None:
+        """Reject load points that would hang or silently drop pacing."""
+        if parallel < 1:
+            raise ValueError(f"parallel must be >= 1, got {parallel}")
+        rate_value = float(rate)
+        if rate_value != -1 and rate_value <= 0:
+            raise ValueError(
+                f"rate must be -1 (no pacing) or > 0, got {rate}"
+            )
 
     def validate(self) -> None:
-        """Reject incompatible open-loop / multi-list sweep combinations."""
-        if self.open_loop and len(self.parallel) > 1:
-            raise ValueError(
-                "--open-loop uses unlimited concurrency; do not "
-                "combine with a multi-value --parallel list. Use a "
-                "single --parallel or sweep --number / --rate instead."
-            )
-        if len(self.rate) > 1 and len(self.parallel) > 1:
-            raise ValueError(
-                "Cannot sweep both --rate and --parallel at once; "
-                "pass one multi-value list at a time."
-            )
-        if len(self.rate) > 1 and len(self.number) > 1:
-            if len(self.number) != len(self.rate):
-                raise ValueError(
-                    "--number list must match --rate length when both "
-                    f"are multi-value; got number={len(self.number)}, "
-                    f"rate={len(self.rate)}."
-                )
-        elif len(self.parallel) > 1 and len(self.number) > 1:
-            if len(self.number) != len(self.parallel):
-                raise ValueError(
-                    "--number list must match --parallel length when both "
-                    f"are multi-value; got number={len(self.number)}, "
-                    f"parallel={len(self.parallel)}."
-                )
+        """Validate load settings."""
+        self.validate_point(parallel=int(self.parallel), rate=float(self.rate))
+        if self.number < 1:
+            raise ValueError(f"--number must be >= 1, got {self.number}")
 
 
 @dataclass
 class GenerationConfig:
     """Sampling and generation parameters for each request."""
 
-    max_tokens: int = 128
+    max_tokens: IntOrRange = 128
     stream: bool = True
     top_p: Optional[float] = None
     top_k: Optional[int] = None
@@ -143,8 +101,9 @@ class DatasetConfig:
     ``dataset`` is a list of unified source selectors:
     - ``random``: synthetic prompts (requires ``tokenizer_path``; alone only)
     - local JSONL path: one messages/prompt object per line
-    - HuggingFace id: ``org/name:split`` (same row shape; split required,
-      and may be a non-standard split/config name)
+    - Hugging Face id: ``org/name:split`` (split required)
+    - Hugging Face file URI: ``hf://datasets/{repo}[@{revision}]/{path}``
+      (cached via Hub, then read as JSONL)
 
     Multiple JSONL/HF sources run sequentially; ``LoadConfig.number`` is the
     total request count across all of them.
@@ -160,10 +119,6 @@ class DatasetConfig:
     prompt: str = ""
     max_turns: Optional[int] = None
 
-    @property
-    def is_multi(self) -> bool:
-        return len(self.dataset) > 1
-
     def resolve_apply_chat_template(self, url: str) -> bool:
         """Default to chat template when the URL is a chat/completions endpoint."""
         if self.apply_chat_template is not None:
@@ -176,7 +131,6 @@ class OutputConfig:
 
     destinations: tuple[str, ...] = ()
     output_dir: str = "results"
-    gpu_count: int = 1
     eval_suite: str = "none"
     sla_auto_tune: bool = False
 
@@ -201,28 +155,13 @@ class WandbConfig:
 
 
 @dataclass
-class EngineMetricsConfig:
-    """Engine Prometheus ``/metrics`` collection."""
-
-    collect: bool = True
-    url: str = ""
-    interval: float = 1.0
-
-
-@dataclass
 class ParamSweepConfig:
-    """Serve × bench parameter product sweep."""
+    """Bench-params JSONL sweep against an already-running service."""
 
-    serve_params: str = ""
     bench_params: str = ""
-    link_vars: str = ""
     num_runs: int = 1
     dry_run: bool = False
     experiment_name: str = ""
-
-    @property
-    def enabled(self) -> bool:
-        return bool(self.serve_params or self.bench_params)
 
 
 @dataclass
@@ -235,7 +174,6 @@ class BenchConfig:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
-    engine: EngineMetricsConfig = field(default_factory=EngineMetricsConfig)
     param_sweep: ParamSweepConfig = field(default_factory=ParamSweepConfig)
 
     def validate(self) -> None:
@@ -246,13 +184,14 @@ class BenchConfig:
         if not dataset.prompt and not dataset.dataset:
             raise ValueError(
                 "No workload source. Pass --prompt or --dataset "
-                "(random | local JSONL path | HuggingFace id)."
+                "(random | local JSONL | org/name:split | "
+                "hf://datasets/...)."
             )
-        if dataset.prompt and dataset.is_multi:
+        if dataset.prompt and len(dataset.dataset) > 1:
             raise ValueError(
                 "--prompt cannot be combined with multiple --dataset values"
             )
-        if dataset.is_multi and "random" in dataset.dataset:
+        if len(dataset.dataset) > 1 and "random" in dataset.dataset:
             raise ValueError(
                 "--dataset random cannot be combined with other dataset sources"
             )
@@ -280,7 +219,7 @@ class BenchConfig:
                 f"min={dataset.min_prompt_length}, "
                 f"max={dataset.max_prompt_length})"
             )
-        elif dataset.is_multi:
+        elif len(dataset.dataset) > 1:
             dataset_label = f"{dataset.dataset} (total number across all)"
         else:
             dataset_label = (
@@ -292,21 +231,15 @@ class BenchConfig:
         else:
             parallel_label = str(self.load.parallel)
 
-        if len(self.load.rate) == 1:
-            rate = float(self.load.rate[0])
-            if rate > 0:
-                mode = "open-loop" if open_loop else "closed-loop"
-                rate_label = f"{rate:g} req/s ({mode}, Poisson pacing)"
-            else:
-                rate_label = "INF (no pacing)"
+        rate = float(self.load.rate)
+        if rate > 0:
+            mode = "open-loop" if open_loop else "closed-loop"
+            rate_label = f"{rate:g} req/s ({mode}, Poisson pacing)"
         else:
-            rate_label = str(self.load.rate)
+            rate_label = "INF (no pacing)"
 
         return (
-            "\n============================================\n"
-            " Foretoken Benchmark\n"
-            "============================================\n"
-            f"Configuration:\n"
+            "\n===== Foretoken Benchmark Configuration ====\n"
             f"  URL        : {self.endpoint.url}\n"
             f"  Model      : {self.endpoint.model}\n"
             f"  Parallel   : {parallel_label}\n"
@@ -315,6 +248,7 @@ class BenchConfig:
             f"  Open Loop  : {open_loop}\n"
             f"  Stream     : {self.generation.stream}\n"
             f"  Dataset    : {dataset_label}\n"
+            "============================================\n"
         )
 
     def to_dict(self) -> dict[str, Any]:

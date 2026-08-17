@@ -82,17 +82,31 @@ class MetricsAggregator:
         results = output["results"]
         success_results = [result for result in results if result["success"]]
 
+        stream_modes = {bool(result["stream"]) for result in results}
+        if not results:
+            streamed = True
+        elif len(stream_modes) != 1:
+            raise ValueError(
+                f"mixed stream modes in one run: {sorted(stream_modes)}"
+            )
+        else:
+            streamed = stream_modes.pop()
+
         latencies = [float(result["latency"]) for result in success_results]
-        ttfts = [
-            float(result["ttft"])
-            for result in success_results
-            if result["ttft"] is not None
-        ]
-        tpots = [
-            float(result["tpot"])
-            for result in success_results
-            if result["tpot"] is not None
-        ]
+        if streamed:
+            ttfts = [
+                float(result["ttft"])
+                for result in success_results
+                if result["ttft"] is not None
+            ]
+            tpots = [
+                float(result["tpot"])
+                for result in success_results
+                if result["tpot"] is not None
+            ]
+        else:
+            ttfts = []
+            tpots = []
 
         output_tokens = sum(
             int(result["output_tokens"]) for result in success_results
@@ -109,6 +123,7 @@ class MetricsAggregator:
             "success_num": success_count,
             "failed_num": failed_count,
             "success_rate": success_count / len(results) if len(results) else 0.0,
+            "stream": streamed,
             "latency": _percentile_stats(latencies),
             "ttft": _percentile_stats(ttfts),
             "tpot": _percentile_stats(tpots),
