@@ -33,13 +33,19 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ### 1. 安装 Foretoken
 
-通过 Helm 安装 Foretoken：
+Quick Start 使用集群中已有的 Gateway API `Gateway`。先填写它的名称和 namespace，再安装 Foretoken：
 
 ```bash
+FORETOKEN_GATEWAY_NAME=inference-gateway
+FORETOKEN_GATEWAY_NAMESPACE=gateway-system
+
 helm upgrade --install foretoken \
   oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
   --namespace foretoken-platform \
   --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.gateway.name="${FORETOKEN_GATEWAY_NAME}" \
+  --set frontend.gateway.namespace="${FORETOKEN_GATEWAY_NAMESPACE}" \
   --wait
 ```
 

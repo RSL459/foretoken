@@ -7,10 +7,14 @@ image:
   repository: registry.example.com/foretoken/control-plane
   tag: dev
 
-# Each Secret name must exist in every namespace where Foretoken creates workloads.
-# workload:
-#   imagePullSecrets:
-#     - name: registry-auth
+# This Secret must exist in the Helm release namespace for the control-plane Pod.
+imagePullSecrets:
+  - name: registry-auth
+
+# The same Secret name must also exist in every namespace where Foretoken creates workloads.
+workload:
+  imagePullSecrets:
+    - name: registry-auth
 
 frontend:
   enabled: true

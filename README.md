@@ -33,13 +33,19 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ### 1. Install Foretoken
 
-Install Foretoken with Helm:
+The Quick Start uses an existing Gateway API `Gateway`. Set its name and namespace, then install Foretoken:
 
 ```bash
+FORETOKEN_GATEWAY_NAME=inference-gateway
+FORETOKEN_GATEWAY_NAMESPACE=gateway-system
+
 helm upgrade --install foretoken \
   oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
   --namespace foretoken-platform \
   --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.gateway.name="${FORETOKEN_GATEWAY_NAME}" \
+  --set frontend.gateway.namespace="${FORETOKEN_GATEWAY_NAMESPACE}" \
   --wait
 ```
 
