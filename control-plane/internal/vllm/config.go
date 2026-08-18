@@ -90,8 +90,7 @@ type LaunchLifecycle struct {
 const (
 	// FilesystemOffloadMountPath is the writable volume target shared by workload and launch plan.
 	FilesystemOffloadMountPath = "/var/lib/foretoken/kv-offload"
-
-	maxKubernetesInt32Seconds = int64(1<<31 - 1)
+	maxKubernetesInt32Seconds  = int64(1<<31 - 1)
 
 	kvNone              = "none"
 	kvPD                = "pd"
@@ -138,9 +137,6 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	startup, err := parsePositiveDuration(group.Timeouts.Startup, "startup")
 	if err != nil {
 		return LaunchPlanV1{}, err
-	}
-	if startup > maxKubernetesInt32Seconds {
-		return LaunchPlanV1{}, fmt.Errorf("vLLM startup timeout must not exceed %d seconds", maxKubernetesInt32Seconds)
 	}
 	drain, err := parsePositiveDuration(group.Timeouts.Drain, "drain")
 	if err != nil {
@@ -252,7 +248,11 @@ func parsePositiveDuration(value inferencev1alpha1.Duration, name string) (int64
 	if err != nil || duration <= 0 {
 		return 0, fmt.Errorf("vLLM %s timeout must be a positive duration", name)
 	}
-	return int64(math.Ceil(duration.Seconds())), nil
+	seconds := int64(math.Ceil(duration.Seconds()))
+	if seconds > maxKubernetesInt32Seconds {
+		return 0, fmt.Errorf("vLLM %s timeout must not exceed %d seconds", name, maxKubernetesInt32Seconds)
+	}
+	return seconds, nil
 }
 
 func copyParallelism(input inferencev1alpha1.CompiledParallelism) inferencev1alpha1.CompiledParallelism {

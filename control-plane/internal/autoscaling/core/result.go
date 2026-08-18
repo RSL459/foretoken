@@ -18,14 +18,24 @@ type ScalingDecision struct {
 }
 type Resolver struct{ AllowDuringTransition bool }
 
-func (resolver Resolver) Hold(snapshot ScalingSnapshot, trigger TriggerDecision, decisionName, adjustmentName string) (ScalingDecision, error) {
+func (resolver Resolver) Hold(snapshot ScalingSnapshot, trigger TriggerDecision, decisionName, adjustmentName string, adjustment ScalingAdjustment) (ScalingDecision, error) {
 	if err := validateSnapshot(snapshot); err != nil {
 		return ScalingDecision{}, err
 	}
 	if trigger.Disposition != TriggerHold && trigger.Disposition != TriggerInsufficientData {
 		return ScalingDecision{}, fmt.Errorf("trigger decision for target %q cannot hold capacity with disposition %q", snapshot.Target.Name, trigger.Disposition)
 	}
-	return ScalingDecision{Target: snapshot.Target, DecisionAlgorithm: decisionName, AdjustmentAlgorithm: adjustmentName, AppliedGroups: snapshot.Capacity.RequestedGroups, Direction: DirectionHold, Message: trigger.Message, Trigger: trigger}, nil
+	current, applied := snapshot.Capacity.RequestedGroups, snapshot.Capacity.RequestedGroups
+	constraint, message := DesiredCapacityReason(""), trigger.Message
+	if current < snapshot.Limits.MinGroups {
+		applied, constraint, message = snapshot.Limits.MinGroups, DesiredCapacityReasonAtMinimum, adjustment.Message
+	} else if current > snapshot.Limits.MaxGroups {
+		applied, constraint, message = snapshot.Limits.MaxGroups, DesiredCapacityReasonAtMaximum, adjustment.Message
+	}
+	if applied != current && adjustment.AdjustedGroups != applied {
+		return ScalingDecision{}, fmt.Errorf("adjustment algorithm %q returned desired groups %d for target %q instead of hard bound %d", adjustmentName, adjustment.AdjustedGroups, snapshot.Target.Name, applied)
+	}
+	return ScalingDecision{Target: snapshot.Target, DecisionAlgorithm: decisionName, AdjustmentAlgorithm: adjustmentName, Adjustment: adjustment, AppliedGroups: applied, Direction: direction(current, applied), Constraint: constraint, Message: message, Trigger: trigger}, nil
 }
 func (resolver Resolver) Resolve(snapshot ScalingSnapshot, decisionName string, desiredCapacity DesiredCapacity, adjustmentName string, adjusted ScalingAdjustment) (ScalingDecision, error) {
 	if err := validateSnapshot(snapshot); err != nil {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Defines the v1alpha1 FrontendService custom-resource API.
 
 package v1alpha1
@@ -13,8 +13,55 @@ import (
 // FrontendTimeouts defines client-facing request budgets.
 // +kubebuilder:validation:XValidation:rule="duration(self.streamIdle) <= duration(self.request)",message="timeouts.streamIdle must not exceed timeouts.request"
 type FrontendTimeouts struct {
-	Request    Duration `json:"request"`
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	Request Duration `json:"request"`
+
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
 	StreamIdle Duration `json:"streamIdle"`
+}
+
+// RouterFilterAlgorithm identifies a compiled Router Filter by its stable lower_snake_case name.
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=128
+// +kubebuilder:validation:Pattern="^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+type RouterFilterAlgorithm string
+
+// RouterScorerAlgorithm identifies a compiled Router Scorer by its stable lower_snake_case name.
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=128
+// +kubebuilder:validation:Pattern="^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+type RouterScorerAlgorithm string
+
+// RouterPickerAlgorithm identifies a compiled Router Picker by its stable lower_snake_case name.
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=128
+// +kubebuilder:validation:Pattern="^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+type RouterPickerAlgorithm string
+
+const (
+	RouterFilterAllowAll RouterFilterAlgorithm = "allow_all"
+
+	RouterScorerUniform       RouterScorerAlgorithm = "uniform"
+	RouterScorerLeastLoaded   RouterScorerAlgorithm = "least_loaded"
+	RouterScorerKVLeastLoaded RouterScorerAlgorithm = "kv_least_loaded"
+
+	RouterPickerMax        RouterPickerAlgorithm = "max"
+	RouterPickerRoundRobin RouterPickerAlgorithm = "round_robin"
+)
+
+// RouterPipeline selects each independently composable routing algorithm stage.
+type RouterPipeline struct {
+	// +optional
+	// +kubebuilder:default=allow_all
+	Filter RouterFilterAlgorithm `json:"filter,omitempty"`
+
+	// +optional
+	// +kubebuilder:default=kv_least_loaded
+	Scorer RouterScorerAlgorithm `json:"scorer,omitempty"`
+
+	// +optional
+	// +kubebuilder:default=round_robin
+	Picker RouterPickerAlgorithm `json:"picker,omitempty"`
 }
 
 // FrontendServiceSpec defines the desired state of a frontend service.
@@ -27,6 +74,9 @@ type FrontendServiceSpec struct {
 	Resources FrontendResources `json:"resources"`
 	Timeouts  FrontendTimeouts  `json:"timeouts"`
 
+	// +optional
+	RouterPipeline RouterPipeline `json:"routerPipeline,omitempty"`
+
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$"
@@ -38,6 +88,11 @@ type FrontendServiceStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Last successfully persisted versioned routing configuration version. It survives ConfigMap recreation.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	ServingSnapshotVersion uint64 `json:"servingSnapshotVersion,omitempty"`
 
 	// +optional
 	// +listType=map

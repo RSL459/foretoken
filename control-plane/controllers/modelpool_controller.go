@@ -19,14 +19,14 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
 	conditionResolved           = "Resolved"
 	conditionGroupsMaterialized = "GroupsMaterialized"
-	conditionCapacityReady      = "CapacityReady"
 	conditionRolloutPending     = "RolloutPending"
-	conditionPoolReady          = conditionReady
 )
 
 // ModelPoolTemplateResolver selects platform runtime settings and resolves one Group template.
@@ -45,7 +45,23 @@ func (reconciler *ModelPoolReconciler) SetupWithManager(manager ctrl.Manager) er
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelPool{}).
 		Owns(&inferencev1alpha1.ModelGroup{}).
+		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForService)).
 		Complete(reconciler)
+}
+
+func (reconciler *ModelPoolReconciler) poolsForService(ctx context.Context, object client.Object) []reconcile.Request {
+	var pools inferencev1alpha1.ModelPoolList
+	if err := reconciler.List(ctx, &pools, client.InNamespace(object.GetNamespace())); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0)
+	for index := range pools.Items {
+		pool := &pools.Items[index]
+		if pool.Spec.ModelServiceRef.Name == object.GetName() && pool.Spec.ModelServiceRef.UID == string(object.GetUID()) {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pool)})
+		}
+	}
+	return requests
 }
 
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools,verbs=get;list;watch
@@ -61,7 +77,8 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	if !pool.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
-	if err := reconciler.validateModelServiceOwnership(ctx, pool); err != nil {
+	service, err := reconciler.validateModelServiceOwnership(ctx, pool)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if reconciler.TemplateResolver == nil {
@@ -69,15 +86,19 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	}
 	template, err := reconciler.TemplateResolver.Resolve(pool.Spec.Template)
 	if err != nil {
-		state, stateErr := reconciler.currentActiveState(ctx, pool)
+		state, stateErr := reconciler.currentActiveState(ctx, pool, serviceServingRevision(service, pool))
 		state.Reason, state.Message = "ResolutionFailed", "The target Pool execution config could not be resolved"
 		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionFalse, "ResolutionFailed", err.Error(), state)
 		return ctrl.Result{}, errors.Join(stateErr, statusErr)
 	}
-	template.Revision = fmt.Sprintf("revision-%d-%s", pool.Generation, template.Revision)
-	state, err := reconciler.reconcileGroups(ctx, pool, template)
+	servingRevision := serviceServingRevision(service, pool)
+	template.Revision, err = reconciler.targetRevision(ctx, pool, template, servingRevision)
 	if err != nil {
-		active, stateErr := reconciler.currentActiveState(ctx, pool)
+		return ctrl.Result{}, err
+	}
+	state, err := reconciler.reconcileGroups(ctx, pool, template, servingRevision)
+	if err != nil {
+		active, stateErr := reconciler.currentActiveState(ctx, pool, serviceServingRevision(service, pool))
 		active.Reason, active.Message = "ApplyFailed", "ModelGroups were not fully materialized"
 		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionTrue, "Resolved", "Pool execution config was resolved", active)
 		return ctrl.Result{}, errors.Join(err, stateErr, statusErr)
@@ -88,16 +109,40 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	return ctrl.Result{}, nil
 }
 
-func (reconciler *ModelPoolReconciler) validateModelServiceOwnership(ctx context.Context, pool *inferencev1alpha1.ModelPool) error {
+func (reconciler *ModelPoolReconciler) validateModelServiceOwnership(ctx context.Context, pool *inferencev1alpha1.ModelPool) (*inferencev1alpha1.ModelService, error) {
 	service := new(inferencev1alpha1.ModelService)
 	key := client.ObjectKey{Namespace: pool.Namespace, Name: pool.Spec.ModelServiceRef.Name}
 	if err := reconciler.Get(ctx, key, service); err != nil {
-		return fmt.Errorf("get owning ModelService: %w", err)
+		return nil, fmt.Errorf("get owning ModelService: %w", err)
 	}
 	if pool.Spec.ModelServiceRef.UID != string(service.UID) || !metav1.IsControlledBy(pool, service) {
-		return fmt.Errorf("ModelPool %q is not owned by its referenced ModelService", pool.Name)
+		return nil, fmt.Errorf("ModelPool %q is not owned by its referenced ModelService", pool.Name)
 	}
-	return nil
+	return service, nil
+}
+
+func (reconciler *ModelPoolReconciler) targetRevision(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) (string, error) {
+	groups, err := reconciler.ownedGroups(ctx, pool)
+	if err != nil {
+		return "", err
+	}
+	for _, revision := range []string{pool.Status.PreparedRevision, servingRevision} {
+		if revision == "" {
+			continue
+		}
+		for index := range groups {
+			group := &groups[index]
+			if group.Spec.Revision == revision && groupMatchesTemplate(group, pool, template) {
+				return revision, nil
+			}
+		}
+	}
+	return fmt.Sprintf("revision-%d-%s", pool.Generation, template.Revision), nil
+}
+
+func groupMatchesTemplate(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate) bool {
+	template.Revision = group.Spec.Revision
+	return reflect.DeepEqual(group.Spec, template.Spec(pool, group.Spec.Ordinal))
 }
 
 type groupState struct {
@@ -106,25 +151,24 @@ type groupState struct {
 	CapacityReady        bool
 	RolloutPending       bool
 	InsufficientCapacity bool
-	ActiveRevision       string
+	PreparedRevision     string
 	Reason               string
 	Message              string
 }
 
-func (reconciler *ModelPoolReconciler) currentActiveState(ctx context.Context, pool *inferencev1alpha1.ModelPool) (groupState, error) {
+func (reconciler *ModelPoolReconciler) currentActiveState(ctx context.Context, pool *inferencev1alpha1.ModelPool, servingRevision string) (groupState, error) {
 	groups, err := reconciler.ownedGroups(ctx, pool)
 	if err != nil {
-		return groupState{ActiveRevision: pool.Status.ActiveRevision}, err
+		return groupState{PreparedRevision: pool.Status.PreparedRevision}, err
 	}
-	active := pool.Status.ActiveRevision
 	return groupState{
-		Ready:          revisionServingReady(groups, active),
-		RolloutPending: active != "",
-		ActiveRevision: active,
+		Ready:            revisionServingReady(groups, servingRevision),
+		RolloutPending:   pool.Status.PreparedRevision != servingRevision,
+		PreparedRevision: pool.Status.PreparedRevision,
 	}, nil
 }
 
-func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate) (groupState, error) {
+func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) (groupState, error) {
 	groups, err := reconciler.ownedGroups(ctx, pool)
 	if err != nil {
 		return groupState{}, err
@@ -175,42 +219,38 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	materialized := int32(len(current)) == pool.Spec.DesiredGroups
 	targetReady := materialized && pool.Spec.DesiredGroups > 0 && groupsReady(current, pool.Spec.DesiredGroups)
 	targetInsufficientCapacity := materialized && groupsInsufficientCapacity(current, pool.Spec.DesiredGroups)
-	activeRevision := pool.Status.ActiveRevision
-	rolloutPending := (activeRevision != "" && activeRevision != template.Revision) || !targetReady
-	ready := revisionServingReady(groups, activeRevision)
-	if activeRevision != template.Revision && targetReady {
-		activeRevision = template.Revision
-		ready = true
-		rolloutPending = true
+	preparedRevision := pool.Status.PreparedRevision
+	if targetReady {
+		preparedRevision = template.Revision
+	} else if preparedRevision == template.Revision {
+		preparedRevision = ""
 	}
-
 	if pool.Spec.DesiredGroups == 0 {
-		activeRevision = ""
-		ready = false
+		preparedRevision = ""
 	}
+	ready := pool.Spec.DesiredGroups > 0 && revisionServingReady(groups, servingRevision)
+	rolloutPending := preparedRevision != template.Revision || servingRevision != template.Revision || !targetReady
 
-	// Retire a previous revision only after the target revision was published as
-	// active in an earlier status update. Routing therefore switches before delete.
-	if pool.Status.ActiveRevision == template.Revision || pool.Spec.DesiredGroups == 0 {
-		for index := range groups {
-			group := &groups[index]
-			if group.Spec.Revision == template.Revision && pool.Spec.DesiredGroups > 0 {
-				continue
-			}
-			rolloutPending = true
-			if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
-				return groupState{}, fmt.Errorf("delete superseded ModelGroup %q: %w", group.Name, err)
-			}
+	// The Pool keeps both its target cohort and the service-selected serving cohort.
+	// Other revisions are no longer reachable and can enter their normal drain finalizer.
+	for index := range groups {
+		group := &groups[index]
+		if (pool.Spec.DesiredGroups > 0 && group.Spec.Revision == template.Revision) || group.Spec.Revision == servingRevision {
+			continue
+		}
+		rolloutPending = true
+		if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
+			return groupState{}, fmt.Errorf("delete superseded ModelGroup %q: %w", group.Name, err)
 		}
 	}
 
 	state := groupState{
 		Materialized:         materialized,
-		Ready:                ready && pool.Spec.DesiredGroups > 0,
+		Ready:                ready,
 		CapacityReady:        targetReady,
 		RolloutPending:       rolloutPending || scalePending,
 		InsufficientCapacity: !targetReady && targetInsufficientCapacity,
-		ActiveRevision:       activeRevision,
+		PreparedRevision:     preparedRevision,
 		Reason:               "Applied",
 		Message:              "All requested ModelGroups were materialized",
 	}
@@ -289,13 +329,8 @@ func modelGroupReady(group *inferencev1alpha1.ModelGroup) bool {
 
 func setGroupName(group *inferencev1alpha1.ModelGroup, poolName, revision string, ordinal int32) {
 	suffix := fmt.Sprintf("-%s-%d", revision, ordinal)
-	prefixLength := 63 - len(suffix)
-	if prefixLength < 1 {
-		group.GenerateName = poolName + "-"
-		return
-	}
-	if len(poolName) > prefixLength {
-		poolName = poolName[:prefixLength]
+	if len(poolName)+len(suffix) > 63 {
+		poolName = poolName[:63-len(suffix)]
 	}
 	group.Name = poolName + suffix
 }
@@ -327,16 +362,9 @@ func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *i
 	}
 	base := pool.DeepCopy()
 	pool.Status.ObservedGeneration = pool.Generation
-	pool.Status.ActiveRevision = state.ActiveRevision
+	pool.Status.PreparedRevision = state.PreparedRevision
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionResolved, Status: resolvedStatus, Reason: resolvedReason, Message: resolvedMessage, ObservedGeneration: pool.Generation})
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionGroupsMaterialized, Status: conditionStatus(state.Materialized), Reason: state.Reason, Message: state.Message, ObservedGeneration: pool.Generation})
-	capacityReason := "TargetCapacityPending"
-	capacityMessage := "Waiting for every requested ModelGroup in the target revision to become ready"
-	if state.CapacityReady {
-		capacityReason = "TargetCapacityReady"
-		capacityMessage = "Every requested ModelGroup in the target revision is ready"
-	}
-	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionCapacityReady, Status: conditionStatus(state.CapacityReady), Reason: capacityReason, Message: capacityMessage, ObservedGeneration: pool.Generation})
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionRolloutPending, Status: conditionStatus(state.RolloutPending), Reason: rolloutReason(state), Message: rolloutMessage(state), ObservedGeneration: pool.Generation})
 	readyReason, readyMessage := poolReadyReasonMessage(pool.Spec.DesiredGroups, state.Ready, state.CapacityReady)
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionReady, Status: conditionStatus(state.Ready), Reason: readyReason, Message: readyMessage, ObservedGeneration: pool.Generation})
@@ -351,7 +379,7 @@ func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *i
 
 func poolReadyReasonMessage(desiredGroups int32, ready, capacityReady bool) (string, string) {
 	if ready && !capacityReady {
-		return "ActiveRevisionReady", "The active revision remains ready while requested capacity is converging"
+		return "ServingRevisionReady", "The service-selected revision remains ready while requested capacity is converging"
 	}
 	if ready {
 		return "Ready", "All requested ModelGroups are ready"
@@ -367,10 +395,6 @@ func conditionStatus(value bool) metav1.ConditionStatus {
 		return metav1.ConditionTrue
 	}
 	return metav1.ConditionFalse
-}
-
-func boolCondition(value bool) metav1.ConditionStatus {
-	return conditionStatus(value)
 }
 
 func rolloutReason(state groupState) string {

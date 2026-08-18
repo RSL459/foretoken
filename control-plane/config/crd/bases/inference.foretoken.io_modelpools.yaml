@@ -156,11 +156,11 @@ spec:
                     properties:
                       mooncakeStore:
                         description: NormalizedMooncakeStore is either an external
-                          profile or a resolved managed binding.
+                          profile or a pinned managed binding.
                         properties:
                           managedBinding:
-                            description: ManagedMooncakeStoreBinding identifies the
-                              resolved Ready KVService generation.
+                            description: ManagedMooncakeStoreBinding pins a Ready
+                              Foretoken-owned KVService against ABA.
                             properties:
                               bindingRevision:
                                 type: string
@@ -462,11 +462,6 @@ spec:
           status:
             description: ModelPoolStatus defines the observed state of a ModelPool.
             properties:
-              activeRevision:
-                description: ActiveRevision is the immutable Group revision currently
-                  admitted to routing.
-                maxLength: 63
-                type: string
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -531,6 +526,11 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              preparedRevision:
+                description: PreparedRevision is the immutable Group revision whose
+                  requested capacity is ready for a service-level commit.
+                maxLength: 63
+                type: string
             type: object
         required:
         - spec

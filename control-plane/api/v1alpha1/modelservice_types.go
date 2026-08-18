@@ -420,11 +420,37 @@ type AutoscalingTargetStatus struct {
 	RoutableGroups int32 `json:"routableGroups"`
 }
 
+// ServingPoolRevision selects one prepared ModelPool cohort for the active service generation.
+type ServingPoolRevision struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	PoolName string `json:"poolName"`
+
+	// +kubebuilder:validation:MinLength=1
+	PoolUID string `json:"poolUID"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Revision string `json:"revision"`
+}
+
 // ModelServiceStatus defines the observed state of a model service.
 type ModelServiceStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// ServingGeneration is the ModelService generation whose complete Pool revision set is admitted to routing.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	ServingGeneration int64 `json:"servingGeneration,omitempty"`
+
+	// ServingPoolRevisions is replaced atomically after every required Pool has prepared a compatible cohort.
+	// +optional
+	// +listType=map
+	// +listMapKey=poolName
+	// +kubebuilder:validation:MaxItems=32
+	ServingPoolRevisions []ServingPoolRevision `json:"servingPoolRevisions,omitempty"`
 
 	// +optional
 	// +listType=map

@@ -49,9 +49,9 @@ const (
 )
 
 type ObservationWindow struct {
-	Start       time.Time
-	End         time.Time
-	CollectedAt time.Time
+	Start       time.Time // Local collection start.
+	End         time.Time // Oldest source sample included in the aggregate.
+	CollectedAt time.Time // Local collection completion.
 	Samples     int32
 	Complete    bool
 }

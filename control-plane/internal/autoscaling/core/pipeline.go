@@ -35,7 +35,16 @@ func (pipeline Pipeline) Plan(ctx context.Context, snapshots []ScalingSnapshot) 
 			switch trigger.Disposition {
 			case TriggerFire:
 			case TriggerHold, TriggerInsufficientData:
-				result, err := pipeline.Resolver.Hold(snapshot, trigger, pipeline.DecisionAlgorithm.Name(), pipeline.AdjustmentAlgorithm.Name())
+				var adjustment ScalingAdjustment
+				current := snapshot.Capacity.RequestedGroups
+				if current < snapshot.Limits.MinGroups || current > snapshot.Limits.MaxGroups {
+					adjusted, err := pipeline.AdjustmentAlgorithm.Adjust(AdjustmentInput{CurrentGroups: current, DesiredGroups: current, Bounds: snapshot.Limits})
+					if err != nil {
+						return nil, fmt.Errorf("adjustment algorithm %q for target %q: %w", pipeline.AdjustmentAlgorithm.Name(), snapshot.Target.Name, err)
+					}
+					adjustment = adjusted
+				}
+				result, err := pipeline.Resolver.Hold(snapshot, trigger, pipeline.DecisionAlgorithm.Name(), pipeline.AdjustmentAlgorithm.Name(), adjustment)
 				if err != nil {
 					return nil, err
 				}

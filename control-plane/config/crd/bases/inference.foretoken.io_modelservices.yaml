@@ -1026,6 +1026,40 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              servingGeneration:
+                description: ServingGeneration is the ModelService generation whose
+                  complete Pool revision set is admitted to routing.
+                format: int64
+                minimum: 0
+                type: integer
+              servingPoolRevisions:
+                description: ServingPoolRevisions is replaced atomically after every
+                  required Pool has prepared a compatible cohort.
+                items:
+                  description: ServingPoolRevision selects one prepared ModelPool
+                    cohort for the active service generation.
+                  properties:
+                    poolName:
+                      maxLength: 63
+                      minLength: 1
+                      type: string
+                    poolUID:
+                      minLength: 1
+                      type: string
+                    revision:
+                      maxLength: 63
+                      minLength: 1
+                      type: string
+                  required:
+                  - poolName
+                  - poolUID
+                  - revision
+                  type: object
+                maxItems: 32
+                type: array
+                x-kubernetes-list-map-keys:
+                - poolName
+                x-kubernetes-list-type: map
             type: object
         required:
         - spec
