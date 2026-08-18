@@ -3,9 +3,7 @@
 
 //! Environment boundary for the controller-owned typed launch plan.
 
-use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use crate::launch::LaunchPlanV1;
 
@@ -20,22 +18,8 @@ pub struct RuntimeConfig {
 
 impl RuntimeConfig {
     pub fn from_env() -> Result<Self, String> {
-        let mut values = HashMap::new();
-        for name in [LAUNCH_PLAN_ENV, LISTEN_ENV] {
-            let value = std::env::var(name).map_err(|error| match error {
-                std::env::VarError::NotPresent => {
-                    format!("{name} must be set by the ModelGroup controller")
-                }
-                std::env::VarError::NotUnicode(_) => format!("{name} must be valid Unicode"),
-            })?;
-            values.insert(name.to_string(), value);
-        }
-        Self::from_values(&values)
-    }
-
-    pub(crate) fn from_values(values: &HashMap<String, String>) -> Result<Self, String> {
-        let launch = LaunchPlanV1::parse(&required(values, LAUNCH_PLAN_ENV)?)?;
-        let listen_address = required(values, LISTEN_ENV)?
+        let launch = LaunchPlanV1::parse(&required_env(LAUNCH_PLAN_ENV)?)?;
+        let listen_address = required_env(LISTEN_ENV)?
             .parse()
             .map_err(|_| format!("{LISTEN_ENV} must be a socket address"))?;
         Ok(Self {
@@ -43,19 +27,14 @@ impl RuntimeConfig {
             listen_address,
         })
     }
-
-    pub fn startup_timeout(&self) -> Duration {
-        self.launch.startup_timeout()
-    }
-    pub fn drain_timeout(&self) -> Duration {
-        self.launch.drain_timeout()
-    }
 }
 
-fn required(values: &HashMap<String, String>, name: &str) -> Result<String, String> {
-    values
-        .get(name)
-        .filter(|value| !value.is_empty())
-        .cloned()
-        .ok_or_else(|| format!("{name} must be set by the ModelGroup controller"))
+fn required_env(name: &str) -> Result<String, String> {
+    match std::env::var(name) {
+        Ok(value) if !value.is_empty() => Ok(value),
+        Ok(_) | Err(std::env::VarError::NotPresent) => {
+            Err(format!("{name} must be set by the ModelGroup controller"))
+        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{name} must be valid Unicode")),
+    }
 }

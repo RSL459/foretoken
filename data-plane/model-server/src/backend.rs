@@ -181,9 +181,10 @@ impl Drop for InflightGuard {
     }
 }
 
-/// Track request lifetime and engine-boundary latency without including response-consumer delay.
+/// Restore external request identity and track engine-boundary latency without consumer delay.
 fn tracked_stream<S>(
     stream: S,
+    request_id: String,
     started_at: Instant,
     running_requests: Arc<AtomicU64>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
@@ -214,13 +215,13 @@ where
                     inflight.release();
                     (
                         Ok(TokenEvent::Error {
-                            request_id: output.request_id,
+                            request_id: request_id.clone(),
                             code: TokenErrorCode::RequestFailed,
                         }),
                         true,
                     )
                 }
-                Ok(output) => {
+                Ok(mut output) => {
                     let now = Instant::now();
                     generation_tokens += output.token_ids.len() as u64;
                     if first_token_at.is_none() && !output.token_ids.is_empty() {
@@ -257,6 +258,7 @@ where
                     if terminal {
                         inflight.release();
                     }
+                    output.request_id.clone_from(&request_id);
                     (Ok(TokenEvent::Token(Box::new(output.into()))), terminal)
                 }
                 Err(error) => {
@@ -293,12 +295,14 @@ impl Backend for VllmBackend {
         let started_at = Instant::now();
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
+        let request_id = request.request_id.clone();
         let stream = llm
             .generate(request.into())
             .await
             .map_err(BackendError::from_llm)?;
         Ok(tracked_stream(
             stream,
+            request_id,
             started_at,
             self.running_requests.clone(),
             self.boundary_latency.clone(),

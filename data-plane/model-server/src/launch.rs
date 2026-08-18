@@ -12,7 +12,8 @@ use vllm_managed_engine::ManagedEngineConfig;
 
 use foretoken_model_protocol::RuntimeEcTransferMetadata;
 
-const HANDSHAKE_HOST: &str = "127.0.0.1";
+use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC, LOOPBACK_HOST};
+
 const PYTHON: &str = "python3";
 const MIN_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 const MAX_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
@@ -21,6 +22,9 @@ const MAX_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 #[serde(deny_unknown_fields)]
 pub struct LaunchPlanV1 {
     pub version: u8,
+    /// Physical model nodes represented by this launch plan; v1 currently permits one.
+    #[serde(rename = "nodeCount")]
+    pub node_count: usize,
     pub artifacts: Artifacts,
     pub parallelism: Parallelism,
     pub kv: KvPlan,
@@ -235,6 +239,9 @@ impl LaunchPlanV1 {
         if self.version != 1 {
             return Err("launch plan version must be 1".into());
         }
+        if self.node_count != 1 {
+            return Err("launch plan currently supports exactly one model node".into());
+        }
         for (name, value) in [
             ("model", &self.artifacts.model),
             ("revision", &self.artifacts.revision),
@@ -327,7 +334,7 @@ impl LaunchPlanV1 {
         Ok(ManagedEngineConfig {
             python: PYTHON.into(),
             model: self.artifacts.model.clone(),
-            handshake_host: HANDSHAKE_HOST.into(),
+            handshake_host: LOOPBACK_HOST.into(),
             handshake_port,
             data_parallel_size: self.parallelism.dp,
             python_args: self.render_vllm_args()?,
@@ -360,7 +367,7 @@ impl LaunchPlanV1 {
             args.push("--no-enable-prefix-caching".into());
         }
         if self.kv.events() {
-            args.push(format!("--kv-events-config={}", json!({"publisher":"zmq","endpoint":"tcp://127.0.0.1:5557","replay_endpoint":"tcp://127.0.0.1:5558","topic":"foretoken-kv-v1","enable_kv_cache_events":true,"buffer_steps":1024,"hwm":4096,"max_queue_size":4096})));
+            args.push(format!("--kv-events-config={}", json!({"publisher":"zmq","endpoint":KV_EVENT_ENDPOINT,"topic":KV_EVENT_TOPIC,"enable_kv_cache_events":true,"hwm":4096,"max_queue_size":4096})));
         }
         if let Some(config) = self.kv.transfer_config() {
             args.push(format!("--kv-transfer-config={config}"));
@@ -398,14 +405,14 @@ impl KvPlan {
                 ..
             } => Some(pd(*role, *protocol, device_name)),
             Self::CpuOffload { cpu_bytes, .. } => Some(
-                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"kv_connector":"CPUOffloadingSpec"}}),
+                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"CPUOffloadingSpec"}}),
             ),
             Self::FilesystemOffload {
                 cpu_bytes,
                 storage_path,
-                ..
+                events,
             } => Some(
-                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"kv_connector":"TieringOffloadingSpec","secondary_tiers":[{"type":"fs","root_dir":storage_path}]}}),
+                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"TieringOffloadingSpec","secondary_tiers":[{"type":"fs","root_dir":storage_path,"enable_kv_events":events}]}}),
             ),
             Self::MooncakeStore { role, .. } => Some(
                 json!({"kv_connector":"MooncakeStoreConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute"}),

@@ -16,7 +16,8 @@ use uuid::Uuid;
 use zeromq::SubSocket;
 use zeromq::prelude::{Socket, SocketRecv};
 
-const TOPIC: &[u8] = b"foretoken-kv-v1";
+use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC};
+
 const CAPACITY: usize = 4096;
 
 #[derive(Clone)]
@@ -64,6 +65,7 @@ impl RankState {
 struct Inner {
     epoch: String,
     ranks: BTreeMap<u32, RankState>,
+    last_publisher_sequence: Option<u64>,
     available: bool,
 }
 
@@ -96,6 +98,7 @@ impl KvEventAdapter {
                 ranks: (0..data_parallel_size)
                     .map(|rank| (rank, RankState::new()))
                     .collect(),
+                last_publisher_sequence: None,
                 available: true,
             }),
             key,
@@ -104,10 +107,6 @@ impl KvEventAdapter {
             model_revision,
             data_parallel_size,
         })
-    }
-
-    pub fn unavailable(&self) {
-        self.mark_unavailable("event_stream_interrupted");
     }
 
     fn mark_unavailable(&self, reason: &'static str) {
@@ -189,6 +188,7 @@ impl KvEventAdapter {
         if inner.available {
             tracing::warn!(reason, "KV event adapter degraded");
         }
+        inner.last_publisher_sequence = None;
         inner.available = false;
     }
 
@@ -212,13 +212,25 @@ impl KvEventAdapter {
         KvBlockHash(URL_SAFE_NO_PAD.encode(hasher.finalize().as_bytes()))
     }
 
-    /// Accepts exactly topic, 8-byte big-endian sequence, and one MessagePack payload.
-    pub fn ingest_frames(&self, frames: Vec<Vec<u8>>) {
-        if frames.len() != 3 || frames[0] != TOPIC || frames[1].len() != 8 {
+    /// Establish the first observed sequence as a safe empty-state baseline, then require contiguity.
+    fn ingest_frames(&self, frames: Vec<Vec<u8>>) -> bool {
+        if frames.len() != 3 || frames[0] != KV_EVENT_TOPIC.as_bytes() || frames[1].len() != 8 {
             self.fail_stream("event_protocol_violation");
-            return;
+            return false;
+        }
+        let sequence = u64::from_be_bytes(frames[1].as_slice().try_into().unwrap());
+        let previous = self.inner.lock().unwrap().last_publisher_sequence;
+        if previous.is_some_and(|current| current.checked_add(1) != Some(sequence)) {
+            self.fail_stream("event_sequence_gap");
+            return false;
         }
         self.ingest_msgpack(&frames[2]);
+        let mut inner = self.inner.lock().unwrap();
+        if !inner.available {
+            return false;
+        }
+        inner.last_publisher_sequence = Some(sequence);
+        true
     }
 
     /// Accepts vLLM's msgspec array payload: timestamp, tagged events, and optional DP rank.
@@ -429,33 +441,28 @@ impl KvEventAdapter {
         true
     }
 
-    pub async fn serve(self: Arc<Self>) {
-        self.serve_ready(None).await;
-    }
-
-    pub async fn serve_ready(self: Arc<Self>, ready: Option<tokio::sync::oneshot::Sender<bool>>) {
+    pub async fn serve(self: Arc<Self>, ready: tokio::sync::oneshot::Sender<bool>) {
         let mut socket = SubSocket::new();
-        if socket.connect("tcp://127.0.0.1:5557").await.is_err()
-            || socket.subscribe("foretoken-kv-v1").await.is_err()
+        if socket.connect(KV_EVENT_ENDPOINT).await.is_err()
+            || socket.subscribe(KV_EVENT_TOPIC).await.is_err()
         {
-            self.unavailable();
-            if let Some(ready) = ready {
-                let _ = ready.send(false);
-            }
+            self.mark_unavailable("event_stream_interrupted");
+            let _ = ready.send(false);
             return;
         }
-        if let Some(ready) = ready {
-            let _ = ready.send(true);
-        }
+        let _ = ready.send(true);
         loop {
             match socket.recv().await {
-                Ok(message) => self.ingest_frames(
-                    message
+                Ok(message) => {
+                    let frames = message
                         .into_vec()
                         .into_iter()
                         .map(|frame| frame.to_vec())
-                        .collect(),
-                ),
+                        .collect();
+                    if !self.ingest_frames(frames) {
+                        return;
+                    }
+                }
                 Err(_) => {
                     self.fail_stream("event_stream_interrupted");
                     return;

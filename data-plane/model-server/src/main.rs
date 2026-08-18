@@ -12,6 +12,7 @@ use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::config::RuntimeConfig;
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
+use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
@@ -30,18 +31,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
 
-    // KV event publication is optional; generation remains available when the subscriber cannot start.
+    // Resolve optional KV projection state now; connect only after the engine publisher is ready.
     let kv_events = match kv_event_adapter(&config) {
-        Ok(adapter) => {
-            let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-            tokio::spawn(adapter.clone().serve_ready(Some(ready_tx)));
-            if ready_rx.await == Ok(true) {
-                Some(adapter)
-            } else {
-                warn!("KV event subscriber is unavailable; prefix scoring is disabled");
-                None
-            }
-        }
+        Ok(adapter) => Some(adapter),
         Err(error) => {
             warn!(%error, "KV index configuration is unavailable; prefix scoring is disabled");
             None
@@ -49,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // The model-server owns one managed engine and the loopback handshake used by its client.
-    let handshake_port = allocate_handshake_port("127.0.0.1")?;
+    let handshake_port = allocate_handshake_port(LOOPBACK_HOST)?;
     let engine = ManagedEngineHandle::spawn(
         config
             .launch
@@ -62,10 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client_config = EngineCoreClientConfig {
         transport_mode: TransportMode::HandshakeOwner {
-            handshake_address: format!("tcp://127.0.0.1:{handshake_port}"),
-            advertised_host: "127.0.0.1".into(),
+            handshake_address: format!("tcp://{LOOPBACK_HOST}:{handshake_port}"),
+            advertised_host: LOOPBACK_HOST.into(),
             engine_count: config.launch.parallelism.dp,
-            ready_timeout: config.startup_timeout(),
+            ready_timeout: config.launch.startup_timeout(),
             local_input_address: None,
             local_output_address: None,
         },
@@ -80,11 +72,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = match client {
         Ok(client) => client,
         Err(error) => {
-            let _ = engine.shutdown(config.drain_timeout()).await;
+            let _ = engine.shutdown(config.launch.drain_timeout()).await;
             return Err(error.into());
         }
     };
 
+    let mut client_health = client.subscribe_health();
     let max_concurrent_requests = client
         .ready_responses()
         .into_iter()
@@ -105,9 +98,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Default::default()
         },
     };
+    if !*client_health.borrow() {
+        let reason = client.health_error().map_or_else(
+            || "EngineCore client became unhealthy during startup".to_string(),
+            |error| format!("EngineCore client became unhealthy during startup: {error}"),
+        );
+        let _ = client.shutdown().await;
+        let _ = engine.shutdown(config.launch.drain_timeout()).await;
+        health.set_process_alive(false);
+        return Err(std::io::Error::other(reason).into());
+    }
+    let kv_events = if let Some(adapter) = kv_events {
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(adapter.clone().serve(ready_tx));
+        if ready_rx.await == Ok(true) {
+            Some(adapter)
+        } else {
+            warn!("KV event subscriber is unavailable; prefix scoring is disabled");
+            None
+        }
+    } else {
+        None
+    };
     health.set_client_healthy(true);
     health.set_accepting(true);
-    let mut client_health = client.subscribe_health();
     let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
@@ -117,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             health.set_accepting(false);
             health.set_client_healthy(false);
             let _ = backend.shutdown().await;
-            let _ = engine.shutdown(config.drain_timeout()).await;
+            let _ = engine.shutdown(config.launch.drain_timeout()).await;
             return Err(error.into());
         }
     };
@@ -172,9 +186,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     health.set_accepting(false);
     health.set_client_healthy(false);
     shutdown.notify_waiters();
-    let deadline = Instant::now() + config.drain_timeout();
+    let deadline = Instant::now() + config.launch.drain_timeout();
     if !matches!(&stop, Stop::Server(_)) {
-        match tokio::time::timeout(config.drain_timeout(), server.as_mut()).await {
+        match tokio::time::timeout(config.launch.drain_timeout(), server.as_mut()).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => error!(%error, "HTTP server failed while draining"),
             Err(_) => {

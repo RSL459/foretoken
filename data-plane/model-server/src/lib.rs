@@ -9,3 +9,5 @@ mod backend_telemetry;
 pub mod config;
 pub mod kv_event_adapter;
 pub mod launch;
+#[doc(hidden)]
+pub mod runtime_transport;

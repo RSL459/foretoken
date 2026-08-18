@@ -4,17 +4,21 @@
 use foretoken_model_server::launch::LaunchPlanV1;
 
 fn plan() -> LaunchPlanV1 {
-    LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":["--max-model-len=32768"]}"#).unwrap()
+    LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":["--max-model-len=32768"]}"#).unwrap()
 }
 
 #[test]
 fn rejects_unknown_and_missing_wire_fields() {
-    assert!(LaunchPlanV1::parse(r#"{"version":1,"artifacts":{},"parallelism":{},"kv":{"kind":"none","events":true},"lifecycle":{},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[],"unexpected":true}"#).is_err());
-    assert!(LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":1,"drainSeconds":1}}"#).is_err());
+    assert!(LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{},"parallelism":{},"kv":{"kind":"none","events":true},"lifecycle":{},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[],"unexpected":true}"#).is_err());
+    assert!(LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":1,"drainSeconds":1}}"#).is_err());
 }
 
 #[test]
 fn rejects_invalid_topology_and_extra_arg_bypass() {
+    let mut invalid = plan();
+    invalid.node_count = 2;
+    assert!(invalid.validate().is_err());
+
     let mut invalid = plan();
     invalid.parallelism.pcp = 2;
     invalid.parallelism.dp = 2;
@@ -61,12 +65,23 @@ fn renders_owned_arguments_once() {
         );
     }
     assert!(args.iter().any(|arg| arg == "--max-model-len=32768"));
+
+    let event_config = args
+        .iter()
+        .find_map(|arg| arg.strip_prefix("--kv-events-config="))
+        .expect("KV event config");
+    let event_config: serde_json::Value = serde_json::from_str(event_config).unwrap();
+    assert_eq!(
+        event_config["endpoint"],
+        "ipc:///tmp/foretoken-kv-events.sock"
+    );
+    assert_eq!(event_config["topic"], "foretoken-kv-v1");
 }
 
 #[test]
 fn ec_plan_renders_one_owned_config_for_each_role() {
-    let producer = LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
-    let consumer = LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
+    let producer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
+    let consumer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
 
     let args = producer.render_vllm_args().unwrap();
     let rendered: Vec<_> = args
@@ -94,7 +109,7 @@ fn ec_plan_renders_one_owned_config_for_each_role() {
 
 #[test]
 fn rejects_invalid_ec_pairing_and_ec_extra_arg_bypass() {
-    let invalid = r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"profile","profileRevision":"r1","connector":"arbitrary","role":"producer","sharedStoragePath":"relative"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#;
+    let invalid = r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"profile","profileRevision":"r1","connector":"arbitrary","role":"producer","sharedStoragePath":"relative"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#;
     assert!(LaunchPlanV1::parse(invalid).is_err());
 
     let mut bypass = plan();
@@ -128,7 +143,7 @@ fn kv_variants_render_expected_semantics() {
     ];
     for (kv, want) in cases {
         let source = format!(
-            r#"{{"version":1,"artifacts":{{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"}},"parallelism":{{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1}},"kv":{kv},"lifecycle":{{"startupSeconds":1,"drainSeconds":1}},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}}"#
+            r#"{{"version":1,"nodeCount":1,"artifacts":{{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"}},"parallelism":{{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1}},"kv":{kv},"lifecycle":{{"startupSeconds":1,"drainSeconds":1}},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}}"#
         );
         let rendered = LaunchPlanV1::parse(&source)
             .unwrap()
@@ -146,13 +161,23 @@ fn kv_variants_render_expected_semantics() {
                 "{rendered:?}"
             );
         }
-        if want == "TieringOffloadingSpec" {
-            assert!(
-                rendered
-                    .iter()
-                    .any(|arg| arg.contains(r#""root_dir":"/mnt/foretoken/kv-offload""#)),
-                "{rendered:?}"
-            );
+        if want == "CPUOffloadingSpec" || want == "TieringOffloadingSpec" {
+            let config = rendered
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--kv-transfer-config="))
+                .expect("KV transfer config");
+            let config: serde_json::Value = serde_json::from_str(config).unwrap();
+            assert_eq!(config["kv_connector_extra_config"]["spec_name"], want);
+            if want == "TieringOffloadingSpec" {
+                assert_eq!(
+                    config["kv_connector_extra_config"]["secondary_tiers"][0]["root_dir"],
+                    "/mnt/foretoken/kv-offload"
+                );
+                assert_eq!(
+                    config["kv_connector_extra_config"]["secondary_tiers"][0]["enable_kv_events"],
+                    true
+                );
+            }
         }
     }
 }

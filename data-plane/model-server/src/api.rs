@@ -22,7 +22,7 @@ use serde::Serialize;
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
 use foretoken_model_protocol::{
-    AbortInput, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
+    AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
 };
 
 // One atomic word linearizes admission close against request acceptance.
@@ -138,7 +138,7 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route("/v1/internal/admission/close", post(close_admission))
         .route("/v1/internal/generate", post(generate))
         .route("/v1/internal/abort", post(abort))
-        .route("/v1/internal/kv-index/delta", get(kv_index_delta))
+        .route(KV_INDEX_DELTA_PATH, get(kv_index_delta))
         .layer(DefaultBodyLimit::max(
             internal_generate_request_body_limit_bytes,
         ))
