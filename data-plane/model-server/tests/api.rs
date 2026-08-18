@@ -440,7 +440,7 @@ async fn readiness_and_admission_gate_generation_without_backend_calls() {
         .await
         .unwrap();
     assert_eq!(health.status(), StatusCode::OK);
-    assert_eq!(ready.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(ready.status(), StatusCode::OK);
     assert_eq!(generate.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert!(backend.requests.lock().unwrap().is_empty());
 }
@@ -508,6 +508,12 @@ async fn admission_close_tracks_open_streams() {
         serde_json::from_slice(&close.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(telemetry["accepting"], false);
     assert_eq!(telemetry["running_requests"], 1);
+    let ready = app
+        .clone()
+        .oneshot(Request::get("/readyz").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(ready.status(), StatusCode::OK);
 
     drop(response);
     let close = app
