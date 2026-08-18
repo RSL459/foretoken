@@ -91,6 +91,8 @@ const (
 	// FilesystemOffloadMountPath is the writable volume target shared by workload and launch plan.
 	FilesystemOffloadMountPath = "/var/lib/foretoken/kv-offload"
 
+	maxKubernetesInt32Seconds = int64(1<<31 - 1)
+
 	kvNone              = "none"
 	kvPD                = "pd"
 	kvCPUOffload        = "cpuOffload"
@@ -136,6 +138,9 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	startup, err := parsePositiveDuration(group.Timeouts.Startup, "startup")
 	if err != nil {
 		return LaunchPlanV1{}, err
+	}
+	if startup > maxKubernetesInt32Seconds {
+		return LaunchPlanV1{}, fmt.Errorf("vLLM startup timeout must not exceed %d seconds", maxKubernetesInt32Seconds)
 	}
 	drain, err := parsePositiveDuration(group.Timeouts.Drain, "drain")
 	if err != nil {

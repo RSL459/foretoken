@@ -102,6 +102,14 @@ func TestBuildLaunchPlanRejectsInvalidTopology(t *testing.T) {
 	}
 }
 
+func TestBuildLaunchPlanRejectsStartupTimeoutAboveKubernetesRange(t *testing.T) {
+	group := testGroup()
+	group.Timeouts.Startup = "2147483648s"
+	if _, err := BuildLaunchPlan(group); err == nil {
+		t.Fatal("startup timeout that overflows Deployment progressDeadlineSeconds was accepted")
+	}
+}
+
 func testVLLMTemplate(gpus int32) inferencev1alpha1.NormalizedPoolTemplate {
 	return inferencev1alpha1.NormalizedPoolTemplate{Model: "Qwen/Qwen3-0.6B", ModelRevision: "main", Tokenizer: "Qwen/Qwen3-0.6B", TokenizerRevision: "main", Backend: "vllm", Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1, Resources: inferencev1alpha1.ModelResources{Requests: inferencev1alpha1.ModelResourceRequests{ComputeResourceRequests: inferencev1alpha1.ComputeResourceRequests{CPU: "1", Memory: "1Gi"}, GPU: inferencev1alpha1.GPURequest{Type: "auto", Count: gpus}}}, Parallelism: inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1}, Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"}}
 }
