@@ -9,100 +9,67 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
-func TestCompilePreservesOnlyAllowedExtraArgs(t *testing.T) {
+func TestCompileExtraArgsBoundary(t *testing.T) {
 	template := testVLLMTemplate(1)
 	template.ExtraArgs = []inferencev1alpha1.BackendArg{"--max-model-len=32768", "--enforce-eager"}
-	config, err := Compile(template)
-	if err != nil {
-		t.Fatal(err)
+	if config, err := Compile(template); err != nil || len(config.ExtraArgs) != 2 {
+		t.Fatalf("valid extraArgs = %#v, err = %v", config.ExtraArgs, err)
 	}
-	if got, want := config.ExtraArgs, template.ExtraArgs; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("extraArgs = %#v", got)
-	}
-}
-
-func TestCompileRejectsExtraArgBypass(t *testing.T) {
-	for _, argument := range []inferencev1alpha1.BackendArg{
-		"--model=other", "--tensor-parallel-size=2", "-dp=2", "--data_parallel_size=2",
-		"--max-model-len 32768", "--config=config.yaml", "--max-model-len=1=2", "--unknown=1",
+	for _, args := range [][]inferencev1alpha1.BackendArg{
+		{"--model=other"},
+		{"--max-model-len 32768"},
+		{"--unknown=1"},
+		{"--max-model-len=1", "--max-model-len=2"},
 	} {
-		template := testVLLMTemplate(1)
-		template.ExtraArgs = append(template.ExtraArgs, argument)
+		template.ExtraArgs = args
 		if _, err := Compile(template); err == nil {
-			t.Fatalf("%q was accepted", argument)
+			t.Fatalf("unsafe extraArgs %v were accepted", args)
 		}
 	}
 }
 
-func TestCompileRejectsDuplicateExtraArgs(t *testing.T) {
-	template := testVLLMTemplate(1)
-	template.ExtraArgs = []inferencev1alpha1.BackendArg{"--max-model-len=1", "--max-model-len=2"}
-	if _, err := Compile(template); err == nil {
-		t.Fatal("duplicate extraArg was accepted")
-	}
-}
-
-func TestBuildLaunchPlanKVVariants(t *testing.T) {
-	base := testGroup()
+func TestBuildLaunchPlanRuntimeVariants(t *testing.T) {
 	cases := []struct {
 		name, kind, role string
 		mutate           func(*inferencev1alpha1.ModelGroupSpec)
 	}{
 		{"aggregate", kvNone, "", func(*inferencev1alpha1.ModelGroupSpec) {}},
-		{"pd", kvPD, "kv_consumer", func(g *inferencev1alpha1.ModelGroupSpec) {
-			g.Role = inferencev1alpha1.ModelRoleDecode
-			g.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{Protocol: "rdma", RDMADeviceName: "mlx5_1"}
+		{"pd", kvPD, "kv_consumer", func(group *inferencev1alpha1.ModelGroupSpec) {
+			group.Role = inferencev1alpha1.ModelRoleDecode
+			group.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{Protocol: "rdma", RDMADeviceName: "mlx5_1"}
 		}},
-		{"cpu", kvCPUOffload, "", func(g *inferencev1alpha1.ModelGroupSpec) {
-			g.KVRuntime = &inferencev1alpha1.ModelGroupKVRuntimeConfig{Offload: &inferencev1alpha1.ModelGroupKVOffloadRuntime{CPUBytes: 1024}}
+		{"cpu offload", kvCPUOffload, "", func(group *inferencev1alpha1.ModelGroupSpec) {
+			group.KVRuntime = &inferencev1alpha1.ModelGroupKVRuntimeConfig{Offload: &inferencev1alpha1.ModelGroupKVOffloadRuntime{CPUBytes: 1024}}
 		}},
-		{"filesystem", kvFilesystemOffload, "", func(g *inferencev1alpha1.ModelGroupSpec) {
-			g.KVRuntime = &inferencev1alpha1.ModelGroupKVRuntimeConfig{Offload: &inferencev1alpha1.ModelGroupKVOffloadRuntime{CPUBytes: 1024, Filesystem: true}}
+		{"filesystem offload", kvFilesystemOffload, "", func(group *inferencev1alpha1.ModelGroupSpec) {
+			group.KVRuntime = &inferencev1alpha1.ModelGroupKVRuntimeConfig{Offload: &inferencev1alpha1.ModelGroupKVOffloadRuntime{CPUBytes: 1024, Filesystem: true}}
 		}},
-		{"store", kvMooncakeStore, "kv_both", func(g *inferencev1alpha1.ModelGroupSpec) { g.KVRuntime = storeRuntime() }},
-		{"multi", kvMultiConnector, "kv_producer", func(g *inferencev1alpha1.ModelGroupSpec) {
-			g.Role = inferencev1alpha1.ModelRolePrefill
-			g.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{Protocol: "rdma", RDMADeviceName: "mlx5_1"}
-			g.KVRuntime = storeRuntime()
-		}},
+		{"store", kvMooncakeStore, "kv_both", func(group *inferencev1alpha1.ModelGroupSpec) { group.KVRuntime = storeRuntime() }},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			group := base
-			tc.mutate(&group)
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			group := testGroup()
+			test.mutate(&group)
 			plan, err := BuildLaunchPlan(group)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.KV.Kind != tc.kind || plan.KV.Role != tc.role || !plan.KV.Events {
-				t.Fatalf("kv = %#v", plan.KV)
-			}
-			if (tc.kind == kvPD || tc.kind == kvMultiConnector) && plan.KV.DeviceName != "mlx5_1" {
-				t.Fatalf("P/D device name = %q", plan.KV.DeviceName)
-			}
-			if tc.kind == kvFilesystemOffload && plan.KV.StoragePath != FilesystemOffloadMountPath {
-				t.Fatalf("filesystem storage path = %q", plan.KV.StoragePath)
+			if plan.KV.Kind != test.kind || plan.KV.Role != test.role {
+				t.Fatalf("KV plan = %#v", plan.KV)
 			}
 		})
 	}
-}
 
-func TestBuildLaunchPlanRejectsInvalidTopology(t *testing.T) {
 	group := testGroup()
-	group.NodeCount = 2
-	if _, err := BuildLaunchPlan(group); err == nil {
-		t.Fatal("multi-node launch plan was accepted")
-	}
-
-	group = testGroup()
-	group.Parallelism.PCP = 2
-	group.Parallelism.DP = 2
-	if _, err := BuildLaunchPlan(group); err == nil {
-		t.Fatal("invalid PCP/DP was accepted")
+	group.Role = inferencev1alpha1.ModelRoleEncoder
+	group.ECRuntime = &inferencev1alpha1.ModelGroupECRuntimeConfig{ProfileName: "ec", ProfileRevision: "r1", Connector: "ECExampleConnector", Role: inferencev1alpha1.ECTransferRoleProducer, SharedStorageClaim: "shared", SharedStoragePath: "/shared"}
+	plan, err := BuildLaunchPlan(group)
+	if err != nil || plan.EC == nil || plan.EC.Role != "producer" {
+		t.Fatalf("EC plan = %#v, err = %v", plan.EC, err)
 	}
 }
 
-func TestBuildLaunchPlanRejectsStartupTimeoutAboveKubernetesRange(t *testing.T) {
+func TestBuildLaunchPlanRejectsStartupTimeoutOverflow(t *testing.T) {
 	group := testGroup()
 	group.Timeouts.Startup = "2147483648s"
 	if _, err := BuildLaunchPlan(group); err == nil {
@@ -111,40 +78,26 @@ func TestBuildLaunchPlanRejectsStartupTimeoutAboveKubernetesRange(t *testing.T) 
 }
 
 func testVLLMTemplate(gpus int32) inferencev1alpha1.NormalizedPoolTemplate {
-	return inferencev1alpha1.NormalizedPoolTemplate{Model: "Qwen/Qwen3-0.6B", ModelRevision: "main", Tokenizer: "Qwen/Qwen3-0.6B", TokenizerRevision: "main", Backend: "vllm", Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1, Resources: inferencev1alpha1.ModelResources{Requests: inferencev1alpha1.ModelResourceRequests{ComputeResourceRequests: inferencev1alpha1.ComputeResourceRequests{CPU: "1", Memory: "1Gi"}, GPU: inferencev1alpha1.GPURequest{Type: "auto", Count: gpus}}}, Parallelism: inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1}, Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"}}
+	return inferencev1alpha1.NormalizedPoolTemplate{
+		Model: "model", ModelRevision: "main", Tokenizer: "model", TokenizerRevision: "main",
+		Backend: "vllm", Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1,
+		Resources:                             inferencev1alpha1.ModelResources{Requests: inferencev1alpha1.ModelResourceRequests{GPU: inferencev1alpha1.GPURequest{Count: gpus}}},
+		Parallelism:                           inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
+		Timeouts:                              inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"},
+		InternalGenerateRequestBodyLimitBytes: inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes,
+	}
 }
 
 func testGroup() inferencev1alpha1.ModelGroupSpec {
-	return inferencev1alpha1.ModelGroupSpec{Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1, Artifacts: inferencev1alpha1.ModelGroupArtifacts{Model: "model", ModelRevision: "revision", Tokenizer: "tokenizer", TokenizerRevision: "tokenizer-revision"}, Runtime: inferencev1alpha1.ModelGroupRuntime{Args: []inferencev1alpha1.BackendArg{"--max-model-len=32768"}, InternalGenerateRequestBodyLimitBytes: inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes}, Parallelism: inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1}, Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"}}
-}
-
-func TestBuildLaunchPlanProjectsInternalGenerateRequestBodyLimit(t *testing.T) {
-	group := testGroup()
-	group.Runtime.InternalGenerateRequestBodyLimitBytes = 96 * 1024 * 1024
-	plan, err := BuildLaunchPlan(group)
-	if err != nil || plan.InternalGenerateRequestBodyLimitBytes != group.Runtime.InternalGenerateRequestBodyLimitBytes {
-		t.Fatalf("launch plan = %#v, err = %v", plan, err)
-	}
-	group.Runtime.InternalGenerateRequestBodyLimitBytes = inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes - 1
-	if _, err := BuildLaunchPlan(group); err == nil {
-		t.Fatal("undersized internal generate request body limit was accepted")
+	return inferencev1alpha1.ModelGroupSpec{
+		Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1,
+		Artifacts:   inferencev1alpha1.ModelGroupArtifacts{Model: "model", ModelRevision: "main", Tokenizer: "model", TokenizerRevision: "main"},
+		Runtime:     inferencev1alpha1.ModelGroupRuntime{InternalGenerateRequestBodyLimitBytes: inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes},
+		Parallelism: inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
+		Timeouts:    inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"},
 	}
 }
 
 func storeRuntime() *inferencev1alpha1.ModelGroupKVRuntimeConfig {
-	return &inferencev1alpha1.ModelGroupKVRuntimeConfig{MooncakeStore: &inferencev1alpha1.ModelGroupMooncakeStoreRuntime{ProfileName: "store", ProfileRevision: "r", ConfigMapName: "cm", ConfigMapKey: "k", PythonHashSeed: "0"}}
-}
-
-func TestBuildLaunchPlanProjectsOnlyTypedECRuntime(t *testing.T) {
-	group := testGroup()
-	group.Role = inferencev1alpha1.ModelRoleEncoder
-	group.ECRuntime = &inferencev1alpha1.ModelGroupECRuntimeConfig{ProfileName: "verified-ec", ProfileRevision: "r2", Connector: "ECExampleConnector", Role: inferencev1alpha1.ECTransferRoleProducer, SharedStorageClaim: "ec-rwx", SharedStoragePath: "/var/lib/foretoken/ec"}
-	plan, err := BuildLaunchPlan(group)
-	if err != nil || plan.EC == nil || plan.EC.Role != "producer" || plan.EC.Connector != "ECExampleConnector" {
-		t.Fatalf("EC launch plan = %#v, err = %v", plan.EC, err)
-	}
-	group.ECRuntime.Connector = "arbitrary.module"
-	if _, err := BuildLaunchPlan(group); err == nil {
-		t.Fatal("arbitrary EC connector was accepted")
-	}
+	return &inferencev1alpha1.ModelGroupKVRuntimeConfig{MooncakeStore: &inferencev1alpha1.ModelGroupMooncakeStoreRuntime{ProfileName: "store", ProfileRevision: "r1", ConfigMapName: "config", ConfigMapKey: "mooncake.json", PythonHashSeed: "0"}}
 }

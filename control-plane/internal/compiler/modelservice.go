@@ -14,7 +14,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-const defaultPoolName = "default"
+const (
+	defaultPoolName         = "default"
+	defaultArtifactRevision = "main"
+)
 
 // ModelPool is one normalized Pool produced from ModelService intent.
 type ModelPool struct {
@@ -108,19 +111,14 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role infe
 	if tokenizer == "" {
 		tokenizer = spec.Model
 	}
-	tokenizerRevision := spec.TokenizerRevision
-	if tokenizerRevision == "" {
-		tokenizerRevision = spec.ModelRevision
-	}
-
 	return ModelPool{
 		Name:          name,
 		DesiredGroups: replicas,
 		Template: inferencev1alpha1.NormalizedPoolTemplate{
 			Model:                                 spec.Model,
-			ModelRevision:                         spec.ModelRevision,
+			ModelRevision:                         defaultArtifactRevision,
 			Tokenizer:                             tokenizer,
-			TokenizerRevision:                     tokenizerRevision,
+			TokenizerRevision:                     defaultArtifactRevision,
 			Backend:                               spec.Backend,
 			Role:                                  role,
 			NodeCount:                             nodes,

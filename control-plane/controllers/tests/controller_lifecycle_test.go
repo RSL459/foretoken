@@ -29,7 +29,7 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 			}
 		}
 		pool := get(t, ctx, c, client.ObjectKey{Namespace: service.Namespace, Name: "chat-default"}, new(inferencev1alpha1.ModelPool))
-		if !metav1.IsControlledBy(pool, service) || pool.Spec.ModelServiceRef.UID != string(service.UID) || pool.Spec.DesiredGroups != 1 || pool.Spec.Template.Tokenizer != service.Spec.Model || pool.Spec.Template.TokenizerRevision != service.Spec.ModelRevision {
+		if !metav1.IsControlledBy(pool, service) || pool.Spec.ModelServiceRef.UID != string(service.UID) || pool.Spec.DesiredGroups != 1 || pool.Spec.Template.Tokenizer != service.Spec.Model || pool.Spec.Template.ModelRevision != "main" || pool.Spec.Template.TokenizerRevision != "main" {
 			t.Fatalf("materialized pool = %#v", pool)
 		}
 		meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: readyCondition, Status: metav1.ConditionTrue, ObservedGeneration: pool.Generation})

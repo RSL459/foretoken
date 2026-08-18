@@ -619,12 +619,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
-              modelRevision:
-                description: ModelRevision pins the model artifact when the platform
-                  does not resolve it from a catalog.
-                maxLength: 256
-                minLength: 1
-                type: string
               nodes:
                 description: Nodes is the number of physical Kubernetes Nodes used
                   by each ModelGroup; the compiler defaults it to 1.
@@ -815,11 +809,6 @@ spec:
               tokenizer:
                 description: Tokenizer defaults to model when omitted.
                 maxLength: 1024
-                minLength: 1
-                type: string
-              tokenizerRevision:
-                description: TokenizerRevision defaults to modelRevision when omitted.
-                maxLength: 256
                 minLength: 1
                 type: string
             required:

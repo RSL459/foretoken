@@ -156,11 +156,11 @@ spec:
                     properties:
                       mooncakeStore:
                         description: NormalizedMooncakeStore is either an external
-                          profile or a pinned managed binding.
+                          profile or a resolved managed binding.
                         properties:
                           managedBinding:
-                            description: ManagedMooncakeStoreBinding pins a Ready
-                              Foretoken-owned KVService against ABA.
+                            description: ManagedMooncakeStoreBinding identifies the
+                              resolved Ready KVService generation.
                             properties:
                               bindingRevision:
                                 type: string

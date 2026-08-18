@@ -300,23 +300,11 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
 
-	// ModelRevision pins the model artifact when the platform does not resolve it from a catalog.
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=256
-	ModelRevision string `json:"modelRevision,omitempty"`
-
 	// Tokenizer defaults to model when omitted.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Tokenizer string `json:"tokenizer,omitempty"`
-
-	// TokenizerRevision defaults to modelRevision when omitted.
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=256
-	TokenizerRevision string `json:"tokenizerRevision,omitempty"`
 
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`

@@ -31,7 +31,7 @@ const (
 	ModelRoleDecode    ModelRole = "decode"
 )
 
-// ManagedMooncakeStoreBinding pins a Ready Foretoken-owned KVService against ABA.
+// ManagedMooncakeStoreBinding identifies the resolved Ready KVService generation.
 type ManagedMooncakeStoreBinding struct {
 	Name            string `json:"name"`
 	UID             string `json:"uid"`
@@ -43,7 +43,7 @@ type ManagedMooncakeStoreBinding struct {
 	RequesterBufferBytes int64 `json:"requesterBufferBytes"`
 }
 
-// NormalizedMooncakeStore is either an external profile or a pinned managed binding.
+// NormalizedMooncakeStore is either an external profile or a resolved managed binding.
 // +kubebuilder:validation:XValidation:rule="has(self.profile) != has(self.managedBinding)",message="exactly one Store source is required"
 type NormalizedMooncakeStore struct {
 	Profile        string                       `json:"profile,omitempty"`
