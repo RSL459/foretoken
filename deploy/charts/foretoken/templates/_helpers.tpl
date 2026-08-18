@@ -1,5 +1,6 @@
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
 {{/* Defines shared naming, labeling, and image-rendering helpers. */}}
 
 {{- define "foretoken.compactName" -}}
@@ -38,10 +39,30 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 {{- end }}
 
-{{- define "foretoken.inferenceEngineImage" -}}
-{{- if .Values.inferenceEngine.image.digest -}}
-{{- printf "%s@%s" .Values.inferenceEngine.image.repository .Values.inferenceEngine.image.digest -}}
-{{- else -}}
-{{- printf "%s:%s" .Values.inferenceEngine.image.repository (default .Chart.AppVersion .Values.inferenceEngine.image.tag) -}}
+{{- define "foretoken.validateValues" -}}
+{{- if eq (trim .Values.image.repository) "" -}}
+{{- fail "image.repository must reference a control-plane image" -}}
+{{- end -}}
+{{- if .Values.frontend.enabled -}}
+{{- if eq (trim .Values.frontend.image) "" -}}
+{{- fail "frontend.image is required when frontend.enabled=true" -}}
+{{- end -}}
+{{- if eq (trim .Values.frontend.gateway.name) "" -}}
+{{- fail "frontend.gateway.name is required when frontend.enabled=true" -}}
+{{- end -}}
+{{- if eq (trim .Values.frontend.gateway.namespace) "" -}}
+{{- fail "frontend.gateway.namespace is required when frontend.enabled=true" -}}
+{{- end -}}
+{{- end -}}
+{{- if ne (trim .Values.runtime.vllm.image) "" -}}
+{{- if eq (trim .Values.runtime.vllm.accelerator.type) "" -}}
+{{- fail "runtime.vllm.accelerator.type is required when runtime.vllm.image is set" -}}
+{{- end -}}
+{{- if eq (trim .Values.runtime.vllm.accelerator.resourceName) "" -}}
+{{- fail "runtime.vllm.accelerator.resourceName is required when runtime.vllm.image is set" -}}
+{{- end -}}
+{{- if ne (eq (trim .Values.runtime.vllm.accelerator.nodeSelector.key) "") (eq (trim .Values.runtime.vllm.accelerator.nodeSelector.value) "") -}}
+{{- fail "runtime.vllm.accelerator.nodeSelector.key and value must be set together" -}}
+{{- end -}}
 {{- end -}}
 {{- end }}
