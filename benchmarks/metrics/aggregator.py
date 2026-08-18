@@ -119,7 +119,11 @@ class MetricsAggregator:
                 "input_token/s": input_tokens / total_time,
                 "total_token/s": (input_tokens + output_tokens) / total_time,
             },
-            "avg_input_tokens": input_tokens / success_count if success_count else 0.0,
-            "avg_output_tokens": output_tokens / success_count if success_count else 0.0,
+            "avg_input_tokens": (
+                input_tokens / success_count if success_count else None
+            ),
+            "avg_output_tokens": (
+                output_tokens / success_count if success_count else None
+            ),
             "benchmark_time": total_time,
         }

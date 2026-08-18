@@ -135,11 +135,19 @@ def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
         _SUCCEED_REQUESTS: int(metrics["success_num"]),
         _FAILED_REQUESTS: int(metrics["failed_num"]),
         _REQUEST_THROUGHPUT: round(float(throughput["request/s"]), 4),
-        _AVERAGE_INPUT_TOKENS: round(float(metrics["avg_input_tokens"]), 4),
         _OUTPUT_TOKEN_THROUGHPUT: round(float(throughput["token/s"]), 4),
         _TOTAL_TOKEN_THROUGHPUT: round(float(throughput["total_token/s"]), 4),
-        _AVERAGE_OUTPUT_TOKENS: round(float(metrics["avg_output_tokens"]), 4),
     }
+
+    if metrics["avg_input_tokens"] is not None:
+        message[_AVERAGE_INPUT_TOKENS] = round(
+            float(metrics["avg_input_tokens"]), 4
+        )
+
+    if metrics["avg_output_tokens"] is not None:
+        message[_AVERAGE_OUTPUT_TOKENS] = round(
+            float(metrics["avg_output_tokens"]), 4
+        )
 
     if latency["mean"] is not None:
         message[_AVERAGE_LATENCY] = round(float(latency["mean"]), 4)
