@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Defines shared validated types used by the Foretoken custom resources.
 
 package v1alpha1
@@ -17,11 +17,50 @@ type ResourceQuantity string
 // +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="must be a positive duration"
 type Duration string
 
-// BackendArg is one backend command-line flag.
-// +kubebuilder:validation:MinLength=2
+// BackendArg is one long-form CLI argument passed to the inference engine.
+// The vLLM compiler checks the allowed arguments and whether they require values;
+// this schema rejects spaces, aliases, and positional arguments.
+// +kubebuilder:validation:MinLength=3
 // +kubebuilder:validation:MaxLength=4096
-// +kubebuilder:validation:Pattern="^--"
+// +kubebuilder:validation:Pattern="^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$"
 type BackendArg string
+
+// StructuredOutputFormat identifies a structured response format supported by a model.
+// +enum
+// +kubebuilder:validation:Enum=jsonObject;jsonSchema
+type StructuredOutputFormat string
+
+const (
+	StructuredOutputFormatJSONObject StructuredOutputFormat = "jsonObject"
+	StructuredOutputFormatJSONSchema StructuredOutputFormat = "jsonSchema"
+)
+
+// MultimodalModality identifies one non-text input modality supported by a model.
+// +enum
+// +kubebuilder:validation:Enum=image
+type MultimodalModality string
+
+const MultimodalModalityImage MultimodalModality = "image"
+
+// ModelFeatures declares opt-in model capabilities. Chat and text are always
+// available and therefore intentionally are not configurable here.
+type ModelFeatures struct {
+	// +optional
+	Tools bool `json:"tools,omitempty"`
+
+	// +optional
+	Reasoning bool `json:"reasoning,omitempty"`
+
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=2
+	StructuredOutputs []StructuredOutputFormat `json:"structuredOutputs,omitempty"`
+
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=1
+	Multimodal []MultimodalModality `json:"multimodal,omitempty"`
+}
 
 // CompiledParallelism defines an explicit execution topology compiled from user intent.
 // Unlike user input, DP is always present and may coexist with EP as its derived value.

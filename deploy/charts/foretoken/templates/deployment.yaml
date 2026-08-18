@@ -57,6 +57,26 @@ spec:
             - --leader-elect=true
             - --metrics-bind-address=0
             - --health-probe-bind-address=:8081
+            - --inference-engine-profile-revision={{ .Values.inferenceEngine.profileRevision }}
+            - --inference-engine-image={{ include "foretoken.inferenceEngineImage" . }}
+            - --model-server-port={{ .Values.inferenceEngine.modelServerPort }}
+            - --gpu-type={{ .Values.inferenceEngine.gpu.type }}
+            - --gpu-resource-name={{ .Values.inferenceEngine.gpu.resourceName }}
+            {{- with .Values.inferenceEngine.gpu.runtimeClassName }}
+            - --runtime-class-name={{ . }}
+            {{- end }}
+            {{- with .Values.inferenceEngine.gpu.nodeSelector.key }}
+            - --gpu-node-selector-key={{ . }}
+            - --gpu-node-selector-value={{ $.Values.inferenceEngine.gpu.nodeSelector.value }}
+            {{- end }}
+            {{- range .Values.workload.imagePullSecrets }}
+            - --workload-image-pull-secret={{ .name }}
+            {{- end }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: healthz
               containerPort: 8081

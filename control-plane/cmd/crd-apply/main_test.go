@@ -90,8 +90,14 @@ func TestGeneratedCRDContracts(t *testing.T) {
 	if !hasValidationRule(modelGroupSpec, "self.memberCount == self.nodeCount") {
 		t.Fatal("ModelGroup spec does not enforce one member per node")
 	}
-	if !hasValidationRule(modelGroupSpec, "self.nodeCount * self.accelerator.countPerMember == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp") {
+	if !hasValidationRule(modelGroupSpec, "self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp") {
 		t.Fatal("ModelGroup spec does not enforce compiled rank capacity")
+	}
+	accelerator := schemaProperty(t, modelGroupSpec, "accelerator")
+	for _, required := range accelerator.Required {
+		if required == "nodeSelector" {
+			t.Fatal("ModelGroup accelerator requires a node selector even though the default GPU profile omits one")
+		}
 	}
 }
 
