@@ -10,10 +10,10 @@ use foretoken_backend_registry::{
     SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup, SnapshotModel, SnapshotPdComponent,
     SnapshotPdPipelineScope,
 };
-use foretoken_llm_facade::LlmFacadeResolver;
+use foretoken_llm_facade::{LlmFacadeResolver, RouteStage};
 use foretoken_model_protocol::{
-    CumulativeHistogram, CumulativeHistogramBucket, ModelServerRole, RouteStage,
-    RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
+    CumulativeHistogram, CumulativeHistogramBucket, ModelServerRole, RuntimeMetadataResponse,
+    RuntimeModelIdentity, TelemetryResponse,
 };
 use foretoken_router::{
     RouteDecision, RouteInventory, RouteTargetId, RouteTargetSet, RouteTargetStatsReader,
@@ -321,6 +321,12 @@ async fn readiness_requires_runtime_metadata() {
 
     assert!(!registry.is_route_target_healthy(&RouteTargetId::new("a")));
     assert_eq!(registry.metadata(&RouteTargetId::new("a")), None);
+
+    let mut mismatched = aggregate_snapshot(serve_model_server().await);
+    mismatched.groups[0].model = "different-model".into();
+    let registry = BackendRegistry::from_snapshot(mismatched).unwrap();
+    registry.refresh_backend_readiness().await;
+    assert!(!registry.is_route_target_healthy(&RouteTargetId::new("a")));
 }
 
 #[tokio::test]

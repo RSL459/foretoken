@@ -9,7 +9,6 @@ pub use facade::{
     consume_encoder, consume_prefill, encoder_stage_request, inject_ec_transfer_params,
     pd_stage_requests, reject_client_transfer_params,
 };
-use foretoken_model_protocol::RouteStage;
 use foretoken_router::RouteDecision;
 use futures::Stream;
 pub use http::{HttpFacade, bootstrap_engine_id};
@@ -19,6 +18,14 @@ use std::task::{Context, Poll};
 use thiserror::Error;
 use vllm_llm::{GenerateOutput, GenerateRequest};
 pub type TokenStream = Pin<Box<dyn Stream<Item = Result<GenerateOutput, LlmFacadeError>> + Send>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteStage {
+    Aggregate,
+    Encoder,
+    Prefill,
+    Decode,
+}
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum LlmFacadeError {
     #[error("backend unavailable")]

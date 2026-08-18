@@ -409,19 +409,24 @@ func projectServiceEPDComponents(service *inferencev1alpha1.ModelService, pools 
 		}
 	}
 	encoders, prefills, decodes := byRoleOrdinal[inferencev1alpha1.ModelRoleEncoder], byRoleOrdinal[inferencev1alpha1.ModelRolePrefill], byRoleOrdinal[inferencev1alpha1.ModelRoleDecode]
-	if len(encoders) == 0 || len(encoders) != len(prefills) || len(encoders) != len(decodes) {
-		return nil, nil, &pdRoutingProjectionError{service: service.Name, reason: "requires complete Ready 1E:1P:1D triplets"}
+	ordinals := make([]int32, 0, len(encoders))
+	for ordinal := range encoders {
+		ordinals = append(ordinals, ordinal)
 	}
-	components := make([]servingSnapshotEPDComponent, 0, len(encoders)*3)
-	pipelineScopes := make([]servingSnapshotEPDPipelineScope, 0, len(encoders))
-	for ordinal, encoder := range encoders {
-		prefill, decode := prefills[ordinal], decodes[ordinal]
+	slices.Sort(ordinals)
+	components := make([]servingSnapshotEPDComponent, 0, len(ordinals)*3)
+	pipelineScopes := make([]servingSnapshotEPDPipelineScope, 0, len(ordinals))
+	for _, ordinal := range ordinals {
+		encoder, prefill, decode := encoders[ordinal], prefills[ordinal], decodes[ordinal]
 		if prefill == nil || decode == nil || !compatibleEPDGroups(encoder, prefill, decode) {
-			return nil, nil, &pdRoutingProjectionError{service: service.Name, reason: fmt.Sprintf("Ready E/P/D ModelGroups at ordinal %d have incompatible runtime identities", ordinal)}
+			continue
 		}
 		pipelineScopeID := fmt.Sprintf("epd:%s:%d", service.UID, ordinal)
 		components = append(components, routingEPDComponent(service, encoder, pipelineScopeID), routingEPDComponent(service, prefill, pipelineScopeID), routingEPDComponent(service, decode, pipelineScopeID))
 		pipelineScopes = append(pipelineScopes, servingSnapshotEPDPipelineScope{PipelineScopeID: pipelineScopeID, EncoderRouteTargetID: string(encoder.UID), PrefillRouteTargetID: string(prefill.UID), DecodeRouteTargetID: string(decode.UID)})
+	}
+	if len(pipelineScopes) == 0 {
+		return nil, nil, &pdRoutingProjectionError{service: service.Name, reason: "requires at least one compatible Ready 1E:1P:1D triplet"}
 	}
 	return components, pipelineScopes, nil
 }

@@ -398,12 +398,6 @@ func (reconciler *ModelServiceReconciler) epdScalingSnapshot(ctx context.Context
 	return reconciler.scalingSnapshot(ctx, service, epdPipelineScopeTargetID(service), evaluatedAt, capacity, scaling), nil
 }
 
-// epdScalingSnapshot preserves the pure snapshot helper used by controller tests.
-func epdScalingSnapshot(service *inferencev1alpha1.ModelService, pools []compiler.ModelPool, indexes []int, owned map[string]*inferencev1alpha1.ModelPool, evaluatedAt metav1.Time) (core.ScalingSnapshot, error) {
-	scaling := modelScalingConfig{Autoscaler: defaultAutoscaler, Limits: core.CapacityLimits{MinGroups: 0, MaxGroups: maxDesiredGroups}, MetricsMaxAge: defaultMetricsMaxAge}
-	return (&ModelServiceReconciler{}).epdScalingSnapshot(context.Background(), service, pools, indexes, owned, nil, evaluatedAt, scaling)
-}
-
 func epdPipelineScopeTargetID(service *inferencev1alpha1.ModelService) core.TargetID {
 	return core.TargetID{ServiceNamespace: service.Namespace, ServiceName: service.Name, ServiceUID: string(service.UID), Name: "epd", Kind: core.TargetEPDPipelineScope, Role: core.RoleEPD}
 }

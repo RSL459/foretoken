@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 use foretoken_llm_facade::{
-    LlmFacadeResolver, MultiStageCleanup, TokenStream, abort_on_drop, consume_encoder,
+    LlmFacadeResolver, MultiStageCleanup, RouteStage, TokenStream, abort_on_drop, consume_encoder,
     consume_prefill, encoder_stage_request, inject_ec_transfer_params, pd_stage_requests,
 };
-use foretoken_model_protocol::{ModelServerRole, RouteStage};
+use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{RouteDecision, RouteError};
 
 use super::GenerationError;

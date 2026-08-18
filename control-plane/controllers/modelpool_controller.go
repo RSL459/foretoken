@@ -284,26 +284,7 @@ func groupsInsufficientCapacity(groups map[int32]*inferencev1alpha1.ModelGroup, 
 	return false
 }
 
-func revisionReady(groups []inferencev1alpha1.ModelGroup, revision string, desired int32) bool {
-	if revision == "" || desired == 0 {
-		return false
-	}
-	current := make(map[int32]*inferencev1alpha1.ModelGroup, desired)
-	for index := range groups {
-		group := &groups[index]
-		if group.Spec.Revision != revision || group.Spec.Ordinal >= desired {
-			continue
-		}
-		if current[group.Spec.Ordinal] != nil {
-			return false
-		}
-		current[group.Spec.Ordinal] = group
-	}
-	return groupsReady(current, desired)
-}
-
 // revisionServingReady reports whether an active revision still has a routable Group.
-// Desired capacity converges separately through revisionReady.
 func revisionServingReady(groups []inferencev1alpha1.ModelGroup, revision string) bool {
 	if revision == "" {
 		return false

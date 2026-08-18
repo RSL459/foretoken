@@ -8,11 +8,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver};
+use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, RouteStage};
 use foretoken_model_protocol::{RuntimeMetadataResponse, TelemetryResponse};
 use vllm_engine_core_client::protocol::dtype::ModelDtype;
 
-use foretoken_model_protocol::{ModelServerRole, RouteStage};
+use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetStats,
     RouteTargetStatsReader,
@@ -135,6 +135,18 @@ impl BackendRegistry {
         !self.healthy_models().is_empty()
     }
 
+    fn metadata_matches_route(
+        &self,
+        id: &RouteTargetId,
+        metadata: &RuntimeMetadataResponse,
+    ) -> bool {
+        self.table.routes().iter().any(|route| {
+            route.route_target_id == *id
+                && metadata.model.model == route.model
+                && metadata.model.revision == route.revision
+        })
+    }
+
     /// Returns the safe effective context limit across healthy components for a model.
     pub fn effective_max_model_len(&self, model: &str) -> Option<u32> {
         self.table
@@ -205,6 +217,9 @@ impl BackendRegistry {
         let probes = self.components.iter().map(|(id, c)| async move {
             let ready = ready(&self.health_client, c.endpoint()).await;
             let metadata = metadata(&self.health_client, c.endpoint()).await;
+            let metadata_matches = metadata
+                .as_ref()
+                .is_some_and(|metadata| self.metadata_matches_route(id, metadata));
             let bootstrap = match c.bootstrap() {
                 Some(endpoint) => {
                     foretoken_llm_facade::bootstrap_engine_id(&self.health_client, endpoint)
@@ -216,7 +231,7 @@ impl BackendRegistry {
             let stats = telemetry(&self.health_client, c.endpoint()).await;
             (
                 id.clone(),
-                ready && bootstrap && metadata.is_some(),
+                ready && bootstrap && metadata_matches,
                 metadata,
                 stats,
             )

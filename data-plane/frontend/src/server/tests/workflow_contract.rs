@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use axum::{Json, Router, routing::get};
 use foretoken_chat::ParserSelection;
-use foretoken_llm_facade::{LlmFacade, LlmFacadeError, LlmFacadeResolver, TokenStream};
-use foretoken_model_protocol::{ModelServerRole, RouteStage};
+use foretoken_llm_facade::{LlmFacade, LlmFacadeError, LlmFacadeResolver, RouteStage, TokenStream};
+use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{
     RouteDecision, RouteError, RouteSession, RouteTargetId, RouteTargetSet, Router as RouteRouter,
     RouterRequest, ScalingTarget, ScalingTargetKind,

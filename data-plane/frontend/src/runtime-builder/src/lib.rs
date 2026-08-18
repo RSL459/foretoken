@@ -83,7 +83,18 @@ impl RuntimeBuilder {
             return Err(RuntimeBuildError::BackendUnavailable);
         }
         let models = if has_physical_backends {
-            model_runtimes(identities, &registry).await?
+            let healthy_models = registry
+                .healthy_models()
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            model_runtimes(
+                identities
+                    .into_iter()
+                    .filter(|(model, _)| healthy_models.contains(model))
+                    .collect(),
+                &registry,
+            )
+            .await?
         } else {
             BTreeMap::new()
         };

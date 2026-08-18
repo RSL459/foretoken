@@ -188,10 +188,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	progressDeadlineSeconds := int32(launchPlan.Lifecycle.StartupSeconds)
 	automountToken := false
 	enableServiceLinks := true
-	runAsNonRoot := true
-	fileSystemGroup := int64(65532)
 	allowPrivilegeEscalation := false
-	readOnlyRootFilesystem := true
 	capabilities := &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
 	if group.Spec.PDRuntime != nil {
 		// RDMA completion queues pin userspace memory. IPC_LOCK permits that
@@ -289,8 +286,6 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 					NodeSelector:                  maps.Clone(group.Spec.Accelerator.NodeSelector),
 					TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot:   &runAsNonRoot,
-						FSGroup:        &fileSystemGroup,
 						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Volumes: volumes,
@@ -305,7 +300,6 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 						VolumeMounts:    mounts,
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: &allowPrivilegeEscalation,
-							ReadOnlyRootFilesystem:   &readOnlyRootFilesystem,
 							Capabilities:             capabilities,
 						},
 						StartupProbe:             modelServerProbe("/readyz", 10, startupFailureThreshold),

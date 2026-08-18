@@ -201,7 +201,6 @@ async fn generate_accepts_msgpack_multimodal_tensors() {
         },
     );
     let body = rmp_serde::to_vec_named(&foretoken_model_protocol::GenerateInput {
-        stage: foretoken_model_protocol::RouteStage::Aggregate,
         request_id: "request-mm".into(),
         prompt_token_ids: vec![1, 2],
         mm_features: Some(vec![MmFeatureSpec {
