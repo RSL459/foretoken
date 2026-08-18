@@ -26,7 +26,11 @@ const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     vllm_tracing::init_tracing("ForetokenModelServer");
+
+    // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
+
+    // KV event publication is optional; generation remains available when the subscriber cannot start.
     let kv_events = match kv_event_adapter(&config) {
         Ok(adapter) => {
             let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
@@ -44,6 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // The model-server owns one managed engine and the loopback handshake used by its client.
     let handshake_port = allocate_handshake_port("127.0.0.1")?;
     let engine = ManagedEngineHandle::spawn(
         config
@@ -104,6 +109,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     health.set_accepting(true);
     let mut client_health = client.subscribe_health();
     let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
+
+    // Expose only the restricted group-local API after EngineCore is connected and healthy.
     let listener = match TcpListener::bind(config.listen_address).await {
         Ok(listener) => listener,
         Err(error) => {
@@ -132,6 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into_future(),
     );
 
+    // Signals, client health, child exit, and server failure converge on one shutdown path.
     enum Stop {
         Signal,
         ClientUnhealthy(String),
@@ -160,6 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Stop new admission before draining HTTP handlers, the client, and finally the child process.
     health.set_accepting(false);
     health.set_client_healthy(false);
     shutdown.notify_waiters();

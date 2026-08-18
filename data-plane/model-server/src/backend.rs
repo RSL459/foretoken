@@ -181,6 +181,7 @@ impl Drop for InflightGuard {
     }
 }
 
+/// Track request lifetime and engine-boundary latency without including response-consumer delay.
 fn tracked_stream<S>(
     stream: S,
     started_at: Instant,

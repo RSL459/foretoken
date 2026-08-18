@@ -191,11 +191,13 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
     }
 }
 
+/// Decode one internal generation request and hold its admission slot for the response stream.
 async fn generate(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
+    // Multimodal tensors use MessagePack; ordinary requests keep a human-readable JSON boundary.
     let input: GenerateInput = if content_type_is(&headers, "application/msgpack") {
         rmp_serde::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
     } else {
@@ -204,6 +206,7 @@ async fn generate(
     if !state.health.healthy() {
         return Err(ApiError::Unavailable);
     }
+    // Admission closes before drain; the permit remains owned by the stream until completion or drop.
     let permit = state.health.try_admit().ok_or(ApiError::Unavailable)?;
     let request_id = input.request_id.clone();
     let stream = state
@@ -211,6 +214,7 @@ async fn generate(
         .generate(input)
         .await
         .map_err(ApiError::backend)?;
+    // Once headers are sent, backend failures become typed terminal events rather than a new HTTP status.
     let body_stream = stream.map(move |item| {
         let _permit = &permit;
         let event = match item {
