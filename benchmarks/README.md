@@ -72,6 +72,28 @@ foretoken bench \
   --output local,wandb
 ```
 
+Timestamped conversation trace. `studychat` is the currently supported trace
+format. Each StudyChat JSONL row contains a Unix millisecond `timestamp`,
+`chatId`, and complete recorded `messages` history. The loader converts
+timestamps to seconds and stably sorts the file before replay. The final
+message must be a user message. The record's `response` is ignored;
+target-server output is never added to a later request.
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --trace /path/conversations.jsonl \
+  --trace-format studychat \
+  --trace-time-scale 10000 \
+  --trace-max-concurrency 256
+```
+
+`--trace-time-scale 1` replays the original timing. A larger value compresses
+the trace in time. Trace timing is independent of `--rate`; `--parallel` and
+`--number` do not apply to trace replay. `--trace-max-concurrency` is optional
+and only bounds active requests; it does not alter the timestamp schedule.
+
 Random synthetic prompts (tokenizer required):
 
 ```bash
