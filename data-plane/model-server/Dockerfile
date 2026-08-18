@@ -27,11 +27,6 @@ FROM ${INFERENCE_ENGINE_IMAGE}
 
 COPY --from=builder /workspace/data-plane/target/release/foretoken-model-server /usr/local/bin/foretoken-model-server
 
-ENV HOME=/var/cache/foretoken \
-    HF_HOME=/var/cache/foretoken/huggingface \
-    XDG_CACHE_HOME=/var/cache/foretoken/xdg
-
-RUN mkdir -p /var/cache/foretoken && chown -R 65532:65532 /var/cache/foretoken
-
-USER 65532:65532
+# Preserve the inference engine image's runtime user and environment. The workload owns its
+# security context, cache environment, and writable volume mounts.
 ENTRYPOINT ["foretoken-model-server"]

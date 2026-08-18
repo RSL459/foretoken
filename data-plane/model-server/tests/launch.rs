@@ -65,8 +65,8 @@ fn renders_owned_arguments_once() {
 
 #[test]
 fn ec_plan_renders_one_owned_config_for_each_role() {
-    let producer = LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/var/lib/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
-    let consumer = LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","sharedStoragePath":"/var/lib/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
+    let producer = LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
+    let consumer = LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
 
     let args = producer.render_vllm_args().unwrap();
     let rendered: Vec<_> = args
@@ -114,7 +114,7 @@ fn kv_variants_render_expected_semantics() {
             "CPUOffloadingSpec",
         ),
         (
-            r#"{"kind":"filesystemOffload","cpuBytes":9,"events":true}"#,
+            r#"{"kind":"filesystemOffload","cpuBytes":9,"storagePath":"/mnt/foretoken/kv-offload","events":true}"#,
             "TieringOffloadingSpec",
         ),
         (
@@ -143,6 +143,14 @@ fn kv_variants_render_expected_semantics() {
                 rendered
                     .iter()
                     .any(|arg| arg.contains(r#""device_name":"mlx5_1""#)),
+                "{rendered:?}"
+            );
+        }
+        if want == "TieringOffloadingSpec" {
+            assert!(
+                rendered
+                    .iter()
+                    .any(|arg| arg.contains(r#""root_dir":"/mnt/foretoken/kv-offload""#)),
                 "{rendered:?}"
             );
         }

@@ -13,7 +13,6 @@ use vllm_managed_engine::ManagedEngineConfig;
 use foretoken_model_protocol::RuntimeEcTransferMetadata;
 
 const HANDSHAKE_HOST: &str = "127.0.0.1";
-const KV_OFFLOAD_ROOT: &str = "/var/lib/foretoken/kv-offload";
 const PYTHON: &str = "python3";
 const MIN_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 const MAX_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
@@ -95,6 +94,9 @@ pub enum KvPlan {
     FilesystemOffload {
         #[serde(rename = "cpuBytes")]
         cpu_bytes: i64,
+        /// Writable directory mounted by the workload projection for this Group.
+        #[serde(rename = "storagePath")]
+        storage_path: String,
         events: bool,
     },
     #[serde(rename = "mooncakeStore")]
@@ -140,9 +142,9 @@ impl MooncakeProtocol {
 
 /// Controller-owned EC transfer configuration for one model-server.
 ///
-/// The the local vLLM build source release exposes `ECExampleConnector` as its reference
-/// disaggregated-encoder path. Encoder and prefill Pods share one platform-owned
-/// ReadWriteMany volume; no client-controlled connector options are accepted.
+/// The local vLLM source release exposes `ECExampleConnector` as its reference
+/// disaggregated-encoder path. The workload projection mounts one writable, platform-owned
+/// ReadWriteMany volume at `sharedStoragePath` for both roles; clients cannot select it.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EcTransferPlan {
@@ -190,8 +192,7 @@ impl EcTransferPlan {
             || self.profile_name.is_empty()
             || self.profile_revision.is_empty()
             || self.role.is_none()
-            || !self.shared_storage_path.starts_with('/')
-            || self.shared_storage_path.contains(char::is_whitespace)
+            || !is_absolute_storage_path(&self.shared_storage_path)
         {
             return Err("EC transfer config is incomplete or unsupported".into());
         }
@@ -282,6 +283,13 @@ impl LaunchPlanV1 {
                 if *cpu_bytes <= 0 =>
             {
                 return Err("KV offload cpuBytes must be positive".into());
+            }
+            KvPlan::FilesystemOffload { storage_path, .. }
+                if !is_absolute_storage_path(storage_path) =>
+            {
+                return Err(
+                    "filesystemOffload storagePath must be an absolute mounted directory".into(),
+                );
             }
             KvPlan::Pd { device_name, .. } | KvPlan::MultiConnector { device_name, .. }
                 if device_name.trim().is_empty() =>
@@ -392,8 +400,12 @@ impl KvPlan {
             Self::CpuOffload { cpu_bytes, .. } => Some(
                 json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"kv_connector":"CPUOffloadingSpec"}}),
             ),
-            Self::FilesystemOffload { cpu_bytes, .. } => Some(
-                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"kv_connector":"TieringOffloadingSpec","secondary_tiers":[{"type":"fs","root_dir":KV_OFFLOAD_ROOT}]}}),
+            Self::FilesystemOffload {
+                cpu_bytes,
+                storage_path,
+                ..
+            } => Some(
+                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"kv_connector":"TieringOffloadingSpec","secondary_tiers":[{"type":"fs","root_dir":storage_path}]}}),
             ),
             Self::MooncakeStore { role, .. } => Some(
                 json!({"kv_connector":"MooncakeStoreConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute"}),
@@ -415,6 +427,10 @@ impl KvPlan {
             }
         }
     }
+}
+
+fn is_absolute_storage_path(value: &str) -> bool {
+    value.starts_with('/') && value != "/" && !value.contains(char::is_whitespace)
 }
 
 fn validate_extra_args(args: &[String]) -> Result<(), String> {
