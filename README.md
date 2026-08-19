@@ -37,7 +37,7 @@ The deployment and cleanup steps are the same in both access modes. Choose one m
 
 #### Local mode
 
-Local mode needs no cluster Gateway:
+Local mode is intended for quick evaluation from your workstation:
 
 ```bash
 helm upgrade --install foretoken \
@@ -65,7 +65,7 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-Set the public hostname in the frontend manifest before applying it:
+Before applying the example, add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
 
 ```yaml
 spec:

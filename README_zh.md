@@ -37,7 +37,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 #### 本地模式
 
-本地模式不需要集群 Gateway：
+本地模式适合在本机快速体验：
 
 ```bash
 helm upgrade --install foretoken \
@@ -49,9 +49,9 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-#### Gateway 模式
+#### 网关模式
 
-Gateway 模式使用集群中已有的 Gateway API `Gateway`：
+网关模式使用集群中已有的 Gateway API `Gateway`：
 
 ```bash
 helm upgrade --install foretoken \
@@ -65,14 +65,14 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-应用 frontend 配置前，填写对外域名：
+应用配置前，在 `examples/quickstart/frontend.yaml` 的 `spec` 中添加对外域名：
 
 ```yaml
 spec:
   hostname: foretoken.example.com
 ```
 
-Gateway 必须允许 Foretoken frontend 所在 namespace 创建的 `HTTPRoute` 接入。DNS 和 TLS 继续由平台 Gateway 管理。
+Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入。DNS 和 TLS 继续由平台网关管理。
 
 ### 2. 部署模型服务
 
@@ -128,9 +128,9 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
 
-#### Gateway 模式
+#### 网关模式
 
-通过 Gateway 配置的域名发送请求：
+通过网关配置的域名发送请求：
 
 ```bash
 curl --fail-with-body --no-buffer \

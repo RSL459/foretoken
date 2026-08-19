@@ -44,7 +44,7 @@ When model instances or routes change, the frontend activates the new configurat
 
 ### Local mode
 
-Local mode creates no cluster-external endpoint. Use the repository helper to open localhost access and reconnect after Pod replacement or transport interruption:
+Use the repository helper to access the frontend from your workstation and reconnect after Pod replacement or transport interruption:
 
 ```bash
 ./scripts/foretoken-port-forward \

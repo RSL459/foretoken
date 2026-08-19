@@ -44,7 +44,7 @@ foretoken-frontend
 
 ### 本地模式
 
-本地模式不创建集群外入口。使用仓库提供的命令建立本机访问，并在 Pod 替换或连接中断后自动重连：
+使用仓库提供的命令从本机访问前端服务，并在 Pod 替换或连接中断后自动重连：
 
 ```bash
 ./scripts/foretoken-port-forward \
@@ -53,11 +53,11 @@ foretoken-frontend
   --local-port 8080
 ```
 
-随后通过 `http://127.0.0.1:8080` 访问 frontend。
+随后通过 `http://127.0.0.1:8080` 访问前端服务。
 
-### Gateway 模式
+### 网关模式
 
-Gateway 模式通过平台已有的 Gateway API `Gateway` 对外提供服务。Foretoken 为 frontend 创建 `HTTPRoute`，域名、TLS、认证和其他入口策略继续由平台 Gateway 管理。
+网关模式通过平台已有的 Gateway API `Gateway` 对外提供服务。Foretoken 为前端服务创建 `HTTPRoute`，域名、TLS、认证和其他入口策略继续由平台网关管理。
 
 ## HTTP 接口
 
