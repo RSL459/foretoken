@@ -41,6 +41,8 @@ impl HttpFacade {
         format!("{}{path}", self.endpoint)
     }
 
+    // Send one MessagePack generation request under the response-start timeout, then decode
+    // the NDJSON body incrementally into the shared token stream without buffering completion.
     pub(crate) async fn generate(
         &self,
         request: GenerateRequest,

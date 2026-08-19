@@ -150,6 +150,8 @@ pub struct ModelIdentity {
     pub capabilities: BTreeSet<String>,
 }
 impl ServingSnapshot {
+    // Prefer the controller-projected logical targets in `models`. Model-less snapshots fall
+    // back to topology-derived targets, then all sets are ordered and deduplicated consistently.
     pub fn admission_target_sets(
         &self,
     ) -> Result<BTreeMap<String, Vec<RouteTargetSet>>, SnapshotError> {

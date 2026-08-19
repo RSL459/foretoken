@@ -44,6 +44,8 @@ impl RuntimeBuilder {
         Ok(serde_json::from_slice(bytes)?)
     }
 
+    // Build one publishable generation in stages: validate projection, construct routing and
+    // KV state, probe backends, load per-model processors, re-probe, then seal PreparedRuntime.
     pub async fn build(
         &self,
         snapshot: ServingSnapshot,

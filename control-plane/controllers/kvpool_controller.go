@@ -77,6 +77,8 @@ type kvGroupState struct {
 	reason, message     string
 }
 
+// Converge immutable revisions in phases: remove superseded or excess ordinals, wait for
+// deletion, create missing ordinals, then aggregate child materialization and readiness.
 func (reconciler *KVPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.KVPool, service *inferencev1alpha1.KVService) (kvGroupState, error) {
 	groups, err := reconciler.ownedGroups(ctx, pool)
 	if err != nil {

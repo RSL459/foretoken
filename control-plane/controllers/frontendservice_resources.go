@@ -29,6 +29,8 @@ func frontendServingConfigMapName(frontend *inferencev1alpha1.FrontendService) s
 	return kvChildName(name, string(frontend.UID))
 }
 
+// Derive the frontend workload, stable Service, and optional gateway route as one desired-state
+// unit so ports, timeouts, labels, and ownership cannot drift across independently built objects.
 func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profile FrontendRuntimeProfile) (*appsv1.Deployment, *corev1.Service, *gatewayv1.HTTPRoute, error) {
 	requests, limits, err := frontendResources(frontend.Spec.Resources)
 	if err != nil {

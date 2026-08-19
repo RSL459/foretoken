@@ -95,6 +95,8 @@ func kvGroupWorkloadName(group *inferencev1alpha1.KVGroup) string {
 	return kvChildName(group.Name, string(group.UID))
 }
 
+// One KVGroup materializes a single Mooncake client together with its offload disk,
+// RPC Service, and namespace-scoped network boundary as one owned resource set.
 func desiredKVGroupResources(group *inferencev1alpha1.KVGroup) (*appsv1.Deployment, *corev1.Service, *corev1.PersistentVolumeClaim, *networkingv1.NetworkPolicy, error) {
 	requests, limits, err := kvResources(group.Spec.Client.Resources)
 	if err != nil {
@@ -197,6 +199,8 @@ func (reconciler *KVGroupReconciler) applyOwned(ctx context.Context, group *infe
 	return reconciler.Update(ctx, desired)
 }
 
+// Delete client networking and workload resources before releasing the finalizer. The disk
+// PVC follows its retention policy; this lifecycle does not claim block migration or GC.
 func (reconciler *KVGroupReconciler) reconcileDelete(ctx context.Context, group *inferencev1alpha1.KVGroup) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(group, kvGroupFinalizer) {
 		return ctrl.Result{}, nil

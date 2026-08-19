@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+//! Executes aggregate, P/D, and E/P/D generation while retaining cross-stage cleanup ownership.
+
 use foretoken_llm_facade::{
     LlmFacadeResolver, MultiStageCleanup, RouteStage, TokenStream, abort_on_drop, consume_encoder,
     consume_prefill, encoder_stage_request, inject_ec_transfer_params, pd_stage_requests,

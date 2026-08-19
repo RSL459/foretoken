@@ -78,6 +78,8 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	return pools, nil
 }
 
+// Validate service-wide topology across Pools: aggregate and split roles are exclusive,
+// P/D must be paired, and E/P/D requires one equally sized Pool for every stage.
 func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
 	var aggregate bool
 	roleCounts := make(map[inferencev1alpha1.ModelRole]int, 3)
@@ -174,6 +176,8 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role infe
 	}, nil
 }
 
+// The remaining compiler helpers normalize user shorthand into stable Pool template fields.
+// Runtime-incompatible resources, storage, timeouts, and features fail before reconciliation.
 func compileParallelism(input inferencev1alpha1.Parallelism) inferencev1alpha1.CompiledParallelism {
 	tp := defaultOne(input.TP)
 	pcp := defaultOne(input.PCP)

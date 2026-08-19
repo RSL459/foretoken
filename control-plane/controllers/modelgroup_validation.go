@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Validates compiled ModelGroup contracts against supported topology, storage, and role combinations.
+
 package controllers
 
 import (
@@ -59,6 +61,8 @@ func validateMooncakeStoreRuntime(group *inferencev1alpha1.ModelGroup, store *in
 	return nil
 }
 
+// Each serving role admits a different combination of P/D and EC runtime state. Split
+// roles additionally share the restricted parallelism contract required by their transports.
 func validateGroupRole(group *inferencev1alpha1.ModelGroup) error {
 	switch group.Spec.Role {
 	case inferencev1alpha1.ModelRoleAggregate:
