@@ -37,3 +37,11 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) -}}
 {{- end -}}
 {{- end }}
+
+{{- define "foretoken.inferenceEngineImage" -}}
+{{- if .Values.inferenceEngine.image.digest -}}
+{{- printf "%s@%s" .Values.inferenceEngine.image.repository .Values.inferenceEngine.image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.inferenceEngine.image.repository (default .Chart.AppVersion .Values.inferenceEngine.image.tag) -}}
+{{- end -}}
+{{- end }}

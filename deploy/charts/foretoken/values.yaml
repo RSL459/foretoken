@@ -11,6 +11,24 @@ image:
 
 imagePullSecrets: []
 
+workload:
+  # Secret names are resolved independently in each ModelService namespace.
+  imagePullSecrets: []
+
+inferenceEngine:
+  profileRevision: default
+  image:
+    repository: ghcr.io/shiweijiezero/foretoken/model-server
+    tag: "" # Defaults to Chart.appVersion.
+    digest: "" # Overrides tag when an immutable digest is provided.
+  modelServerPort: 9000
+  gpu:
+    resourceName: nvidia.com/gpu
+    runtimeClassName: ""
+    nodeSelector:
+      key: ""
+      value: ""
+
 # Resource sizing is workload- and cluster-dependent; measure before setting it.
 resources: {}
 # resources:
