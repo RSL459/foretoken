@@ -127,6 +127,9 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role infe
 		return ModelPool{}, err
 	}
 	compiledParallelism := compileParallelism(parallelism)
+	if role != inferencev1alpha1.ModelRoleAggregate && (compiledParallelism.TP != 1 || compiledParallelism.PP != 1 || compiledParallelism.DP != 1 || compiledParallelism.PCP != 1 || compiledParallelism.DCP != 1 || compiledParallelism.EP != nil) {
+		return ModelPool{}, fmt.Errorf("split serving currently requires TP=PP=DP=PCP=DCP=1 without expert parallelism")
+	}
 	normalizedKVCache, err := normalizeKVCache(kvCache)
 	if err != nil {
 		return ModelPool{}, err

@@ -284,7 +284,7 @@ func validateParallelism(parallelism inferencev1alpha1.CompiledParallelism) erro
 	return nil
 }
 
-var allowedExtraArgs = map[string]bool{"--max-model-len": true, "--dtype": true, "--quantization": true, "--gpu-memory-utilization": true, "--max-num-seqs": true, "--max-num-batched-tokens": true, "--enforce-eager": true, "--disable-log-stats": true}
+var allowedExtraArgs = map[string]bool{"--max-model-len": true, "--dtype": true, "--quantization": true, "--gpu-memory-utilization": true, "--max-num-seqs": true, "--max-num-batched-tokens": true, "--limit-mm-per-prompt": true, "--enforce-eager": true, "--disable-log-stats": true}
 
 func validateExtraArgs(args []inferencev1alpha1.BackendArg) error {
 	seen := map[string]bool{}

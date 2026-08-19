@@ -168,8 +168,7 @@ type ModelPoolTemplate struct {
 }
 
 // AutoscalingAlgorithm selects a statically linked autoscaling decision algorithm.
-// +kubebuilder:validation:MaxLength=63
-// +kubebuilder:validation:Pattern="^[a-z][a-z0-9_]*$"
+// +kubebuilder:validation:Enum=manual;queue;threshold
 type AutoscalingAlgorithm string
 
 const (
@@ -179,8 +178,7 @@ const (
 )
 
 // AutoscalingTriggerAlgorithm selects when an automatic scaling algorithm is evaluated.
-// +kubebuilder:validation:MaxLength=63
-// +kubebuilder:validation:Pattern="^[a-z][a-z0-9_]*$"
+// +kubebuilder:validation:Enum=periodic;watermark
 type AutoscalingTriggerAlgorithm string
 
 const (
@@ -215,8 +213,7 @@ type ModelAutoscalingTriggerConfig struct {
 }
 
 // AutoscalingAdjustmentAlgorithm selects how a desired capacity is adjusted before resolution.
-// +kubebuilder:validation:MaxLength=63
-// +kubebuilder:validation:Pattern="^[a-z][a-z0-9_]*$"
+// +kubebuilder:validation:Enum=direct;step
 type AutoscalingAdjustmentAlgorithm string
 
 const (

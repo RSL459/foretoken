@@ -159,10 +159,6 @@ async fn openai_http_rejects_unsupported_or_unbounded_requests() {
     for (uri, body) in [
         (
             "/v1/completions",
-            r#"{"model":"served-model","prompt":"x","n":17}"#,
-        ),
-        (
-            "/v1/completions",
             r#"{"model":"served-model","prompt":["a","b"],"stream":true}"#,
         ),
         (

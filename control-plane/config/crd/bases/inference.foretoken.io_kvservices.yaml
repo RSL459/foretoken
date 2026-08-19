@@ -180,6 +180,25 @@ spec:
                     required:
                     - size
                     type: object
+                  snapshotInterval:
+                    allOf:
+                    - pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    - pattern: ^([0-9]+(s|m|h))+$
+                    default: 60s
+                    description: SnapshotInterval controls the provider snapshot cadence
+                      for both persistent and ephemeral snapshot storage.
+                    minLength: 2
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
+                  snapshotRetentionCount:
+                    default: 3
+                    description: SnapshotRetentionCount is the number of provider
+                      snapshots retained.
+                    format: int32
+                    minimum: 1
+                    type: integer
                 required:
                 - image
                 - resources

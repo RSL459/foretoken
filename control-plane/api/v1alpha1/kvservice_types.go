@@ -68,6 +68,16 @@ type KVMasterSpec struct {
 	// +kubebuilder:validation:Maximum=65535
 	MetricsPort int32       `json:"metricsPort,omitempty"`
 	Resources   KVResources `json:"resources"`
+	// SnapshotInterval controls the provider snapshot cadence for both persistent and ephemeral snapshot storage.
+	// +optional
+	// +kubebuilder:default="60s"
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	SnapshotInterval Duration `json:"snapshotInterval,omitempty"`
+	// SnapshotRetentionCount is the number of provider snapshots retained.
+	// +optional
+	// +kubebuilder:default=3
+	// +kubebuilder:validation:Minimum=1
+	SnapshotRetentionCount int32 `json:"snapshotRetentionCount,omitempty"`
 	// +optional
 	Snapshot *SnapshotStorage `json:"snapshot,omitempty"`
 }

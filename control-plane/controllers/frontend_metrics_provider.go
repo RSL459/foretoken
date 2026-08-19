@@ -20,11 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	frontendAutoscalingTelemetryVersion = 1
-	metricsCollectionTimeout            = 3 * time.Second
-	metricsCollectionConcurrency        = 8
-)
+const frontendAutoscalingTelemetryVersion = 1
 
 type frontendAutoscalingTarget struct {
 	ServiceUID     string `json:"service_uid"`
@@ -39,19 +35,30 @@ type frontendAutoscalingTelemetry struct {
 	Targets           []frontendAutoscalingTarget `json:"targets"`
 }
 
+// AutoscalingTelemetryOptions defines the controller-wide collection budget.
+type AutoscalingTelemetryOptions struct {
+	CollectionTimeout time.Duration
+	RequestTimeout    time.Duration
+	Concurrency       int
+}
+
 // HTTPPoolMetricsProvider reads every ready frontend replica and every currently
 // routable model-server represented by one immutable scaling target.
 type HTTPPoolMetricsProvider struct {
-	client     client.Client
-	httpClient *http.Client
-	now        func() time.Time
+	client            client.Client
+	httpClient        *http.Client
+	collectionTimeout time.Duration
+	concurrency       int
+	now               func() time.Time
 }
 
-func NewHTTPPoolMetricsProvider(kubeClient client.Client) *HTTPPoolMetricsProvider {
+func NewHTTPPoolMetricsProvider(kubeClient client.Client, options AutoscalingTelemetryOptions) *HTTPPoolMetricsProvider {
 	return &HTTPPoolMetricsProvider{
-		client:     kubeClient,
-		httpClient: &http.Client{Timeout: time.Second},
-		now:        time.Now,
+		client:            kubeClient,
+		httpClient:        &http.Client{Timeout: options.RequestTimeout},
+		collectionTimeout: options.CollectionTimeout,
+		concurrency:       options.Concurrency,
+		now:               time.Now,
 	}
 }
 
@@ -60,7 +67,7 @@ func (provider *HTTPPoolMetricsProvider) Observation(ctx context.Context, target
 		return core.DemandObservation{}, fmt.Errorf("pool metrics provider is not configured")
 	}
 	startedAt := provider.now()
-	collectionCtx, cancel := context.WithTimeout(ctx, metricsCollectionTimeout)
+	collectionCtx, cancel := context.WithTimeout(ctx, provider.collectionTimeout)
 	defer cancel()
 	var queuedRequests, activeRequests uint64
 	var queueSamples, activeSamples int64
@@ -109,7 +116,7 @@ func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, targ
 	}
 	results := make(chan queueSample, len(pods.Items))
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(metricsCollectionConcurrency)
+	group.SetLimit(provider.concurrency)
 	for index := range pods.Items {
 		pod := &pods.Items[index]
 		if pod.Labels[frontendServiceLabel] == "" || !pod.DeletionTimestamp.IsZero() || !podReady(pod) {
@@ -186,7 +193,7 @@ func (provider *HTTPPoolMetricsProvider) activeRequests(ctx context.Context, tar
 	}
 	results := make(chan uint64, len(groups.Items))
 	requestGroup, groupCtx := errgroup.WithContext(ctx)
-	requestGroup.SetLimit(metricsCollectionConcurrency)
+	requestGroup.SetLimit(provider.concurrency)
 	for index := range groups.Items {
 		modelGroup := &groups.Items[index]
 		pool := selectedPools[modelGroup.Spec.ModelPoolRef.UID]

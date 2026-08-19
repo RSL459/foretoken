@@ -9,7 +9,7 @@ We aim to turn an inference cluster into a token factory that continuously conve
 
 ## When to Use Foretoken
 
-- Serve one or more models across multiple GPUs or nodes.
+- Serve one or more models across multiple GPUs and Kubernetes nodes. Each ModelGroup currently runs on one node; a service scales across nodes by creating additional groups.
 - Route requests based on load, queue depth, or KV cache state.
 - Autoscale inference instances based on traffic and SLO targets.
 - Compare aggregated serving, Prefill/Decode disaggregation, and different parallelism strategies.

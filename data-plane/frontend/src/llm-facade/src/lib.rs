@@ -39,14 +39,6 @@ pub enum LlmFacadeError {
     #[error("backend configuration is invalid")]
     Configuration,
 }
-impl LlmFacadeError {
-    pub const fn retryable(self) -> bool {
-        matches!(self, Self::Unavailable | Self::RequestFailed)
-    }
-    pub const fn affects_health(self) -> bool {
-        matches!(self, Self::Unavailable | Self::Protocol)
-    }
-}
 #[async_trait]
 pub trait LlmFacade: Send + Sync {
     async fn generate(&self, request: GenerateRequest) -> Result<TokenStream, LlmFacadeError>;

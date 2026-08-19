@@ -9,7 +9,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 什么时候需要 Foretoken
 
-- 在多卡或多节点上运行一种或多种模型。
+- 在多卡和多个 Kubernetes 节点上运行一种或多种模型。当前每个 ModelGroup 只使用一个节点，服务通过增加 Group 横向扩展到更多节点。
 - 根据负载、队列或 KV Cache 状态路由请求。
 - 根据请求量和 SLO 自动扩缩推理实例。
 - 比较聚合部署、Prefill/Decode 分离和不同并行方案。

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -68,12 +69,18 @@ func main() {
 	var vllmMooncakeStoreConfigMapName string
 	var vllmMooncakeStoreConfigMapKey string
 	var vllmMooncakeStorePythonHashSeed string
+	var autoscalingTelemetryCollectionTimeout time.Duration
+	var autoscalingTelemetryRequestTimeout time.Duration
+	var autoscalingTelemetryConcurrency int
 	var workloadImagePullSecretNames []string
 
 	// Metrics stay disabled until the chart exposes a secured endpoint.
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "Health probe bind address.")
 	flag.BoolVar(&leaderElection, "leader-elect", false, "Enable leader election.")
+	flag.DurationVar(&autoscalingTelemetryCollectionTimeout, "autoscaling-telemetry-collection-timeout", 3*time.Second, "Total budget for one autoscaling telemetry observation.")
+	flag.DurationVar(&autoscalingTelemetryRequestTimeout, "autoscaling-telemetry-request-timeout", time.Second, "Timeout for one autoscaling telemetry HTTP request.")
+	flag.IntVar(&autoscalingTelemetryConcurrency, "autoscaling-telemetry-concurrency", 8, "Maximum concurrent autoscaling telemetry HTTP requests per source type.")
 	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload reconciliation.")
 	flag.StringVar(&frontendMode, "frontend-mode", frontendModeLocal, "Frontend exposure mode: local or production.")
 	flag.StringVar(&frontendImage, "frontend-image", "", "Frontend runtime image.")
@@ -124,6 +131,10 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
 	if modelServerPort < 1 || modelServerPort > 65535 {
 		ctrl.Log.Error(errors.New("model-server-port must be between 1 and 65535"), "invalid inference engine profile")
+		os.Exit(1)
+	}
+	if autoscalingTelemetryCollectionTimeout <= 0 || autoscalingTelemetryRequestTimeout <= 0 || autoscalingTelemetryConcurrency < 1 {
+		ctrl.Log.Error(errors.New("autoscaling telemetry timeouts and concurrency must be positive"), "invalid autoscaling telemetry settings")
 		os.Exit(1)
 	}
 	if frontendMode != frontendModeLocal && frontendMode != frontendModeProduction {
@@ -234,8 +245,12 @@ func main() {
 		}
 	}
 	if err := (&controllers.ModelServiceReconciler{
-		Client:              manager.GetClient(),
-		PoolMetricsProvider: controllers.NewHTTPPoolMetricsProvider(manager.GetClient()),
+		Client: manager.GetClient(),
+		PoolMetricsProvider: controllers.NewHTTPPoolMetricsProvider(manager.GetClient(), controllers.AutoscalingTelemetryOptions{
+			CollectionTimeout: autoscalingTelemetryCollectionTimeout,
+			RequestTimeout:    autoscalingTelemetryRequestTimeout,
+			Concurrency:       autoscalingTelemetryConcurrency,
+		}),
 	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelService controller")
 		os.Exit(1)

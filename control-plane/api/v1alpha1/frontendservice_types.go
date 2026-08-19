@@ -20,22 +20,16 @@ type FrontendTimeouts struct {
 	StreamIdle Duration `json:"streamIdle"`
 }
 
-// RouterFilterAlgorithm identifies a compiled Router Filter by its stable lower_snake_case name.
-// +kubebuilder:validation:MinLength=1
-// +kubebuilder:validation:MaxLength=128
-// +kubebuilder:validation:Pattern="^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+// RouterFilterAlgorithm identifies a compiled Router Filter.
+// +kubebuilder:validation:Enum=allow_all
 type RouterFilterAlgorithm string
 
-// RouterScorerAlgorithm identifies a compiled Router Scorer by its stable lower_snake_case name.
-// +kubebuilder:validation:MinLength=1
-// +kubebuilder:validation:MaxLength=128
-// +kubebuilder:validation:Pattern="^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+// RouterScorerAlgorithm identifies a compiled Router Scorer.
+// +kubebuilder:validation:Enum=uniform;least_loaded;kv_least_loaded
 type RouterScorerAlgorithm string
 
-// RouterPickerAlgorithm identifies a compiled Router Picker by its stable lower_snake_case name.
-// +kubebuilder:validation:MinLength=1
-// +kubebuilder:validation:MaxLength=128
-// +kubebuilder:validation:Pattern="^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+// RouterPickerAlgorithm identifies a compiled Router Picker.
+// +kubebuilder:validation:Enum=max;round_robin
 type RouterPickerAlgorithm string
 
 const (

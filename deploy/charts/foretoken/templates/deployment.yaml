@@ -12,7 +12,7 @@ metadata:
   labels:
     {{- include "foretoken.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.controller.replicas }}
   selector:
     matchLabels:
       {{- include "foretoken.selectorLabels" . | nindent 6 }}
@@ -56,6 +56,9 @@ spec:
             - /manager
           args:
             - --leader-elect=true
+            - {{ printf "--autoscaling-telemetry-collection-timeout=%s" .Values.controller.autoscalingTelemetry.collectionTimeout | quote }}
+            - {{ printf "--autoscaling-telemetry-request-timeout=%s" .Values.controller.autoscalingTelemetry.requestTimeout | quote }}
+            - {{ printf "--autoscaling-telemetry-concurrency=%d" (int .Values.controller.autoscalingTelemetry.concurrency) | quote }}
             - --metrics-bind-address=0
             - --health-probe-bind-address=:8081
             {{- range .Values.workload.imagePullSecrets }}

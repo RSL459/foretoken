@@ -33,12 +33,6 @@ use crate::response::{
 use crate::runtime::{Generation, GenerationError, GenerationRequest};
 
 const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
-const MAX_MEDIA_PARTS: usize = 8;
-const MAX_IMAGE_PARTS: usize = 4;
-const MAX_TOTAL_MEDIA_BYTES: usize = 32 * 1024 * 1024;
-const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
-const MAX_COMPLETION_PROMPTS: usize = 16;
-const MAX_COMPLETION_CANDIDATES: u32 = 16;
 const MAX_COMPLETION_FAN_OUT: usize = 64;
 
 type LoweredResponseFormat = (Option<Value>, Option<StructuredOutputsParams>);
@@ -767,11 +761,8 @@ async fn completions(
     let best_of = request.best_of.unwrap_or(request.n);
     if include_usage && !stream
         || prompts.is_empty()
-        || prompts.len() > MAX_COMPLETION_PROMPTS
         || request.n == 0
-        || request.n > MAX_COMPLETION_CANDIDATES
         || best_of < request.n
-        || best_of > MAX_COMPLETION_CANDIDATES
         || prompts.len().saturating_mul(best_of as usize) > MAX_COMPLETION_FAN_OUT
         || (stream && (prompts.len() != 1 || request.best_of.is_some()))
     {
@@ -999,32 +990,18 @@ async fn chat_with_request(
     }
 }
 
-fn encoded_limit(decoded_limit: usize) -> usize {
-    decoded_limit.saturating_add(2) / 3 * 4
-}
-
-fn data_url_size(
-    value: &str,
-    mime_prefix: &str,
-    decoded_limit: usize,
-) -> Result<usize, GenerationError> {
+fn validate_image_data_url(value: &str) -> Result<(), GenerationError> {
     let (metadata, payload) = value
         .split_once(',')
         .ok_or(GenerationError::InvalidRequest)?;
-    if !metadata.starts_with(mime_prefix)
-        || !metadata.ends_with(";base64")
-        || payload.is_empty()
-        || payload.len() > encoded_limit(decoded_limit)
+    if !metadata.starts_with("data:image/") || !metadata.ends_with(";base64") || payload.is_empty()
     {
         return Err(GenerationError::InvalidRequest);
     }
-    Ok(payload.len().saturating_add(3) / 4 * 3)
+    Ok(())
 }
 
 fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<(), GenerationError> {
-    let mut total_parts = 0;
-    let mut images = 0;
-    let mut total_bytes = 0usize;
     for part in messages
         .iter()
         .filter_map(|message| match &message.content {
@@ -1033,22 +1010,8 @@ fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<(), Generatio
         })
         .flatten()
     {
-        let bytes = match part {
-            OpenAiContentPart::Text { .. } => continue,
-            OpenAiContentPart::ImageUrl { image_url } => {
-                images += 1;
-                data_url_size(&image_url.url, "data:image/", MAX_IMAGE_BYTES)?
-            }
-        };
-        total_parts += 1;
-        total_bytes = total_bytes
-            .checked_add(bytes)
-            .ok_or(GenerationError::InvalidRequest)?;
-        if total_parts > MAX_MEDIA_PARTS
-            || images > MAX_IMAGE_PARTS
-            || total_bytes > MAX_TOTAL_MEDIA_BYTES
-        {
-            return Err(GenerationError::InvalidRequest);
+        if let OpenAiContentPart::ImageUrl { image_url } = part {
+            validate_image_data_url(&image_url.url)?;
         }
     }
     Ok(())

@@ -58,7 +58,7 @@ type httpModelGroupDrainClient struct {
 }
 
 func newHTTPModelGroupDrainClient() ModelGroupDrainClient {
-	return &httpModelGroupDrainClient{client: &http.Client{Timeout: time.Second}}
+	return &httpModelGroupDrainClient{client: &http.Client{}}
 }
 
 func (client *httpModelGroupDrainClient) FrontendGeneration(ctx context.Context, endpoint string) (uint64, error) {

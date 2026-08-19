@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -55,6 +56,17 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (*corev1.Con
 	masterName, configName, pvcName, serviceName := kvMasterNames(service)
 	labels := map[string]string{kvServiceLabel: kvLabelValue(service.Name), "inference.foretoken.io/component": "mooncake-master"}
 	rpcPort, metadataPort, metricsPort := masterPorts(service.Spec.Master)
+	snapshotIntervalSeconds, err := mooncakeSnapshotIntervalSeconds(service.Spec.Master.SnapshotInterval)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	snapshotRetentionCount := service.Spec.Master.SnapshotRetentionCount
+	if snapshotRetentionCount == 0 {
+		snapshotRetentionCount = 3
+	}
+	if snapshotRetentionCount < 1 {
+		return nil, nil, nil, nil, nil, fmt.Errorf("master.snapshotRetentionCount must be positive")
+	}
 	requesterConfig, err := desiredKVRequesterConfig(service, serviceName, rpcPort)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
@@ -62,7 +74,7 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (*corev1.Con
 	config := &corev1.ConfigMap{
 		TypeMeta:   metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "ConfigMap"},
 		ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: service.Namespace, Labels: labels},
-		Data:       map[string]string{masterConfigKey: mooncakeMasterConfig(rpcPort, metadataPort, metricsPort)},
+		Data:       map[string]string{masterConfigKey: mooncakeMasterConfig(rpcPort, metadataPort, metricsPort, snapshotIntervalSeconds, snapshotRetentionCount)},
 	}
 	volumes := []corev1.Volume{{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
 	if service.Spec.Master.Snapshot != nil {
@@ -152,10 +164,21 @@ func masterPorts(master inferencev1alpha1.KVMasterSpec) (int32, int32, int32) {
 	return rpc, metadata, metrics
 }
 
-func mooncakeMasterConfig(rpcPort, metadataPort, metricsPort int32) string {
-	// Field names follow llm-d v0.8.0's Master ConfigMap. The fixed provider
-	// snapshot interval and retention count are not Foretoken TTL or eviction.
-	return fmt.Sprintf("rpc_port: %d\nrpc_address: \"0.0.0.0\"\nenable_metric_reporting: true\nmetrics_port: %d\nenable_http_metadata_server: true\nhttp_metadata_server_host: \"0.0.0.0\"\nhttp_metadata_server_port: %d\ncluster_id: \"mooncake_cluster\"\nroot_fs_dir: \"/data/mooncake-offload\"\nenable_snapshot: true\nenable_snapshot_restore: true\nsnapshot_interval_seconds: 300\nsnapshot_retention_count: 3\nsnapshot_object_store_type: \"local\"\n", rpcPort, metricsPort, metadataPort)
+func mooncakeSnapshotIntervalSeconds(value inferencev1alpha1.Duration) (int64, error) {
+	if value == "" {
+		value = "60s"
+	}
+	interval, err := time.ParseDuration(string(value))
+	if err != nil || interval <= 0 || interval%time.Second != 0 {
+		return 0, fmt.Errorf("master.snapshotInterval must be a positive whole number of seconds")
+	}
+	return int64(interval / time.Second), nil
+}
+
+func mooncakeMasterConfig(rpcPort, metadataPort, metricsPort int32, snapshotIntervalSeconds int64, snapshotRetentionCount int32) string {
+	// Field names follow llm-d v0.8.0's Master ConfigMap. Snapshot retention is
+	// provider history, not a Foretoken cache TTL or eviction policy.
+	return fmt.Sprintf("rpc_port: %d\nrpc_address: \"0.0.0.0\"\nenable_metric_reporting: true\nmetrics_port: %d\nenable_http_metadata_server: true\nhttp_metadata_server_host: \"0.0.0.0\"\nhttp_metadata_server_port: %d\ncluster_id: \"mooncake_cluster\"\nroot_fs_dir: \"/data/mooncake-offload\"\nenable_snapshot: true\nenable_snapshot_restore: true\nsnapshot_interval_seconds: %d\nsnapshot_retention_count: %d\nsnapshot_object_store_type: \"local\"\n", rpcPort, metricsPort, metadataPort, snapshotIntervalSeconds, snapshotRetentionCount)
 }
 
 func tcpProbe(port string, periodSeconds int32) *corev1.Probe {

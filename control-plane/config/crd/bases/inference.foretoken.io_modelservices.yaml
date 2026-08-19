@@ -70,8 +70,9 @@ spec:
                         default: step
                         description: AutoscalingAdjustmentAlgorithm selects how a
                           desired capacity is adjusted before resolution.
-                        maxLength: 63
-                        pattern: ^[a-z][a-z0-9_]*$
+                        enum:
+                        - direct
+                        - step
                         type: string
                       maxScaleDownGroups:
                         default: 1
@@ -92,8 +93,10 @@ spec:
                     default: manual
                     description: AutoscalingAlgorithm selects a statically linked
                       autoscaling decision algorithm.
-                    maxLength: 63
-                    pattern: ^[a-z][a-z0-9_]*$
+                    enum:
+                    - manual
+                    - queue
+                    - threshold
                     type: string
                   maxGroups:
                     description: MaxGroups is required for automatic autoscaling.
@@ -136,8 +139,9 @@ spec:
                         default: periodic
                         description: AutoscalingTriggerAlgorithm selects when an automatic
                           scaling algorithm is evaluated.
-                        maxLength: 63
-                        pattern: ^[a-z][a-z0-9_]*$
+                        enum:
+                        - periodic
+                        - watermark
                         type: string
                       highQueuePerRoutableGroup:
                         default: 1
@@ -200,8 +204,9 @@ spec:
                 items:
                   description: |-
                     BackendArg is one long-form CLI argument passed to the inference engine.
-                    The vLLM compiler checks the allowed arguments and whether they require values;
-                    this schema rejects spaces, aliases, and positional arguments.
+                    The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
+                    max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and
+                    disable-log-stats. This schema rejects spaces, aliases, and positional arguments.
                   maxLength: 4096
                   minLength: 3
                   pattern: ^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$

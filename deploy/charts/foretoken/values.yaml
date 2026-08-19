@@ -11,6 +11,13 @@ image:
 
 imagePullSecrets: []
 
+controller:
+  replicas: 1
+  autoscalingTelemetry:
+    collectionTimeout: 3s
+    requestTimeout: 1s
+    concurrency: 8
+
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []
