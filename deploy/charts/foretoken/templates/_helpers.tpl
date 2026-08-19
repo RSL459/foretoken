@@ -47,12 +47,12 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- if eq (trim .Values.frontend.image) "" -}}
 {{- fail "frontend.image is required when frontend.enabled=true" -}}
 {{- end -}}
-{{- if eq .Values.frontend.mode "production" -}}
+{{- if eq .Values.frontend.mode "gateway" -}}
 {{- if eq (trim .Values.frontend.gateway.name) "" -}}
-{{- fail "frontend.gateway.name is required in production mode" -}}
+{{- fail "frontend.gateway.name is required in gateway mode" -}}
 {{- end -}}
 {{- if eq (trim .Values.frontend.gateway.namespace) "" -}}
-{{- fail "frontend.gateway.namespace is required in production mode" -}}
+{{- fail "frontend.gateway.namespace is required in gateway mode" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

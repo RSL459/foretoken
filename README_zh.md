@@ -31,11 +31,13 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-### 本地模式
+两种访问模式使用相同的部署、等待和卸载步骤，只需在安装 Foretoken 时选择一种模式。
 
-#### 1. 安装 Foretoken
+### 1. 安装 Foretoken
 
-本地模式无需安装或准备集群 Gateway，frontend 只通过集群内 Service 提供访问：
+#### 本地模式
+
+本地模式不需要集群 Gateway：
 
 ```bash
 helm upgrade --install foretoken \
@@ -47,7 +49,32 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-#### 2. 部署模型服务
+#### Gateway 模式
+
+Gateway 模式使用集群中已有的 Gateway API `Gateway`：
+
+```bash
+helm upgrade --install foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=gateway \
+  --set frontend.gateway.name=inference-gateway \
+  --set frontend.gateway.namespace=gateway-system \
+  --wait
+```
+
+应用 frontend 配置前，填写对外域名：
+
+```yaml
+spec:
+  hostname: foretoken.example.com
+```
+
+Gateway 必须允许 Foretoken frontend 所在 namespace 创建的 `HTTPRoute` 接入。DNS 和 TLS 继续由平台 Gateway 管理。
+
+### 2. 部署模型服务
 
 `examples/quickstart/kustomization.yaml` 是部署入口，统一组织前端服务和模型服务：
 
@@ -65,7 +92,7 @@ kubectl apply --server-side \
   -k "${FORETOKEN_SERVING_DIR}"
 ```
 
-#### 3. 等待服务就绪
+### 3. 等待服务就绪
 
 ```bash
 FORETOKEN_NAMESPACE=foretoken-demo
@@ -79,9 +106,11 @@ kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
     -f -
 ```
 
-#### 4. 发送生成请求进行测试
+### 4. 发送生成请求进行测试
 
-在源码目录运行本地访问命令。它会等待 frontend 就绪，并在 Pod 替换或连接中断后重新建立转发：
+#### 本地模式
+
+在源码目录运行本地访问命令：
 
 ```bash
 ./scripts/foretoken-port-forward \
@@ -99,32 +128,16 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
 
-本地访问命令运行期间，可以通过本机端口访问 frontend。
+#### Gateway 模式
 
-### 生产模式
-
-生产模式会为已有的 Gateway API `Gateway` 创建 `HTTPRoute`。安装时配置 Gateway，并为每个 `FrontendService` 设置 `spec.hostname`：
+通过 Gateway 配置的域名发送请求：
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=production \
-  --set frontend.gateway.name=inference-gateway \
-  --set frontend.gateway.namespace=gateway-system \
-  --wait
+curl --fail-with-body --no-buffer \
+  https://foretoken.example.com/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
-
-在 frontend 配置中填写对外域名：
-
-```yaml
-spec:
-  hostname: foretoken.example.com
-```
-
-Gateway 必须允许 Foretoken frontend 所在 namespace 创建的 `HTTPRoute` 接入。DNS 和 TLS 继续由平台 Gateway 管理。
 
 ## 停止与卸载
 

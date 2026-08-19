@@ -29,8 +29,8 @@ import (
 )
 
 const (
-	frontendModeLocal      = "local"
-	frontendModeProduction = "production"
+	frontendModeLocal   = "local"
+	frontendModeGateway = "gateway"
 )
 
 func main() {
@@ -82,7 +82,7 @@ func main() {
 	flag.DurationVar(&autoscalingTelemetryRequestTimeout, "autoscaling-telemetry-request-timeout", time.Second, "Timeout for one autoscaling telemetry HTTP request.")
 	flag.IntVar(&autoscalingTelemetryConcurrency, "autoscaling-telemetry-concurrency", 8, "Maximum concurrent autoscaling telemetry HTTP requests per source type.")
 	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload reconciliation.")
-	flag.StringVar(&frontendMode, "frontend-mode", frontendModeLocal, "Frontend exposure mode: local or production.")
+	flag.StringVar(&frontendMode, "frontend-mode", frontendModeLocal, "Frontend access mode: local or gateway.")
 	flag.StringVar(&frontendImage, "frontend-image", "", "Frontend runtime image.")
 	flag.IntVar(&frontendPort, "frontend-port", 8080, "Frontend runtime HTTP port.")
 	flag.StringVar(&frontendGatewayName, "frontend-gateway-name", "", "Platform Gateway name used by frontend HTTPRoutes.")
@@ -137,8 +137,8 @@ func main() {
 		ctrl.Log.Error(errors.New("autoscaling telemetry timeouts and concurrency must be positive"), "invalid autoscaling telemetry settings")
 		os.Exit(1)
 	}
-	if frontendMode != frontendModeLocal && frontendMode != frontendModeProduction {
-		ctrl.Log.Error(errors.New("frontend-mode must be local or production"), "invalid frontend profile")
+	if frontendMode != frontendModeLocal && frontendMode != frontendModeGateway {
+		ctrl.Log.Error(errors.New("frontend-mode must be local or gateway"), "invalid frontend profile")
 		os.Exit(1)
 	}
 	if vllmPDProfileName != "" && (vllmPDBootstrapPort < 1 || vllmPDBootstrapPort > 65535 || vllmPDAbortRequestTimeoutSeconds < 1 || int64(vllmPDAbortRequestTimeoutSeconds) > int64(1<<31-1) || vllmPDRDMAResourceCount < 1 || int64(vllmPDRDMAResourceCount) > int64(1<<31-1)) {
@@ -179,7 +179,7 @@ func main() {
 	utilruntime.Must(gatewayv1.Install(scheme))
 
 	restConfig := ctrl.GetConfigOrDie()
-	if frontendEnabled && frontendMode == frontendModeProduction {
+	if frontendEnabled && frontendMode == frontendModeGateway {
 		discoveryClient, err := discovery.NewDiscoveryClientForConfig(restConfig)
 		if err != nil {
 			ctrl.Log.Error(err, "unable to create Gateway API discovery client")
@@ -222,7 +222,7 @@ func main() {
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
 	if frontendEnabled {
 		var gateway *controllers.GatewayParent
-		if frontendMode == frontendModeProduction {
+		if frontendMode == frontendModeGateway {
 			gateway = &controllers.GatewayParent{
 				Name:        frontendGatewayName,
 				Namespace:   frontendGatewayNamespace,

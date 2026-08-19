@@ -145,7 +145,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		return deployment, service, nil, nil
 	}
 	if frontend.Spec.Hostname == "" {
-		return nil, nil, nil, fmt.Errorf("frontend hostname is required in production mode")
+		return nil, nil, nil, fmt.Errorf("frontend hostname is required in gateway mode")
 	}
 	return deployment, service, desiredHTTPRoute(frontend, profile, requestTimeout), nil
 }

@@ -31,11 +31,13 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-### Local Mode
+The deployment and cleanup steps are the same in both access modes. Choose one mode when installing Foretoken.
 
-#### 1. Install Foretoken
+### 1. Install Foretoken
 
-Local mode runs the frontend without installing or requiring a cluster Gateway:
+#### Local mode
+
+Local mode needs no cluster Gateway:
 
 ```bash
 helm upgrade --install foretoken \
@@ -47,7 +49,32 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-#### 2. Deploy a model service
+#### Gateway mode
+
+Gateway mode uses an existing Gateway API `Gateway`:
+
+```bash
+helm upgrade --install foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=gateway \
+  --set frontend.gateway.name=inference-gateway \
+  --set frontend.gateway.namespace=gateway-system \
+  --wait
+```
+
+Set the public hostname in the frontend manifest before applying it:
+
+```yaml
+spec:
+  hostname: foretoken.example.com
+```
+
+The Gateway must allow `HTTPRoute` resources from the namespaces where Foretoken frontends run. DNS and TLS remain owned by the platform Gateway.
+
+### 2. Deploy a model service
 
 `examples/quickstart/kustomization.yaml` is the deployment entrypoint. It organizes the frontend and model services, while the Operator creates and manages the underlying resources.
 
@@ -65,7 +92,7 @@ kubectl apply --server-side \
   -k "${FORETOKEN_SERVING_DIR}"
 ```
 
-#### 3. Wait for serving to become ready
+### 3. Wait for serving to become ready
 
 ```bash
 FORETOKEN_NAMESPACE=foretoken-demo
@@ -79,9 +106,11 @@ kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
     -f -
 ```
 
-#### 4. Send a generation request
+### 4. Send a generation request
 
-Start the local access helper from the source checkout. It waits for the frontend and reconnects after Pod replacement or transport interruption:
+#### Local mode
+
+Start the local access helper from the source checkout:
 
 ```bash
 ./scripts/foretoken-port-forward \
@@ -99,32 +128,16 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-Local mode is accessible through the localhost port-forward while the helper is running.
+#### Gateway mode
 
-### Production Mode
-
-Production mode creates an `HTTPRoute` for an existing Gateway API `Gateway`. Configure the Gateway and set `spec.hostname` on each `FrontendService`:
+Send the request through the hostname configured on the Gateway:
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=production \
-  --set frontend.gateway.name=inference-gateway \
-  --set frontend.gateway.namespace=gateway-system \
-  --wait
+curl --fail-with-body --no-buffer \
+  https://foretoken.example.com/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
-
-Set the public hostname in the frontend manifest:
-
-```yaml
-spec:
-  hostname: foretoken.example.com
-```
-
-The Gateway must allow `HTTPRoute` resources from the namespaces where Foretoken frontends run. DNS and TLS remain owned by the platform Gateway.
 
 ## Stop and Uninstall
 

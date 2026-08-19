@@ -55,9 +55,9 @@ Local mode creates no cluster-external endpoint. Use the repository helper to op
 
 The frontend is then available at `http://127.0.0.1:8080`.
 
-### Production mode
+### Gateway mode
 
-Production mode exposes the frontend through an existing Gateway API `Gateway`. Foretoken creates the frontend's `HTTPRoute`, while the platform Gateway continues to own DNS, TLS, authentication, and other ingress policies.
+Gateway mode exposes the frontend through an existing Gateway API `Gateway`. Foretoken creates the frontend's `HTTPRoute`, while the platform Gateway continues to own DNS, TLS, authentication, and other ingress policies.
 
 ## HTTP APIs
 

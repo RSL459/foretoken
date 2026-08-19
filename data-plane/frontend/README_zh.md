@@ -55,9 +55,9 @@ foretoken-frontend
 
 随后通过 `http://127.0.0.1:8080` 访问 frontend。
 
-### 生产模式
+### Gateway 模式
 
-生产模式通过平台已有的 Gateway API `Gateway` 对外提供服务。Foretoken 为 frontend 创建 `HTTPRoute`，域名、TLS、认证和其他入口策略继续由平台 Gateway 管理。
+Gateway 模式通过平台已有的 Gateway API `Gateway` 对外提供服务。Foretoken 为 frontend 创建 `HTTPRoute`，域名、TLS、认证和其他入口策略继续由平台 Gateway 管理。
 
 ## HTTP 接口
 
