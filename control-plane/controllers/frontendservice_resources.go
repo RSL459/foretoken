@@ -134,11 +134,15 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			},
 		},
 	}
+	serviceType := corev1.ServiceTypeClusterIP
+	if profile.Gateway == nil {
+		serviceType = corev1.ServiceTypeLoadBalancer
+	}
 	service := &corev1.Service{
 		TypeMeta:   metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"},
 		ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels},
 		Spec: corev1.ServiceSpec{
-			Type:     corev1.ServiceTypeClusterIP,
+			Type:     serviceType,
 			Selector: labels,
 			Ports:    []corev1.ServicePort{{Name: "http", Port: profile.Port, TargetPort: intstr.FromString("http"), Protocol: corev1.ProtocolTCP}},
 		},

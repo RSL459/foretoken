@@ -25,7 +25,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 ```text
 Client
   ↓
-Gateway or local port forwarding
+LoadBalancer or Gateway
   ↓
 foretoken-frontend
   ├─ validates and prepares the request
@@ -44,16 +44,7 @@ When model instances or routes change, the frontend activates the new configurat
 
 ### Local mode
 
-Use the repository helper to access the frontend from your workstation and reconnect after Pod replacement or transport interruption:
-
-```bash
-./scripts/foretoken-port-forward \
-  --namespace foretoken-demo \
-  --frontend quickstart-frontend \
-  --local-port 8080
-```
-
-The frontend is then available at `http://127.0.0.1:8080`.
+Local mode obtains an address from a `LoadBalancer` Service. See the repository Quick Start for the access command.
 
 ### Gateway mode
 

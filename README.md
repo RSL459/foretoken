@@ -37,7 +37,7 @@ The deployment and cleanup steps are the same in both access modes. Choose one m
 
 #### Local mode
 
-Local mode is intended for quick evaluation from your workstation:
+Local mode obtains an address from a `LoadBalancer` Service, so the cluster must support that Service type:
 
 ```bash
 helm upgrade --install foretoken \
@@ -112,20 +112,20 @@ kubectl wait --for=condition=Ready \
 
 #### Local mode
 
-Start the local access helper from the source checkout:
+Read the frontend address and send the request:
 
 ```bash
-./scripts/foretoken-port-forward \
+kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' \
   --namespace foretoken-demo \
-  --frontend quickstart-frontend \
-  --local-port 8080
-```
+  --timeout=5m \
+  service/quickstart-frontend
 
-Keep the helper running and send the request from another terminal:
+FORETOKEN_FRONTEND_ADDRESS=$(kubectl get service quickstart-frontend \
+  --namespace foretoken-demo \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')
 
-```bash
 curl --fail-with-body --no-buffer \
-  http://127.0.0.1:8080/v1/chat/completions \
+  "http://${FORETOKEN_FRONTEND_ADDRESS}:8080/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```

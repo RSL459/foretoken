@@ -37,7 +37,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 #### 本地模式
 
-本地模式适合在本机快速体验：
+本地模式通过 `LoadBalancer` 提供访问地址，集群需要支持 `LoadBalancer` Service：
 
 ```bash
 helm upgrade --install foretoken \
@@ -112,20 +112,20 @@ kubectl wait --for=condition=Ready \
 
 #### 本地模式
 
-在源码目录运行本地访问命令：
+读取前端服务的访问地址并发送请求：
 
 ```bash
-./scripts/foretoken-port-forward \
+kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' \
   --namespace foretoken-demo \
-  --frontend quickstart-frontend \
-  --local-port 8080
-```
+  --timeout=5m \
+  service/quickstart-frontend
 
-保持该命令运行，并在另一个终端发送请求：
+FORETOKEN_FRONTEND_ADDRESS=$(kubectl get service quickstart-frontend \
+  --namespace foretoken-demo \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')
 
-```bash
 curl --fail-with-body --no-buffer \
-  http://127.0.0.1:8080/v1/chat/completions \
+  "http://${FORETOKEN_FRONTEND_ADDRESS}:8080/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```

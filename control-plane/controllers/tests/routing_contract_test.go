@@ -131,8 +131,9 @@ func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 	if err := c.Get(ctx, client.ObjectKeyFromObject(staleRoute), new(gatewayv1.HTTPRoute)); !apierrors.IsNotFound(err) {
 		t.Fatalf("stale local HTTPRoute lookup error = %v", err)
 	}
-	if err := c.Get(ctx, request.NamespacedName, new(corev1.Service)); err != nil {
-		t.Fatalf("local frontend Service: %v", err)
+	service := get(t, ctx, c, request.NamespacedName, new(corev1.Service))
+	if service.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		t.Fatalf("local frontend Service type = %q", service.Spec.Type)
 	}
 	deployment := get(t, ctx, c, request.NamespacedName, new(appsv1.Deployment))
 	deployment.Status.ObservedGeneration = deployment.Generation

@@ -25,7 +25,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 ```text
 客户端
   ↓
-Gateway 或本地端口转发
+LoadBalancer 或网关
   ↓
 foretoken-frontend
   ├─ 校验并转换请求
@@ -44,16 +44,7 @@ foretoken-frontend
 
 ### 本地模式
 
-使用仓库提供的命令从本机访问前端服务，并在 Pod 替换或连接中断后自动重连：
-
-```bash
-./scripts/foretoken-port-forward \
-  --namespace foretoken-demo \
-  --frontend quickstart-frontend \
-  --local-port 8080
-```
-
-随后通过 `http://127.0.0.1:8080` 访问前端服务。
+本地模式通过 `LoadBalancer` Service 提供访问地址。具体访问命令见仓库根目录的 Quick Start。
 
 ### 网关模式
 
