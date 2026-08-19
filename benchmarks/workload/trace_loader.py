@@ -17,9 +17,13 @@ class TraceRequest:
     """One timestamped chat request ready for replay."""
 
     timestamp_s: float
-    conversation_id: str
-    messages: list[dict[str, str]]
     source_index: int
+    messages: list[dict[str, Any]] | None = None
+    prompt: str | None = None
+    tools: list[dict[str, Any]] | None = None
+    input_length: int | None = None
+    conversation_id: str | None = None
+    payload_source: str = "trace-native"
 
 
 class StudyChatAdapter:
@@ -75,18 +79,74 @@ class StudyChatAdapter:
                 f"{path}:{line_no}"
             )
 
+        input_length = payload.get("input_length")
+        if input_length is not None:
+            try:
+                input_length = int(input_length)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"Invalid input_length at {path}:{line_no}"
+                ) from error
+            if input_length <= 0:
+                raise ValueError(f"Invalid input_length at {path}:{line_no}")
+
         return TraceRequest(
             timestamp_s=timestamp_ms / 1000.0,
-            conversation_id=str(chat_id),
-            messages=list(messages),
             source_index=source_index,
+            messages=list(messages),
+            input_length=input_length,
+            conversation_id=str(chat_id),
+        )
+
+
+class MooncakeAdapter:
+    """Convert Mooncake JSONL rows into timestamped trace events."""
+
+    @staticmethod
+    def parse(
+        payload: object,
+        *,
+        path: Path,
+        line_no: int,
+        source_index: int,
+    ) -> TraceRequest:
+        if not isinstance(payload, dict):
+            raise ValueError(f"Expected an object at {path}:{line_no}")
+        if "timestamp" not in payload or "input_length" not in payload:
+            raise ValueError(
+                f"Mooncake trace needs timestamp and input_length at "
+                f"{path}:{line_no}"
+            )
+        try:
+            timestamp_ms = float(payload["timestamp"])
+            input_length = int(payload["input_length"])
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"Invalid timestamp or input_length at {path}:{line_no}"
+            ) from error
+        if not math.isfinite(timestamp_ms) or input_length <= 0:
+            raise ValueError(
+                f"Invalid timestamp or input_length at {path}:{line_no}"
+            )
+
+        conversation_id = payload.get("chatId")
+        return TraceRequest(
+            timestamp_s=timestamp_ms / 1000.0,
+            source_index=source_index,
+            input_length=input_length,
+            conversation_id=(
+                str(conversation_id) if conversation_id is not None else None
+            ),
         )
 
 
 class TraceLoader:
     """Load and stably order requests from a supported trace format."""
 
-    _ADAPTERS = {"studychat": StudyChatAdapter}
+    _ADAPTERS = {
+        "studychat": StudyChatAdapter,
+        "mooncake": MooncakeAdapter,
+    }
 
     def __init__(self, path: str | Path, trace_format: str):
         self.path = Path(path)
@@ -103,7 +163,12 @@ class TraceLoader:
     def supported_formats(cls) -> tuple[str, ...]:
         return tuple(cls._ADAPTERS)
 
-    def iter_requests(self) -> Iterator[TraceRequest]:
+    def load_window(
+        self,
+        *,
+        start: float = 0.0,
+        duration: float | None = None,
+    ) -> tuple[float, list[TraceRequest]]:
         if not self.path.is_file():
             raise FileNotFoundError(f"Trace JSONL not found: {self.path}")
 
@@ -129,4 +194,31 @@ class TraceLoader:
                 )
                 source_index += 1
 
-        yield from sorted(requests, key=lambda request: request.timestamp_s)
+        requests.sort(key=lambda request: request.timestamp_s)
+        if not requests:
+            raise ValueError("Trace contains no requests")
+
+        first_timestamp = requests[0].timestamp_s
+        window_start = first_timestamp + start
+        window_end = (
+            None if duration is None else window_start + duration
+        )
+        selected = [
+            request
+            for request in requests
+            if request.timestamp_s >= window_start
+            and (window_end is None or request.timestamp_s < window_end)
+        ]
+        if not selected:
+            raise ValueError("Trace window contains no requests")
+        return window_start, selected
+
+    def iter_requests(
+        self,
+        *,
+        start: float = 0.0,
+        duration: float | None = None,
+    ) -> Iterator[TraceRequest]:
+        """Yield requests selected from a trace time window."""
+        _, requests = self.load_window(start=start, duration=duration)
+        yield from requests

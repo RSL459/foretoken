@@ -72,12 +72,11 @@ foretoken bench \
   --output local,wandb
 ```
 
-Timestamped conversation trace. `studychat` is the currently supported trace
-format. Each StudyChat JSONL row contains a Unix millisecond `timestamp`,
-`chatId`, and complete recorded `messages` history. The loader converts
-timestamps to seconds and stably sorts the file before replay. The final
-message must be a user message. The record's `response` is ignored;
-target-server output is never added to a later request.
+Trace supplies arrival timing; payload can come from trace-native messages,
+random, a dataset, or a fixed prompt. Supported formats are `studychat`
+(`timestamp`, `chatId`, `messages`) and `mooncake` (`timestamp`, `input_length`).
+
+Trace-native (StudyChat):
 
 ```bash
 foretoken bench \
@@ -85,14 +84,55 @@ foretoken bench \
   --model Qwen3.6-27B \
   --trace /path/conversations.jsonl \
   --trace-format studychat \
-  --trace-time-scale 10000 \
+  --trace-start 600 \
+  --trace-duration 300 \
   --trace-max-concurrency 256
 ```
 
-`--trace-time-scale 1` replays the original timing. A larger value compresses
-the trace in time. Trace timing is independent of `--rate`; `--parallel` and
-`--number` do not apply to trace replay. `--trace-max-concurrency` is optional
-and only bounds active requests; it does not alter the timestamp schedule.
+Trace replays original timestamps. The window is `[first + start, first +
+start + duration)`; its start is benchmark time zero. Omit duration to replay
+through the end. `--trace-max-concurrency` limits active requests.
+
+Trace + random:
+
+Trace + random uses trace timestamps for request timing and generates random
+request content. When available, each event's `input_length` is used as the
+generated prompt length.
+For Mooncake, replay uses `timestamp` and `input_length`; `output_length` and
+`hash_ids` are not used.
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --trace /path/mooncake-trace.jsonl \
+  --trace-format mooncake \
+  --dataset random \
+  --tokenizer-path /path/tokenizer \
+  --trace-max-concurrency 256
+```
+
+Trace + dataset:
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --trace /path/mooncake-trace.jsonl \
+  --trace-format mooncake \
+  --dataset /path/payloads.jsonl
+```
+
+Trace + prompt:
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --trace /path/mooncake-trace.jsonl \
+  --trace-format mooncake \
+  --prompt "Reply with exactly: OK"
+```
 
 Random synthetic prompts (tokenizer required):
 

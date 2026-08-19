@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,12 @@ def resolve_tokenizer_path(tokenizer_path: str) -> str:
 
 
 def _build_perf_arguments(
-    config: BenchConfig, *, tokenizer_path: str
+    config: BenchConfig,
+    *,
+    tokenizer_path: str,
+    number: int,
+    min_prompt_length: int,
+    max_prompt_length: int,
 ) -> Arguments:
     """Map ``BenchConfig`` to EvalScope ``Arguments`` for random generation."""
     dataset = config.dataset
@@ -63,12 +69,12 @@ def _build_perf_arguments(
         api_key=config.endpoint.api_key,
         dataset="random",
         tokenizer_path=tokenizer_path,
-        number=config.load.number[0],
+        number=number,
         parallel=config.load.parallel[0],
         rate=float(config.load.rate[0]),
         open_loop=config.load.open_loop,
-        min_prompt_length=dataset.min_prompt_length,
-        max_prompt_length=dataset.max_prompt_length,
+        min_prompt_length=min_prompt_length,
+        max_prompt_length=max_prompt_length,
         prefix_length=dataset.prefix_length,
         dataset_offset=dataset.dataset_offset,
         apply_chat_template=apply_chat,
@@ -97,8 +103,41 @@ def _to_request(message: Any) -> dict[str, Any]:
     raise TypeError(f"Unexpected message type: {type(message)!r}")
 
 
-def generate_random_requests(config: BenchConfig) -> list[dict[str, Any]]:
-    """Build ``number`` random requests from the benchmark config."""
+def _generate_random_requests(
+    config: BenchConfig,
+    *,
+    tokenizer_path: str,
+    number: int,
+    min_prompt_length: int,
+    max_prompt_length: int,
+) -> list[dict[str, Any]]:
+    arguments = _build_perf_arguments(
+        config,
+        tokenizer_path=tokenizer_path,
+        number=number,
+        min_prompt_length=min_prompt_length,
+        max_prompt_length=max_prompt_length,
+    )
+    plugin = RandomDatasetPlugin(arguments)
+    requests: list[dict[str, Any]] = []
+    for message in plugin.build_messages():
+        requests.append(_to_request(message))
+        if len(requests) >= number:
+            break
+    if len(requests) < number:
+        raise RuntimeError(
+            f"Random dataset yielded {len(requests)} messages, need {number}"
+        )
+    return requests
+
+
+def generate_random_requests(
+    config: BenchConfig,
+    *,
+    number: int | None = None,
+    input_lengths: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Build random requests, optionally matching per-request input lengths."""
     dataset = config.dataset
     if not dataset.tokenizer_path:
         raise ValueError(
@@ -106,18 +145,33 @@ def generate_random_requests(config: BenchConfig) -> list[dict[str, Any]]:
         )
 
     tokenizer_path = resolve_tokenizer_path(dataset.tokenizer_path)
-    arguments = _build_perf_arguments(config, tokenizer_path=tokenizer_path)
-    plugin = RandomDatasetPlugin(arguments)
-
-    number = config.load.number[0]
-    requests: list[dict[str, Any]] = []
-    for message in plugin.build_messages():
-        requests.append(_to_request(message))
-        if len(requests) >= number:
-            break
-
-    if len(requests) < number:
-        raise RuntimeError(
-            f"Random dataset yielded {len(requests)} messages, need {number}"
+    if input_lengths is None:
+        count = config.load.number[0] if number is None else number
+        return _generate_random_requests(
+            config,
+            tokenizer_path=tokenizer_path,
+            number=count,
+            min_prompt_length=dataset.min_prompt_length,
+            max_prompt_length=dataset.max_prompt_length,
         )
-    return requests
+
+    if number is not None and number != len(input_lengths):
+        raise ValueError("number must match input_lengths")
+    positions: dict[int, list[int]] = defaultdict(list)
+    for index, input_length in enumerate(input_lengths):
+        positions[input_length].append(index)
+
+    requests: list[dict[str, Any] | None] = [None] * len(input_lengths)
+    for input_length, indexes in positions.items():
+        generated = _generate_random_requests(
+            config,
+            tokenizer_path=tokenizer_path,
+            number=len(indexes),
+            min_prompt_length=input_length,
+            max_prompt_length=input_length,
+        )
+        for index, request in zip(indexes, generated):
+            requests[index] = request
+    if any(request is None for request in requests):
+        raise RuntimeError("Random dataset generation returned missing requests")
+    return [request for request in requests if request is not None]

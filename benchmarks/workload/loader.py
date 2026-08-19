@@ -142,13 +142,9 @@ def load_requests(
         source = dataset.dataset[0]
 
     if source == "random":
-        if number is not None and number != config.load.number[0]:
-            raise ValueError(
-                "number override is not supported for --dataset random"
-            )
         from benchmarks.workload.random_dataset import generate_random_requests
 
-        return generate_random_requests(config)
+        return generate_random_requests(config, number=count)
 
     path = Path(source)
     if path.is_file():
