@@ -7,6 +7,7 @@ members = [
     "frontend/src/backend-registry",
     "frontend/src/chat",
     "frontend/src/cmd",
+    "frontend/src/engine-core-client",
     "frontend/src/kv-indexer",
     "frontend/src/llm-facade",
     "frontend/src/metrics",

@@ -16,11 +16,14 @@ use std::sync::Arc;
 use crate::registry::{Component, RouteTable};
 use crate::snapshot::{ServingSnapshot, SnapshotError};
 
-pub(crate) fn kv_runtime_config(
+pub(crate) fn project_kv_runtime(
     snapshot: &ServingSnapshot,
 ) -> Result<KvRuntimeConfig, SnapshotError> {
     let mut sources = BTreeMap::new();
     let mut bindings = BTreeMap::new();
+
+    // Aggregate and prefill runtimes are the only components that publish prompt-side
+    // KV events. Each data-parallel rank gets an independent source and route binding.
     let mut add_route = |route_target_id: &RouteTargetId,
                          endpoint: &str,
                          model_revision: &str,
@@ -115,9 +118,11 @@ fn epd_pipeline_scope_target(service_uid: String) -> ScalingTarget {
     }
 }
 
-pub(crate) fn build(
+pub(crate) fn project_registry(
     snapshot: ServingSnapshot,
 ) -> Result<(RouteTable, BTreeMap<RouteTargetId, Component>), SnapshotError> {
+    // Validate snapshot-wide identity and admission ownership before consuming topology
+    // vectors so every emitted route receives one unambiguous scaling target set.
     if snapshot.version == 0 {
         return Err(SnapshotError::InvalidVersion);
     }
@@ -147,6 +152,9 @@ pub(crate) fn build(
     let mut components = BTreeMap::new();
     let mut aggregate_models = BTreeSet::new();
     let mut pd_models = BTreeSet::new();
+
+    // Aggregate groups map one physical model-server endpoint directly to one routing
+    // target and one reusable HTTP facade.
     for group in snapshot.groups {
         if group.service_uid.is_empty()
             || group.pool_uid.is_empty()
@@ -190,6 +198,8 @@ pub(crate) fn build(
             data_parallel_size: group.data_parallel_size,
         });
     }
+    // P/D components are admitted independently by Pool, but routing is valid only when
+    // every component belongs to the explicit prefill/decode membership of its pipeline.
     let mut pipeline_scope_members =
         BTreeMap::<String, (BTreeSet<RouteTargetId>, BTreeSet<RouteTargetId>)>::new();
     for pipeline_scope in &snapshot.pd_pipeline_scopes {
@@ -303,6 +313,8 @@ pub(crate) fn build(
         }
     }
 
+    // E/P/D projection first assembles complete encoder, prefill, and decode triplets.
+    // Cross-role artifact and transport checks run before any triplet becomes routable.
     let mut epd_pipeline_scopes = BTreeMap::new();
     for pipeline_scope in &snapshot.epd_pipeline_scopes {
         if pipeline_scope.pipeline_scope_id.is_empty()
@@ -367,6 +379,8 @@ pub(crate) fn build(
                 pipeline_scope_id.clone(),
             ));
         };
+        // A pipeline is one model artifact with matched EC on encoder/prefill and
+        // matched Mooncake KV transport on prefill/decode; decode never participates in EC.
         if aggregate_models.contains(&encoder.model)
             || pd_models.contains(&encoder.model)
             || encoder.model != prefill.model
@@ -412,6 +426,8 @@ pub(crate) fn build(
             ));
         }
     }
+    // Only fully validated triplets are materialized into executable components and
+    // service-scoped admission targets.
     for component in snapshot.epd_components {
         let target = epd_pipeline_scope_target(component.service_uid.clone());
         let route = RouteTarget {

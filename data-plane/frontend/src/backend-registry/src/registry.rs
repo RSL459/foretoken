@@ -8,9 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, RouteStage};
 use foretoken_model_protocol::{RuntimeMetadataResponse, TelemetryResponse};
-use vllm_engine_core_client::protocol::dtype::ModelDtype;
 
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{
@@ -96,7 +96,7 @@ impl BackendRegistry {
     }
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
         let configured_models = snapshot.admission_target_sets()?.into_keys().collect();
-        let (table, components) = crate::build::build(snapshot)?;
+        let (table, components) = crate::snapshot_projection::project_registry(snapshot)?;
         let health = components
             .keys()
             .map(|id| (id.clone(), AtomicBool::new(false)))

@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use foretoken_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 use foretoken_model_protocol::ModelServerRole;
-use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 
 use foretoken_router::{
     ModelRouteTable, RouteInventory, RouteTarget, RouteTargetId, RouteTargetSet, RouteTargetStats,

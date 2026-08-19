@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use vllm_engine_core_client::protocol::structured_outputs::StructuredOutputConstraint;
+use foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputConstraint;
 
 use crate::{RouteTarget, RouterRequest};
 

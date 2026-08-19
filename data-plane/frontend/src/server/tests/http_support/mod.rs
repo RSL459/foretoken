@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use foretoken_chat::{
     ChatRequest, DefaultChatOutputProcessor, DynChatOutputProcessor, ParserSelection,
 };
+use foretoken_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{RouteDecision, RouteTargetId, RouteTargetSet};
 use foretoken_server::{
@@ -15,7 +16,6 @@ use foretoken_server::{
 };
 use foretoken_text::Prompt;
 use foretoken_tokenizer::{DynTokenizer, Result as TokenizerResult, Tokenizer};
-use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 use vllm_llm::{FinishReason, GenerateOutput, GeneratePromptInfo, GenerateRequest};
 
 pub type CapturedTextRequest = (

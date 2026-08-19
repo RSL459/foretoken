@@ -10,11 +10,11 @@ use std::sync::Arc;
 use foretoken_chat::{
     ChatBackend, ChatRequestProcessor, DynChatBackend, HfChatBackend, LoadModelBackendsOptions,
 };
+use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_tokenizer::DynTokenizer;
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Repo, RepoType, api::Siblings};
 use thiserror::Error;
-use vllm_engine_core_client::protocol::dtype::ModelDtype;
 use vllm_text::backend::hf::HfTextBackend;
 
 pub use vllm_text::*;

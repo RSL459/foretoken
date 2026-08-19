@@ -1165,6 +1165,7 @@ name = "foretoken-backend-registry"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "foretoken-engine-core-client",
  "foretoken-kv-indexer",
  "foretoken-llm-facade",
  "foretoken-model-protocol",
@@ -1175,7 +1176,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
- "vllm-engine-core-client",
 ]
 
 [[package]]
@@ -1184,6 +1184,13 @@ version = "0.0.1"
 dependencies = [
  "foretoken-parser",
  "vllm-chat",
+]
+
+[[package]]
+name = "foretoken-engine-core-client"
+version = "0.0.1"
+dependencies = [
+ "vllm-engine-core-client",
 ]
 
 [[package]]
@@ -1229,6 +1236,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "axum",
+ "foretoken-engine-core-client",
  "foretoken-model-protocol",
  "foretoken-router",
  "futures",
@@ -1238,7 +1246,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
- "vllm-engine-core-client",
  "vllm-llm",
 ]
 
@@ -1303,13 +1310,13 @@ dependencies = [
 name = "foretoken-router"
 version = "0.0.1"
 dependencies = [
+ "foretoken-engine-core-client",
  "foretoken-kv-indexer",
  "foretoken-model-protocol",
  "inventory",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "vllm-engine-core-client",
  "vllm-llm",
 ]
 
@@ -1341,6 +1348,7 @@ dependencies = [
  "axum",
  "foretoken-backend-registry",
  "foretoken-chat",
+ "foretoken-engine-core-client",
  "foretoken-kv-indexer",
  "foretoken-llm-facade",
  "foretoken-metrics",
@@ -1355,7 +1363,6 @@ dependencies = [
  "tokio",
  "tower",
  "uuid",
- "vllm-engine-core-client",
  "vllm-llm",
 ]
 
@@ -1364,10 +1371,10 @@ name = "foretoken-text"
 version = "0.0.1"
 dependencies = [
  "foretoken-chat",
+ "foretoken-engine-core-client",
  "foretoken-tokenizer",
  "hf-hub",
  "thiserror 2.0.20",
- "vllm-engine-core-client",
  "vllm-text",
 ]
 

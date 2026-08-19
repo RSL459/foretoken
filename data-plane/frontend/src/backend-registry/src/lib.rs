@@ -3,10 +3,10 @@
 
 //! Builds immutable component inventory and dynamic execution facades from snapshots.
 
-mod build;
 mod registry;
 mod route_target_stats;
 mod snapshot;
+mod snapshot_projection;
 
 pub use registry::{BackendRegistry, RouteTable};
 pub use snapshot::{
@@ -28,7 +28,7 @@ impl BackendRegistryBuild {
     }
 
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
-        let kv_runtime_config = build::kv_runtime_config(&snapshot)?;
+        let kv_runtime_config = snapshot_projection::project_kv_runtime(&snapshot)?;
         let registry = BackendRegistry::from_snapshot(snapshot)?;
         Ok(Self {
             registry,

@@ -11,13 +11,13 @@ use axum::Json;
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use foretoken_chat::{AssistantBlockKind, AssistantMessageExt as _, ChatEvent, FinishReason};
+use foretoken_engine_core_client::protocol::output::StopReason;
 use foretoken_llm_facade::{LlmFacadeError, TokenStream};
 use foretoken_text::output::decoded_text_event_stream;
 use foretoken_text::{DecodedLogprobs, DecodedPositionLogprobs};
 use foretoken_text::{DecodedTextEvent, TextOutputStreamExt};
 use futures::{StreamExt, stream};
 use serde::Serialize;
-use vllm_engine_core_client::protocol::output::StopReason;
 use vllm_llm::FinishReason as VllmFinishReason;
 
 use crate::http::backend_error;

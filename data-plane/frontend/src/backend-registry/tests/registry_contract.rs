@@ -10,6 +10,7 @@ use foretoken_backend_registry::{
     SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup, SnapshotModel, SnapshotPdComponent,
     SnapshotPdPipelineScope,
 };
+use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::{LlmFacadeResolver, RouteStage};
 use foretoken_model_protocol::{
     CumulativeHistogram, CumulativeHistogramBucket, ModelServerRole, RuntimeMetadataResponse,
@@ -20,7 +21,6 @@ use foretoken_router::{
     ScalingTarget, ScalingTargetKind,
 };
 use tokio::net::TcpListener;
-use vllm_engine_core_client::protocol::dtype::ModelDtype;
 
 fn pd_component(id: &str, role: ModelServerRole) -> SnapshotPdComponent {
     let pool = if role == ModelServerRole::Prefill {

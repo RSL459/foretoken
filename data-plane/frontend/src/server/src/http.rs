@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Defines OpenAI-compatible request DTOs and HTTP handlers.
+//! Defines OpenAI-compatible request data transfer objects (DTOs) and HTTP handlers.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,11 +20,11 @@ use foretoken_chat::{
     ChatOptions, ChatRequest, ChatTool, ChatToolChoice, GenerationPromptMode, ParserSelection,
     ReasoningEffort, ResolvedToolContext,
 };
+use foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputsParams;
 use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
-use vllm_engine_core_client::protocol::structured_outputs::StructuredOutputsParams;
 
 use crate::response::{
     CompletionResponseOptions, chat_collected, chat_stream_with_options, text_collected_many,
