@@ -41,7 +41,7 @@ func controllerClient(t *testing.T, objects ...client.Object) client.Client {
 func modelService(name string, replicas int32) *inferencev1alpha1.ModelService {
 	resources := inferencev1alpha1.ModelResources{Requests: inferencev1alpha1.ModelResourceRequests{
 		ComputeResourceRequests: inferencev1alpha1.ComputeResourceRequests{CPU: "1", Memory: "1Gi"},
-		GPU:                     inferencev1alpha1.GPURequest{Type: "auto", Count: 1},
+		GPU:                     inferencev1alpha1.GPURequest{Count: 1},
 	}}
 	return &inferencev1alpha1.ModelService{
 		TypeMeta:   metav1.TypeMeta{APIVersion: inferencev1alpha1.GroupVersion.String(), Kind: "ModelService"},

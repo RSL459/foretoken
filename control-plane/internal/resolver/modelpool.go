@@ -51,7 +51,6 @@ type RuntimeProfile struct {
 	Revision           string
 	Image              string
 	ModelServerPort    int32
-	AcceleratorType    string
 	DeviceResourceName string
 	RuntimeClassName   string
 	NodeSelectorKey    string
@@ -108,17 +107,12 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if profile.ModelServerPort < 1 || profile.ModelServerPort > 65535 {
 		return ModelGroupTemplate{}, fmt.Errorf("model-server port must be between 1 and 65535")
 	}
-	if profile.AcceleratorType == "" || profile.DeviceResourceName == "" {
-		return ModelGroupTemplate{}, fmt.Errorf("inference engine GPU profile is incomplete")
+	if profile.DeviceResourceName == "" {
+		return ModelGroupTemplate{}, fmt.Errorf("inference engine accelerator resource name is not configured")
 	}
 	if (profile.NodeSelectorKey == "") != (profile.NodeSelectorValue == "") {
 		return ModelGroupTemplate{}, fmt.Errorf("GPU node selector key and value must be configured together")
 	}
-	requestedAccelerator := template.Resources.Requests.GPU.Type
-	if requestedAccelerator != "auto" && requestedAccelerator != profile.AcceleratorType {
-		return ModelGroupTemplate{}, fmt.Errorf("accelerator type %q is not supported by the configured vLLM profile", requestedAccelerator)
-	}
-
 	effective, err := vllmconfig.Compile(template)
 	if err != nil {
 		return ModelGroupTemplate{}, err
@@ -142,7 +136,6 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
 	}
 	resources := *template.Resources.DeepCopy()
-	resources.Requests.GPU.Type = profile.AcceleratorType
 
 	nodeSelector := map[string]string(nil)
 	if profile.NodeSelectorKey != "" {

@@ -170,9 +170,6 @@ func normalizeResources(input inferencev1alpha1.ModelResources) (inferencev1alph
 		return inferencev1alpha1.ModelResources{}, err
 	}
 	gpu := input.Requests.GPU
-	if gpu.Type == "" {
-		gpu.Type = "auto"
-	}
 	if gpu.Count == 0 {
 		gpu.Count = 1
 	}

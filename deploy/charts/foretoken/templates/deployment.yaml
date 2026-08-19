@@ -60,7 +60,6 @@ spec:
             - --inference-engine-profile-revision={{ .Values.inferenceEngine.profileRevision }}
             - --inference-engine-image={{ include "foretoken.inferenceEngineImage" . }}
             - --model-server-port={{ .Values.inferenceEngine.modelServerPort }}
-            - --gpu-type={{ .Values.inferenceEngine.gpu.type }}
             - --gpu-resource-name={{ .Values.inferenceEngine.gpu.resourceName }}
             {{- with .Values.inferenceEngine.gpu.runtimeClassName }}
             - --runtime-class-name={{ . }}

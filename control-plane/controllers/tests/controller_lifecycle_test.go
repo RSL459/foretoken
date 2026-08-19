@@ -52,7 +52,7 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 		c := controllerClient(t, service, pool)
 		reconciler := &controllers.ModelPoolReconciler{Client: c, TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{
 			Revision: "default", Image: "vllm:test", ModelServerPort: 9000,
-			AcceleratorType: "nvidia", DeviceResourceName: "nvidia.com/gpu",
+			DeviceResourceName: "nvidia.com/gpu",
 		}}}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pool)}
 		if _, err := reconciler.Reconcile(ctx, request); err != nil {

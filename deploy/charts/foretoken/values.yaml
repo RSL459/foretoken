@@ -23,7 +23,6 @@ inferenceEngine:
     digest: "" # Overrides tag when an immutable digest is provided.
   modelServerPort: 9000
   gpu:
-    type: nvidia
     resourceName: nvidia.com/gpu
     runtimeClassName: ""
     nodeSelector:

@@ -46,7 +46,6 @@ func main() {
 	var inferenceEngineProfileRevision string
 	var inferenceEngineImage string
 	var modelServerPort int
-	var gpuType string
 	var gpuResourceName string
 	var runtimeClassName string
 	var gpuNodeSelectorKey string
@@ -60,8 +59,7 @@ func main() {
 	flag.StringVar(&inferenceEngineProfileRevision, "inference-engine-profile-revision", "default", "Opaque revision of the configured inference engine profile.")
 	flag.StringVar(&inferenceEngineImage, "inference-engine-image", "", "Inference engine image containing the Foretoken model-server adapter.")
 	flag.IntVar(&modelServerPort, "model-server-port", 9000, "Internal model-server HTTP port.")
-	flag.StringVar(&gpuType, "gpu-type", "", "GPU type served by the inference engine profile.")
-	flag.StringVar(&gpuResourceName, "gpu-resource-name", "nvidia.com/gpu", "Kubernetes extended resource used for GPUs.")
+	flag.StringVar(&gpuResourceName, "gpu-resource-name", "nvidia.com/gpu", "Kubernetes extended resource used for accelerator devices.")
 	flag.StringVar(&runtimeClassName, "runtime-class-name", "", "Optional RuntimeClass for inference engine Pods.")
 	flag.StringVar(&gpuNodeSelectorKey, "gpu-node-selector-key", "", "Node label key for the configured GPU profile.")
 	flag.StringVar(&gpuNodeSelectorValue, "gpu-node-selector-value", "", "Node label value for the configured GPU profile.")
@@ -114,7 +112,6 @@ func main() {
 			Revision:           inferenceEngineProfileRevision,
 			Image:              inferenceEngineImage,
 			ModelServerPort:    int32(modelServerPort),
-			AcceleratorType:    gpuType,
 			DeviceResourceName: gpuResourceName,
 			RuntimeClassName:   runtimeClassName,
 			NodeSelectorKey:    gpuNodeSelectorKey,

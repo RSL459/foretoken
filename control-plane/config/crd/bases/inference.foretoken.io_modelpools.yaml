@@ -357,24 +357,16 @@ spec:
                               rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
                                 >= 0
                           gpu:
-                            description: GPURequest defines the logical GPU request
+                            description: GPURequest defines the accelerator request
                               for one runtime member Pod.
                             properties:
                               count:
                                 default: 1
-                                description: Count is the number of GPUs requested
-                                  by one runtime member Pod.
+                                description: Count is the number of accelerator devices
+                                  requested by one runtime member Pod.
                                 format: int32
                                 minimum: 1
                                 type: integer
-                              type:
-                                default: auto
-                                description: Type is a platform-registered GPU type
-                                  or auto.
-                                maxLength: 128
-                                minLength: 1
-                                pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                                type: string
                             type: object
                           memory:
                             description: Memory is the requested Kubernetes memory

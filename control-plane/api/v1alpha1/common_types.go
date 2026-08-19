@@ -118,17 +118,9 @@ type FrontendResources struct {
 	Limits *ComputeResourceLimits `json:"limits,omitempty"`
 }
 
-// GPURequest defines the logical GPU request for one runtime member Pod.
+// GPURequest defines the accelerator request for one runtime member Pod.
 type GPURequest struct {
-	// Type is a platform-registered GPU type or auto.
-	// +optional
-	// +kubebuilder:default=auto
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	// +kubebuilder:validation:Pattern="^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
-	Type string `json:"type,omitempty"`
-
-	// Count is the number of GPUs requested by one runtime member Pod.
+	// Count is the number of accelerator devices requested by one runtime member Pod.
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
