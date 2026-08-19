@@ -31,7 +31,7 @@ runtime:
     image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.1
     profileRevision: default
     modelServerPort: 9000
-    accelerator:
+    gpu:
       resourceName: nvidia.com/gpu
       runtimeClassName: ""
       nodeSelector:

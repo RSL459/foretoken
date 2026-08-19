@@ -55,11 +55,11 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 {{- end -}}
 {{- if ne (trim .Values.runtime.vllm.image) "" -}}
-{{- if eq (trim .Values.runtime.vllm.accelerator.resourceName) "" -}}
-{{- fail "runtime.vllm.accelerator.resourceName is required when runtime.vllm.image is set" -}}
+{{- if eq (trim .Values.runtime.vllm.gpu.resourceName) "" -}}
+{{- fail "runtime.vllm.gpu.resourceName is required when runtime.vllm.image is set" -}}
 {{- end -}}
-{{- if ne (eq (trim .Values.runtime.vllm.accelerator.nodeSelector.key) "") (eq (trim .Values.runtime.vllm.accelerator.nodeSelector.value) "") -}}
-{{- fail "runtime.vllm.accelerator.nodeSelector.key and value must be set together" -}}
+{{- if ne (eq (trim .Values.runtime.vllm.gpu.nodeSelector.key) "") (eq (trim .Values.runtime.vllm.gpu.nodeSelector.value) "") -}}
+{{- fail "runtime.vllm.gpu.nodeSelector.key and value must be set together" -}}
 {{- end -}}
 {{- end -}}
 {{- end }}

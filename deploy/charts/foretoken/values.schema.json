@@ -132,7 +132,7 @@
             "image",
             "profileRevision",
             "modelServerPort",
-            "accelerator"
+            "gpu"
           ],
           "properties": {
             "image": {
@@ -149,7 +149,7 @@
               "minimum": 1,
               "maximum": 65535
             },
-            "accelerator": {
+            "gpu": {
               "type": "object",
               "required": [
                 "resourceName",
@@ -241,11 +241,8 @@
             "properties": {
               "vllm": {
                 "properties": {
-                  "accelerator": {
+                  "gpu": {
                     "properties": {
-                      "type": {
-                        "minLength": 1
-                      },
                       "resourceName": {
                         "minLength": 1
                       },
