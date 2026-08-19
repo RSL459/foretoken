@@ -21,6 +21,7 @@ frontend:
   mode: gateway
   image: registry.example.com/foretoken/frontend:dev
   gateway:
+    create: false
     name: inference-gateway
     namespace: gateway-system
     sectionName: https

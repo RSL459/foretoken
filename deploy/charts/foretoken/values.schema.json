@@ -148,11 +148,19 @@
         "gateway": {
           "type": "object",
           "required": [
+            "create",
+            "controllerName",
             "name",
             "namespace",
             "sectionName"
           ],
           "properties": {
+            "create": {
+              "type": "boolean"
+            },
+            "controllerName": {
+              "type": "string"
+            },
             "name": {
               "type": "string"
             },
@@ -265,6 +273,13 @@
               },
               "mode": {
                 "const": "gateway"
+              },
+              "gateway": {
+                "properties": {
+                  "create": {
+                    "const": false
+                  }
+                }
               }
             }
           }
@@ -280,6 +295,44 @@
                     "minLength": 1
                   },
                   "namespace": {
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "enabled": {
+                "const": true
+              },
+              "mode": {
+                "const": "gateway"
+              },
+              "gateway": {
+                "properties": {
+                  "create": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "controllerName": {
                     "minLength": 1
                   }
                 }

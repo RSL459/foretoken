@@ -70,9 +70,9 @@ spec:
             - {{ printf "--frontend-image=%s" .Values.frontend.image | quote }}
             - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
             {{- if eq .Values.frontend.mode "gateway" }}
-            - {{ printf "--frontend-gateway-name=%s" .Values.frontend.gateway.name | quote }}
-            - {{ printf "--frontend-gateway-namespace=%s" .Values.frontend.gateway.namespace | quote }}
-            - {{ printf "--frontend-gateway-section-name=%s" .Values.frontend.gateway.sectionName | quote }}
+            - {{ printf "--frontend-gateway-name=%s" (include "foretoken.frontendGatewayName" .) | quote }}
+            - {{ printf "--frontend-gateway-namespace=%s" (include "foretoken.frontendGatewayNamespace" .) | quote }}
+            - {{ printf "--frontend-gateway-section-name=%s" (include "foretoken.frontendGatewaySectionName" .) | quote }}
             {{- end }}
             {{- end }}
             {{- with .Values.runtime.vllm.image }}

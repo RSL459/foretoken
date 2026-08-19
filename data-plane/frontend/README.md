@@ -57,7 +57,7 @@ The frontend is then available at `http://127.0.0.1:8080`.
 
 ### Gateway mode
 
-Gateway mode exposes the frontend through an existing Gateway API `Gateway`. Foretoken creates the frontend's `HTTPRoute`, while the platform Gateway continues to own DNS, TLS, authentication, and other ingress policies.
+After a Gateway Controller is installed, the Foretoken Chart can create a dedicated `GatewayClass` and `Gateway` or reuse an existing platform Gateway. Foretoken creates the frontend's `HTTPRoute`, while the platform Gateway continues to own DNS, TLS, authentication, and other ingress policies.
 
 ## HTTP APIs
 

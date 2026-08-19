@@ -29,6 +29,9 @@ frontend:
   image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.1
   port: 8080
   gateway:
+    # When enabled, the Chart creates an isolated GatewayClass and HTTP Gateway.
+    create: false
+    controllerName: gateway.envoyproxy.io/gatewayclass-controller
     name: ""
     namespace: ""
     sectionName: ""

@@ -51,7 +51,20 @@ helm upgrade --install foretoken \
 
 #### Gateway mode
 
-Gateway mode uses an existing Gateway API `Gateway`:
+Gateway mode requires a Gateway Controller. This example first installs Envoy Gateway:
+
+```bash
+ENVOY_GATEWAY_VERSION=v1.8.3
+
+helm upgrade --install envoy-gateway \
+  oci://docker.io/envoyproxy/gateway-helm \
+  --version "${ENVOY_GATEWAY_VERSION}" \
+  --namespace envoy-gateway-system \
+  --create-namespace \
+  --wait
+```
+
+Then let the Foretoken Chart create a dedicated `GatewayClass` and `Gateway`:
 
 ```bash
 helm upgrade --install foretoken \
@@ -60,10 +73,11 @@ helm upgrade --install foretoken \
   --create-namespace \
   --set frontend.enabled=true \
   --set frontend.mode=gateway \
-  --set frontend.gateway.name=inference-gateway \
-  --set frontend.gateway.namespace=gateway-system \
+  --set frontend.gateway.create=true \
   --wait
 ```
+
+If the platform already has a suitable `Gateway`, leave creation disabled and set `frontend.gateway.name` and `frontend.gateway.namespace` instead.
 
 Before applying the example, add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
 
@@ -130,14 +144,21 @@ curl --fail-with-body --no-buffer \
 
 #### Gateway mode
 
-Send the request through the hostname configured on the Gateway:
+For the Chart-created HTTP Gateway, read its address and send the configured hostname:
 
 ```bash
+FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
+  --namespace foretoken-platform \
+  -o jsonpath='{.status.addresses[0].value}')
+
 curl --fail-with-body --no-buffer \
-  https://foretoken.example.com/v1/chat/completions \
+  "http://${FORETOKEN_GATEWAY_ADDRESS}/v1/chat/completions" \
+  -H "Host: foretoken.example.com" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
+
+When reusing a platform Gateway, use that Gateway's configured hostname, port, and TLS settings.
 
 ## Stop and Uninstall
 
@@ -159,6 +180,18 @@ helm uninstall foretoken \
   --namespace foretoken-platform \
   --wait --timeout 5m
 ```
+
+A `GatewayClass` and `Gateway` created with `frontend.gateway.create=true` are removed with the Foretoken release; a reused platform Gateway is left unchanged.
+
+If Envoy Gateway was installed only for this Foretoken deployment, uninstall it as well:
+
+```bash
+helm uninstall envoy-gateway \
+  --namespace envoy-gateway-system \
+  --wait --timeout 5m
+```
+
+Do not run this step while other services still use Envoy Gateway.
 
 Uninstalling the control plane preserves Foretoken CRDs and custom resources. Delete the CRDs explicitly only after all Foretoken resources have been removed:
 

@@ -51,7 +51,20 @@ helm upgrade --install foretoken \
 
 #### 网关模式
 
-网关模式使用集群中已有的 Gateway API `Gateway`：
+网关模式需要 Gateway Controller。以下示例先安装 Envoy Gateway：
+
+```bash
+ENVOY_GATEWAY_VERSION=v1.8.3
+
+helm upgrade --install envoy-gateway \
+  oci://docker.io/envoyproxy/gateway-helm \
+  --version "${ENVOY_GATEWAY_VERSION}" \
+  --namespace envoy-gateway-system \
+  --create-namespace \
+  --wait
+```
+
+然后让 Foretoken Chart 创建专用的 `GatewayClass` 和 `Gateway`：
 
 ```bash
 helm upgrade --install foretoken \
@@ -60,10 +73,11 @@ helm upgrade --install foretoken \
   --create-namespace \
   --set frontend.enabled=true \
   --set frontend.mode=gateway \
-  --set frontend.gateway.name=inference-gateway \
-  --set frontend.gateway.namespace=gateway-system \
+  --set frontend.gateway.create=true \
   --wait
 ```
+
+如果平台已经有可用的 `Gateway`，则不需要创建，改为设置 `frontend.gateway.name` 和 `frontend.gateway.namespace`。
 
 应用配置前，在 `examples/quickstart/frontend.yaml` 的 `spec` 中添加对外域名：
 
@@ -130,14 +144,21 @@ curl --fail-with-body --no-buffer \
 
 #### 网关模式
 
-通过网关配置的域名发送请求：
+使用 Chart 创建的 HTTP 网关时，读取网关地址并携带配置的域名：
 
 ```bash
+FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
+  --namespace foretoken-platform \
+  -o jsonpath='{.status.addresses[0].value}')
+
 curl --fail-with-body --no-buffer \
-  https://foretoken.example.com/v1/chat/completions \
+  "http://${FORETOKEN_GATEWAY_ADDRESS}/v1/chat/completions" \
+  -H "Host: foretoken.example.com" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
+
+复用平台已有网关时，使用该网关实际配置的域名、端口和 TLS。
 
 ## 停止与卸载
 
@@ -155,6 +176,18 @@ helm uninstall foretoken \
   --namespace foretoken-platform \
   --wait --timeout 5m
 ```
+
+通过 `frontend.gateway.create=true` 创建的 `GatewayClass` 和 `Gateway` 会随 Foretoken release 一起删除；复用的平台网关不会被删除。
+
+如果 Envoy Gateway 仅供本次 Foretoken 部署使用，可以继续卸载它：
+
+```bash
+helm uninstall envoy-gateway \
+  --namespace envoy-gateway-system \
+  --wait --timeout 5m
+```
+
+其他服务仍在使用 Envoy Gateway 时不要执行这一步。
 
 卸载 control plane 时会保留 Foretoken CRD 和自定义资源。只有在清理全部 Foretoken 资源后，才应显式删除 CRD：
 

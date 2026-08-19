@@ -57,7 +57,7 @@ foretoken-frontend
 
 ### 网关模式
 
-网关模式通过平台已有的 Gateway API `Gateway` 对外提供服务。Foretoken 为前端服务创建 `HTTPRoute`，域名、TLS、认证和其他入口策略继续由平台网关管理。
+安装 Gateway Controller 后，Foretoken Chart 可以创建专用的 `GatewayClass` 和 `Gateway`，也可以复用平台已有网关。Foretoken 为前端服务创建 `HTTPRoute`，域名、TLS、认证和其他入口策略继续由平台网关管理。
 
 ## HTTP 接口
 

@@ -19,6 +19,34 @@
 {{- include "foretoken.compactName" (printf "%s-%s-control-plane" .Release.Namespace .Release.Name) -}}
 {{- end }}
 
+{{- define "foretoken.frontendGatewayClassName" -}}
+{{- include "foretoken.compactName" (printf "%s-%s-gateway-class" .Release.Namespace .Release.Name) -}}
+{{- end }}
+
+{{- define "foretoken.frontendGatewayName" -}}
+{{- if .Values.frontend.gateway.create -}}
+{{- include "foretoken.compactName" (printf "%s-gateway" .Release.Name) -}}
+{{- else -}}
+{{- .Values.frontend.gateway.name -}}
+{{- end -}}
+{{- end }}
+
+{{- define "foretoken.frontendGatewayNamespace" -}}
+{{- if .Values.frontend.gateway.create -}}
+{{- .Release.Namespace -}}
+{{- else -}}
+{{- .Values.frontend.gateway.namespace -}}
+{{- end -}}
+{{- end }}
+
+{{- define "foretoken.frontendGatewaySectionName" -}}
+{{- if .Values.frontend.gateway.create -}}
+{{- "http" -}}
+{{- else -}}
+{{- .Values.frontend.gateway.sectionName -}}
+{{- end -}}
+{{- end }}
+
 {{- define "foretoken.selectorLabels" -}}
 app.kubernetes.io/name: foretoken-control-plane
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -47,12 +75,21 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- if eq (trim .Values.frontend.image) "" -}}
 {{- fail "frontend.image is required when frontend.enabled=true" -}}
 {{- end -}}
+{{- if and .Values.frontend.gateway.create (ne .Values.frontend.mode "gateway") -}}
+{{- fail "frontend.gateway.create requires frontend.mode=gateway" -}}
+{{- end -}}
 {{- if eq .Values.frontend.mode "gateway" -}}
+{{- if .Values.frontend.gateway.create -}}
+{{- if eq (trim .Values.frontend.gateway.controllerName) "" -}}
+{{- fail "frontend.gateway.controllerName is required when creating a Gateway" -}}
+{{- end -}}
+{{- else -}}
 {{- if eq (trim .Values.frontend.gateway.name) "" -}}
-{{- fail "frontend.gateway.name is required in gateway mode" -}}
+{{- fail "frontend.gateway.name is required when using an existing Gateway" -}}
 {{- end -}}
 {{- if eq (trim .Values.frontend.gateway.namespace) "" -}}
-{{- fail "frontend.gateway.namespace is required in gateway mode" -}}
+{{- fail "frontend.gateway.namespace is required when using an existing Gateway" -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
