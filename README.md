@@ -90,31 +90,22 @@ The Gateway must allow `HTTPRoute` resources from the namespaces where Foretoken
 `examples/quickstart/kustomization.yaml` is the deployment entrypoint. It organizes the frontend and model services, while the Operator creates and manages the underlying resources.
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
-
 # Create the namespace for the model service; keep it unchanged if it exists.
-kubectl create namespace "${FORETOKEN_NAMESPACE}" \
+kubectl create namespace foretoken-demo \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # Apply the model service configuration; the Operator creates and starts its workloads.
-kubectl apply --server-side \
-  --namespace "${FORETOKEN_NAMESPACE}" \
-  -k "${FORETOKEN_SERVING_DIR}"
+kubectl apply --server-side -k examples/quickstart
 ```
 
 ### 3. Wait for serving to become ready
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
-
-# Wait until the frontend and model services in the Kustomize entrypoint are ready.
-kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
-  kubectl wait --for=condition=Ready \
-    --namespace "${FORETOKEN_NAMESPACE}" \
-    --timeout=15m \
-    -f -
+kubectl wait --for=condition=Ready \
+  --namespace foretoken-demo \
+  --timeout=15m \
+  frontendservice/quickstart-frontend \
+  modelservice/quickstart-qwen3-0.6b
 ```
 
 ### 4. Send a generation request
@@ -162,12 +153,8 @@ When reusing a platform Gateway, use that Gateway's configured hostname, port, a
 Delete the serving configuration so the Operator can stop the service and clean up its resources:
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
-
 kubectl delete --wait=true --timeout=10m \
-  --namespace "${FORETOKEN_NAMESPACE}" \
-  -k "${FORETOKEN_SERVING_DIR}"
+  -k examples/quickstart
 ```
 
 After the serving resources are gone, uninstall Foretoken:
@@ -195,6 +182,9 @@ Uninstalling the control plane preserves Foretoken CRDs and custom resources. De
 ```bash
 kubectl delete crd \
   frontendservices.inference.foretoken.io \
+  kvservices.inference.foretoken.io \
+  kvpools.inference.foretoken.io \
+  kvgroups.inference.foretoken.io \
   modelservices.inference.foretoken.io \
   modelpools.inference.foretoken.io \
   modelgroups.inference.foretoken.io

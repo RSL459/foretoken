@@ -90,31 +90,22 @@ Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入。DNS �
 `examples/quickstart/kustomization.yaml` 是部署入口，统一组织前端服务和模型服务：
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
-
 # 创建模型服务的 namespace；已存在时保持不变
-kubectl create namespace "${FORETOKEN_NAMESPACE}" \
+kubectl create namespace foretoken-demo \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # 提交模型服务配置，由 K8s Operator 创建并启动相关服务
-kubectl apply --server-side \
-  --namespace "${FORETOKEN_NAMESPACE}" \
-  -k "${FORETOKEN_SERVING_DIR}"
+kubectl apply --server-side -k examples/quickstart
 ```
 
 ### 3. 等待服务就绪
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
-
-# 等待 Kustomize 入口中的前端服务和模型服务全部就绪
-kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
-  kubectl wait --for=condition=Ready \
-    --namespace "${FORETOKEN_NAMESPACE}" \
-    --timeout=15m \
-    -f -
+kubectl wait --for=condition=Ready \
+  --namespace foretoken-demo \
+  --timeout=15m \
+  frontendservice/quickstart-frontend \
+  modelservice/quickstart-qwen3-0.6b
 ```
 
 ### 4. 发送生成请求进行测试
@@ -160,13 +151,9 @@ curl --fail-with-body --no-buffer \
 ## 停止与卸载
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
-
 # 删除服务配置，停止服务并清理所辖资源：
 kubectl delete --wait=true --timeout=10m \
-  --namespace "${FORETOKEN_NAMESPACE}" \
-  -k "${FORETOKEN_SERVING_DIR}"
+  -k examples/quickstart
 
 # 服务资源清理完成后，再卸载 Foretoken：
 helm uninstall foretoken \
@@ -191,6 +178,9 @@ helm uninstall envoy-gateway \
 ```bash
 kubectl delete crd \
   frontendservices.inference.foretoken.io \
+  kvservices.inference.foretoken.io \
+  kvpools.inference.foretoken.io \
+  kvgroups.inference.foretoken.io \
   modelservices.inference.foretoken.io \
   modelpools.inference.foretoken.io \
   modelgroups.inference.foretoken.io
