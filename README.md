@@ -79,16 +79,16 @@ kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
 
 ### 4. Send a generation request
 
-Forward the frontend Service from the model namespace:
+Start the local access helper from the source checkout. It waits for the frontend and reconnects after Pod replacement or transport interruption:
 
 ```bash
-kubectl port-forward \
+./scripts/foretoken-port-forward \
   --namespace foretoken-demo \
-  service/quickstart-frontend \
-  8080:8080
+  --frontend quickstart-frontend \
+  --local-port 8080
 ```
 
-Keep the port-forward running and send the request from another terminal:
+Keep the helper running and send the request from another terminal:
 
 ```bash
 curl --fail-with-body --no-buffer \

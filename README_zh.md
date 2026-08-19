@@ -79,16 +79,16 @@ kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
 
 ### 4. 发送生成请求进行测试
 
-将模型 namespace 中的 frontend Service 转发到本机：
+在源码目录运行本地访问命令。它会等待 frontend 就绪，并在 Pod 替换或连接中断后重新建立转发：
 
 ```bash
-kubectl port-forward \
+./scripts/foretoken-port-forward \
   --namespace foretoken-demo \
-  service/quickstart-frontend \
-  8080:8080
+  --frontend quickstart-frontend \
+  --local-port 8080
 ```
 
-保持端口转发运行，并在另一个终端发送请求：
+保持该命令运行，并在另一个终端发送请求：
 
 ```bash
 curl --fail-with-body --no-buffer \
