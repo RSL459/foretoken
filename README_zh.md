@@ -54,11 +54,8 @@ helm upgrade --install foretoken \
 网关模式需要 Gateway Controller。以下示例先安装 Envoy Gateway：
 
 ```bash
-ENVOY_GATEWAY_VERSION=v1.8.3
-
 helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
-  --version "${ENVOY_GATEWAY_VERSION}" \
   --namespace envoy-gateway-system \
   --create-namespace \
   --wait

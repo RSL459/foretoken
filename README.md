@@ -54,11 +54,8 @@ helm upgrade --install foretoken \
 Gateway mode requires a Gateway Controller. This example first installs Envoy Gateway:
 
 ```bash
-ENVOY_GATEWAY_VERSION=v1.8.3
-
 helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
-  --version "${ENVOY_GATEWAY_VERSION}" \
   --namespace envoy-gateway-system \
   --create-namespace \
   --wait
