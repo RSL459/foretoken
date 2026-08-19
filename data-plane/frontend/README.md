@@ -7,104 +7,77 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [简体中文](README_zh.md)
 
-`foretoken-frontend` is the northbound Rust data plane behind the platform-owned
-Gateway. It reuses vLLM Rust request processors and incremental output APIs while Foretoken
-owns multi-model routing and model-server selection.
+`foretoken-frontend` is the Rust data plane behind the gateway that directly handles inference requests. It provides a consistent generation API and manages request routing, streaming responses, and runtime availability across multiple models and inference instances.
 
-## Data flow
+## Capabilities
 
-The control plane projects one routing configuration into the frontend Pod.
-The frontend prepares a complete pending routing configuration and publishes it atomically
-only after its model runtimes and model servers are ready. Invalid or unready updates
-leave the active routing configuration unchanged.
+- OpenAI-compatible Completion and Chat Completion APIs;
+- multiple public models through one frontend;
+- instance selection based on model compatibility, request capabilities, health, load, and KV cache reuse opportunities;
+- aggregated, Prefill/Decode, and Encoder/Prefill/Decode serving topologies;
+- both SSE streaming and collected JSON responses;
+- tools, reasoning, structured output, and capability-gated image input;
+- uninterrupted accepted requests while routes and instances change;
+- health, readiness, and runtime metrics endpoints.
 
-```text
-ModelService / ModelPool / ModelGroup
-  → FrontendService controller
-  → mounted serving.json routing configuration
-  → BackendRegistry + KvIndexer + per-model vLLM processors
-  → RuntimeState { models, PipelineRouter, LlmFacadeResolver }
-  → atomic active-routing-configuration swap
-```
-
-Each request loads one immutable active routing configuration. vLLM owns request preparation
-and output processing; Foretoken routes the generation request without
-introducing a second text-generation path.
+## Request path
 
 ```text
-OpenAI HTTP request
-  → select pinned model runtime
-  → vLLM text/chat processor → vllm_llm::GenerateRequest
-  → PipelineRouter: node-list Filter → Scorer → Picker
-  → BackendRegistry resolves the selected Aggregate or Prefill model server
-  → after Prefill, PipelineRouter independently selects one Decode node
-  → LlmFacade → GenerateInput JSON
-  → Group-local model server → vLLM Llm / EngineCore
-  → TokenEvent<TokenOutput> NDJSON
-  → LlmFacade reconstructs the vllm_llm::GenerateOutput stream
-  → vLLM text/chat output processor
-  → SSE chunks or one collected HTTP response
+Client
+  ↓
+Gateway or local port forwarding
+  ↓
+foretoken-frontend
+  ├─ validates and prepares the request
+  ├─ selects the model and an available inference instance
+  ├─ executes an aggregated or disaggregated generation flow
+  └─ returns a streaming or collected response
+  ↓
+Model service
 ```
 
-Aggregate requests use one model server. For P/D requests, Router first selects and executes one Prefill model server, then reads a fresh routing configuration and selects one Decode model server. P and D are not paired or reserved together. Only the Decode stream is exposed to the caller, and dropping it aborts unfinished model-server work.
+The request's `model` field selects the public model. The frontend sends it only to instances that support that model and the requested capabilities. If one model is temporarily unavailable, other healthy models continue serving; requests are never silently redirected to a different model.
 
-## Component responsibilities
+When model instances or routes change, the frontend activates the new configuration only after it is ready. Invalid or unready updates do not replace the active configuration or interrupt requests already in progress.
 
-`cmd` is the process entry and component assembly point. It validates one mounted routing configuration into a
-`BackendRegistryBuild`, constructs `BackendRegistry` and `KvIndexer` separately,
-and installs a `PipelineRouter` with the selected pipeline, KV-prefix reader, and model-server statistics reader. Its runtime control refreshes model-server readiness, load telemetry, and KV event deltas. Model-server readiness does not depend on a capacity-admission snapshot.
+## Access
 
-```text
-routing configuration (mounted as serving.json)
-  → BackendRegistryBuild
-      ├→ BackendRegistry: RouteInventory + LlmFacadeResolver + route health
-      └→ KvRuntimeConfig → KvIndexer: event sources, bindings, cursors, digest index
-                                      └→ KvPrefixIndexer
-BackendRegistry + KvIndexer → PipelineRouter
+### Local mode
+
+Local mode creates no cluster-external endpoint. Use the repository helper to open localhost access and reconnect after Pod replacement or transport interruption:
+
+```bash
+./scripts/foretoken-port-forward \
+  --namespace foretoken-demo \
+  --frontend quickstart-frontend \
+  --local-port 8080
 ```
 
-The dependency direction is one-way: `router → kv-indexer`; `backend-registry` derives
-KV configuration but owns no KV runtime state; the Frontend component assembly joins both owners. KV event access,
-credentials, and index failures are opportunistic: they produce a neutral score and never
-make an otherwise healthy route ineligible. For P/D routes, the binding always scores the
-prefill source; decode cache state is not used as a prefix signal.
+The frontend is then available at `http://127.0.0.1:8080`.
 
-## Runtime requirements
+### Production mode
 
-The controller provides:
+Production mode exposes the frontend through an existing Gateway API `Gateway`. Foretoken creates the frontend's `HTTPRoute`, while the platform Gateway continues to own DNS, TLS, authentication, and other ingress policies.
 
-- `FORETOKEN_LISTEN_ADDRESS`, for example `0.0.0.0:8080`;
-- `FORETOKEN_SERVING_SNAPSHOT`, the mounted `serving.json` path;
-- `FORETOKEN_STREAM_IDLE_SECONDS`, a positive per-token idle deadline;
-- `FORETOKEN_KV_INDEX_KEY_PATH`, the optional mounted digest key used by the embedded `KvIndexer`;
-- a writable `HF_HOME` cache used to resolve each routing configuration's pinned
-  tokenizer identity and revision.
+## HTTP APIs
 
-On initial startup, the process remains live but not ready until it can prepare a
-valid routing configuration with healthy model servers. After a routing configuration is
-active, an invalid, unreadable, or unready update is retried without replacing it;
-readiness continues to follow the active routing configuration's model-server health.
+- `POST /v1/completions`
+- `POST /v1/chat/completions`
+- `POST /v1/generate`
+- `POST /tokenize`
+- `POST /detokenize`
+- `GET /v1/models`
+- `GET /v1/models/{model}`
+- `GET /healthz`
+- `GET /readyz`
+- `GET /metrics`
 
-A routing configuration may contain multiple public request models. Groups for the same `model`
-must share one pinned model revision, tokenizer, and tokenizer revision; different
-models may use different identities. The frontend loads one runtime bundle per model
-and selects it before chat rendering, text lowering, routing, and decoding. Model-server health and load telemetry are tracked per physical component. The Registry owns the node inventory and resolves the selected node through `LlmFacadeResolver`. The KV Indexer is best-effort and provides local and offloaded prefix signals. Router filters and scores the complete node list, then selects one Aggregate or Prefill node. After Prefill completes, Router reads a fresh routing configuration and independently selects one Decode model server. P/D execution is sequential: the internal prefill NDJSON stream is fully consumed to a normal terminal event before decode is submitted, and only decode output reaches the caller. P/D-alpha has mock coverage only:
-real GPU/RDMA Mooncake connector timing still requires conformance validation, and this document
-makes no GPU/RDMA conformance claim. The frontend remains
-ready while any route is healthy; a model with no healthy route is omitted from
-`/v1/models` and only that model's requests fail. There is no cross-model fallback. The
-supported requests are:
+Streaming and non-streaming requests have the same generation semantics. Image input currently accepts bounded base64 `data:` content; remote media URLs are not accepted.
 
-- `POST /v1/completions`;
-- `POST /v1/chat/completions` with text, tools, reasoning, structured-output, and
-  capability-gated multimodal messages;
-- `POST /v1/generate` as the simplified completion alias;
-- `POST /tokenize` and `POST /detokenize`;
-- `GET /v1/models`, `GET /v1/models/{model}`, `/healthz`, `/readyz`, and `/metrics`.
+## Health and readiness
 
-Streaming and non-streaming responses share vLLM's incremental detokenization
-path. Optional request features are capability-gated and never silently
-downgraded. Multimodal HTTP input is currently fail-closed to bounded base64
-`data:` content; remote media URLs are rejected until the pinned connector has
-connection-time host/IP and redirect enforcement. Aggregate model runtimes may
-serve multimodal requests, while P/D routing configurations reject multimodal capabilities.
+- `/healthz` reports whether the frontend process is operating;
+- `/readyz` reports whether at least one model route can accept inference requests;
+- `/v1/models` lists only models with a currently healthy inference path.
+
+The Foretoken Controller normally creates and configures the frontend; users do not need to start or maintain it separately.
