@@ -28,7 +28,6 @@ runtime:
   vllm:
     image: registry.example.com/foretoken/model-server:dev
     accelerator:
-      type: nvidia-h100-80gb
       resourceName: nvidia.com/gpu
       # Set this when the cluster exposes GPUs through a RuntimeClass.
       runtimeClassName: nvidia

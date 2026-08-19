@@ -152,14 +152,10 @@
             "accelerator": {
               "type": "object",
               "required": [
-                "type",
                 "resourceName",
                 "nodeSelector"
               ],
               "properties": {
-                "type": {
-                  "type": "string"
-                },
                 "resourceName": {
                   "type": "string"
                 },

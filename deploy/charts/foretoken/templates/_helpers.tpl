@@ -55,9 +55,6 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 {{- end -}}
 {{- if ne (trim .Values.runtime.vllm.image) "" -}}
-{{- if eq (trim .Values.runtime.vllm.accelerator.type) "" -}}
-{{- fail "runtime.vllm.accelerator.type is required when runtime.vllm.image is set" -}}
-{{- end -}}
 {{- if eq (trim .Values.runtime.vllm.accelerator.resourceName) "" -}}
 {{- fail "runtime.vllm.accelerator.resourceName is required when runtime.vllm.image is set" -}}
 {{- end -}}
