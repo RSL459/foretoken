@@ -101,7 +101,6 @@ type servingSnapshotEPDComponent struct {
 	ECProfileName            string   `json:"ec_profile_name,omitempty"`
 	ECProfileRevision        string   `json:"ec_profile_revision,omitempty"`
 	ECConnector              string   `json:"ec_connector,omitempty"`
-	ECRole                   string   `json:"ec_role,omitempty"`
 	Capabilities             []string `json:"capabilities"`
 	Endpoint                 string   `json:"endpoint"`
 	PrefillBootstrapEndpoint string   `json:"prefill_bootstrap_endpoint,omitempty"`

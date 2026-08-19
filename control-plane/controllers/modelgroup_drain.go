@@ -131,7 +131,7 @@ func (reconciler *ModelGroupReconciler) reconcileDelete(ctx context.Context, gro
 	drainCtx, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
 
-	telemetry, err := reconciler.drainClient().CloseAdmission(drainCtx, modelServerEndpoint(group))
+	telemetry, err := reconciler.drainClient().CloseAdmission(drainCtx, modelGroupEndpoint(group, group.Spec.Runtime.Port))
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(drainCtx.Err(), context.DeadlineExceeded) {
 		return reconciler.finishDrainTimeout(ctx, group)
 	}
@@ -284,11 +284,6 @@ func frontendPodEndpoint(pod *corev1.Pod) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("ready frontend Pod %q has no %q port", pod.Name, frontendHTTPPortName)
-}
-
-func modelServerEndpoint(group *inferencev1alpha1.ModelGroup) string {
-	address := net.JoinHostPort(group.Name+"."+group.Namespace+".svc", strconv.Itoa(int(group.Spec.Runtime.Port)))
-	return "http://" + address
 }
 
 func (reconciler *ModelGroupReconciler) drainClient() ModelGroupDrainClient {

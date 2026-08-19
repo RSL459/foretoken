@@ -20,7 +20,7 @@ use futures::{StreamExt, stream};
 use serde::Serialize;
 use vllm_llm::FinishReason as VllmFinishReason;
 
-use crate::http::backend_error;
+use crate::http::openai_error;
 use crate::runtime::{Generated, GeneratedChat, GenerationError};
 
 #[derive(Clone, Serialize)]
@@ -453,7 +453,7 @@ pub(crate) fn chat_stream_with_options(
     let metadata = ResponseMetadata::from_generated(&generated.generated);
     let (include_reasoning, stream) = match chat_events(generated, idle) {
         Ok(stream) => stream,
-        Err(_) => return backend_error(GenerationError::RequestFailed),
+        Err(_) => return openai_error(GenerationError::RequestFailed),
     };
     let events = async_stream::stream! {
         let mut stream = Box::pin(stream);
@@ -630,7 +630,7 @@ pub(crate) async fn text_collected_many(
     options: CompletionResponseOptions,
 ) -> Response {
     let Some(first) = generated.first() else {
-        return backend_error(GenerationError::InvalidRequest);
+        return openai_error(GenerationError::InvalidRequest);
     };
     let metadata = ResponseMetadata::from_generated(first);
     let mut groups = Vec::new();
@@ -644,7 +644,7 @@ pub(crate) async fn text_collected_many(
         let prompt_text = if options.echo {
             match item.tokenizer.decode(&prompt_ids, false) {
                 Ok(prompt) => prompt,
-                Err(_) => return backend_error(GenerationError::Internal),
+                Err(_) => return openai_error(GenerationError::Internal),
             }
         } else {
             String::new()
@@ -652,7 +652,7 @@ pub(crate) async fn text_collected_many(
         match idle_timed(decoded(item), idle).collect_output().await {
             Ok(output) => {
                 let Ok(finish_reason) = completion_finish_reason(&output.finish_reason) else {
-                    return backend_error(GenerationError::RequestFailed);
+                    return openai_error(GenerationError::RequestFailed);
                 };
                 let score = output
                     .logprobs
@@ -695,7 +695,7 @@ pub(crate) async fn text_collected_many(
                     },
                 ));
             }
-            Err(_) => return backend_error(GenerationError::RequestFailed),
+            Err(_) => return openai_error(GenerationError::RequestFailed),
         }
     }
     let mut choices = Vec::with_capacity(groups.len() * options.n);
@@ -730,7 +730,7 @@ pub(crate) fn text_stream_many(
     return_prompt_token_ids: bool,
 ) -> Response {
     let Some(first) = generated.first() else {
-        return backend_error(GenerationError::InvalidRequest);
+        return openai_error(GenerationError::InvalidRequest);
     };
     let metadata = ResponseMetadata::from_generated(first);
     // The HTTP layer admits streaming only for one prompt, irrespective of `n`.
@@ -788,7 +788,7 @@ pub(crate) async fn chat_collected(generated: GeneratedChat, idle: Duration) -> 
     let metadata = ResponseMetadata::from_generated(&generated.generated);
     let (include_reasoning, stream) = match chat_events(generated, idle) {
         Ok(stream) => stream,
-        Err(_) => return backend_error(GenerationError::RequestFailed),
+        Err(_) => return openai_error(GenerationError::RequestFailed),
     };
     let mut stream = Box::pin(stream);
     let mut token_ids = Vec::new();
@@ -828,7 +828,7 @@ pub(crate) async fn chat_collected(generated: GeneratedChat, idle: Duration) -> 
                 let Ok(openai_finish_reason) =
                     chat_finish_reason(&finish_reason, !tool_calls.is_empty())
                 else {
-                    return backend_error(GenerationError::RequestFailed);
+                    return openai_error(GenerationError::RequestFailed);
                 };
                 return Json(ChatResponse {
                     metadata,
@@ -855,10 +855,10 @@ pub(crate) async fn chat_collected(generated: GeneratedChat, idle: Duration) -> 
                 .into_response();
             }
             Ok(_) => {}
-            Err(_) => return backend_error(GenerationError::RequestFailed),
+            Err(_) => return openai_error(GenerationError::RequestFailed),
         }
     }
-    backend_error(GenerationError::RequestFailed)
+    openai_error(GenerationError::RequestFailed)
 }
 
 /// A small helper for model-free tests and embeddings.

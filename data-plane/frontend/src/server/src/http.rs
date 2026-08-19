@@ -742,10 +742,6 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
     )
         .into_response()
 }
-pub(crate) fn backend_error(error: GenerationError) -> Response {
-    openai_error(error)
-}
-
 async fn completions(
     State(state): State<AppState>,
     request: Result<Json<CompletionRequest>, JsonRejection>,
@@ -981,7 +977,7 @@ async fn chat_with_request(
         .await
     {
         Ok(generated) => generated,
-        Err(error) => return backend_error(error),
+        Err(error) => return openai_error(error),
     };
     if stream {
         chat_stream_with_options(generated, state.stream_idle, include_usage)
