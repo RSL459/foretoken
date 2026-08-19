@@ -165,6 +165,8 @@ func (provider *HTTPPoolMetricsProvider) activeRequests(ctx context.Context, tar
 	if string(service.UID) != target.ServiceUID {
 		return 0, 0, fmt.Errorf("ModelService UID changed for target %q", target.Name)
 	}
+	// Demand follows only the service-selected serving revision; preparing and draining
+	// cohorts must not influence scaling. E/P/D aggregates all three stages as one target.
 	var pools inferencev1alpha1.ModelPoolList
 	if err := provider.client.List(ctx, &pools, client.InNamespace(target.ServiceNamespace)); err != nil {
 		return 0, 0, fmt.Errorf("list ModelPools for telemetry: %w", err)

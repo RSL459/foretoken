@@ -54,6 +54,8 @@ func (resolver Resolver) Resolve(snapshot ScalingSnapshot, decisionName string, 
 		return ScalingDecision{}, fmt.Errorf("adjustment algorithm %q returned desired groups %d for target %q outside [%d, %d]", adjustmentName, desired, snapshot.Target.Name, snapshot.Limits.MinGroups, snapshot.Limits.MaxGroups)
 	}
 	constraint := DesiredCapacityReason("")
+	// Freeze ordinary changes while replacement capacity is still converging, but allow
+	// zero-to-positive bootstrap so a scaled-to-zero target can re-enter service.
 	if snapshot.Capacity.Transitioning && !resolver.AllowDuringTransition && !(current == 0 && desired > 0) && desired != current {
 		desired, constraint, message = current, DesiredCapacityReasonTransitionInProgress, "capacity transition is in progress; holding current capacity"
 	}

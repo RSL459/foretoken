@@ -176,6 +176,8 @@ impl BackendRegistry {
     }
 
     pub fn healthy_models(&self) -> Vec<String> {
+        // Aggregate routes are independently serviceable. A split scope is healthy only with
+        // P+D, or E+P+D when that scope includes an encoder.
         let mut models = BTreeSet::new();
         let mut pipeline_scopes = BTreeMap::<(String, String), (bool, bool, bool)>::new();
         for route in self.table.routes() {
@@ -214,6 +216,8 @@ impl BackendRegistry {
     }
     /// Health, runtime metadata, and telemetry are per physical component.
     pub async fn refresh_backend_readiness(&self) {
+        // Probe components concurrently, but retain metadata and telemetry only for components
+        // proven healthy in this pass so replaced backends cannot leave stale routing signals.
         let probes = self.components.iter().map(|(id, c)| async move {
             let ready = ready(&self.health_client, c.endpoint()).await;
             let metadata = metadata(&self.health_client, c.endpoint()).await;

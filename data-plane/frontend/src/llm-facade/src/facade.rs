@@ -82,6 +82,8 @@ fn pd_requests_with_engine(
     bootstrap_endpoint: &str,
     engine_id: String,
 ) -> Result<(GenerateRequest, GenerateRequest), LlmFacadeError> {
+    // Prefill produces one transfer and decode consumes that exact transfer using the live
+    // prefill engine identity. Stage IDs and transfer parameters are workflow-owned.
     reject_client_transfer_params(&request)?;
     let transfer_id = format!("xfer-{}", request.request_id);
     let mut prefill = request.clone();

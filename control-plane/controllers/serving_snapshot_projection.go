@@ -52,6 +52,8 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		return false, fmt.Errorf("get serving snapshot ConfigMap: %w", err)
 	}
 
+	// Status is the durable version floor, while the persisted ConfigMap is the last semantic payload.
+	// Increment only for changed content so recreation or reconcile replay cannot publish an older generation.
 	version := frontend.Status.ServingSnapshotVersion
 	contentsChanged := true
 	var previous servingSnapshot
@@ -386,6 +388,8 @@ func projectServicePDComponents(service *inferencev1alpha1.ModelService, pools [
 }
 
 func projectServiceEPDComponents(service *inferencev1alpha1.ModelService, pools []*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) ([]servingSnapshotEPDComponent, []servingSnapshotEPDPipelineScope, error) {
+	// Publish only ordinal-aligned 1E:1P:1D triplets. An incomplete ordinal is withheld
+	// without removing another complete triplet from the same Service.
 	byRoleOrdinal := map[inferencev1alpha1.ModelRole]map[int32]*inferencev1alpha1.ModelGroup{
 		inferencev1alpha1.ModelRoleEncoder: {}, inferencev1alpha1.ModelRolePrefill: {}, inferencev1alpha1.ModelRoleDecode: {},
 	}
@@ -580,6 +584,8 @@ func modelGroupEndpoint(group *inferencev1alpha1.ModelGroup, port int32) string 
 }
 
 func validateRoutingIdentities(groups []servingSnapshotGroup, components []servingSnapshotPDComponent, epdComponents []servingSnapshotEPDComponent) error {
+	// One public model must have unambiguous stage semantics. Reject identity conflicts and
+	// overlap between aggregate, P/D, and E/P/D before the snapshot reaches any frontend.
 	for first := range groups {
 		for second := first + 1; second < len(groups); second++ {
 			if groups[first].Model == groups[second].Model && !matchingRoutingArtifacts(groups[first], groups[second]) {

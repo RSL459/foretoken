@@ -24,6 +24,9 @@ pub(crate) async fn watch_serving_snapshot(
     builder: Arc<RuntimeBuilder>,
 ) {
     let mut read_failure_reported = false;
+
+    // Advance the byte watermark only after publishing a candidate or recognizing it as stale.
+    // Failed candidates remain retryable while the active generation continues serving.
     loop {
         match std::fs::read(&path) {
             Ok(bytes) if last_processed_snapshot.as_ref() == Some(&bytes) => {

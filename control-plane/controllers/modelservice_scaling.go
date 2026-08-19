@@ -176,6 +176,8 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 		return nil, nil, err
 	}
 
+	// Ordinary Pools scale independently. Encoder, prefill, and decode instead share one
+	// E/P/D pipeline-scope decision, which is applied back to all three Pool intents together.
 	evaluatedAt := metav1.Now()
 	snapshots := make([]core.ScalingSnapshot, 0, len(compiledPools))
 	epdIndexes := make([]int, 0, 3)

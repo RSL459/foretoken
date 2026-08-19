@@ -122,6 +122,8 @@ func (reconciler *ModelPoolReconciler) validateModelServiceOwnership(ctx context
 }
 
 func (reconciler *ModelPoolReconciler) targetRevision(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) (string, error) {
+	// Reuse a prepared or serving cohort when its immutable template still matches. This lets
+	// retries and pure scale changes converge without minting a disruptive new revision.
 	groups, err := reconciler.ownedGroups(ctx, pool)
 	if err != nil {
 		return "", err

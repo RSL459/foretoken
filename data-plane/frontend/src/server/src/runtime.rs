@@ -376,6 +376,8 @@ impl RuntimeGeneration {
     }
 
     async fn generation_slot(&self, model: &str) -> Result<Arc<RuntimeSlot>, GenerationError> {
+        // A configured model without a prepared processor is admission-only: keep its targets
+        // queued while waiting, then reload the complete slot across each generation boundary.
         let deadline = Instant::now() + self.request_timeout;
         let mut publication_updates = self.publication_updates.subscribe();
         let mut queued = None;

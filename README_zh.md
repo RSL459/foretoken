@@ -9,7 +9,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 什么时候需要 Foretoken
 
-- 在多卡和多个 Kubernetes 节点上运行一种或多种模型。当前每个 ModelGroup 只使用一个节点，服务通过增加 Group 横向扩展到更多节点。
+- 在多卡或多节点上运行一种或多种模型。
 - 根据负载、队列或 KV Cache 状态路由请求。
 - 根据请求量和 SLO 自动扩缩推理实例。
 - 比较聚合部署、Prefill/Decode 分离和不同并行方案。
@@ -31,7 +31,9 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-### 1. 安装 Foretoken
+### 本地模式
+
+#### 1. 安装 Foretoken
 
 本地模式无需安装或准备集群 Gateway，frontend 只通过集群内 Service 提供访问：
 
@@ -45,7 +47,7 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-### 2. 部署模型服务
+#### 2. 部署模型服务
 
 `examples/quickstart/kustomization.yaml` 是部署入口，统一组织前端服务和模型服务：
 
@@ -63,7 +65,7 @@ kubectl apply --server-side \
   -k "${FORETOKEN_SERVING_DIR}"
 ```
 
-### 3. 等待服务就绪
+#### 3. 等待服务就绪
 
 ```bash
 FORETOKEN_NAMESPACE=foretoken-demo
@@ -77,7 +79,7 @@ kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
     -f -
 ```
 
-### 4. 发送生成请求进行测试
+#### 4. 发送生成请求进行测试
 
 在源码目录运行本地访问命令。它会等待 frontend 就绪，并在 Pod 替换或连接中断后重新建立转发：
 
@@ -97,9 +99,9 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
 
-底层资源由 Operator 管理。本地模式不会创建外部入口，只有用户主动执行端口转发时，本机才能访问 frontend。
+本地访问命令运行期间，可以通过本机端口访问 frontend。
 
-## 生产环境 Gateway 访问
+### 生产模式
 
 生产模式会为已有的 Gateway API `Gateway` 创建 `HTTPRoute`。安装时配置 Gateway，并为每个 `FrontendService` 设置 `spec.hostname`：
 

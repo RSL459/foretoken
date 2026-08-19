@@ -9,7 +9,7 @@ We aim to turn an inference cluster into a token factory that continuously conve
 
 ## When to Use Foretoken
 
-- Serve one or more models across multiple GPUs and Kubernetes nodes. Each ModelGroup currently runs on one node; a service scales across nodes by creating additional groups.
+- Serve one or more models across multiple GPUs or nodes.
 - Route requests based on load, queue depth, or KV cache state.
 - Autoscale inference instances based on traffic and SLO targets.
 - Compare aggregated serving, Prefill/Decode disaggregation, and different parallelism strategies.
@@ -31,7 +31,9 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-### 1. Install Foretoken
+### Local Mode
+
+#### 1. Install Foretoken
 
 Local mode runs the frontend without installing or requiring a cluster Gateway:
 
@@ -45,7 +47,7 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-### 2. Deploy a model service
+#### 2. Deploy a model service
 
 `examples/quickstart/kustomization.yaml` is the deployment entrypoint. It organizes the frontend and model services, while the Operator creates and manages the underlying resources.
 
@@ -63,7 +65,7 @@ kubectl apply --server-side \
   -k "${FORETOKEN_SERVING_DIR}"
 ```
 
-### 3. Wait for serving to become ready
+#### 3. Wait for serving to become ready
 
 ```bash
 FORETOKEN_NAMESPACE=foretoken-demo
@@ -77,7 +79,7 @@ kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
     -f -
 ```
 
-### 4. Send a generation request
+#### 4. Send a generation request
 
 Start the local access helper from the source checkout. It waits for the frontend and reconnects after Pod replacement or transport interruption:
 
@@ -97,9 +99,9 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-The Operator manages the underlying resources; local mode keeps access private to the cluster unless the user opens a port-forward.
+Local mode is accessible through the localhost port-forward while the helper is running.
 
-## Production Gateway Access
+### Production Mode
 
 Production mode creates an `HTTPRoute` for an existing Gateway API `Gateway`. Configure the Gateway and set `spec.hostname` on each `FrontendService`:
 

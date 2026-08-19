@@ -35,6 +35,8 @@ func (pipeline Pipeline) Plan(ctx context.Context, snapshots []ScalingSnapshot) 
 			switch trigger.Disposition {
 			case TriggerFire:
 			case TriggerHold, TriggerInsufficientData:
+				// Holding algorithmic demand still passes through hard-bound adjustment and
+				// resolution; absence of a demand signal does not suspend capacity safety.
 				var adjustment ScalingAdjustment
 				current := snapshot.Capacity.RequestedGroups
 				if current < snapshot.Limits.MinGroups || current > snapshot.Limits.MaxGroups {

@@ -16,6 +16,8 @@ pub(crate) async fn execute_workflow(
     initial: RouteDecision,
     request: vllm_llm::GenerateRequest,
 ) -> Result<(RouteDecision, TokenStream), GenerationError> {
+    // The router chooses only the initial stage. Encoder output prepares prefill transfer state,
+    // and decode is selected only after prefill completes within the same routing session.
     match initial.role {
         ModelServerRole::Aggregate => execute_aggregate(resolver, initial, request).await,
         ModelServerRole::Prefill => {

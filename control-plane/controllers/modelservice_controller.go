@@ -208,6 +208,8 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 }
 
 func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, error) {
+	// Keep routing on the last complete cohort until every nonzero Pool has prepared a
+	// compatible revision. The final status patch is the service-level atomic commit point.
 	pools, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
 		return false, err
