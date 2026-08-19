@@ -59,7 +59,7 @@ func TestInvalidPDRouteWithdrawsOnlyItsService(t *testing.T) {
 	markGroupReady(decode)
 
 	c := controllerClient(t, frontend, aggregate, aggregatePool, aggregateGroup, pd, prefillPool, decodePool, prefill, decode)
-	r := &controllers.FrontendServiceReconciler{Client: c, RuntimeProfile: controllers.FrontendRuntimeProfile{Image: "frontend:test", Port: 8080, Gateway: controllers.GatewayParent{Name: "gateway", Namespace: "gateway-system"}}}
+	r := &controllers.FrontendServiceReconciler{Client: c, RuntimeProfile: controllers.FrontendRuntimeProfile{Image: "frontend:test", Port: 8080, Gateway: &controllers.GatewayParent{Name: "gateway", Namespace: "gateway-system"}}}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(frontend)}
 	if _, err := r.Reconcile(ctx, request); err != nil {
 		t.Fatal(err)

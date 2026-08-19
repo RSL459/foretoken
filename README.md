@@ -33,19 +33,15 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ### 1. Install Foretoken
 
-The Quick Start uses an existing Gateway API `Gateway`. Set its name and namespace, then install Foretoken:
+Local mode runs the frontend without installing or requiring a cluster Gateway:
 
 ```bash
-FORETOKEN_GATEWAY_NAME=inference-gateway
-FORETOKEN_GATEWAY_NAMESPACE=gateway-system
-
 helm upgrade --install foretoken \
   oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
   --namespace foretoken-platform \
   --create-namespace \
   --set frontend.enabled=true \
-  --set frontend.gateway.name="${FORETOKEN_GATEWAY_NAME}" \
-  --set frontend.gateway.namespace="${FORETOKEN_GATEWAY_NAMESPACE}" \
+  --set frontend.mode=local \
   --wait
 ```
 
@@ -81,16 +77,52 @@ kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
     -f -
 ```
 
-### 4. Send a generation request through the Gateway
+### 4. Send a generation request
+
+Forward the frontend Service from the model namespace:
+
+```bash
+kubectl port-forward \
+  --namespace foretoken-demo \
+  service/quickstart-frontend \
+  8080:8080
+```
+
+Keep the port-forward running and send the request from another terminal:
 
 ```bash
 curl --fail-with-body --no-buffer \
-  https://foretoken.example.com/v1/chat/completions \
+  http://127.0.0.1:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-Users submit the serving configuration. The Operator manages the underlying resources, and clients access the model service through the Gateway.
+The Operator manages the underlying resources; local mode keeps access private to the cluster unless the user opens a port-forward.
+
+## Production Gateway Access
+
+Production mode creates an `HTTPRoute` for an existing Gateway API `Gateway`. Configure the Gateway and set `spec.hostname` on each `FrontendService`:
+
+```bash
+helm upgrade --install foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=production \
+  --set frontend.gateway.name=inference-gateway \
+  --set frontend.gateway.namespace=gateway-system \
+  --wait
+```
+
+Set the public hostname in the frontend manifest:
+
+```yaml
+spec:
+  hostname: foretoken.example.com
+```
+
+The Gateway must allow `HTTPRoute` resources from the namespaces where Foretoken frontends run. DNS and TLS remain owned by the platform Gateway.
 
 ## Stop and Uninstall
 

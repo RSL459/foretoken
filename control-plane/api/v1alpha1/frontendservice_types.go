@@ -77,10 +77,11 @@ type FrontendServiceSpec struct {
 	// +optional
 	RouterPipeline RouterPipeline `json:"routerPipeline,omitempty"`
 
-	// +kubebuilder:validation:MinLength=1
+	// Hostname is required when the platform exposes frontends through a Gateway.
+	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$"
-	Hostname string `json:"hostname"`
+	Hostname string `json:"hostname,omitempty"`
 }
 
 // FrontendServiceStatus defines the observed state of a frontend service.

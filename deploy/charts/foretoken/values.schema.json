@@ -83,6 +83,7 @@
       "type": "object",
       "required": [
         "enabled",
+        "mode",
         "image",
         "port",
         "gateway"
@@ -90,6 +91,13 @@
       "properties": {
         "enabled": {
           "type": "boolean"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "local",
+            "production"
+          ]
         },
         "image": {
           "type": "string"
@@ -203,7 +211,31 @@
             "properties": {
               "image": {
                 "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "enabled": {
+                "const": true
               },
+              "mode": {
+                "const": "production"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "frontend": {
+            "properties": {
               "gateway": {
                 "properties": {
                   "name": {

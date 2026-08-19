@@ -27,11 +27,17 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
 )
 
+const (
+	frontendModeLocal      = "local"
+	frontendModeProduction = "production"
+)
+
 func main() {
 	var metricsAddress string
 	var probeAddress string
 	var leaderElection bool
 	var frontendEnabled bool
+	var frontendMode string
 	var frontendImage string
 	var frontendPort int
 	var frontendGatewayName string
@@ -68,7 +74,8 @@ func main() {
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "Health probe bind address.")
 	flag.BoolVar(&leaderElection, "leader-elect", false, "Enable leader election.")
-	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload and HTTPRoute reconciliation.")
+	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload reconciliation.")
+	flag.StringVar(&frontendMode, "frontend-mode", frontendModeLocal, "Frontend exposure mode: local or production.")
 	flag.StringVar(&frontendImage, "frontend-image", "", "Frontend runtime image.")
 	flag.IntVar(&frontendPort, "frontend-port", 8080, "Frontend runtime HTTP port.")
 	flag.StringVar(&frontendGatewayName, "frontend-gateway-name", "", "Platform Gateway name used by frontend HTTPRoutes.")
@@ -119,6 +126,10 @@ func main() {
 		ctrl.Log.Error(errors.New("model-server-port must be between 1 and 65535"), "invalid inference engine profile")
 		os.Exit(1)
 	}
+	if frontendMode != frontendModeLocal && frontendMode != frontendModeProduction {
+		ctrl.Log.Error(errors.New("frontend-mode must be local or production"), "invalid frontend profile")
+		os.Exit(1)
+	}
 	if vllmPDProfileName != "" && (vllmPDBootstrapPort < 1 || vllmPDBootstrapPort > 65535 || vllmPDAbortRequestTimeoutSeconds < 1 || int64(vllmPDAbortRequestTimeoutSeconds) > int64(1<<31-1) || vllmPDRDMAResourceCount < 1 || int64(vllmPDRDMAResourceCount) > int64(1<<31-1)) {
 		ctrl.Log.Error(errors.New("vLLM P/D numeric settings are outside their supported ranges"), "invalid P/D profile")
 		os.Exit(1)
@@ -157,7 +168,7 @@ func main() {
 	utilruntime.Must(gatewayv1.Install(scheme))
 
 	restConfig := ctrl.GetConfigOrDie()
-	if frontendEnabled {
+	if frontendEnabled && frontendMode == frontendModeProduction {
 		discoveryClient, err := discovery.NewDiscoveryClientForConfig(restConfig)
 		if err != nil {
 			ctrl.Log.Error(err, "unable to create Gateway API discovery client")
@@ -199,17 +210,22 @@ func main() {
 
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
 	if frontendEnabled {
+		var gateway *controllers.GatewayParent
+		if frontendMode == frontendModeProduction {
+			gateway = &controllers.GatewayParent{
+				Name:        frontendGatewayName,
+				Namespace:   frontendGatewayNamespace,
+				SectionName: frontendGatewaySectionName,
+			}
+		}
 		frontendReconciler := &controllers.FrontendServiceReconciler{
-			Client: manager.GetClient(),
+			Client:    manager.GetClient(),
+			APIReader: manager.GetAPIReader(),
 			RuntimeProfile: controllers.FrontendRuntimeProfile{
 				Image:            frontendImage,
 				Port:             int32(frontendPort),
 				ImagePullSecrets: workloadImagePullSecrets,
-				Gateway: controllers.GatewayParent{
-					Name:        frontendGatewayName,
-					Namespace:   frontendGatewayNamespace,
-					SectionName: frontendGatewaySectionName,
-				},
+				Gateway:          gateway,
 			},
 		}
 		if err := frontendReconciler.SetupWithManager(manager); err != nil {

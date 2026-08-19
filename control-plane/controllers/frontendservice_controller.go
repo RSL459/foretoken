@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Reconciles FrontendService intent into a frontend workload and platform route.
+// Reconciles FrontendService intent into a frontend workload and optional platform route.
 
 package controllers
 
@@ -40,6 +40,7 @@ const (
 	frontendDeploymentUnavailableMessage    = "The frontend Deployment is not available"
 	frontendRouteAcceptedMessage            = "The HTTPRoute is accepted and resolved"
 	frontendRoutePendingMessage             = "The HTTPRoute is not accepted and resolved"
+	frontendRouteNotRequiredMessage         = "Local mode exposes the frontend through its ClusterIP Service"
 	frontendRoutingInstalledMessage         = "A routable backend snapshot is installed"
 	frontendRoutingNotInstalledMessage      = "No routable backend snapshot is installed"
 )
@@ -59,28 +60,32 @@ type GatewayParent struct {
 	SectionName string
 }
 
-// FrontendRuntimeProfile contains platform-owned frontend and Gateway settings.
+// FrontendRuntimeProfile contains platform-owned frontend settings and an optional production Gateway.
 type FrontendRuntimeProfile struct {
 	Image            string
 	Port             int32
 	ImagePullSecrets []corev1.LocalObjectReference
-	Gateway          GatewayParent
+	Gateway          *GatewayParent
 }
 
-// FrontendServiceReconciler owns the frontend workload and its HTTPRoute.
+// FrontendServiceReconciler owns the frontend workload and its optional HTTPRoute.
 type FrontendServiceReconciler struct {
 	client.Client
+	APIReader      client.Reader
 	RuntimeProfile FrontendRuntimeProfile
 }
 
 // SetupWithManager watches each resource whose state contributes to frontend readiness.
 func (reconciler *FrontendServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).
+	builder := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.FrontendService{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Owns(&corev1.ConfigMap{}).
-		Owns(&gatewayv1.HTTPRoute{}).
+		Owns(&corev1.ConfigMap{})
+	if reconciler.RuntimeProfile.Gateway != nil {
+		builder = builder.Owns(&gatewayv1.HTTPRoute{})
+	}
+	return builder.
 		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.ModelPool{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
@@ -123,7 +128,11 @@ func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, requ
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
 	}
-	for _, object := range []client.Object{deployment, service, route} {
+	objects := []client.Object{deployment, service}
+	if route != nil {
+		objects = append(objects, route)
+	}
+	for _, object := range objects {
 		if err := controllerutil.SetControllerReference(frontend, object, reconciler.Scheme()); err != nil {
 			return ctrl.Result{}, fmt.Errorf("set %s owner: %w", object.GetObjectKind().GroupVersionKind().Kind, err)
 		}
@@ -132,22 +141,34 @@ func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, requ
 			return ctrl.Result{}, errors.Join(err, statusErr)
 		}
 	}
+	if route == nil {
+		if err := reconciler.deleteOwnedHTTPRoute(ctx, frontend); err != nil {
+			statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RouteCleanupFailed", FailureMessage: err.Error()})
+			return ctrl.Result{}, errors.Join(err, statusErr)
+		}
+	}
 
-	// Status is calculated from persisted workload and Gateway observations, not desired objects.
+	// Status is calculated from persisted workload and optional Gateway observations.
 	currentDeployment := new(appsv1.Deployment)
 	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(deployment), currentDeployment); err != nil {
 		return ctrl.Result{}, fmt.Errorf("get frontend Deployment: %w", err)
 	}
-	currentRoute := new(gatewayv1.HTTPRoute)
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(route), currentRoute); err != nil {
-		return ctrl.Result{}, fmt.Errorf("get frontend HTTPRoute: %w", err)
+	routeRequired := route != nil
+	routeReady := !routeRequired
+	if routeRequired {
+		currentRoute := new(gatewayv1.HTTPRoute)
+		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(route), currentRoute); err != nil {
+			return ctrl.Result{}, fmt.Errorf("get frontend HTTPRoute: %w", err)
+		}
+		routeReady = httpRouteAccepted(currentRoute, *reconciler.RuntimeProfile.Gateway, frontend.Namespace)
 	}
 	available := frontendDeploymentAvailable(currentDeployment)
 	state := frontendState{
-		Materialized: true,
-		Available:    available,
-		RouteReady:   httpRouteAccepted(currentRoute, reconciler.RuntimeProfile.Gateway, frontend.Namespace),
-		RoutingReady: available && servingSnapshotInstalled,
+		Materialized:  true,
+		Available:     available,
+		RouteRequired: routeRequired,
+		RouteReady:    routeReady,
+		RoutingReady:  available && servingSnapshotInstalled,
 	}
 	return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, state)
 }
@@ -159,7 +180,7 @@ func (profile FrontendRuntimeProfile) validate() error {
 	if profile.Port < 1 || profile.Port > 65535 {
 		return fmt.Errorf("frontend runtime port must be between 1 and 65535")
 	}
-	if profile.Gateway.Name == "" {
+	if profile.Gateway != nil && profile.Gateway.Name == "" {
 		return fmt.Errorf("Gateway parent name is not configured")
 	}
 	return nil
@@ -180,9 +201,32 @@ func (reconciler *FrontendServiceReconciler) applyOwned(ctx context.Context, own
 	return nil
 }
 
+func (reconciler *FrontendServiceReconciler) deleteOwnedHTTPRoute(ctx context.Context, frontend *inferencev1alpha1.FrontendService) error {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	route := &gatewayv1.HTTPRoute{}
+	err := reader.Get(ctx, client.ObjectKeyFromObject(frontend), route)
+	if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get frontend HTTPRoute for local mode: %w", err)
+	}
+	if !metav1.IsControlledBy(route, frontend) {
+		return nil
+	}
+	if err := reconciler.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete frontend HTTPRoute for local mode: %w", err)
+	}
+	return nil
+}
+
 type frontendState struct {
 	Materialized   bool
 	Available      bool
+	RouteRequired  bool
 	RouteReady     bool
 	RoutingReady   bool
 	FailureReason  string
@@ -211,13 +255,17 @@ func (reconciler *FrontendServiceReconciler) updateStatus(ctx context.Context, f
 			frontendBooleanReason(state.Available, "Available", "Unavailable"),
 			frontendBooleanMessage(state.Available, frontendDeploymentAvailableMessage, frontendDeploymentUnavailableMessage),
 		)
-		setFrontendCondition(
-			frontend,
-			frontendConditionRouteReady,
-			conditionStatus(state.RouteReady),
-			frontendBooleanReason(state.RouteReady, "Accepted", "Pending"),
-			frontendBooleanMessage(state.RouteReady, frontendRouteAcceptedMessage, frontendRoutePendingMessage),
-		)
+		if state.RouteRequired {
+			setFrontendCondition(
+				frontend,
+				frontendConditionRouteReady,
+				conditionStatus(state.RouteReady),
+				frontendBooleanReason(state.RouteReady, "Accepted", "Pending"),
+				frontendBooleanMessage(state.RouteReady, frontendRouteAcceptedMessage, frontendRoutePendingMessage),
+			)
+		} else {
+			setFrontendCondition(frontend, frontendConditionRouteReady, metav1.ConditionTrue, "NotRequired", frontendRouteNotRequiredMessage)
+		}
 		setFrontendCondition(
 			frontend,
 			frontendConditionRoutingReady,
@@ -247,12 +295,12 @@ func frontendReadyFailure(state frontendState) (string, string) {
 		return "NotMaterialized", "Frontend resources are not materialized"
 	case !state.Available:
 		return "WorkloadUnavailable", "The frontend Deployment is not available"
-	case !state.RouteReady:
+	case state.RouteRequired && !state.RouteReady:
 		return "RouteNotAccepted", "The HTTPRoute is not accepted and resolved by its Gateway"
 	case !state.RoutingReady:
 		return "RoutingNotReady", frontendRoutingNotInstalledMessage
 	default:
-		return "Ready", "The frontend workload, route, and backend routing are ready"
+		return "Ready", "The frontend workload and backend routing are ready"
 	}
 }
 

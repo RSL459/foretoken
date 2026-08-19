@@ -23,4 +23,3 @@ spec:
     filter: allow_all
     scorer: least_loaded
     picker: round_robin
-  hostname: foretoken.example.com # Hostname for the frontend service.

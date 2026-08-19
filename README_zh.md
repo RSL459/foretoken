@@ -33,19 +33,15 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ### 1. 安装 Foretoken
 
-Quick Start 使用集群中已有的 Gateway API `Gateway`。先填写它的名称和 namespace，再安装 Foretoken：
+本地模式无需安装或准备集群 Gateway，frontend 只通过集群内 Service 提供访问：
 
 ```bash
-FORETOKEN_GATEWAY_NAME=inference-gateway
-FORETOKEN_GATEWAY_NAMESPACE=gateway-system
-
 helm upgrade --install foretoken \
   oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
   --namespace foretoken-platform \
   --create-namespace \
   --set frontend.enabled=true \
-  --set frontend.gateway.name="${FORETOKEN_GATEWAY_NAME}" \
-  --set frontend.gateway.namespace="${FORETOKEN_GATEWAY_NAMESPACE}" \
+  --set frontend.mode=local \
   --wait
 ```
 
@@ -83,14 +79,50 @@ kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
 
 ### 4. 发送生成请求进行测试
 
+将模型 namespace 中的 frontend Service 转发到本机：
+
+```bash
+kubectl port-forward \
+  --namespace foretoken-demo \
+  service/quickstart-frontend \
+  8080:8080
+```
+
+保持端口转发运行，并在另一个终端发送请求：
+
 ```bash
 curl --fail-with-body --no-buffer \
-  https://foretoken.example.com/v1/chat/completions \
+  http://127.0.0.1:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
 
-用户只需提交服务配置；底层资源由 Operator 管理，客户端通过 Gateway 访问模型服务。
+底层资源由 Operator 管理。本地模式不会创建外部入口，只有用户主动执行端口转发时，本机才能访问 frontend。
+
+## 生产环境 Gateway 访问
+
+生产模式会为已有的 Gateway API `Gateway` 创建 `HTTPRoute`。安装时配置 Gateway，并为每个 `FrontendService` 设置 `spec.hostname`：
+
+```bash
+helm upgrade --install foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=production \
+  --set frontend.gateway.name=inference-gateway \
+  --set frontend.gateway.namespace=gateway-system \
+  --wait
+```
+
+在 frontend 配置中填写对外域名：
+
+```yaml
+spec:
+  hostname: foretoken.example.com
+```
+
+Gateway 必须允许 Foretoken frontend 所在 namespace 创建的 `HTTPRoute` 接入。DNS 和 TLS 继续由平台 Gateway 管理。
 
 ## 停止与卸载
 

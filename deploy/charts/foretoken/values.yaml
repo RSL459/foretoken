@@ -15,9 +15,10 @@ imagePullSecrets: []
 workload:
   imagePullSecrets: []
 
-# Frontend execution requires Gateway API v1 HTTPRoute CRDs and a platform-managed Gateway.
+# Local mode exposes the frontend through its ClusterIP Service. Production mode attaches an HTTPRoute to an existing Gateway.
 frontend:
   enabled: false
+  mode: local
   image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.1
   port: 8080
   gateway:

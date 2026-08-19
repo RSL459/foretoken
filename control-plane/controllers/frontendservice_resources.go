@@ -141,6 +141,12 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			Ports:    []corev1.ServicePort{{Name: "http", Port: profile.Port, TargetPort: intstr.FromString("http"), Protocol: corev1.ProtocolTCP}},
 		},
 	}
+	if profile.Gateway == nil {
+		return deployment, service, nil, nil
+	}
+	if frontend.Spec.Hostname == "" {
+		return nil, nil, nil, fmt.Errorf("frontend hostname is required in production mode")
+	}
 	return deployment, service, desiredHTTPRoute(frontend, profile, requestTimeout), nil
 }
 

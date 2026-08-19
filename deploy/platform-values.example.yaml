@@ -18,6 +18,7 @@ workload:
 
 frontend:
   enabled: true
+  mode: production
   image: registry.example.com/foretoken/frontend:dev
   gateway:
     name: inference-gateway
