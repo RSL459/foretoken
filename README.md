@@ -81,7 +81,27 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-If the platform already has a suitable `Gateway`, leave creation disabled and set `frontend.gateway.name` and `frontend.gateway.namespace` instead. The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
+If the platform already has a suitable `Gateway`, first list its name and namespace:
+
+```bash
+kubectl get gateway -A
+```
+
+For example:
+
+```text
+NAMESPACE        NAME
+gateway-system   inference-gateway
+```
+
+Do not set `frontend.gateway.create=true`. Instead, use these values in the Foretoken installation command above:
+
+```bash
+--set frontend.gateway.name=inference-gateway \
+--set frontend.gateway.namespace=gateway-system
+```
+
+`name` comes from the `NAME` column and `namespace` from `NAMESPACE`. The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
 
 ### 2. Deploy a model service
 

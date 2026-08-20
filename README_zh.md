@@ -81,7 +81,27 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-如果平台已经有可用的 `Gateway`，则不需要创建，改为设置 `frontend.gateway.name` 和 `frontend.gateway.namespace`。Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
+如果平台已经有可用的 `Gateway`，可以先查看它的名称和 namespace：
+
+```bash
+kubectl get gateway -A
+```
+
+例如输出：
+
+```text
+NAMESPACE        NAME
+gateway-system   inference-gateway
+```
+
+此时不设置 `frontend.gateway.create=true`，而是在上述 Foretoken 安装命令中改用：
+
+```bash
+--set frontend.gateway.name=inference-gateway \
+--set frontend.gateway.namespace=gateway-system
+```
+
+其中 `name` 对应 `NAME` 列，`namespace` 对应 `NAMESPACE` 列。该 Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
 
 ### 2. 部署模型服务
 
