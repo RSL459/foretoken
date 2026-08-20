@@ -3,7 +3,7 @@
 
 //! Watches serving snapshots and atomically publishes prepared runtime generations.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,7 +34,7 @@ pub(crate) async fn watch_serving_snapshot(
             }
             Ok(bytes) => {
                 read_failure_reported = false;
-                if process_serving_snapshot(&generation, &bytes, &builder).await {
+                if process_serving_snapshot(&generation, &path, &bytes, &builder).await {
                     last_processed_snapshot = Some(bytes);
                 }
             }
@@ -51,6 +51,7 @@ pub(crate) async fn watch_serving_snapshot(
 
 async fn process_serving_snapshot(
     generation: &RuntimeGeneration,
+    path: &Path,
     bytes: &[u8],
     builder: &RuntimeBuilder,
 ) -> bool {
@@ -73,7 +74,20 @@ async fn process_serving_snapshot(
         return true;
     }
     match builder.build(snapshot).await {
-        Ok(prepared) => prepared.publish(generation),
+        Ok(prepared) => match std::fs::read(path) {
+            Ok(current) if current == bytes => prepared.publish(generation),
+            Ok(_) => {
+                tracing::info!(
+                    candidate_version,
+                    "serving snapshot candidate was superseded during preparation"
+                );
+                true
+            }
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "could not confirm serving snapshot candidate before publication");
+                false
+            }
+        },
         Err(error) => {
             tracing::warn!(%error, "could not prepare serving snapshot candidate");
             false

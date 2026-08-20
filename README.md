@@ -98,21 +98,17 @@ Do not set `frontend.gateway.create=true`. Instead, use these values in the Fore
 
 ```bash
 --set frontend.gateway.name=inference-gateway \
---set frontend.gateway.namespace=gateway-system
+--set frontend.gateway.namespace=gateway-system \
+--set frontend.gateway.sectionName=https
 ```
 
-`name` comes from the `NAME` column and `namespace` from `NAMESPACE`. The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
+`name` comes from the `NAME` column, `namespace` from `NAMESPACE`, and `sectionName` is the listener name selected from that Gateway. The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
 
 ### 2. Deploy a model service
 
 `examples/quickstart/kustomization.yaml` is the deployment entrypoint. It organizes the frontend and model services, while the Operator creates and manages the underlying resources.
 
 ```bash
-# Create the namespace for the model service; keep it unchanged if it exists.
-kubectl create namespace foretoken-demo \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# Apply the model service configuration; the Operator creates and starts its workloads.
 kubectl apply --server-side -k examples/quickstart
 ```
 
@@ -216,6 +212,8 @@ Use the local Chart from a source checkout:
 helm upgrade --install foretoken ./deploy/charts/foretoken \
   --namespace foretoken-platform \
   --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=local \
   --wait
 ```
 

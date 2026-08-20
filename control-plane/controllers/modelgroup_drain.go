@@ -224,8 +224,13 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 		}
 		for podIndex := range pods.Items {
 			pod := &pods.Items[podIndex]
-			if !pod.DeletionTimestamp.IsZero() || !podReady(pod) {
+			if !pod.DeletionTimestamp.IsZero() {
 				continue
+			}
+			// Every surviving replica must observe the withdrawal before deletion. An unready
+			// replica may later rejoin the Service, so it cannot be excluded from the barrier.
+			if !podReady(pod) {
+				return false, nil
 			}
 			endpoint, err := frontendPodEndpoint(pod)
 			if err != nil {

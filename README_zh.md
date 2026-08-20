@@ -98,21 +98,17 @@ gateway-system   inference-gateway
 
 ```bash
 --set frontend.gateway.name=inference-gateway \
---set frontend.gateway.namespace=gateway-system
+--set frontend.gateway.namespace=gateway-system \
+--set frontend.gateway.sectionName=https
 ```
 
-其中 `name` 对应 `NAME` 列，`namespace` 对应 `NAMESPACE` 列。该 Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
+其中 `name` 对应 `NAME` 列，`namespace` 对应 `NAMESPACE` 列，`sectionName` 是该 Gateway 中目标 listener 的名称。该 Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
 
 ### 2. 部署模型服务
 
 `examples/quickstart/kustomization.yaml` 是部署入口，统一组织前端服务和模型服务：
 
 ```bash
-# 创建模型服务的 namespace；已存在时保持不变
-kubectl create namespace foretoken-demo \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# 提交模型服务配置，由 K8s Operator 创建并启动相关服务
 kubectl apply --server-side -k examples/quickstart
 ```
 
@@ -212,6 +208,8 @@ kubectl delete crd \
 helm upgrade --install foretoken ./deploy/charts/foretoken \
   --namespace foretoken-platform \
   --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=local \
   --wait
 ```
 

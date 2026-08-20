@@ -189,6 +189,10 @@ impl RuntimeControl for RegistryRuntimeControl {
         self.registry.is_configured()
     }
 
+    fn model_ready(&self, model: &str) -> bool {
+        self.registry.is_model_ready(model)
+    }
+
     fn kv_index_diagnostics(&self) -> KvIndexDiagnostics {
         let status = self.kv_indexer.status();
         KvIndexDiagnostics {

@@ -22,7 +22,7 @@ controller:
 workload:
   imagePullSecrets: []
 
-# Local mode uses the frontend ClusterIP Service. Gateway mode attaches an HTTPRoute to an existing Gateway.
+# Local mode uses a LoadBalancer Service. Gateway mode attaches an HTTPRoute to a Gateway.
 frontend:
   enabled: false
   mode: local

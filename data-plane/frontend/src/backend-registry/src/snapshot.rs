@@ -290,11 +290,7 @@ impl ServingSnapshot {
                 }
             }
         }
-        if identities.is_empty() {
-            Err(SnapshotError::EmptyGroups)
-        } else {
-            Ok(identities)
-        }
+        Ok(identities)
     }
 }
 #[derive(Debug, Error)]
@@ -303,8 +299,6 @@ pub enum SnapshotError {
     Parse(serde_json::Error),
     #[error("routing snapshot version must be greater than zero")]
     InvalidVersion,
-    #[error("routing snapshot has no complete groups")]
-    EmptyGroups,
     #[error("routing snapshot has an incomplete model or tokenizer identity")]
     IncompleteModelIdentity,
     #[error("routing snapshot has an incomplete logical scaling model {0:?}")]

@@ -40,7 +40,7 @@ const (
 	frontendDeploymentUnavailableMessage    = "The frontend Deployment is not available"
 	frontendRouteAcceptedMessage            = "The HTTPRoute is accepted and resolved"
 	frontendRoutePendingMessage             = "The HTTPRoute is not accepted and resolved"
-	frontendRouteNotRequiredMessage         = "Local mode exposes the frontend through its ClusterIP Service"
+	frontendRouteNotRequiredMessage         = "Local mode exposes the frontend through its LoadBalancer Service"
 	frontendRoutingInstalledMessage         = "A routable backend snapshot is installed"
 	frontendRoutingNotInstalledMessage      = "No routable backend snapshot is installed"
 )

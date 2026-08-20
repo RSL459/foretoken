@@ -144,6 +144,10 @@ pub trait RuntimeControl: Send + Sync {
     async fn refresh_backend_readiness(&self);
     fn configured_models(&self) -> Vec<String>;
     fn is_ready(&self) -> bool;
+    #[allow(unused_variables)]
+    fn model_ready(&self, model: &str) -> bool {
+        self.is_ready()
+    }
     fn kv_index_diagnostics(&self) -> KvIndexDiagnostics {
         KvIndexDiagnostics {
             state: "unavailable".into(),
@@ -273,10 +277,6 @@ impl RuntimeState {
             .map(AdmissionTargets::select)
     }
 
-    pub fn has_runtime_model(&self, model: &str) -> bool {
-        self.models.contains_key(model)
-    }
-
     pub fn model(&self, model: &str) -> Result<&ModelRuntime, GenerationError> {
         self.models.get(model).ok_or(GenerationError::ModelNotFound)
     }
@@ -353,6 +353,7 @@ impl RuntimeGeneration {
     pub async fn refresh_backend_readiness(&self) {
         if let Some(slot) = self.slot.load_full() {
             slot.control.refresh_backend_readiness().await;
+            self.publication_updates.send_replace(slot.version);
         }
     }
 
@@ -383,11 +384,8 @@ impl RuntimeGeneration {
         let mut queued = None;
         loop {
             let slot = self.ready_state()?;
-            if slot.state.model(model).is_ok() {
+            if slot.state.model(model).is_ok() && slot.control.model_ready(model) {
                 return Ok(slot);
-            }
-            if slot.state.has_runtime_model(model) {
-                return Err(GenerationError::ModelNotFound);
             }
             let Some(targets) = slot.state.select_admission_targets(model) else {
                 return Err(GenerationError::ModelNotFound);

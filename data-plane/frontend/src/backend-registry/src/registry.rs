@@ -175,6 +175,10 @@ impl BackendRegistry {
         dtypes.all(|candidate| candidate == dtype).then_some(dtype)
     }
 
+    pub fn is_model_ready(&self, model: &str) -> bool {
+        self.healthy_models().iter().any(|healthy| healthy == model)
+    }
+
     pub fn healthy_models(&self) -> Vec<String> {
         // Aggregate routes are independently serviceable. A split scope is healthy only with
         // P+D, or E+P+D when that scope includes an encoder.
@@ -233,9 +237,10 @@ impl BackendRegistry {
                 None => true,
             };
             let stats = telemetry(&self.health_client, c.endpoint()).await;
+            let accepting = stats.as_ref().is_some_and(|stats| stats.accepting);
             (
                 id.clone(),
-                ready && bootstrap && metadata_matches,
+                ready && bootstrap && metadata_matches && accepting,
                 metadata,
                 stats,
             )

@@ -349,6 +349,11 @@ async fn telemetry_history_derives_windows_and_rejects_counter_resets() {
     *telemetry_state.lock().unwrap() = telemetry(302_000, 10, histogram(1, 0.1, 1));
     registry.refresh_backend_readiness().await;
     assert!(registry.stats(&target, Duration::from_secs(150)).is_none());
+
+    telemetry_state.lock().unwrap().accepting = false;
+    registry.refresh_backend_readiness().await;
+    assert!(!registry.is_route_target_healthy(&target));
+    assert!(registry.metadata(&target).is_none());
 }
 
 #[tokio::test]
@@ -444,6 +449,23 @@ fn epd_snapshot_projects_one_static_triplet_and_prefill_kv_source() {
     assert_eq!(build.kv_runtime_config.route_bindings.len(), 1);
     assert_eq!(build.kv_runtime_config.event_sources.len(), 1);
     assert!(build.kv_runtime_config.route_bindings.contains_key("p"));
+}
+
+#[test]
+fn empty_snapshot_withdraws_all_routes() {
+    let build = BackendRegistryBuild::from_snapshot(ServingSnapshot {
+        version: 2,
+        models: vec![],
+        groups: vec![],
+        pd_components: vec![],
+        pd_pipeline_scopes: vec![],
+        epd_components: vec![],
+        epd_pipeline_scopes: vec![],
+    })
+    .unwrap();
+
+    assert!(build.registry.route_table().routes().is_empty());
+    assert!(build.registry.configured_models().is_empty());
 }
 
 #[test]

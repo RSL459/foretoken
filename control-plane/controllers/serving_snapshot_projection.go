@@ -200,7 +200,13 @@ func admissionTargetSetsForService(service *inferencev1alpha1.ModelService, pool
 		return compareStrings(left.UID, right.UID)
 	})
 	if poolsHavePD(pools) || len(pools) == 0 && serviceDeclaresPD(service) {
-		if len(targets) == 0 {
+		hasPrefill := slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
+			return pool.Spec.Template.Role == inferencev1alpha1.ModelRolePrefill
+		})
+		hasDecode := slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
+			return pool.Spec.Template.Role == inferencev1alpha1.ModelRoleDecode
+		})
+		if !hasPrefill || !hasDecode {
 			return nil
 		}
 		return [][]servingSnapshotScalingTarget{targets}
