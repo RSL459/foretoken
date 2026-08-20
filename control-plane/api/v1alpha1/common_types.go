@@ -18,8 +18,9 @@ type ResourceQuantity string
 type Duration string
 
 // BackendArg is one long-form CLI argument passed to the inference engine.
-// The vLLM compiler checks the allowed arguments and whether they require values;
-// this schema rejects spaces, aliases, and positional arguments.
+// The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
+// max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and
+// disable-log-stats. This schema rejects spaces, aliases, and positional arguments.
 // +kubebuilder:validation:MinLength=3
 // +kubebuilder:validation:MaxLength=4096
 // +kubebuilder:validation:Pattern="^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$"

@@ -59,7 +59,7 @@ impl RuntimeHealth {
         self.process_alive.load(Ordering::Acquire) && self.client_healthy.load(Ordering::Acquire)
     }
     pub fn ready(&self) -> bool {
-        self.healthy() && self.accepting()
+        self.healthy()
     }
     pub fn accepting(&self) -> bool {
         self.admission.load(Ordering::Acquire) & ADMISSION_OPEN != 0

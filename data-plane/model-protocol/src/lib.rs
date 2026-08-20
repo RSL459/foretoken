@@ -25,28 +25,11 @@ pub enum ModelServerRole {
     Decode,
 }
 
-/// Model-server wire execution stage selected for a routed request.
-///
-/// This typed value is sent to the model-server HTTP endpoint. It is distinct from the Router's
-/// request-local routing state and from a route target's execution role.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RouteStage {
-    #[default]
-    Aggregate,
-    Encoder,
-    Prefill,
-    Decode,
-}
-
 /// Request accepted by the single model-server ingress owned by one routable ModelGroup.
 /// Its Pod placement is a runtime detail and does not create another routing identity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GenerateInput {
-    /// Model-server execution stage selected by the router, not Router's per-request routing stage.
-    #[serde(default)]
-    pub stage: RouteStage,
     pub request_id: String,
     pub prompt_token_ids: Vec<u32>,
     pub sampling_params: EngineCoreSamplingParams,
@@ -72,7 +55,6 @@ pub struct GenerateInput {
 impl From<GenerateRequest> for GenerateInput {
     fn from(request: GenerateRequest) -> Self {
         Self {
-            stage: RouteStage::Aggregate,
             request_id: request.request_id,
             prompt_token_ids: request.prompt_token_ids,
             sampling_params: request.sampling_params,

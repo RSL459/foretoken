@@ -141,6 +141,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if profile.NodeSelectorKey != "" {
 		nodeSelector = map[string]string{profile.NodeSelectorKey: profile.NodeSelectorValue}
 	}
+
 	resolved := ModelGroupTemplate{
 		Role: template.Role,
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{

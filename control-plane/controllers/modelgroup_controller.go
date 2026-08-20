@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
@@ -32,20 +33,23 @@ import (
 )
 
 const (
-	conditionWorkloadMaterialized = "WorkloadMaterialized"
-	conditionWorkloadAvailable    = "WorkloadAvailable"
-	conditionSchedulingCapacity   = "SchedulingCapacity"
-	modelGroupLabel               = "inference.foretoken.io/model-group"
-	modelGroupRoleLabel           = "inference.foretoken.io/model-role"
-	multusNetworksAnnotation      = "k8s.v1.cni.cncf.io/networks"
-	modelGroupFieldOwner          = "foretoken-modelgroup-controller"
-	controlPlanePodLabel          = "app.kubernetes.io/name"
-	controlPlanePodLabelValue     = "foretoken-control-plane"
+	conditionWorkloadMaterialized  = "WorkloadMaterialized"
+	conditionWorkloadAvailable     = "WorkloadAvailable"
+	conditionSchedulingCapacity    = "SchedulingCapacity"
+	modelGroupLabel                = "inference.foretoken.io/model-group"
+	modelGroupRoleLabel            = "inference.foretoken.io/model-role"
+	modelGroupPDPipelineScopeLabel = "inference.foretoken.io/pd-pipeline-scope"
+	multusNetworksAnnotation       = "k8s.v1.cni.cncf.io/networks"
+	modelGroupFieldOwner           = "foretoken-modelgroup-controller"
+	controlPlanePodLabel           = "app.kubernetes.io/name"
+	controlPlanePodLabelValue      = "foretoken-control-plane"
 )
 
 // ModelGroupReconciler owns the Kubernetes workload for one execution Group.
 type ModelGroupReconciler struct {
 	client.Client
+	DrainClient           ModelGroupDrainClient
+	Now                   func() time.Time
 	ControlPlaneNamespace string
 	ImagePullSecrets      []corev1.LocalObjectReference
 }
@@ -78,7 +82,7 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !group.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, nil
+		return reconciler.reconcileDelete(ctx, group)
 	}
 	if err := reconciler.validateModelPoolOwnership(ctx, group); err != nil {
 		return ctrl.Result{}, err
@@ -86,6 +90,18 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err := validateGroupProfile(group); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(err))
 	}
+	if err := ensureKVIndexerSecret(ctx, reconciler.Client, group.Namespace); err != nil {
+		return ctrl.Result{}, err
+	}
+	if !controllerutil.ContainsFinalizer(group, modelGroupDrainFinalizer) {
+		base := group.DeepCopy()
+		controllerutil.AddFinalizer(group, modelGroupDrainFinalizer)
+		if err := reconciler.Patch(ctx, group, client.MergeFrom(base)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("add ModelGroup drain finalizer: %w", err)
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	deployment, err := reconciler.reconcileDeployment(ctx, group)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -146,7 +162,11 @@ func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context,
 }
 
 func modelGroupLabels(group *inferencev1alpha1.ModelGroup) map[string]string {
-	return map[string]string{modelGroupLabel: group.Name, modelGroupRoleLabel: string(group.Spec.Role)}
+	labels := map[string]string{modelGroupLabel: group.Name, modelGroupRoleLabel: string(group.Spec.Role)}
+	if group.Spec.PDRuntime != nil {
+		labels[modelGroupPDPipelineScopeLabel] = pdPipelineScopeID(group)
+	}
+	return labels
 }
 
 func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference) (*appsv1.Deployment, error) {
@@ -182,6 +202,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	env := []corev1.EnvVar{
 		{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON},
 		{Name: "FORETOKEN_INTERNAL_LISTEN", Value: fmt.Sprintf("0.0.0.0:%d", group.Spec.Runtime.Port)},
+		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
+		{Name: "FORETOKEN_KV_SCOPE_ID", Value: kvScopeID(group)},
+		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
 	}
 	if group.Spec.PDRuntime != nil {
 		env = append(env,
@@ -219,8 +242,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	volumes := []corev1.Volume{
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}},
+		{Name: "kv-indexer", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: kvIndexerSecretName, Items: []corev1.KeyToPath{{Key: kvIndexerSecretKey, Path: "key"}}}}},
 	}
-	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}, {Name: "dshm", MountPath: "/dev/shm"}}
+	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}, {Name: "dshm", MountPath: "/dev/shm"}, {Name: "kv-indexer", MountPath: "/etc/foretoken/kv-indexer", ReadOnly: true}}
 	if group.Spec.ECRuntime != nil {
 		volumes = append(volumes, corev1.Volume{Name: "ec-shared-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: group.Spec.ECRuntime.SharedStorageClaim}}})
 		mounts = append(mounts, corev1.VolumeMount{Name: "ec-shared-storage", MountPath: group.Spec.ECRuntime.SharedStoragePath})
@@ -269,6 +293,8 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 						Name:            "model-server",
 						Image:           group.Spec.Runtime.Image,
 						ImagePullPolicy: corev1.PullIfNotPresent,
+						Command:         []string{"foretoken-model-server"},
+						Args:            []string{},
 						Ports:           ports,
 						Env:             env,
 						VolumeMounts:    mounts,
@@ -348,12 +374,39 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 		return fmt.Errorf("control-plane namespace is not configured")
 	}
 	ingress := []networkingv1.NetworkPolicyIngressRule{{
-		From: []networkingv1.NetworkPolicyPeer{{
-			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": reconciler.ControlPlaneNamespace}},
-			PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{controlPlanePodLabel: controlPlanePodLabelValue}},
-		}},
+		From: []networkingv1.NetworkPolicyPeer{
+			{
+				PodSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+					Key:      frontendServiceLabel,
+					Operator: metav1.LabelSelectorOpExists,
+				}}},
+			},
+			{
+				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": reconciler.ControlPlaneNamespace}},
+				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{controlPlanePodLabel: controlPlanePodLabelValue}},
+			},
+		},
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &modelServerPort}},
 	}}
+	if group.Spec.PDRuntime != nil {
+		// Mooncake opens bidirectional runtime side channels on dynamic ports
+		// after bootstrap. Restrict them to the same controller-owned P/D linked processing unit.
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{
+			PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+				modelGroupPDPipelineScopeLabel: pdPipelineScopeID(group),
+			}},
+		}}})
+		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+			bootstrapPort := intstr.FromInt32(group.Spec.PDRuntime.BootstrapPort)
+			ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+				From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+					Key:      frontendServiceLabel,
+					Operator: metav1.LabelSelectorOpExists,
+				}}}}},
+				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &bootstrapPort}},
+			})
+		}
+	}
 	desired := &networkingv1.NetworkPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: networkingv1.SchemeGroupVersion.String(), Kind: "NetworkPolicy"},
 		ObjectMeta: metav1.ObjectMeta{Name: group.Name, Namespace: group.Namespace, Labels: labels},

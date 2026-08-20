@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm/adjustment"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"strings"
 	"testing"
@@ -57,6 +58,45 @@ func TestPipelineCombinesRegisteredStagesAndManualBypassesTelemetry(t *testing.T
 	}
 }
 
+func TestAutomaticHoldStillEnforcesCapacityBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		current    int32
+		limits     core.CapacityLimits
+		transition bool
+		trigger    core.TriggerDecision
+		want       int32
+		constraint core.DesiredCapacityReason
+		direction  core.Direction
+	}{
+		{name: "hold below minimum", current: 0, limits: core.CapacityLimits{MinGroups: 1, MaxGroups: 8}, trigger: core.TriggerDecision{Disposition: core.TriggerHold, Reason: core.TriggerReasonWithinWatermarkBand}, want: 1, constraint: core.DesiredCapacityReasonAtMinimum, direction: core.DirectionUp},
+		{name: "insufficient data above maximum while transitioning", current: 5, limits: core.CapacityLimits{MinGroups: 0, MaxGroups: 3}, transition: true, trigger: core.TriggerDecision{Disposition: core.TriggerInsufficientData, Reason: core.TriggerDesiredCapacityReasonObservationStale}, want: 3, constraint: core.DesiredCapacityReasonAtMaximum, direction: core.DirectionDown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := scalingSnapshot()
+			snapshot.Capacity.RequestedGroups = tc.current
+			snapshot.Capacity.Transitioning = tc.transition
+			snapshot.Limits = tc.limits
+			pipeline := autoscaling.NewWithAlgorithms(currentCapacityDecision{}, fixedTrigger{tc.trigger}, adjustment.Step{}, true)
+			results, err := pipeline.Plan(context.Background(), []core.ScalingSnapshot{snapshot})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := results[0]
+			if result.AppliedGroups != tc.want || result.Adjustment.AdjustedGroups != tc.want || result.Constraint != tc.constraint || result.Direction != tc.direction || result.Trigger != tc.trigger {
+				t.Fatalf("bounded hold = %#v", result)
+			}
+		})
+	}
+}
+
+type fixedTrigger struct{ decision core.TriggerDecision }
+
+func (trigger fixedTrigger) Name() string { return "fixed" }
+func (trigger fixedTrigger) Decide(core.ScalingSnapshot) core.TriggerDecision {
+	return trigger.decision
+}
+
 type currentCapacityDecision struct{}
 
 func (currentCapacityDecision) Name() string { return "hold" }
@@ -69,15 +109,6 @@ type failAdjustment struct{}
 func (failAdjustment) Name() string { return "fail" }
 func (failAdjustment) Adjust(core.AdjustmentInput) (core.ScalingAdjustment, error) {
 	return core.ScalingAdjustment{}, errors.New("adjustment must not run")
-}
-
-func contains(names []string, wanted string) bool {
-	for _, name := range names {
-		if name == wanted {
-			return true
-		}
-	}
-	return false
 }
 
 func scalingSnapshot() core.ScalingSnapshot {

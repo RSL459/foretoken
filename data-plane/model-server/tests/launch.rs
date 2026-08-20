@@ -14,7 +14,7 @@ fn rejects_unknown_and_missing_wire_fields() {
 }
 
 #[test]
-fn rejects_invalid_topology_and_extra_arg_bypass() {
+fn rejects_invalid_topology() {
     let mut invalid = plan();
     invalid.node_count = 2;
     assert!(invalid.validate().is_err());
@@ -23,27 +23,6 @@ fn rejects_invalid_topology_and_extra_arg_bypass() {
     invalid.parallelism.pcp = 2;
     invalid.parallelism.dp = 2;
     assert!(invalid.validate().is_err());
-    for argument in [
-        "--model=other",
-        "-dp=2",
-        "--max_model_len=1",
-        "--config=x",
-        "--max-model-len 1",
-        "--unknown=1",
-    ] {
-        let mut bad = plan();
-        bad.extra_args = vec![argument.into()];
-        assert!(bad.validate().is_err(), "{argument} was accepted");
-    }
-}
-
-#[test]
-fn rejects_out_of_range_internal_generate_request_body_limits() {
-    for limit in [1_048_575, 268_435_457] {
-        let mut invalid = plan();
-        invalid.internal_generate_request_body_limit_bytes = limit;
-        assert!(invalid.validate().is_err(), "limit {limit} was accepted");
-    }
 }
 
 #[test]
@@ -108,13 +87,9 @@ fn ec_plan_renders_one_owned_config_for_each_role() {
 }
 
 #[test]
-fn rejects_invalid_ec_pairing_and_ec_extra_arg_bypass() {
+fn rejects_invalid_ec_pairing() {
     let invalid = r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"profile","profileRevision":"r1","connector":"arbitrary","role":"producer","sharedStoragePath":"relative"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#;
     assert!(LaunchPlanV1::parse(invalid).is_err());
-
-    let mut bypass = plan();
-    bypass.extra_args = vec!["--ec-transfer-config={}".into()];
-    assert!(bypass.validate().is_err());
 }
 
 #[test]

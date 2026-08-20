@@ -104,8 +104,9 @@ spec:
                     items:
                       description: |-
                         BackendArg is one long-form CLI argument passed to the inference engine.
-                        The vLLM compiler checks the allowed arguments and whether they require values;
-                        this schema rejects spaces, aliases, and positional arguments.
+                        The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
+                        max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and
+                        disable-log-stats. This schema rejects spaces, aliases, and positional arguments.
                       maxLength: 4096
                       minLength: 3
                       pattern: ^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$
@@ -156,11 +157,11 @@ spec:
                     properties:
                       mooncakeStore:
                         description: NormalizedMooncakeStore is either an external
-                          profile or a resolved managed binding.
+                          profile or a pinned managed binding.
                         properties:
                           managedBinding:
-                            description: ManagedMooncakeStoreBinding identifies the
-                              resolved Ready KVService generation.
+                            description: ManagedMooncakeStoreBinding pins a Ready
+                              Foretoken-owned KVService against ABA.
                             properties:
                               bindingRevision:
                                 type: string
@@ -462,11 +463,6 @@ spec:
           status:
             description: ModelPoolStatus defines the observed state of a ModelPool.
             properties:
-              activeRevision:
-                description: ActiveRevision is the immutable Group revision currently
-                  admitted to routing.
-                maxLength: 63
-                type: string
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -531,6 +527,11 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              preparedRevision:
+                description: PreparedRevision is the immutable Group revision whose
+                  requested capacity is ready for a service-level commit.
+                maxLength: 63
+                type: string
             type: object
         required:
         - spec

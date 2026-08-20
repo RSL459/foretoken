@@ -78,21 +78,60 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	return pools, nil
 }
 
+// Validate service-wide topology across Pools: aggregate and split roles are exclusive,
+// P/D must be paired, and E/P/D requires one equally sized Pool for every stage.
 func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
+	var aggregate bool
+	roleCounts := make(map[inferencev1alpha1.ModelRole]int, 3)
+	roleReplicas := make(map[inferencev1alpha1.ModelRole]int32, 3)
 	for _, pool := range pools {
-		if pool.Role != "" && pool.Role != inferencev1alpha1.ModelRoleAggregate {
-			return fmt.Errorf("modelPools role %q is not enabled by the current control-plane runtime", pool.Role)
+		switch pool.Role {
+		case "", inferencev1alpha1.ModelRoleAggregate:
+			aggregate = true
+		case inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode:
+			roleCounts[pool.Role]++
+			roleReplicas[pool.Role] += valueOrDefault(pool.Replicas, 1)
 		}
+	}
+	hasEncoder := roleCounts[inferencev1alpha1.ModelRoleEncoder] > 0
+	hasPrefill := roleCounts[inferencev1alpha1.ModelRolePrefill] > 0
+	hasDecode := roleCounts[inferencev1alpha1.ModelRoleDecode] > 0
+	if aggregate && (hasEncoder || hasPrefill || hasDecode) {
+		return fmt.Errorf("modelPools cannot mix aggregate and split roles")
+	}
+	if hasEncoder {
+		if !hasPrefill || !hasDecode {
+			return fmt.Errorf("E/P/D modelPools must contain encoder, prefill, and decode roles")
+		}
+		for _, role := range []inferencev1alpha1.ModelRole{inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode} {
+			if roleCounts[role] != 1 {
+				return fmt.Errorf("E/P/D modelPools must contain exactly one %s Pool", role)
+			}
+		}
+		encoderReplicas := roleReplicas[inferencev1alpha1.ModelRoleEncoder]
+		if encoderReplicas != roleReplicas[inferencev1alpha1.ModelRolePrefill] || encoderReplicas != roleReplicas[inferencev1alpha1.ModelRoleDecode] {
+			return fmt.Errorf("E/P/D modelPools must have equal encoder, prefill, and decode replica counts")
+		}
+		return nil
+	}
+	if hasPrefill != hasDecode {
+		return fmt.Errorf("modelPools must contain both prefill and decode roles")
 	}
 	return nil
 }
 
 func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, parallelism inferencev1alpha1.Parallelism, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
+	if nodes != 1 {
+		return ModelPool{}, fmt.Errorf("only single-node model groups are currently supported")
+	}
 	normalizedResources, err := normalizeResources(resources)
 	if err != nil {
 		return ModelPool{}, err
 	}
 	compiledParallelism := compileParallelism(parallelism)
+	if role != inferencev1alpha1.ModelRoleAggregate && (compiledParallelism.TP != 1 || compiledParallelism.PP != 1 || compiledParallelism.DP != 1 || compiledParallelism.PCP != 1 || compiledParallelism.DCP != 1 || compiledParallelism.EP != nil) {
+		return ModelPool{}, fmt.Errorf("split serving currently requires TP=PP=DP=PCP=DCP=1 without expert parallelism")
+	}
 	normalizedKVCache, err := normalizeKVCache(kvCache)
 	if err != nil {
 		return ModelPool{}, err
@@ -137,6 +176,8 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role infe
 	}, nil
 }
 
+// The remaining compiler helpers normalize user shorthand into stable Pool template fields.
+// Runtime-incompatible resources, storage, timeouts, and features fail before reconciliation.
 func compileParallelism(input inferencev1alpha1.Parallelism) inferencev1alpha1.CompiledParallelism {
 	tp := defaultOne(input.TP)
 	pcp := defaultOne(input.PCP)
@@ -236,8 +277,8 @@ func normalizeKVCache(input *inferencev1alpha1.KVCache) (*inferencev1alpha1.Norm
 		if (store.Profile == "") == (store.KVServiceRef == nil) {
 			return nil, fmt.Errorf("kvCache.mooncakeStore must select exactly one of profile or kvServiceRef")
 		}
-		if store.KVServiceRef != nil {
-			return nil, fmt.Errorf("kvCache.mooncakeStore.kvServiceRef is not enabled by the current control-plane runtime")
+		if store.KVServiceRef != nil && store.KVServiceRef.Name == "" {
+			return nil, fmt.Errorf("kvCache.mooncakeStore.kvServiceRef.name is required")
 		}
 		output.MooncakeStore = &inferencev1alpha1.NormalizedMooncakeStore{Profile: store.Profile}
 	}
@@ -245,8 +286,41 @@ func normalizeKVCache(input *inferencev1alpha1.KVCache) (*inferencev1alpha1.Norm
 }
 
 func validateAutoscalingConfig(config *inferencev1alpha1.ModelAutoscalingConfig) error {
-	if config != nil {
-		return fmt.Errorf("autoscaling is not enabled by the current control-plane runtime")
+	if config == nil {
+		return nil
+	}
+	minimum := int32(0)
+	if config.MinGroups != nil {
+		minimum = *config.MinGroups
+	}
+	if minimum < 0 || config.MaxGroups != nil && *config.MaxGroups < minimum {
+		return fmt.Errorf("autoscaling group bounds are invalid")
+	}
+	if config.Algorithm != "" && config.Algorithm != inferencev1alpha1.AutoscalingAlgorithmManual && config.MaxGroups == nil {
+		return fmt.Errorf("autoscaling maxGroups is required unless algorithm is manual")
+	}
+	if config.TargetQueuePerRoutableGroup != nil && *config.TargetQueuePerRoutableGroup < 0 || config.ScaleUpQueue != nil && *config.ScaleUpQueue < 0 {
+		return fmt.Errorf("autoscaling thresholds must be non-negative")
+	}
+	if adjustment := config.Adjustment; adjustment != nil {
+		if adjustment.MaxScaleUpGroups != nil && *adjustment.MaxScaleUpGroups < 0 || adjustment.MaxScaleDownGroups != nil && *adjustment.MaxScaleDownGroups < 0 {
+			return fmt.Errorf("autoscaling adjustment step limits must be non-negative")
+		}
+	}
+	if trigger := config.Trigger; trigger != nil {
+		low := valueOrDefaultInt64(trigger.LowQueuePerRoutableGroup, 0)
+		high := valueOrDefaultInt64(trigger.HighQueuePerRoutableGroup, 1)
+		if low < 0 || high < 0 || low > high {
+			return fmt.Errorf("autoscaling trigger watermarks are invalid")
+		}
+	}
+	for field, value := range map[string]inferencev1alpha1.Duration{
+		"autoscaling.trigger.interval": triggerIntervalDuration(config.Trigger),
+		"autoscaling.metricsMaxAge":    valueOrDefaultDuration(config.MetricsMaxAge, "15s"),
+	} {
+		if duration, err := time.ParseDuration(string(value)); err != nil || duration <= 0 {
+			return fmt.Errorf("%s must be a positive duration", field)
+		}
 	}
 	return nil
 }
@@ -276,6 +350,20 @@ func valueOrDefault(value *int32, fallback int32) int32 {
 		return fallback
 	}
 	return *value
+}
+
+func valueOrDefaultDuration(value inferencev1alpha1.Duration, fallback inferencev1alpha1.Duration) inferencev1alpha1.Duration {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func triggerIntervalDuration(trigger *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
+	if trigger == nil {
+		return "5s"
+	}
+	return valueOrDefaultDuration(trigger.Interval, "5s")
 }
 
 func valueOrDefaultInt64(value *int64, fallback int64) int64 {

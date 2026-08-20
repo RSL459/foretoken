@@ -3,7 +3,6 @@
 
 //! Private versioned launch contract and the sole vLLM argv renderer.
 
-use std::collections::HashSet;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -15,8 +14,6 @@ use foretoken_model_protocol::RuntimeEcTransferMetadata;
 use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC, LOOPBACK_HOST};
 
 const PYTHON: &str = "python3";
-const MIN_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
-const MAX_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -276,12 +273,6 @@ impl LaunchPlanV1 {
         if self.lifecycle.startup_seconds == 0 || self.lifecycle.drain_seconds == 0 {
             return Err("launch plan lifecycle seconds must be positive".into());
         }
-        if !(MIN_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES
-            ..=MAX_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES)
-            .contains(&self.internal_generate_request_body_limit_bytes)
-        {
-            return Err("launch plan internalGenerateRequestBodyLimitBytes must be between 1048576 and 268435456".into());
-        }
         if self.kv.events() != (p.dp == 1) {
             return Err("KV events must be enabled exactly when DP is 1".into());
         }
@@ -317,8 +308,7 @@ impl LaunchPlanV1 {
             } => return Err("Mooncake Store cannot be producer-only".into()),
             _ => {}
         }
-        self.ec.validate()?;
-        validate_extra_args(&self.extra_args)
+        self.ec.validate()
     }
 
     pub fn startup_timeout(&self) -> Duration {
@@ -438,46 +428,4 @@ impl KvPlan {
 
 fn is_absolute_storage_path(value: &str) -> bool {
     value.starts_with('/') && value != "/" && !value.contains(char::is_whitespace)
-}
-
-fn validate_extra_args(args: &[String]) -> Result<(), String> {
-    const VALUE_FLAGS: &[&str] = &[
-        "--max-model-len",
-        "--dtype",
-        "--quantization",
-        "--gpu-memory-utilization",
-        "--max-num-seqs",
-        "--max-num-batched-tokens",
-    ];
-    const BOOL_FLAGS: &[&str] = &["--enforce-eager", "--disable-log-stats"];
-    let mut seen = HashSet::new();
-    for argument in args {
-        if argument.is_empty()
-            || argument.contains(char::is_whitespace)
-            || !argument.starts_with("--")
-            || argument == "--"
-        {
-            return Err("extraArgs must be one nonempty --long-name token".into());
-        }
-        let (name, value) = argument
-            .split_once('=')
-            .map_or((argument.as_str(), None), |(name, value)| {
-                (name, Some(value))
-            });
-        if argument.matches('=').count() > 1 || name.contains('_') || !seen.insert(name) {
-            return Err(format!("extraArgs flag {name:?} is not allowed"));
-        }
-        if VALUE_FLAGS.contains(&name) {
-            if value.is_none_or(str::is_empty) {
-                return Err(format!("extraArgs flag {name:?} requires a value"));
-            }
-        } else if BOOL_FLAGS.contains(&name) {
-            if value.is_some() {
-                return Err(format!("extraArgs flag {name:?} does not take a value"));
-            }
-        } else {
-            return Err(format!("extraArgs flag {name:?} is not allowed"));
-        }
-    }
-    Ok(())
 }

@@ -31,7 +31,7 @@ const (
 	ModelRoleDecode    ModelRole = "decode"
 )
 
-// ManagedMooncakeStoreBinding identifies the resolved Ready KVService generation.
+// ManagedMooncakeStoreBinding pins a Ready Foretoken-owned KVService against ABA.
 type ManagedMooncakeStoreBinding struct {
 	Name            string `json:"name"`
 	UID             string `json:"uid"`
@@ -43,7 +43,7 @@ type ManagedMooncakeStoreBinding struct {
 	RequesterBufferBytes int64 `json:"requesterBufferBytes"`
 }
 
-// NormalizedMooncakeStore is either an external profile or a resolved managed binding.
+// NormalizedMooncakeStore is either an external profile or a pinned managed binding.
 // +kubebuilder:validation:XValidation:rule="has(self.profile) != has(self.managedBinding)",message="exactly one Store source is required"
 type NormalizedMooncakeStore struct {
 	Profile        string                       `json:"profile,omitempty"`
@@ -158,10 +158,10 @@ type ModelPoolStatus struct {
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// ActiveRevision is the immutable Group revision currently admitted to routing.
+	// PreparedRevision is the immutable Group revision whose requested capacity is ready for a service-level commit.
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
-	ActiveRevision string `json:"activeRevision,omitempty"`
+	PreparedRevision string `json:"preparedRevision,omitempty"`
 
 	// +optional
 	// +listType=map
