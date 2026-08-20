@@ -51,7 +51,14 @@ helm upgrade --install foretoken \
 
 #### Gateway mode
 
-Gateway mode requires a Gateway Controller. This example first installs Envoy Gateway:
+First set the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
+
+```yaml
+spec:
+  hostname: foretoken.example.com
+```
+
+Gateway mode requires a Gateway Controller. This example installs Envoy Gateway:
 
 ```bash
 helm upgrade --install envoy-gateway \
@@ -74,16 +81,7 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-If the platform already has a suitable `Gateway`, leave creation disabled and set `frontend.gateway.name` and `frontend.gateway.namespace` instead.
-
-Before applying the example, add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
-
-```yaml
-spec:
-  hostname: foretoken.example.com
-```
-
-The Gateway must allow `HTTPRoute` resources from the namespaces where Foretoken frontends run. DNS and TLS remain owned by the platform Gateway.
+If the platform already has a suitable `Gateway`, leave creation disabled and set `frontend.gateway.name` and `frontend.gateway.namespace` instead. The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
 
 ### 2. Deploy a model service
 

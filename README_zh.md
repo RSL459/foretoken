@@ -51,7 +51,14 @@ helm upgrade --install foretoken \
 
 #### 网关模式
 
-网关模式需要 Gateway Controller。以下示例先安装 Envoy Gateway：
+先在 `examples/quickstart/frontend.yaml` 的 `spec` 中填写对外域名：
+
+```yaml
+spec:
+  hostname: foretoken.example.com
+```
+
+网关模式需要 Gateway Controller。以下示例安装 Envoy Gateway：
 
 ```bash
 helm upgrade --install envoy-gateway \
@@ -74,16 +81,7 @@ helm upgrade --install foretoken \
   --wait
 ```
 
-如果平台已经有可用的 `Gateway`，则不需要创建，改为设置 `frontend.gateway.name` 和 `frontend.gateway.namespace`。
-
-应用配置前，在 `examples/quickstart/frontend.yaml` 的 `spec` 中添加对外域名：
-
-```yaml
-spec:
-  hostname: foretoken.example.com
-```
-
-Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入。DNS 和 TLS 继续由平台网关管理。
+如果平台已经有可用的 `Gateway`，则不需要创建，改为设置 `frontend.gateway.name` 和 `frontend.gateway.namespace`。Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
 
 ### 2. 部署模型服务
 
