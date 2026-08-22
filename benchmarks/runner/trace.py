@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Iterator
+from typing import Any
 
 from benchmarks.client.openai_client import OpenAICompatClient
 from benchmarks.metrics.aggregator import percentile_stats
@@ -44,6 +44,9 @@ class TraceRunner(Runner):
         result["conversation_id"] = request.conversation_id
         result["trace_timestamp_s"] = request.timestamp_s
         result["trace_input_length"] = request.input_length
+        result["trace_hash_block_count"] = (
+            len(request.hash_ids) if request.hash_ids is not None else None
+        )
         result["payload_source"] = request.payload_source
         replay_delay = max(0.0, actual_send_at - scheduled_at)
         result["replay_delay"] = replay_delay
@@ -71,10 +74,10 @@ class TraceRunner(Runner):
     async def _replay(
         self,
         client: OpenAICompatClient,
-        requests: Iterator[TraceRequest],
+        requests: list[TraceRequest],
         *,
         max_concurrency: int | None,
-        window_start_s: float,
+        trace_window_start_s: float,
     ) -> dict[str, Any]:
         """Schedule trace requests at their recorded arrival times."""
 
@@ -91,7 +94,9 @@ class TraceRunner(Runner):
         start_time = time.perf_counter()
         request_count = 0
         for request in requests:
-            scheduled_at = start_time + request.timestamp_s - window_start_s
+            scheduled_at = (
+                start_time + request.timestamp_s - trace_window_start_s
+            )
             delay = scheduled_at - time.perf_counter()
             if delay > 0:
                 await asyncio.sleep(delay)
@@ -140,16 +145,16 @@ class TraceRunner(Runner):
     async def run(self) -> dict[str, Any]:
         dataset = self.config.dataset
         max_concurrency = dataset.trace_max_concurrency
-        metrics_parallel = -1 if max_concurrency is None else max_concurrency
-        trace_load = {
-            "parallel": metrics_parallel,
+        reported_parallel = -1 if max_concurrency is None else max_concurrency
+        reporting_load = {
+            "parallel": reported_parallel,
             "number": 0,
             "rate": -1.0,
             "open_loop": False,
-            "resolved_parallel": metrics_parallel,
+            "resolved_parallel": reported_parallel,
         }
         writer = self.make_writer()
-        run_config = self.build_run_config("trace", trace_load)
+        run_config = self.build_run_config("trace", reporting_load)
         run_config.update(
             {
                 "dataset": f"trace={dataset.trace_path}",
@@ -158,21 +163,24 @@ class TraceRunner(Runner):
                 "trace_start": dataset.trace_start,
                 "trace_duration": dataset.trace_duration,
                 "trace_max_concurrency": max_concurrency,
+                "trace_synthetic_prefix_reuse": (
+                    dataset.trace_synthetic_prefix_reuse
+                ),
             }
         )
-        wandb_logger = self.make_wandb_logger(writer, trace_load)
+        wandb_logger = self.make_wandb_logger(writer, reporting_load)
         client = self.make_client()
 
         try:
-            window_start_s, payload_source, requests = load_trace_workload(
+            trace_window_start_s, payload_source, requests = load_trace_workload(
                 self.config
             )
             run_config["payload_source"] = payload_source
             raw_output = await self._replay(
                 client,
-                iter(requests),
+                requests,
                 max_concurrency=max_concurrency,
-                window_start_s=window_start_s,
+                trace_window_start_s=trace_window_start_s,
             )
             request_count = len(raw_output["results"])
             run_config["number"] = request_count
@@ -181,7 +189,7 @@ class TraceRunner(Runner):
                 raw_output,
                 rate=-1.0,
                 number=request_count,
-                resolved_parallel=metrics_parallel,
+                resolved_parallel=reported_parallel,
                 include_user_throughput=False,
             )
             self._add_trace_metrics(metrics, raw_output["results"])

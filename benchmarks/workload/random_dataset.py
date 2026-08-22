@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import random
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +21,8 @@ from huggingface_hub import snapshot_download
 from benchmarks.config import BenchConfig
 
 logger = logging.getLogger(__name__)
+_MOONCAKE_BLOCK_TOKENS = 512
+_PREFIX_REUSE_SEED = b"foretoken-mooncake-prefix-v1"
 
 # Hub file patterns kept when resolving a remote ``--tokenizer-path``.
 _TOKENIZER_ALLOW_PATTERNS = (
@@ -175,3 +180,82 @@ def generate_random_requests(
     if any(request is None for request in requests):
         raise RuntimeError("Random dataset generation returned missing requests")
     return [request for request in requests if request is not None]
+
+
+def _seed_for_hash_id(hash_id: int) -> int:
+    digest = hashlib.sha256(
+        _PREFIX_REUSE_SEED + str(hash_id).encode("ascii")
+    ).digest()
+    return int.from_bytes(digest[:8], byteorder="big")
+
+
+def generate_synthetic_prefix_reuse_requests(
+    config: BenchConfig,
+    *,
+    input_lengths: list[int],
+    hash_id_lists: list[list[int] | None],
+) -> list[dict[str, Any]]:
+    """Build deterministic Mooncake-prefix payloads from ``hash_ids``.
+
+    Each hash id maps to a fixed synthetic 512-token block. A request joins
+    its blocks in trace order and truncates the final block to ``input_length``.
+    """
+    dataset = config.dataset
+    if not dataset.tokenizer_path:
+        raise ValueError(
+            "tokenizer_path is required for random data generation"
+        )
+    if len(input_lengths) != len(hash_id_lists):
+        raise ValueError("input_lengths must match hash_id_lists")
+
+    from transformers import AutoTokenizer
+
+    tokenizer_path = resolve_tokenizer_path(dataset.tokenizer_path)
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+    vocab_size = int(tokenizer.vocab_size)
+    special_ids = set(tokenizer.all_special_ids)
+    if vocab_size <= len(special_ids):
+        raise ValueError("Tokenizer has no non-special tokens")
+
+    @lru_cache(maxsize=1024)
+    def block_for(hash_id: int) -> tuple[int, ...]:
+        generator = random.Random(_seed_for_hash_id(hash_id))
+        block: list[int] = []
+        while len(block) < _MOONCAKE_BLOCK_TOKENS:
+            token_id = generator.randrange(vocab_size)
+            if token_id not in special_ids:
+                block.append(token_id)
+        return tuple(block)
+
+    requests: list[dict[str, Any]] = []
+    for input_length, hash_ids in zip(input_lengths, hash_id_lists):
+        if hash_ids is None:
+            raise ValueError(
+                "--trace-synthetic-prefix-reuse requires hash_ids on every "
+                "selected trace event"
+            )
+        expected_blocks = (
+            input_length + _MOONCAKE_BLOCK_TOKENS - 1
+        ) // _MOONCAKE_BLOCK_TOKENS
+        if len(hash_ids) != expected_blocks:
+            raise ValueError(
+                "Mooncake hash_ids must cover every 512-token input block; "
+                f"got {len(hash_ids)} hash_ids for input_length={input_length}"
+            )
+
+        token_ids = [
+            token_id
+            for hash_id in hash_ids
+            for token_id in block_for(hash_id)
+        ][:input_length]
+        prompt = tokenizer.decode(
+            token_ids,
+            skip_special_tokens=False,
+            clean_up_tokenization_spaces=False,
+        )
+        if not prompt:
+            raise ValueError(
+                "Tokenizer produced an empty synthetic prefix-reuse prompt"
+            )
+        requests.append({"prompt": prompt})
+    return requests

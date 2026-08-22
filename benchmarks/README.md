@@ -75,6 +75,8 @@ foretoken bench \
 Trace supplies arrival timing; payload can come from trace-native messages,
 random, a dataset, or a fixed prompt. Supported formats are `studychat`
 (`timestamp`, `chatId`, `messages`) and `mooncake` (`timestamp`, `input_length`).
+`--trace` accepts a local JSONL path or
+`hf://org/dataset/path/to/trace.jsonl`; HF files are cached before replay.
 
 Trace-native (StudyChat):
 
@@ -82,7 +84,7 @@ Trace-native (StudyChat):
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
-  --trace /path/conversations.jsonl \
+  --trace hf://KrisQ/StudyChat/data.jsonl \
   --trace-format studychat \
   --trace-start 600 \
   --trace-duration 300 \
@@ -98,17 +100,22 @@ Trace + random:
 Trace + random uses trace timestamps for request timing and generates random
 request content. When available, each event's `input_length` is used as the
 generated prompt length.
-For Mooncake, replay uses `timestamp` and `input_length`; `output_length` and
-`hash_ids` are not used.
+For Mooncake, `--trace-synthetic-prefix-reuse` maps each `hash_id` to a
+deterministic synthetic 512-token block. Without it, `hash_ids` are ignored.
+It simulates shared prefixes; it does not reconstruct original KV content.
 
 ```bash
+curl -L -o conversation_trace.jsonl \
+  https://raw.githubusercontent.com/kvcache-ai/Mooncake/main/FAST25-release/traces/conversation_trace.jsonl
+
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
-  --trace /path/mooncake-trace.jsonl \
+  --trace conversation_trace.jsonl \
   --trace-format mooncake \
   --dataset random \
   --tokenizer-path /path/tokenizer \
+  --trace-synthetic-prefix-reuse \
   --trace-max-concurrency 256
 ```
 
@@ -118,7 +125,7 @@ Trace + dataset:
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
-  --trace /path/mooncake-trace.jsonl \
+  --trace conversation_trace.jsonl \
   --trace-format mooncake \
   --dataset /path/payloads.jsonl
 ```
@@ -129,7 +136,7 @@ Trace + prompt:
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
-  --trace /path/mooncake-trace.jsonl \
+  --trace conversation_trace.jsonl \
   --trace-format mooncake \
   --prompt "Reply with exactly: OK"
 ```

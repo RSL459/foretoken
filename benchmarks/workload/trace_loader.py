@@ -6,15 +6,30 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
+
+logger = logging.getLogger(__name__)
+_HF_TRACE_PREFIX = "hf://"
+
+
+def _download_hf_trace(repo_id: str, filename: str) -> str:
+    """Download one dataset file through the Hugging Face cache."""
+    from huggingface_hub import hf_hub_download
+
+    return hf_hub_download(
+        repo_id=repo_id,
+        filename=filename,
+        repo_type="dataset",
+    )
 
 
 @dataclass(frozen=True)
 class TraceRequest:
-    """One timestamped chat request ready for replay."""
+    """One normalized trace event with an optional bound payload."""
 
     timestamp_s: float
     source_index: int
@@ -22,6 +37,7 @@ class TraceRequest:
     prompt: str | None = None
     tools: list[dict[str, Any]] | None = None
     input_length: int | None = None
+    hash_ids: list[int] | None = None
     conversation_id: str | None = None
     payload_source: str = "trace-native"
 
@@ -129,11 +145,22 @@ class MooncakeAdapter:
                 f"Invalid timestamp or input_length at {path}:{line_no}"
             )
 
+        hash_ids = payload.get("hash_ids")
+        if hash_ids is not None:
+            if not isinstance(hash_ids, list) or any(
+                isinstance(hash_id, bool)
+                or not isinstance(hash_id, int)
+                or hash_id < 0
+                for hash_id in hash_ids
+            ):
+                raise ValueError(f"Invalid hash_ids at {path}:{line_no}")
+
         conversation_id = payload.get("chatId")
         return TraceRequest(
             timestamp_s=timestamp_ms / 1000.0,
             source_index=source_index,
             input_length=input_length,
+            hash_ids=hash_ids,
             conversation_id=(
                 str(conversation_id) if conversation_id is not None else None
             ),
@@ -149,7 +176,7 @@ class TraceLoader:
     }
 
     def __init__(self, path: str | Path, trace_format: str):
-        self.path = Path(path)
+        self.trace_path = str(path)
         try:
             self.adapter = self._ADAPTERS[trace_format]
         except KeyError as error:
@@ -163,18 +190,35 @@ class TraceLoader:
     def supported_formats(cls) -> tuple[str, ...]:
         return tuple(cls._ADAPTERS)
 
+    def _resolve_path(self) -> Path:
+        """Return a local trace path, downloading an HF trace if necessary."""
+        if not self.trace_path.startswith(_HF_TRACE_PREFIX):
+            return Path(self.trace_path).expanduser()
+
+        reference = self.trace_path.removeprefix(_HF_TRACE_PREFIX)
+        parts = reference.split("/", maxsplit=2)
+        if len(parts) != 3 or not all(parts):
+            raise ValueError(
+                "HF trace must use hf://org/dataset/path/to/trace.jsonl"
+            )
+        repo_id = "/".join(parts[:2])
+        filename = parts[2]
+        logger.info("Resolving Hugging Face trace %s", self.trace_path)
+        return Path(_download_hf_trace(repo_id, filename))
+
     def load_window(
         self,
         *,
         start: float = 0.0,
         duration: float | None = None,
     ) -> tuple[float, list[TraceRequest]]:
-        if not self.path.is_file():
-            raise FileNotFoundError(f"Trace JSONL not found: {self.path}")
+        path = self._resolve_path()
+        if not path.is_file():
+            raise FileNotFoundError(f"Trace JSONL not found: {path}")
 
         requests: list[TraceRequest] = []
         source_index = 0
-        with self.path.open("r", encoding="utf-8") as file:
+        with path.open("r", encoding="utf-8") as file:
             for line_no, line in enumerate(file, start=1):
                 if not line.strip():
                     continue
@@ -182,12 +226,12 @@ class TraceLoader:
                     payload: Any = json.loads(line)
                 except json.JSONDecodeError as error:
                     raise ValueError(
-                        f"Invalid JSON at {self.path}:{line_no}: {error}"
+                        f"Invalid JSON at {path}:{line_no}: {error}"
                     ) from error
                 requests.append(
                     self.adapter.parse(
                         payload,
-                        path=self.path,
+                        path=path,
                         line_no=line_no,
                         source_index=source_index,
                     )
@@ -212,13 +256,3 @@ class TraceLoader:
         if not selected:
             raise ValueError("Trace window contains no requests")
         return window_start, selected
-
-    def iter_requests(
-        self,
-        *,
-        start: float = 0.0,
-        duration: float | None = None,
-    ) -> Iterator[TraceRequest]:
-        """Yield requests selected from a trace time window."""
-        _, requests = self.load_window(start=start, duration=duration)
-        yield from requests
