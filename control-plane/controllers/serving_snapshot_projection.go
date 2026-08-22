@@ -586,7 +586,7 @@ func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferenc
 }
 
 func modelGroupEndpoint(group *inferencev1alpha1.ModelGroup, port int32) string {
-	return fmt.Sprintf("http://%s.%s.svc:%d", group.Name, group.Namespace, port)
+	return fmt.Sprintf("http://%s.%s.svc:%d", modelGroupServiceName(group), group.Namespace, port)
 }
 
 func validateRoutingIdentities(groups []servingSnapshotGroup, components []servingSnapshotPDComponent, epdComponents []servingSnapshotEPDComponent) error {
