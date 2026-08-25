@@ -2,13 +2,15 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""CLI argument definition and parsing → ``BenchConfig``."""
+"""CLI commands and benchmark argument mapping."""
 
 from __future__ import annotations
 
 import argparse
-from dataclasses import MISSING, fields
-from typing import Any, Sequence
+import json
+from collections.abc import Sequence
+from dataclasses import MISSING, dataclass, fields
+from typing import Any
 
 from benchmarks.config import (
     BenchConfig,
@@ -18,9 +20,18 @@ from benchmarks.config import (
     LoadConfig,
     OutputConfig,
     ParamSweepConfig,
-    TargetConfig,
+    EndpointConfig,
     WandbConfig,
 )
+
+
+@dataclass(frozen=True)
+class BenchCommand:
+    """Run a benchmark against a deployment or existing endpoint."""
+
+    deploy: str
+    config: BenchConfig
+    wait_timeout: str
 
 
 def _default(cls: type, name: str) -> Any:
@@ -32,88 +43,144 @@ def _default(cls: type, name: str) -> Any:
     raise KeyError(name)
 
 
-def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
-    """Parse ``foretoken bench`` CLI into ``BenchConfig``."""
-    parser = argparse.ArgumentParser(
-        prog="foretoken",
-        description=(
-            "LLM inference tool"
-        ),
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    bench = subparsers.add_parser(
-        "bench",
-        help="Run an inference benchmark",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
+def _output_destinations(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
 
-    # Target
-    bench.add_argument("--url", required=True, help="OpenAI compatible API URL")
-    bench.add_argument("--model", required=True, help="Model name")
-    bench.add_argument(
-        "--api-key", default=_default(TargetConfig, "api_key"), help="API key"
+
+def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
+    # Service source
+    service_source = parser.add_mutually_exclusive_group(required=True)
+    service_source.add_argument(
+        "--deploy",
+        default="",
+        help="Kustomize directory to deploy or reuse for this benchmark",
     )
-    bench.add_argument(
+    service_source.add_argument(
+        "--url",
+        default="",
+        help="Existing OpenAI-compatible API URL",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Model name; inferred when the deployment contains one model",
+    )
+    parser.add_argument(
+        "--api-key", default=_default(EndpointConfig, "api_key"), help="API key"
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
-        default=_default(TargetConfig, "timeout"),
+        default=_default(EndpointConfig, "timeout"),
         help="Request timeout seconds",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--max-retries",
         type=int,
-        default=_default(TargetConfig, "max_retries"),
+        default=_default(EndpointConfig, "max_retries"),
         help="OpenAI client max retries on transient failures",
+    )
+    parser.add_argument(
+        "--wait-timeout",
+        default="15m",
+        help="Timeout for each deployment readiness stage",
     )
 
     # Load
-    bench.add_argument(
+    parser.add_argument(
         "--parallel",
-        type=lambda s: [int(x.strip()) for x in s.split(",") if x.strip()],
+        type=lambda value: [
+            int(item.strip()) for item in value.split(",") if item.strip()
+        ],
         default=_default(LoadConfig, "parallel"),
         help="Concurrency; list like 1,2,4,8 triggers sweep",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--number",
-        type=lambda s: [int(x.strip()) for x in s.split(",") if x.strip()],
+        type=lambda value: [
+            int(item.strip()) for item in value.split(",") if item.strip()
+        ],
         default=_default(LoadConfig, "number"),
         help=(
             "Request count (total across all --dataset values when multiple); "
             "list aligns with parallel"
         ),
     )
-    bench.add_argument(
+    parser.add_argument(
         "--rate",
-        type=lambda s: [float(x.strip()) for x in s.split(",") if x.strip()],
+        type=lambda value: [
+            float(item.strip()) for item in value.split(",") if item.strip()
+        ],
         default=_default(LoadConfig, "rate"),
         help=(
             "Arrival rate (req/s). -1 = no pacing; >0 = Poisson pacing. "
             "Still closed-loop unless --open-loop. List e.g. 5,10,20 for sweep"
         ),
     )
-    bench.add_argument(
+    parser.add_argument(
         "--open-loop",
         action="store_true",
         default=_default(LoadConfig, "open_loop"),
-        help=(
-            "Open-loop: no concurrency limit; optionally pace with --rate"
-        ),
+        help="Open-loop: no concurrency limit; optionally pace with --rate",
     )
 
     # Generation
-    bench.add_argument(
+    parser.add_argument(
         "--max-tokens",
         type=int,
         default=_default(GenerationConfig, "max_tokens"),
         help="Max generation tokens",
     )
-    bench.add_argument(
+    sampling = parser.add_argument_group("sampling parameters")
+    sampling.add_argument(
+        "--top-p",
+        type=float,
+        default=_default(GenerationConfig, "top_p"),
+        help="Top-p sampling parameter",
+    )
+    sampling.add_argument(
+        "--top-k",
+        type=int,
+        default=_default(GenerationConfig, "top_k"),
+        help="Top-k sampling parameter",
+    )
+    sampling.add_argument(
+        "--min-p",
+        type=float,
+        default=_default(GenerationConfig, "min_p"),
+        help="Min-p sampling parameter",
+    )
+    sampling.add_argument(
         "--temperature",
         type=float,
         default=_default(GenerationConfig, "temperature"),
-        help="Sampling temperature",
+        help="Temperature sampling parameter",
     )
-    bench.add_argument(
+    sampling.add_argument(
+        "--frequency-penalty",
+        type=float,
+        default=_default(GenerationConfig, "frequency_penalty"),
+        help="Frequency penalty sampling parameter",
+    )
+    sampling.add_argument(
+        "--presence-penalty",
+        type=float,
+        default=_default(GenerationConfig, "presence_penalty"),
+        help="Presence penalty sampling parameter",
+    )
+    sampling.add_argument(
+        "--repetition-penalty",
+        type=float,
+        default=_default(GenerationConfig, "repetition_penalty"),
+        help="Repetition penalty sampling parameter",
+    )
+    parser.add_argument(
+        "--extra-body",
+        type=json.loads,
+        default=_default(GenerationConfig, "extra_body"),
+        help="JSON object of extra body parameters included in each request",
+    )
+    parser.add_argument(
         "--stream",
         action=argparse.BooleanOptionalAction,
         default=_default(GenerationConfig, "stream"),
@@ -121,9 +188,9 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
     )
 
     # Dataset
-    bench.add_argument(
+    parser.add_argument(
         "--dataset",
-        type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
+        type=lambda value: [item.strip() for item in value.split(",") if item.strip()],
         default=_default(DatasetConfig, "dataset"),
         help=(
             "Workload source(s), comma-separated: 'random', local JSONL "
@@ -132,47 +199,47 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
             "merged; --number is the total across all"
         ),
     )
-    bench.add_argument(
+    parser.add_argument(
         "--dataset-offset",
         type=int,
         default=_default(DatasetConfig, "dataset_offset"),
         help="Skip first N samples (JSONL/HF) or token-sequence offset (random)",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--tokenizer-path",
         default=_default(DatasetConfig, "tokenizer_path"),
         help="Tokenizer path (required for --dataset random)",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--min-prompt-length",
         type=int,
         default=_default(DatasetConfig, "min_prompt_length"),
         help="Minimum prompt length in tokens (random: sampled inner length)",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--max-prompt-length",
         type=int,
         default=_default(DatasetConfig, "max_prompt_length"),
         help="Maximum prompt length in tokens (random: sampled inner length)",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--prefix-length",
         type=int,
         default=_default(DatasetConfig, "prefix_length"),
         help="Shared prefix token length (random dataset only)",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--apply-chat-template",
         action=argparse.BooleanOptionalAction,
         default=_default(DatasetConfig, "apply_chat_template"),
         help="Apply chat template (default: auto from URL)",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--prompt",
         default=_default(DatasetConfig, "prompt"),
         help="Fixed prompt text; overrides dataset",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--max-turns",
         type=int,
         default=_default(DatasetConfig, "max_turns"),
@@ -180,65 +247,65 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
     )
 
     # Output
-    bench.add_argument(
+    parser.add_argument(
         "--sla-auto-tune",
         action=argparse.BooleanOptionalAction,
         default=_default(OutputConfig, "sla_auto_tune"),
         help="Enable SLA auto-tune search",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--gpu-count",
         type=int,
         default=_default(OutputConfig, "gpu_count"),
         help="GPU count for Pareto tokens/s/GPU axis",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--eval-suite",
         default=_default(OutputConfig, "eval_suite"),
         help="Correctness suite: none | general | tool | both",
     )
-    bench.add_argument(
-        "--outputs-dir",
-        default=_default(OutputConfig, "outputs_dir"),
-        help="Results root directory",
+    parser.add_argument(
+        "--output",
+        type=_output_destinations,
+        default=_default(OutputConfig, "destinations"),
+        help="Comma-separated outputs: local, wandb, and quiet",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=_default(OutputConfig, "output_dir"),
+        help="Directory for JSON and W&B artifacts",
     )
 
-    # WandB
-    bench.add_argument(
-        "--wandb",
-        action=argparse.BooleanOptionalAction,
-        default=_default(WandbConfig, "enabled"),
-        help="Enable Weights & Biases logging",
-    )
-    bench.add_argument(
+    # W&B
+    parser.add_argument(
         "--wandb-project",
         default=_default(WandbConfig, "project"),
         help="W&B project",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--wandb-entity",
         default=_default(WandbConfig, "entity"),
         help="W&B entity",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--wandb-run-name",
         default=_default(WandbConfig, "run_name"),
         help="W&B run name; default {model}_{YYYYMMDD_HHMMSS}",
     )
 
     # Engine metrics
-    bench.add_argument(
+    parser.add_argument(
         "--collect-engine-metrics",
         action=argparse.BooleanOptionalAction,
         default=_default(EngineMetricsConfig, "collect"),
-        help="Collect foretoken metrics through /metrics gate",
+        help="Collect Foretoken metrics through the /metrics endpoint",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--engine-metrics-url",
         default=_default(EngineMetricsConfig, "url"),
         help="Prometheus /metrics URL",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--engine-metrics-interval",
         type=float,
         default=_default(EngineMetricsConfig, "interval"),
@@ -246,93 +313,125 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
     )
 
     # Param sweep
-    bench.add_argument(
+    parser.add_argument(
         "--serve-params",
         default=_default(ParamSweepConfig, "serve_params"),
         help="JSON path of serve parameter combinations",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--bench-params",
         default=_default(ParamSweepConfig, "bench_params"),
         help="JSON path of bench parameter combinations",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--link-vars",
         default=_default(ParamSweepConfig, "link_vars"),
         help="Comma-separated serve_key=bench_key product filters",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--num-runs",
         type=int,
         default=_default(ParamSweepConfig, "num_runs"),
         help="Repeats per serve×bench combination",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--dry-run",
         action=argparse.BooleanOptionalAction,
         default=_default(ParamSweepConfig, "dry_run"),
         help="Print serve×bench plan without executing",
     )
-    bench.add_argument(
+    parser.add_argument(
         "--experiment-name",
         default=_default(ParamSweepConfig, "experiment_name"),
-        help="Param-sweep experiment subdir under --outputs-dir",
+        help="Param-sweep experiment subdir under --output-dir",
     )
 
-    ns = parser.parse_args(argv)
+
+def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
     return BenchConfig(
-        target=TargetConfig(
-            url=ns.url,
-            model=ns.model,
-            api_key=ns.api_key,
-            timeout=ns.timeout,
-            max_retries=ns.max_retries,
+        endpoint=EndpointConfig(
+            url=namespace.url,
+            model=namespace.model,
+            api_key=namespace.api_key,
+            timeout=namespace.timeout,
+            max_retries=namespace.max_retries,
         ),
         load=LoadConfig(
-            parallel=ns.parallel,
-            number=ns.number,
-            rate=ns.rate,
-            open_loop=ns.open_loop,
+            parallel=namespace.parallel,
+            number=namespace.number,
+            rate=namespace.rate,
+            open_loop=namespace.open_loop,
         ),
         generation=GenerationConfig(
-            max_tokens=ns.max_tokens,
-            temperature=ns.temperature,
-            stream=ns.stream,
+            max_tokens=namespace.max_tokens,
+            stream=namespace.stream,
+            top_p=namespace.top_p,
+            top_k=namespace.top_k,
+            min_p=namespace.min_p,
+            temperature=namespace.temperature,
+            frequency_penalty=namespace.frequency_penalty,
+            presence_penalty=namespace.presence_penalty,
+            repetition_penalty=namespace.repetition_penalty,
+            extra_body=namespace.extra_body,
         ),
         dataset=DatasetConfig(
-            dataset=ns.dataset,
-            dataset_offset=ns.dataset_offset,
-            tokenizer_path=ns.tokenizer_path,
-            min_prompt_length=ns.min_prompt_length,
-            max_prompt_length=ns.max_prompt_length,
-            prefix_length=ns.prefix_length,
-            apply_chat_template=ns.apply_chat_template,
-            prompt=ns.prompt,
-            max_turns=ns.max_turns,
+            dataset=namespace.dataset,
+            dataset_offset=namespace.dataset_offset,
+            tokenizer_path=namespace.tokenizer_path,
+            min_prompt_length=namespace.min_prompt_length,
+            max_prompt_length=namespace.max_prompt_length,
+            prefix_length=namespace.prefix_length,
+            apply_chat_template=namespace.apply_chat_template,
+            prompt=namespace.prompt,
+            max_turns=namespace.max_turns,
         ),
         output=OutputConfig(
-            outputs_dir=ns.outputs_dir,
-            gpu_count=ns.gpu_count,
-            eval_suite=ns.eval_suite,
-            sla_auto_tune=ns.sla_auto_tune,
+            destinations=namespace.output,
+            output_dir=namespace.output_dir,
+            gpu_count=namespace.gpu_count,
+            eval_suite=namespace.eval_suite,
+            sla_auto_tune=namespace.sla_auto_tune,
         ),
         wandb=WandbConfig(
-            enabled=ns.wandb,
-            project=ns.wandb_project,
-            entity=ns.wandb_entity,
-            run_name=ns.wandb_run_name,
+            project=namespace.wandb_project,
+            entity=namespace.wandb_entity,
+            run_name=namespace.wandb_run_name,
         ),
         engine=EngineMetricsConfig(
-            collect=ns.collect_engine_metrics,
-            url=ns.engine_metrics_url,
-            interval=ns.engine_metrics_interval,
+            collect=namespace.collect_engine_metrics,
+            url=namespace.engine_metrics_url,
+            interval=namespace.engine_metrics_interval,
         ),
         param_sweep=ParamSweepConfig(
-            serve_params=ns.serve_params,
-            bench_params=ns.bench_params,
-            link_vars=ns.link_vars,
-            num_runs=ns.num_runs,
-            dry_run=ns.dry_run,
-            experiment_name=ns.experiment_name,
+            serve_params=namespace.serve_params,
+            bench_params=namespace.bench_params,
+            link_vars=namespace.link_vars,
+            num_runs=namespace.num_runs,
+            dry_run=namespace.dry_run,
+            experiment_name=namespace.experiment_name,
         ),
+    )
+
+
+def parse_arguments(argv: Sequence[str] | None = None) -> BenchCommand:
+    """Parse the ``foretoken bench`` command."""
+    parser = argparse.ArgumentParser(
+        prog="foretoken",
+        description="Benchmark Foretoken and OpenAI-compatible inference services",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    bench = subparsers.add_parser(
+        "bench",
+        help="Benchmark a deployed Foretoken service or an existing endpoint",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    _add_benchmark_arguments(bench)
+
+    namespace = parser.parse_args(argv)
+    if namespace.url and not namespace.model:
+        bench.error("--model is required with --url")
+    return BenchCommand(
+        deploy=namespace.deploy,
+        config=_bench_config(namespace),
+        wait_timeout=namespace.wait_timeout,
     )

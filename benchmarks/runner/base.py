@@ -25,7 +25,7 @@ from benchmarks.metrics.aggregator import (
     attach_user_throughput,
 )
 from benchmarks.report.summary import log_summary
-from benchmarks.report.wandb_logger import WandbLogger
+from benchmarks.logger.wandb import WandbLogger
 from benchmarks.storage.result_writer import ResultWriter
 
 logger = logging.getLogger(__name__)
@@ -42,25 +42,29 @@ class Runner(ABC):
         """Execute the benchmark and return a result dict."""
 
     def make_client(self) -> OpenAICompatClient:
-        """Build an OpenAI-compatible client from ``config.target`` / load."""
-        target = self.config.target
+        """Build an OpenAI-compatible client from ``config.endpoint`` / load."""
+        endpoint = self.config.endpoint
         load = self.config.load
         return OpenAICompatClient(
-            target.url,
-            target.model,
-            timeout=target.timeout,
-            api_key=target.api_key,
+            endpoint.url,
+            endpoint.model,
+            timeout=endpoint.timeout,
+            api_key=endpoint.api_key,
             max_connections=derive_max_connections(
                 parallel=load.parallel[0],
                 number=load.number[0],
                 open_loop=load.open_loop,
             ),
-            max_retries=target.max_retries,
+            max_retries=endpoint.max_retries,
+            headers=endpoint.headers,
         )
 
     def make_writer(self) -> ResultWriter:
-        """Create a timestamped result writer under ``config.output``."""
-        return ResultWriter(root_dir=self.config.output.outputs_dir)
+        """Create the local JSON writer selected for this benchmark."""
+        return ResultWriter(
+            root_dir=self.config.output.output_dir,
+            enabled=self.config.output.includes("local"),
+        )
 
     def make_wandb_logger(
         self,
@@ -71,7 +75,7 @@ class Runner(ABC):
         group: Optional[str] = None,
         config: Optional[BenchConfig] = None,
     ) -> WandbLogger:
-        """Start W&B logging when ``config.wandb.enabled``."""
+        """Start W&B when selected as a result destination."""
         wandb_logger = WandbLogger()
         wandb_logger.start(
             config if config is not None else self.config,
@@ -101,8 +105,8 @@ class Runner(ABC):
         config = self.config
         return {
             "mode": mode,
-            "model": config.target.model,
-            "url": config.target.url,
+            "model": config.endpoint.model,
+            "url": config.endpoint.url,
             "parallel": load["parallel"],
             "number": load["number"],
             "rate": load["rate"],
@@ -123,12 +127,11 @@ class Runner(ABC):
         parallel: int,
         rate: float,
         open_loop: bool,
-        wandb_logger: Optional[WandbLogger] = None,
     ) -> dict[str, Any]:
         """Dispatch requests with closed/open-loop concurrency and optional rate pacing."""
         generation = self.config.generation
         max_tokens = generation.max_tokens
-        temperature = generation.temperature
+        extra_body = generation.request_overrides()
 
         request_count = len(requests)
         has_pacing = rate != -1 and rate > 0
@@ -137,22 +140,25 @@ class Runner(ABC):
         )
         results: list[Optional[dict[str, Any]]] = [None] * request_count
         start_time = time.perf_counter()
-        progress_bar = tqdm_asyncio(total=request_count, desc="Benchmarking")
+        progress_bar = tqdm_asyncio(
+            total=request_count,
+            desc="Benchmarking",
+            disable=self.config.output.includes("quiet"),
+        )
 
         async def dispatch_one(index: int, request: dict[str, Any]) -> None:
             if semaphore is not None:
                 await semaphore.acquire()
             try:
-                result = await client.generate_stream(
+                result = await client.generate(
                     prompt=request.get("prompt"),
                     messages=request.get("messages"),
                     tools=request.get("tools"),
                     max_tokens=max_tokens,
-                    temperature=temperature,
+                    stream=generation.stream,
+                    extra_body=extra_body,
                 )
                 results[index] = result
-                if wandb_logger is not None and wandb_logger.enabled:
-                    await asyncio.to_thread(wandb_logger.log_result, result)
             finally:
                 if semaphore is not None:
                     semaphore.release()
@@ -167,9 +173,7 @@ class Runner(ABC):
                     delay = next_at - (time.perf_counter() - pacing_start)
                     if delay > 0:
                         await asyncio.sleep(delay)
-                    tasks.append(
-                        asyncio.create_task(dispatch_one(index, request))
-                    )
+                    tasks.append(asyncio.create_task(dispatch_one(index, request)))
                     # Poisson inter-arrival ~ Exp(rate)
                     next_at += random.expovariate(rate)
                 await asyncio.gather(*tasks)
@@ -218,13 +222,10 @@ class Runner(ABC):
         wandb_logger: Optional[WandbLogger] = None,
         config_snapshot: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Log summary and persist config / raw / metrics JSON artifacts."""
-        log_summary(run_config, metrics)
-        base = (
-            config_snapshot
-            if config_snapshot is not None
-            else self.config.to_dict()
-        )
+        """Publish the selected console, JSON, and W&B results."""
+        if not self.config.output.includes("quiet"):
+            log_summary(run_config, metrics)
+        base = config_snapshot if config_snapshot is not None else self.config.to_dict()
         writer.save_json("config.json", {**base, **run_config})
         writer.save_json("raw_output.json", raw["results"])
         writer.save_json("metrics.json", metrics)
@@ -233,4 +234,5 @@ class Runner(ABC):
                 wandb_logger.log_metrics(metrics)
             finally:
                 wandb_logger.finish()
-        logger.info("Results saved: %s", writer.output_dir)
+        if writer.enabled:
+            logger.info("Results saved: %s", writer.output_dir)

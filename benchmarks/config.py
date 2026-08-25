@@ -11,14 +11,15 @@ from typing import Any, Optional
 
 
 @dataclass
-class TargetConfig:
-    """Inference service endpoint."""
+class EndpointConfig:
+    """Inference service URL, model, and request options."""
 
     url: str
     model: str
-    api_key: str = ""
+    api_key: str = "EMPTY"
     timeout: int = 300
     max_retries: int = 2
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -95,11 +96,34 @@ class LoadConfig:
 
 @dataclass
 class GenerationConfig:
-    """Sampling / generation parameters."""
+    """Sampling and generation parameters for each request."""
 
     max_tokens: int = 128
-    temperature: float = 0.0
     stream: bool = True
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    temperature: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    repetition_penalty: Optional[float] = None
+    extra_body: dict[str, Any] = field(default_factory=dict)
+
+    def request_overrides(self) -> dict[str, Any]:
+        """Return vLLM-compatible request fields with ``extra_body`` applied last."""
+        sampling = {
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "min_p": self.min_p,
+            "temperature": self.temperature,
+            "frequency_penalty": self.frequency_penalty,
+            "presence_penalty": self.presence_penalty,
+            "repetition_penalty": self.repetition_penalty,
+        }
+        return {
+            **{key: value for key, value in sampling.items() if value is not None},
+            **self.extra_body,
+        }
 
 
 def allocate_dataset_counts(total: int, n: int) -> list[int]:
@@ -148,19 +172,29 @@ class DatasetConfig:
 
 @dataclass
 class OutputConfig:
-    """Result location and analysis knobs."""
+    """Result destinations, location, and analysis knobs."""
 
-    outputs_dir: str = "results"
+    destinations: tuple[str, ...] = ()
+    output_dir: str = "results"
     gpu_count: int = 1
     eval_suite: str = "none"
     sla_auto_tune: bool = False
 
+    def includes(self, destination: str) -> bool:
+        return destination in self.destinations
+
+    def validate(self) -> None:
+        allowed = {"local", "wandb", "quiet"}
+        unknown = set(self.destinations) - allowed
+        if unknown:
+            names = ", ".join(sorted(unknown))
+            raise ValueError(f"unknown --output destination: {names}")
+
 
 @dataclass
 class WandbConfig:
-    """Weights & Biases logging."""
+    """Weights & Biases connection settings."""
 
-    enabled: bool = False
     project: str = "foretoken-bench"
     entity: str = ""
     run_name: str = ""
@@ -195,7 +229,7 @@ class ParamSweepConfig:
 class BenchConfig:
     """Root benchmark configuration (framework contract)."""
 
-    target: TargetConfig
+    endpoint: EndpointConfig
     load: LoadConfig = field(default_factory=LoadConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
@@ -207,6 +241,7 @@ class BenchConfig:
     def validate(self) -> None:
         """Validate nested configs before a run starts."""
         self.load.validate()
+        self.output.validate()
         dataset = self.dataset
         if not dataset.prompt and not dataset.dataset:
             raise ValueError(
@@ -272,8 +307,8 @@ class BenchConfig:
             " Foretoken Benchmark\n"
             "============================================\n"
             f"Configuration:\n"
-            f"  URL        : {self.target.url}\n"
-            f"  Model      : {self.target.model}\n"
+            f"  URL        : {self.endpoint.url}\n"
+            f"  Model      : {self.endpoint.model}\n"
             f"  Parallel   : {parallel_label}\n"
             f"  Number     : {self.load.number}\n"
             f"  Rate       : {rate_label}\n"
@@ -283,5 +318,7 @@ class BenchConfig:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Nested dict snapshot (e.g. param-sweep plan base config)."""
-        return asdict(self)
+        """Return the serializable benchmark config without credentials."""
+        config = asdict(self)
+        config["endpoint"].pop("api_key", None)
+        return config
