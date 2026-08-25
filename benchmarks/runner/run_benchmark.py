@@ -30,7 +30,7 @@ class RunBenchmark(Runner):
 
         try:
             raw_output = await self.dispatch(
-                self.make_client(),
+                self.create_client(),
                 requests,
                 parallel=load["parallel"],
                 rate=load["rate"],

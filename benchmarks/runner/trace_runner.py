@@ -169,7 +169,7 @@ class TraceRunner(Runner):
             }
         )
         wandb_logger = self.make_wandb_logger(writer, reporting_load)
-        client = self.make_client()
+        client = self.create_client()
 
         try:
             trace_window_start_s, payload_source, requests = load_trace_workload(

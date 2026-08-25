@@ -10,7 +10,7 @@ from benchmarks.config import BenchConfig
 from benchmarks.runner.base import Runner
 from benchmarks.runner.multi_dataset import MultiDatasetRunner
 from benchmarks.runner.run_benchmark import RunBenchmark
-from benchmarks.runner.trace import TraceRunner
+from benchmarks.runner.trace_runner import TraceRunner
 
 
 def select_runner(config: BenchConfig) -> Runner:
