@@ -6,17 +6,43 @@
 mod kv_least_loaded_scorer;
 mod least_loaded_scorer;
 mod uniform_scorer;
+mod session_aware_scorer;
+mod latency_aware_scorer;
+mod sequence_length_aware_scorer;
+mod kv_cache_utilization_scorer;
+mod lora_aware_scorer;
+mod mmcache_affinity_scorer;
+mod prefix_scorer;
+mod queue_depth_scorer;
+mod running_request_scorer;
+mod capacity_aware_scorer;
+mod prefix_decay_scorer;
+mod throughput_aware_scorer;
+mod weighted_sum_scorer;
 
 use std::collections::BTreeMap;
 
 use foretoken_kv_indexer::KvPrefixIndexer;
-use foretoken_model_protocol::ModelServerRole;
+use foretoken_model_protocol::{KvCacheLocality, KvStorageTier, ModelServerRole};
 
 use crate::{RouteCandidate, RouteScore, RouterRequest};
 
 pub use kv_least_loaded_scorer::KvLeastLoadedScorer;
 pub use least_loaded_scorer::LeastLoadedScorer;
+pub use session_aware_scorer::SessionAwareScorer;
 pub use uniform_scorer::UniformScorer;
+pub use latency_aware_scorer::LatencyAwareScorer;
+pub use sequence_length_aware_scorer::SequenceLengthAwareScorer;
+pub use kv_cache_utilization_scorer::KvCacheUtilizationScorer;
+pub use lora_aware_scorer::LoraAwareScorer;
+pub use mmcache_affinity_scorer::MmcacheAffinityScorer;
+pub use prefix_scorer::PrefixScorer;
+pub use queue_depth_scorer::QueueDepthScorer;
+pub use running_request_scorer::RunningRequestScorer;
+pub use capacity_aware_scorer::CapacityAwareScorer;
+pub use prefix_decay_scorer::PrefixDecayScorer;
+pub use throughput_aware_scorer::ThroughputAwareScorer;
+pub use weighted_sum_scorer::WeightedSumScorer;
 
 /// Scores the complete filtered compatible, healthy route target snapshot for one routing round.
 ///
@@ -64,4 +90,71 @@ pub(crate) fn decode_loads_by_pipeline_scope(
             .or_insert_with(|| load(candidate));
     }
     loads
+}
+
+/// Best readable KV-prefix match facts for `request` on `candidate`, or zeros when the candidate
+/// role does not consume prompt tokens or prefix locality is unavailable.
+///
+/// Returns `(matched_tokens, tier_preference, locality_preference)` already in their final
+/// lexicographic `RouteScore` forms. Providers outside this crate are not trusted to have applied
+/// indexer filtering: unknown locality is equivalent to no cache match.
+pub(crate) fn kv_prefix_best_match(
+    request: &RouterRequest,
+    candidate: &RouteCandidate,
+    kv: &dyn KvPrefixIndexer,
+) -> (i64, i8, i8) {
+    if !matches!(
+        candidate.role,
+        ModelServerRole::Aggregate | ModelServerRole::Prefill
+    ) {
+        // Decode consumes generated tokens, not the prompt KV prefix.
+        return (0, 0, 0);
+    }
+    let lookup = request.kv_prefix_lookup(
+        candidate.route_target_id.as_str(),
+        candidate.data_parallel_rank,
+    );
+    match lookup.map_or_else(
+        foretoken_kv_indexer::KvPrefixQueryResult::Unavailable,
+        |lookup| kv.prefix_matches(lookup),
+    ) {
+        foretoken_kv_indexer::KvPrefixQueryResult::Matches(matches) => matches
+            .into_iter()
+            .filter(|m| m.placement.locality != KvCacheLocality::Unspecified)
+            .max_by_key(|m| {
+                (
+                    m.matched_tokens,
+                    tier_preference(m.placement.tier),
+                    locality_preference(m.placement.locality),
+                )
+            })
+            .map(|m| {
+                (
+                    i64::try_from(m.matched_tokens).unwrap_or(i64::MAX),
+                    tier_preference(m.placement.tier),
+                    locality_preference(m.placement.locality),
+                )
+            })
+            .unwrap_or((0, 0, 0)),
+        foretoken_kv_indexer::KvPrefixQueryResult::Unavailable(_) => (0, 0, 0),
+    }
+}
+
+/// Lexicographic policy deliberately has no measured weights.
+pub(crate) fn tier_preference(t: KvStorageTier) -> i8 {
+    match t {
+        KvStorageTier::Device => 4,
+        KvStorageTier::HostPinned => 3,
+        KvStorageTier::Disk => 2,
+        KvStorageTier::External => 1,
+    }
+}
+
+/// Lexicographic policy deliberately has no measured weights.
+pub(crate) fn locality_preference(locality: KvCacheLocality) -> i8 {
+    match locality {
+        KvCacheLocality::Unspecified => 0,
+        KvCacheLocality::Local => 2,
+        KvCacheLocality::Remote => 1,
+    }
 }

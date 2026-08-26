@@ -165,6 +165,8 @@ fn customized_context_is_request_owned_and_shared_by_filter_scorer_picker_across
                 ttft: None,
                 tpot: None,
                 e2e_latency: None,
+                avg_sequence_length: None,
+                loaded_lora_adapters: vec![],
             },
         ),
         (
@@ -182,6 +184,8 @@ fn customized_context_is_request_owned_and_shared_by_filter_scorer_picker_across
                 ttft: None,
                 tpot: None,
                 e2e_latency: None,
+                avg_sequence_length: None,
+                loaded_lora_adapters: vec![],
             },
         ),
         (
@@ -199,6 +203,8 @@ fn customized_context_is_request_owned_and_shared_by_filter_scorer_picker_across
                 ttft: None,
                 tpot: None,
                 e2e_latency: None,
+                avg_sequence_length: None,
+                loaded_lora_adapters: vec![],
             },
         ),
     ]);

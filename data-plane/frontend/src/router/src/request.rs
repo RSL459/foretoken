@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use foretoken_kv_indexer::{KvPrefixLookup, KvPrefixUnavailableReason};
 
+use crate::RouteTargetId;
+
 /// Request information available to every routing algorithm stage.
 #[derive(Clone)]
 pub struct RouterRequest {
@@ -16,6 +18,9 @@ pub struct RouterRequest {
     pub revision: Option<String>,
     /// Tokenized vLLM request, including prompt tokens, sampling, multimodal, LoRA, and priority.
     pub generate_request: Arc<vllm_llm::GenerateRequest>,
+    /// Route target previously selected for this conversation session, resolved by the caller from
+    /// `generate_request.session_id`. `None` when the session has no affinity or is session-less.
+    pub session_target_id: Option<RouteTargetId>,
 }
 
 impl RouterRequest {
@@ -29,12 +34,43 @@ impl RouterRequest {
             model: model.into(),
             revision,
             generate_request,
+            session_target_id: None,
         }
+    }
+
+    /// Sets the route target previously selected for this conversation session, enabling
+    /// session-sticky scorers.
+    pub fn with_session_target_id(mut self, session_target_id: Option<RouteTargetId>) -> Self {
+        self.session_target_id = session_target_id;
+        self
     }
 
     /// Returns the prompt tokens used by KV-prefix algorithms.
     pub fn prompt_token_ids(&self) -> &[u32] {
         &self.generate_request.prompt_token_ids
+    }
+
+    /// Returns the conversation session identity carried by the tokenized request, if any.
+    pub fn session_id(&self) -> Option<&str> {
+        self.generate_request.session_id.as_deref()
+    }
+
+    /// Returns the route target previously selected for this session, when the caller resolved one.
+    pub fn session_target_id(&self) -> Option<&str> {
+        self.session_target_id.as_ref().map(RouteTargetId::as_str)
+    }
+
+    /// Returns the LoRA adapter identity requested by the tokenized request, if any.
+    pub fn lora_id(&self) -> Option<&str> {
+        self.generate_request
+            .lora_request
+            .as_ref()
+            .map(|lora| lora.lora_name.as_str())
+    }
+
+    /// Returns the maximum number of tokens this request may generate.
+    pub fn max_new_tokens(&self) -> u32 {
+        self.generate_request.sampling_params.max_tokens
     }
 
     /// Rejects request features whose cache identity is not represented by prompt tokens.
