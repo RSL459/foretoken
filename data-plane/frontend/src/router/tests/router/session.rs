@@ -28,6 +28,8 @@ fn target_stats(running_requests: u64) -> RouteTargetStats {
         ttft: None,
         tpot: None,
         e2e_latency: None,
+        avg_sequence_length: None,
+        loaded_lora_adapters: vec![],
     }
 }
 
