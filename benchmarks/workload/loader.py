@@ -112,6 +112,46 @@ def _load_hf_requests(spec: str, number: int, offset: int) -> list[dict[str, Any
     return requests
 
 
+def load_indexed_requests(
+    source: str,
+    indexes: list[int],
+) -> list[dict[str, Any]]:
+    """Load payloads at exact source indexes, preserving ``indexes`` order."""
+    if not indexes:
+        return []
+    if source == "random":
+        raise ValueError("Indexed payload loading does not support random data")
+
+    requested = set(indexes)
+    loaded: dict[int, dict[str, Any]] = {}
+    path = Path(source)
+    if path.is_file():
+        label = path
+        rows = (
+            (row_index, payload, line_no)
+            for row_index, (line_no, payload) in enumerate(load_jsonl(path))
+        )
+    else:
+        label = Path(f"hf://{source}")
+        rows = (
+            (row_index, payload, row_index + 1)
+            for row_index, payload in iter_hf_rows(source)
+        )
+
+    for row_index, payload, line_no in rows:
+        if row_index in requested:
+            loaded[row_index] = _normalize(payload, label, line_no)
+            if len(loaded) == len(requested):
+                break
+
+    missing = sorted(requested - loaded.keys())
+    if missing:
+        raise ValueError(
+            f"Payload source {source!r} is missing row indexes {missing[:10]}"
+        )
+    return [loaded[index] for index in indexes]
+
+
 def load_requests(
     config: BenchConfig,
     *,

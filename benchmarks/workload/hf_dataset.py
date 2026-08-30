@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Load HuggingFace dataset rows for ``--dataset org/name:split``."""
+"""Load HuggingFace dataset rows for benchmark workloads."""
 
 from __future__ import annotations
 
@@ -10,14 +10,22 @@ from typing import Any, Iterator
 
 from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset
 
+_DEFAULT_SELECTORS = {
+    "KrisQ/StudyChat": "train",
+    "valeriol29/mooncake-traces": "conversation",
+}
+
 
 def parse_hf_dataset_spec(spec: str) -> tuple[str, str]:
-    """Parse ``org/name:split`` into ``(dataset_id, split)``.
+    """Parse a supported dataset selector into ``(dataset_id, selector)``.
 
-    ``split`` is required and may be a non-standard name (not only
-    ``train`` / ``test`` / ``validation``).
+    A selector may be a split or a builder config. Known trace datasets have
+    defaults; other datasets must use ``org/name:split``.
     """
     if ":" not in spec:
+        selector = _DEFAULT_SELECTORS.get(spec)
+        if selector is not None:
+            return spec, selector
         raise ValueError(
             f"Invalid HuggingFace dataset spec {spec!r}. "
             "Use 'org/name:split' (split is required)."
@@ -31,8 +39,27 @@ def parse_hf_dataset_spec(spec: str) -> tuple[str, str]:
     return dataset_id, split
 
 
+def is_hf_dataset_spec(spec: str) -> bool:
+    """Return whether ``spec`` is a supported Hugging Face selector."""
+    try:
+        parse_hf_dataset_spec(spec)
+    except ValueError:
+        return False
+    return True
+
+
+def same_dataset_source(left: str, right: str) -> bool:
+    """Return whether two selectors resolve to the same dataset source."""
+    if left == right:
+        return True
+    try:
+        return parse_hf_dataset_spec(left) == parse_hf_dataset_spec(right)
+    except ValueError:
+        return False
+
+
 def _load_hf_data(dataset_id: str, split: str) -> Any:
-    """Load a streaming HF dataset for ``dataset_id`` / ``split``.
+    """Load a cached HF dataset for ``dataset_id`` / ``split``.
 
     Some hubs publish named builder configs whose only data split is
     ``train``; the CLI ``split`` then selects that config name.
@@ -49,9 +76,8 @@ def _load_hf_data(dataset_id: str, split: str) -> Any:
             dataset_id,
             name=split,
             split=data_splits[0],
-            streaming=True,
         )
-    return load_dataset(dataset_id, split=split, streaming=True)
+    return load_dataset(dataset_id, split=split)
 
 
 def iter_hf_rows(spec: str) -> Iterator[tuple[int, Any]]:

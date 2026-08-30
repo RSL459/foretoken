@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import random
 from collections import defaultdict
@@ -14,6 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.plugin.datasets.random_dataset import RandomDatasetPlugin
 from huggingface_hub import snapshot_download
@@ -22,7 +22,6 @@ from benchmarks.config import BenchConfig
 
 logger = logging.getLogger(__name__)
 _MOONCAKE_BLOCK_TOKENS = 512
-_PREFIX_REUSE_SEED = b"foretoken-mooncake-prefix-v1"
 
 # Hub file patterns kept when resolving a remote ``--tokenizer-path``.
 _TOKENIZER_ALLOW_PATTERNS = (
@@ -85,6 +84,7 @@ def _build_perf_arguments(
         apply_chat_template=apply_chat,
         tokenize_prompt=False,
         dataset_args={},
+        seed=dataset.random_seed,
         num_workers=0,
         warmup_num=0,
         max_tokens=config.generation.max_tokens,
@@ -123,7 +123,14 @@ def _generate_random_requests(
         min_prompt_length=min_prompt_length,
         max_prompt_length=max_prompt_length,
     )
-    plugin = RandomDatasetPlugin(arguments)
+    return _collect_random_requests(RandomDatasetPlugin(arguments), number)
+
+
+def _collect_random_requests(
+    plugin: RandomDatasetPlugin,
+    number: int,
+) -> list[dict[str, Any]]:
+    """Collect exactly ``number`` requests from an initialized plugin."""
     requests: list[dict[str, Any]] = []
     for message in plugin.build_messages():
         requests.append(_to_request(message))
@@ -149,6 +156,7 @@ def generate_random_requests(
             "tokenizer_path is required for random data generation"
         )
 
+    np.random.seed(dataset.random_seed)
     tokenizer_path = resolve_tokenizer_path(dataset.tokenizer_path)
     if input_lengths is None:
         count = config.load.number[0] if number is None else number
@@ -160,33 +168,34 @@ def generate_random_requests(
             max_prompt_length=dataset.max_prompt_length,
         )
 
+    if not input_lengths:
+        return []
+
     if number is not None and number != len(input_lengths):
         raise ValueError("number must match input_lengths")
     positions: dict[int, list[int]] = defaultdict(list)
     for index, input_length in enumerate(input_lengths):
         positions[input_length].append(index)
 
+    arguments = _build_perf_arguments(
+        config,
+        tokenizer_path=tokenizer_path,
+        number=len(input_lengths),
+        min_prompt_length=min(input_lengths),
+        max_prompt_length=max(input_lengths),
+    )
+    plugin = RandomDatasetPlugin(arguments)
     requests: list[dict[str, Any] | None] = [None] * len(input_lengths)
     for input_length, indexes in positions.items():
-        generated = _generate_random_requests(
-            config,
-            tokenizer_path=tokenizer_path,
-            number=len(indexes),
-            min_prompt_length=input_length,
-            max_prompt_length=input_length,
-        )
+        plugin.query_parameters.min_prompt_length = input_length
+        plugin.query_parameters.max_prompt_length = input_length
+        plugin.number = len(indexes)
+        generated = _collect_random_requests(plugin, len(indexes))
         for index, request in zip(indexes, generated):
             requests[index] = request
     if any(request is None for request in requests):
         raise RuntimeError("Random dataset generation returned missing requests")
     return [request for request in requests if request is not None]
-
-
-def _seed_for_hash_id(hash_id: int) -> int:
-    digest = hashlib.sha256(
-        _PREFIX_REUSE_SEED + str(hash_id).encode("ascii")
-    ).digest()
-    return int.from_bytes(digest[:8], byteorder="big")
 
 
 def generate_synthetic_prefix_reuse_requests(
@@ -214,18 +223,21 @@ def generate_synthetic_prefix_reuse_requests(
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     vocab_size = int(tokenizer.vocab_size)
     special_ids = set(tokenizer.all_special_ids)
-    if vocab_size <= len(special_ids):
+    allowed_token_ids = [
+        token_id
+        for token_id in range(vocab_size)
+        if token_id not in special_ids
+    ]
+    if not allowed_token_ids:
         raise ValueError("Tokenizer has no non-special tokens")
 
     @lru_cache(maxsize=1024)
     def block_for(hash_id: int) -> tuple[int, ...]:
-        generator = random.Random(_seed_for_hash_id(hash_id))
-        block: list[int] = []
-        while len(block) < _MOONCAKE_BLOCK_TOKENS:
-            token_id = generator.randrange(vocab_size)
-            if token_id not in special_ids:
-                block.append(token_id)
-        return tuple(block)
+        generator = random.Random(dataset.random_seed + hash_id)
+        return tuple(
+            generator.choice(allowed_token_ids)
+            for _ in range(_MOONCAKE_BLOCK_TOKENS)
+        )
 
     requests: list[dict[str, Any]] = []
     for input_length, hash_ids in zip(input_lengths, hash_id_lists):
@@ -243,13 +255,13 @@ def generate_synthetic_prefix_reuse_requests(
                 f"got {len(hash_ids)} hash_ids for input_length={input_length}"
             )
 
-        token_ids = [
+        prompt_token_ids = [
             token_id
             for hash_id in hash_ids
             for token_id in block_for(hash_id)
         ][:input_length]
         prompt = tokenizer.decode(
-            token_ids,
+            prompt_token_ids,
             skip_special_tokens=False,
             clean_up_tokenization_spaces=False,
         )

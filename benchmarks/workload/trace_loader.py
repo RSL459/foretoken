@@ -10,7 +10,9 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+
+from benchmarks.workload.hf_dataset import is_hf_dataset_spec, iter_hf_rows
 
 logger = logging.getLogger(__name__)
 _HF_TRACE_PREFIX = "hf://"
@@ -39,7 +41,7 @@ class TraceRequest:
     input_length: int | None = None
     hash_ids: list[int] | None = None
     conversation_id: str | None = None
-    payload_source: str = "trace-native"
+    payload_source: str = ""
 
 
 class StudyChatAdapter:
@@ -77,23 +79,6 @@ class StudyChatAdapter:
         messages = payload["messages"]
         if not isinstance(messages, list) or not messages:
             raise ValueError(f"Invalid messages at {path}:{line_no}")
-        for message_index, message in enumerate(messages):
-            if not isinstance(message, dict):
-                raise ValueError(
-                    f"Invalid message at {path}:{line_no}:{message_index}"
-                )
-            if not isinstance(message.get("role"), str) or not isinstance(
-                message.get("content"), str
-            ):
-                raise ValueError(
-                    f"Each message needs text role/content at "
-                    f"{path}:{line_no}:{message_index}"
-                )
-        if messages[-1]["role"] != "user":
-            raise ValueError(
-                f"StudyChat request must end with a user message at "
-                f"{path}:{line_no}"
-            )
 
         input_length = payload.get("input_length")
         if input_length is not None:
@@ -109,7 +94,7 @@ class StudyChatAdapter:
         return TraceRequest(
             timestamp_s=timestamp_ms / 1000.0,
             source_index=source_index,
-            messages=list(messages),
+            messages=messages,
             input_length=input_length,
             conversation_id=str(chat_id),
         )
@@ -175,25 +160,18 @@ class TraceLoader:
         "mooncake": MooncakeAdapter,
     }
 
-    def __init__(self, path: str | Path, trace_format: str):
+    def __init__(self, path: str | Path):
         self.trace_path = str(path)
-        try:
-            self.adapter = self._ADAPTERS[trace_format]
-        except KeyError as error:
-            supported = ", ".join(self._ADAPTERS)
-            raise ValueError(
-                f"Unsupported trace format {trace_format!r}; "
-                f"expected one of {supported}"
-            ) from error
-
-    @classmethod
-    def supported_formats(cls) -> tuple[str, ...]:
-        return tuple(cls._ADAPTERS)
+        self.trace_format: str | None = None
 
     def _resolve_path(self) -> Path:
-        """Return a local trace path, downloading an HF trace if necessary."""
+        """Resolve a local path, HF dataset file, or known trace source."""
+        local = Path(self.trace_path).expanduser()
+        if local.exists():
+            return local
+
         if not self.trace_path.startswith(_HF_TRACE_PREFIX):
-            return Path(self.trace_path).expanduser()
+            return local
 
         reference = self.trace_path.removeprefix(_HF_TRACE_PREFIX)
         parts = reference.split("/", maxsplit=2)
@@ -206,17 +184,24 @@ class TraceLoader:
         logger.info("Resolving Hugging Face trace %s", self.trace_path)
         return Path(_download_hf_trace(repo_id, filename))
 
-    def load_window(
-        self,
-        *,
-        start: float = 0.0,
-        duration: float | None = None,
-    ) -> tuple[float, list[TraceRequest]]:
+    def _iter_rows(self) -> Iterator[tuple[Path, int, int, Any]]:
+        """Yield ``(label, line_no, source_index, payload)`` rows."""
+        local = Path(self.trace_path).expanduser()
+        is_hf_dataset = (
+            not local.exists()
+            and not self.trace_path.startswith(_HF_TRACE_PREFIX)
+            and is_hf_dataset_spec(self.trace_path)
+        )
+        if is_hf_dataset:
+            label = Path(f"hf://{self.trace_path}")
+            logger.info("Resolving Hugging Face trace %s", self.trace_path)
+            for row_index, payload in iter_hf_rows(self.trace_path):
+                yield label, row_index + 1, row_index, payload
+            return
+
         path = self._resolve_path()
         if not path.is_file():
             raise FileNotFoundError(f"Trace JSONL not found: {path}")
-
-        requests: list[TraceRequest] = []
         source_index = 0
         with path.open("r", encoding="utf-8") as file:
             for line_no, line in enumerate(file, start=1):
@@ -228,31 +213,79 @@ class TraceLoader:
                     raise ValueError(
                         f"Invalid JSON at {path}:{line_no}: {error}"
                     ) from error
-                requests.append(
-                    self.adapter.parse(
-                        payload,
-                        path=path,
-                        line_no=line_no,
-                        source_index=source_index,
-                    )
-                )
+                yield path, line_no, source_index, payload
                 source_index += 1
 
-        requests.sort(key=lambda request: request.timestamp_s)
-        if not requests:
+    def _iter_requests(self) -> Iterator[TraceRequest]:
+        """Parse trace rows without retaining the complete source in memory."""
+        adapter = None
+        for path, line_no, source_index, payload in self._iter_rows():
+            if adapter is None:
+                trace_format = self._detect_format(
+                    payload,
+                    path=path,
+                    line_no=line_no,
+                )
+                if self.trace_format not in (None, trace_format):
+                    raise ValueError("Trace format changed between reads")
+                self.trace_format = trace_format
+                adapter = self._ADAPTERS[trace_format]
+            yield adapter.parse(
+                payload,
+                path=path,
+                line_no=line_no,
+                source_index=source_index,
+            )
+
+    @staticmethod
+    def _detect_format(
+        payload: object,
+        *,
+        path: Path,
+        line_no: int,
+    ) -> str:
+        if isinstance(payload, dict):
+            if all(
+                key in payload
+                for key in ("timestamp", "chatId", "messages")
+            ):
+                return "studychat"
+            if all(key in payload for key in ("timestamp", "input_length")):
+                return "mooncake"
+        raise ValueError(
+            f"Cannot detect trace format from {path}:{line_no}; expected "
+            "StudyChat timestamp/chatId/messages or Mooncake "
+            "timestamp/input_length"
+        )
+
+    def load_window(
+        self,
+        *,
+        start: float = 0.0,
+        duration: float | None = None,
+    ) -> tuple[float, list[TraceRequest]]:
+        self.trace_format = None
+        first_timestamp = None
+        for request in self._iter_requests():
+            if first_timestamp is None:
+                first_timestamp = request.timestamp_s
+            else:
+                first_timestamp = min(first_timestamp, request.timestamp_s)
+
+        if first_timestamp is None:
             raise ValueError("Trace contains no requests")
 
-        first_timestamp = requests[0].timestamp_s
         window_start = first_timestamp + start
         window_end = (
             None if duration is None else window_start + duration
         )
         selected = [
             request
-            for request in requests
+            for request in self._iter_requests()
             if request.timestamp_s >= window_start
             and (window_end is None or request.timestamp_s < window_end)
         ]
         if not selected:
             raise ValueError("Trace window contains no requests")
+        selected.sort(key=lambda request: request.timestamp_s)
         return window_start, selected

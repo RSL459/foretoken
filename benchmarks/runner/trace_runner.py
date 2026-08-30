@@ -30,19 +30,22 @@ class TraceRunner(Runner):
         index: int,
         *,
         scheduled_at: float,
+        trace_offset_s: float,
     ) -> tuple[int, dict[str, Any]]:
         generation = self.config.generation
         actual_send_at = time.perf_counter()
-        result = await client.generate_stream(
+        result = await client.generate(
             prompt=request.prompt,
             messages=request.messages,
             tools=request.tools,
             max_tokens=generation.max_tokens,
-            temperature=generation.temperature,
+            stream=generation.stream,
+            extra_body=generation.request_overrides(),
         )
         result["source_index"] = request.source_index
         result["conversation_id"] = request.conversation_id
         result["trace_timestamp_s"] = request.timestamp_s
+        result["trace_offset_s"] = trace_offset_s
         result["trace_input_length"] = request.input_length
         result["trace_hash_block_count"] = (
             len(request.hash_ids) if request.hash_ids is not None else None
@@ -81,61 +84,66 @@ class TraceRunner(Runner):
     ) -> dict[str, Any]:
         """Schedule trace requests at their recorded arrival times."""
 
+        task_queue: asyncio.Queue[
+            asyncio.Task[tuple[int, dict[str, Any]]]
+        ] = asyncio.Queue()
         pending: set[asyncio.Task[tuple[int, dict[str, Any]]]] = set()
         completed: dict[int, dict[str, Any]] = {}
 
-        def collect(
-            done: set[asyncio.Task[tuple[int, dict[str, Any]]]],
-        ) -> None:
-            for task in done:
-                index, result = task.result()
-                completed[index] = result
+        def collect(task: asyncio.Task[tuple[int, dict[str, Any]]]) -> None:
+            pending.discard(task)
+            index, result = task.result()
+            completed[index] = result
+
+        def drain_completed() -> None:
+            while True:
+                try:
+                    collect(task_queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    return
 
         start_time = time.perf_counter()
         request_count = 0
-        for request in requests:
-            scheduled_at = (
-                start_time + request.timestamp_s - trace_window_start_s
-            )
-            delay = scheduled_at - time.perf_counter()
-            if delay > 0:
-                await asyncio.sleep(delay)
-
-            done = {task for task in pending if task.done()}
-            if done:
-                pending.difference_update(done)
-                collect(done)
-
-            while (
-                max_concurrency is not None
-                and len(pending) >= max_concurrency
-            ):
-                done, pending = await asyncio.wait(
-                    pending,
-                    return_when=asyncio.FIRST_COMPLETED,
+        try:
+            for request in requests:
+                scheduled_at = (
+                    start_time + request.timestamp_s - trace_window_start_s
                 )
-                collect(done)
+                delay = scheduled_at - time.perf_counter()
+                if delay > 0:
+                    await asyncio.sleep(delay)
 
-            task = asyncio.create_task(
-                self._send(
-                    client,
-                    request,
-                    request_count,
-                    scheduled_at=scheduled_at,
+                drain_completed()
+                while (
+                    max_concurrency is not None
+                    and len(pending) >= max_concurrency
+                ):
+                    collect(await task_queue.get())
+
+                task = asyncio.create_task(
+                    self._send(
+                        client,
+                        request,
+                        request_count,
+                        scheduled_at=scheduled_at,
+                        trace_offset_s=(
+                            request.timestamp_s - trace_window_start_s
+                        ),
+                    )
                 )
-            )
-            pending.add(task)
-            request_count += 1
+                pending.add(task)
+                task.add_done_callback(task_queue.put_nowait)
+                request_count += 1
 
-        end_time = start_time
-        while pending:
-            done, pending = await asyncio.wait(
-                pending,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if not pending:
-                end_time = time.perf_counter()
-            collect(done)
+            while pending:
+                collect(await task_queue.get())
+        finally:
+            if pending:
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+
+        end_time = time.perf_counter()
 
         return {
             "results": [completed[index] for index in range(request_count)],
@@ -159,7 +167,7 @@ class TraceRunner(Runner):
             {
                 "dataset": f"trace={dataset.trace_path}",
                 "trace_path": dataset.trace_path,
-                "trace_format": dataset.trace_format,
+                "payload_dataset": dataset.dataset[0],
                 "trace_start": dataset.trace_start,
                 "trace_duration": dataset.trace_duration,
                 "trace_max_concurrency": max_concurrency,
@@ -172,9 +180,13 @@ class TraceRunner(Runner):
         client = self.create_client()
 
         try:
-            trace_window_start_s, payload_source, requests = load_trace_workload(
-                self.config
-            )
+            (
+                trace_window_start_s,
+                trace_format,
+                payload_source,
+                requests,
+            ) = load_trace_workload(self.config)
+            run_config["trace_format"] = trace_format
             run_config["payload_source"] = payload_source
             raw_output = await self._replay(
                 client,
@@ -199,6 +211,7 @@ class TraceRunner(Runner):
                 raw_output,
                 metrics,
                 wandb_logger=wandb_logger,
+                wandb_trace_results=raw_output["results"],
             )
         except Exception:
             wandb_logger.finish()

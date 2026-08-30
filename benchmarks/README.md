@@ -72,74 +72,26 @@ foretoken bench \
   --output local,wandb
 ```
 
-Trace supplies arrival timing; payload can come from trace-native messages,
-random, a dataset, or a fixed prompt. Supported formats are `studychat`
-(`timestamp`, `chatId`, `messages`) and `mooncake` (`timestamp`, `input_length`).
-`--trace` accepts a local JSONL path or
-`hf://org/dataset/path/to/trace.jsonl`; HF files are cached before replay.
-
-Trace-native (StudyChat):
+Trace replay uses `--trace` for arrival timestamps and `--dataset` for payloads.
+It accepts local JSONL, Hugging Face datasets, or `hf://` files and detects
+StudyChat and Mooncake formats automatically.
 
 ```bash
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
-  --trace hf://KrisQ/StudyChat/data.jsonl \
-  --trace-format studychat \
+  --trace KrisQ/StudyChat \
+  --dataset KrisQ/StudyChat \
   --trace-start 600 \
   --trace-duration 300 \
-  --trace-max-concurrency 256
+  --trace-max-concurrency 32
 ```
 
-Trace replays original timestamps. The window is `[first + start, first +
-start + duration)`; its start is benchmark time zero. Omit duration to replay
-through the end. `--trace-max-concurrency` limits active requests.
-
-Trace + random:
-
-Trace + random uses trace timestamps for request timing and generates random
-request content. When available, each event's `input_length` is used as the
-generated prompt length.
-For Mooncake, `--trace-synthetic-prefix-reuse` maps each `hash_id` to a
-deterministic synthetic 512-token block. Without it, `hash_ids` are ignored.
-It simulates shared prefixes; it does not reconstruct original KV content.
-
-```bash
-curl -L -o conversation_trace.jsonl \
-  https://raw.githubusercontent.com/kvcache-ai/Mooncake/main/FAST25-release/traces/conversation_trace.jsonl
-
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --trace conversation_trace.jsonl \
-  --trace-format mooncake \
-  --dataset random \
-  --tokenizer-path /path/tokenizer \
-  --trace-synthetic-prefix-reuse \
-  --trace-max-concurrency 256
-```
-
-Trace + dataset:
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --trace conversation_trace.jsonl \
-  --trace-format mooncake \
-  --dataset /path/payloads.jsonl
-```
-
-Trace + prompt:
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --trace conversation_trace.jsonl \
-  --trace-format mooncake \
-  --prompt "Reply with exactly: OK"
-```
+The selected window is `[first + start, first + start + duration)`, with the
+window start as replay time zero. `--trace-max-concurrency` limits active
+requests, and slot waiting is included in Replay delay. Mooncake can pair trace
+timing with random or external dataset payloads and optionally synthesize shared
+prefix blocks. See [trace examples and screenshots](doc/examples.md).
 
 Random synthetic prompts (tokenizer required):
 
@@ -149,6 +101,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset random \
   --tokenizer-path Qwen/Qwen3.6-27B \
+  --random-seed 0 \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
   --rate 5 \
