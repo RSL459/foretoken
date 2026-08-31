@@ -1,24 +1,24 @@
-# Benchmark examples
+# 评测示例
 
-English | [简体中文](examples_zh.md)
+[English](examples.md) | 简体中文
 
-# Foretoken deployment
+# Foretoken 部署
 
-Deploy or reuse the Quick Start service, discover its model and endpoint, and clean up resources created for the benchmark:
+部署或复用快速开始服务，自动发现模型和访问入口，并在评测结束后清理本次创建的资源：
 
 ```bash
 foretoken bench examples/quickstart
 ```
 
-The remaining examples use an existing endpoint:
+以下示例连接已经运行的服务：
 
 ```bash
 FRONTEND_URL=http://127.0.0.1:8008
 ```
 
-# Dataset sources
+# 数据集来源
 
-Supported `--dataset` selectors include local JSONL files, Hugging Face datasets, and files stored in dataset repositories:
+`--dataset` 支持本地 JSONL、Hugging Face 数据集，以及数据集仓库中的文件：
 
 ```text
 /path/to/conversation.jsonl
@@ -26,9 +26,9 @@ org/dataset:train
 hf://datasets/org/dataset@main/path/to/conversation.jsonl
 ```
 
-Multiple sources can be comma-separated. A Hub file URI must include the `datasets` repository type.
+多个来源可用逗号分隔。Hub 文件 URI 必须包含 `datasets` 仓库类型。
 
-# Random dataset
+# 随机数据集
 
 ```
 foretoken bench \
@@ -47,7 +47,7 @@ foretoken bench \
 
 ![Random dataset W&B dashboard](imgs/random-dataset-wandb-dashboard.png)
 
-# HuggingFace dataset
+# Hugging Face 数据集
 
 ```
 foretoken bench \
@@ -63,7 +63,7 @@ foretoken bench \
 
 ![Hugging Face dataset W&B dashboard](imgs/huggingface-dataset-wandb-dashboard.png)
 
-# Local dataset
+# 本地数据集
 
 ```
 foretoken bench \
@@ -79,7 +79,7 @@ foretoken bench \
 
 ![Local dataset W&B dashboard](imgs/local-dataset-wandb-dashboard.png)
 
-# StudyChat trace + dataset
+# StudyChat trace 与数据集
 
 ```
 foretoken bench \
@@ -99,7 +99,7 @@ foretoken bench \
 
 ![StudyChat trace W&B dashboard](imgs/trace-studychat-wandb-dashboard.png)
 
-# Mooncake trace + StudyChat dataset
+# Mooncake trace 与 StudyChat 数据集
 
 ```
 foretoken bench \
@@ -119,7 +119,7 @@ foretoken bench \
 
 ![Mooncake trace with StudyChat W&B dashboard](imgs/trace-mooncake-studychat-wandb-dashboard.png)
 
-# Mooncake trace + random
+# Mooncake trace 与随机数据
 
 ```
 foretoken bench \
@@ -141,7 +141,7 @@ foretoken bench \
 
 ![Mooncake trace with random payload W&B dashboard](imgs/trace-mooncake-random-wandb-dashboard.png)
 
-# Mooncake trace + synthetic prefix reuse
+# Mooncake trace 与合成前缀复用
 
 ```
 foretoken bench \
@@ -164,7 +164,7 @@ foretoken bench \
 
 ![Mooncake synthetic prefix replay W&B dashboard](imgs/trace-mooncake-prefix-reuse-wandb-dashboard.png)
 
-# Multi-dataset
+# 多数据集
 
 ```
 foretoken bench \
@@ -181,11 +181,11 @@ foretoken bench \
 ![Multi-dataset benchmark output](imgs/multi-dataset-benchmark-output.png)
 
 
-# Parameter sweep
+# 参数扫描
 
-Pass `--bench-params` a JSONL file whose lines override request execution fields. List-valued `parallel`, `number`, or `rate` values expand into separate load points.
+通过 `--bench-params` 传入 JSONL 文件，每行覆盖请求执行字段。`parallel`、`number` 或 `rate` 的列表值会展开为独立负载点。
 
-Example (`benchmarks/examples/bench_params.jsonl`):
+示例（`benchmarks/examples/bench_params.jsonl`）：
 
 ```jsonl
 {"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
@@ -201,7 +201,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-The experiment writes every point plus `pareto/PARETO.png` (Tok/s/user versus Tok/s/GPU).
+实验会保存全部负载点，并生成 `pareto/PARETO.png`（Tok/s/user 对 Tok/s/GPU）。
 
 ![Pareto frontier](imgs/PARETO.png)
 

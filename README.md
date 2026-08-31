@@ -111,74 +111,59 @@ helm upgrade --install foretoken \
 
 ### 2. Deploy the model service
 
-`examples/quickstart` provides a ready-to-use frontend and single-model configuration. For two models with queue-based autoscaling, see [Multi-Model Quick Start](examples/multi-model-quickstart/README.md).
+Install the Foretoken CLI from the repository root. `examples/quickstart` provides a ready-to-use frontend and single-model configuration. For two models with queue-based autoscaling, see [Multi-Model Quick Start](examples/multi-model-quickstart/README.md).
 
 ```bash
-kubectl apply --server-side -k examples/quickstart
+pip install -e .
+foretoken deploy examples/quickstart
 ```
 
-### 3. Wait for serving to become ready
+The command applies the Kustomize configuration, reports each service state as it changes, and exits when the current configuration is ready.
 
-```bash
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
-```
-
-### 4. Send a generation request
+### 3. Send a generation request
 
 #### Local mode
 
-Read the frontend address and send the request:
+Resolve the frontend URL and send the request:
 
 ```bash
-kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' \
-  --namespace foretoken-demo \
-  --timeout=5m \
-  service/quickstart-frontend
-
-FORETOKEN_FRONTEND_ADDRESS=$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 
 curl --fail-with-body --no-buffer \
-  "http://${FORETOKEN_FRONTEND_ADDRESS}:8080/v1/chat/completions" \
+  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
 #### Gateway mode
 
-For the Chart-created HTTP Gateway, read its address and send the configured hostname:
+For the Chart-created HTTP Gateway, resolve its address and routing hostname:
 
 ```bash
-FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
-  --namespace foretoken-platform \
-  -o jsonpath='{.status.addresses[0].value}')
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
 curl --fail-with-body --no-buffer \
-  "http://${FORETOKEN_GATEWAY_ADDRESS}/v1/chat/completions" \
-  -H "Host: foretoken.example.com" \
+  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FORETOKEN_REQUEST_HOST" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
 When reusing a platform Gateway, use that Gateway's configured hostname, port, and TLS settings.
 
-### 5. Benchmark service throughput
+### 4. Benchmark service throughput
 
-Install the Foretoken Benchmark CLI from this project path:
+Install the optional benchmark dependencies from the repository root:
 
 ```bash
-python -m pip install ./benchmarks
+pip install -e '.[bench]'
 ```
 
-The deployment command reuses an existing Quick Start service. If the service is absent, it deploys the configuration and removes only the resources it created after the benchmark. When neither `--prompt` nor `--dataset` is specified, it uses a short built-in prompt:
+The benchmark command reuses an existing Quick Start service. If the service is absent, it deploys the configuration and removes only the resources it created after the benchmark. When neither `--prompt` nor `--dataset` is specified, it uses a short built-in prompt:
 
 ```bash
-foretoken bench --deploy examples/quickstart
+foretoken bench examples/quickstart
 ```
 
 Results are shown in the console by default. Use `--output local` to save local artifacts, `--output wandb` to publish the run, or combine them.
@@ -197,8 +182,7 @@ foretoken bench \
 Delete the serving configuration so the Operator can stop the service and clean up its resources:
 
 ```bash
-kubectl delete --wait=true --timeout=10m \
-  -k examples/quickstart
+foretoken delete examples/quickstart
 ```
 
 After the serving resources are gone, uninstall Foretoken:

@@ -37,6 +37,7 @@ class Runner(ABC):
 
     def __init__(self, config: BenchConfig):
         self.config = config
+        self._generation_overrides = config.generation.request_overrides()
 
     @abstractmethod
     async def run(self) -> dict[str, Any]:
@@ -116,7 +117,7 @@ class Runner(ABC):
     def build_run_config(self, mode: str, load: dict[str, Any]) -> dict[str, Any]:
         """Build the per-run config dict used by summary and persistence."""
         config = self.config
-        return {
+        run_config = {
             "mode": mode,
             "model": config.endpoint.model,
             "url": config.endpoint.url,
@@ -131,6 +132,28 @@ class Runner(ABC):
                 "rate": load["rate"],
             },
         }
+        if config.dataset.dataset == ["random"]:
+            run_config["random_seed"] = config.dataset.random_seed
+        return run_config
+
+    async def generate_request(
+        self,
+        client: OpenAICompatClient,
+        *,
+        prompt: str | None = None,
+        messages: list[dict[str, Any]] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Send one request using the runner's resolved generation config."""
+        generation = self.config.generation
+        return await client.generate(
+            prompt=prompt,
+            messages=messages,
+            tools=tools,
+            max_tokens=sample_max_tokens(generation.max_tokens),
+            stream=generation.stream,
+            extra_body=self._generation_overrides,
+        )
 
     async def dispatch(
         self,
@@ -145,10 +168,6 @@ class Runner(ABC):
 
         Does not close ``client``; the caller that created it owns cleanup.
         """
-        generation = self.config.generation
-        max_tokens = generation.max_tokens
-        extra_body = generation.request_overrides()
-
         request_count = len(requests)
         LoadConfig.validate_point(parallel=int(parallel), rate=float(rate))
         has_pacing = float(rate) > 0
@@ -167,13 +186,11 @@ class Runner(ABC):
             if semaphore is not None:
                 await semaphore.acquire()
             try:
-                result = await client.generate(
+                result = await self.generate_request(
+                    client,
                     prompt=request.get("prompt"),
                     messages=request.get("messages"),
                     tools=request.get("tools"),
-                    max_tokens=sample_max_tokens(max_tokens),
-                    stream=generation.stream,
-                    extra_body=extra_body,
                 )
                 result["end_time"] = time.perf_counter() - start_time
                 results[index] = result
@@ -221,8 +238,9 @@ class Runner(ABC):
         rate: float,
         number: int,
         resolved_parallel: int,
+        include_user_throughput: bool = True,
     ) -> dict[str, Any]:
-        """Aggregate raw dispatch output and attach per-user throughput."""
+        """Aggregate raw output and optionally attach per-user throughput."""
         metrics = MetricsAggregator().aggregate(raw)
         configured_stream = bool(self.config.generation.stream)
         if metrics["stream"] != configured_stream:
@@ -232,7 +250,9 @@ class Runner(ABC):
             )
         metrics["rate"] = rate
         metrics["number"] = number
-        attach_user_throughput(metrics, parallel=resolved_parallel)
+        metrics["parallel"] = resolved_parallel
+        if include_user_throughput:
+            attach_user_throughput(metrics, parallel=resolved_parallel)
         return metrics
 
     def save_results(
@@ -243,6 +263,7 @@ class Runner(ABC):
         metrics: dict[str, Any],
         *,
         wandb_logger: Optional[WandbLogger] = None,
+        wandb_trace_results: Optional[list[dict[str, Any]]] = None,
         config_snapshot: Optional[dict[str, Any]] = None,
     ) -> None:
         """Publish the selected console, JSON, and W&B results."""
@@ -254,7 +275,9 @@ class Runner(ABC):
         writer.save_json("metrics.json", metrics)
         if wandb_logger is not None:
             try:
-                wandb_logger.log_metrics(metrics, raw["results"])
+                if wandb_trace_results is not None:
+                    wandb_logger.log_trace_results(wandb_trace_results)
+                wandb_logger.log_metrics(metrics)
             finally:
                 wandb_logger.finish()
         if writer.enabled:

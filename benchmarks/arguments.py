@@ -24,13 +24,11 @@ from benchmarks.config import (
     EndpointConfig,
     WandbConfig,
 )
-
-
 @dataclass(frozen=True)
 class BenchCommand:
     """Run a benchmark against a deployment or existing endpoint."""
 
-    deploy: str
+    kustomize_path: str
     config: BenchConfig
     wait_timeout: str
 
@@ -50,13 +48,13 @@ def _output_destinations(value: str) -> tuple[str, ...]:
 
 def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     # Service source
-    service_source = parser.add_mutually_exclusive_group(required=True)
-    service_source.add_argument(
-        "--deploy",
-        default="",
-        help="Kustomize directory to deploy or reuse for this benchmark",
+    parser.add_argument(
+        "kustomize_path",
+        nargs="?",
+        metavar="PATH",
+        help="Kustomize root to deploy or reuse for this benchmark",
     )
-    service_source.add_argument(
+    parser.add_argument(
         "--url",
         default="",
         help="Existing OpenAI-compatible API URL",
@@ -203,6 +201,47 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--trace",
+        dest="trace_path",
+        default=_default(DatasetConfig, "trace_path"),
+        help=(
+            "Timestamped schedule: local JSONL, known source org/repo, "
+            "Hugging Face org/name:split, or "
+            "hf://datasets/org/name[@rev]/path/to/trace.jsonl; "
+            "requires --dataset."
+        ),
+    )
+    parser.add_argument(
+        "--trace-start",
+        type=float,
+        default=_default(DatasetConfig, "trace_start"),
+        help="Start offset from the first trace timestamp, in seconds",
+    )
+    parser.add_argument(
+        "--trace-duration",
+        type=float,
+        default=_default(DatasetConfig, "trace_duration"),
+        help="Trace window duration in seconds; omit to replay to the end",
+    )
+    parser.add_argument(
+        "--trace-max-concurrency",
+        type=int,
+        default=_default(DatasetConfig, "trace_max_concurrency"),
+        help=(
+            "Optional cap on active trace requests; timestamps still control "
+            "arrival times"
+        ),
+    )
+    parser.add_argument(
+        "--trace-synthetic-prefix-reuse",
+        action="store_true",
+        default=_default(DatasetConfig, "trace_synthetic_prefix_reuse"),
+        help=(
+            "For Mooncake + random, synthesize deterministic 512-token "
+            "prefix blocks from trace hash_ids"
+        ),
+    )
+    parser.add_argument(
         "--dataset-offset",
         type=int,
         default=_default(DatasetConfig, "dataset_offset"),
@@ -212,6 +251,12 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "--tokenizer-path",
         default=_default(DatasetConfig, "tokenizer_path"),
         help="Tokenizer path (required for --dataset random)",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=_default(DatasetConfig, "random_seed"),
+        help="Random payload seed (default: 0)",
     )
     parser.add_argument(
         "--min-prompt-length",
@@ -255,11 +300,6 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         action=argparse.BooleanOptionalAction,
         default=_default(OutputConfig, "sla_auto_tune"),
         help="Enable SLA auto-tune search",
-    )
-    parser.add_argument(
-        "--eval-suite",
-        default=_default(OutputConfig, "eval_suite"),
-        help="Correctness suite: none | general | tool | both",
     )
     parser.add_argument(
         "--output",
@@ -351,17 +391,24 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
             dataset=namespace.dataset,
             dataset_offset=namespace.dataset_offset,
             tokenizer_path=namespace.tokenizer_path,
+            random_seed=namespace.random_seed,
             min_prompt_length=namespace.min_prompt_length,
             max_prompt_length=namespace.max_prompt_length,
             prefix_length=namespace.prefix_length,
             apply_chat_template=namespace.apply_chat_template,
             prompt=namespace.prompt,
             max_turns=namespace.max_turns,
+            trace_path=namespace.trace_path,
+            trace_start=namespace.trace_start,
+            trace_duration=namespace.trace_duration,
+            trace_max_concurrency=namespace.trace_max_concurrency,
+            trace_synthetic_prefix_reuse=(
+                namespace.trace_synthetic_prefix_reuse
+            ),
         ),
         output=OutputConfig(
             destinations=namespace.output,
             output_dir=namespace.output_dir,
-            eval_suite=namespace.eval_suite,
             sla_auto_tune=namespace.sla_auto_tune,
         ),
         wandb=WandbConfig(
@@ -392,11 +439,13 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchCommand:
     )
     _add_benchmark_arguments(bench)
 
-    namespace = parser.parse_args(argv)
-    if namespace.url and not namespace.model:
+    parsed_args = parser.parse_args(argv)
+    if bool(parsed_args.kustomize_path) == bool(parsed_args.url):
+        bench.error("provide either PATH or --url")
+    if parsed_args.url and not parsed_args.model:
         bench.error("--model is required with --url")
     return BenchCommand(
-        deploy=namespace.deploy,
-        config=_bench_config(namespace),
-        wait_timeout=namespace.wait_timeout,
+        kustomize_path=parsed_args.kustomize_path or "",
+        config=_bench_config(parsed_args),
+        wait_timeout=parsed_args.wait_timeout,
     )

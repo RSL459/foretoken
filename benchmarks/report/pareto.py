@@ -7,50 +7,31 @@
 from __future__ import annotations
 
 import math
-import re
 from pathlib import Path
 from typing import Any
 
-# Suffix added by expand_load_points: -p{parallel}-n{number}-r{rate}
-_LOAD_POINT_SUFFIX = re.compile(r"-p[^-]+-n[^-]+-r[^-]+$")
-
-
-def _param_group(item: dict[str, Any]) -> str:
-    """Color/label key: config identity excluding load-point fields."""
-    combination = str(item["combination"])
-    stripped = _LOAD_POINT_SUFFIX.sub("", combination)
-    return stripped if stripped else combination
-
-
-def _infer_gpu_count(item: dict[str, Any]) -> int:
-    """GPU count for Tok/s/GPU; 1 when the point has no ``gpu_count``."""
-    if "gpu_count" not in item:
-        return 1
-    count = int(item["gpu_count"])
-    if count < 1:
-        raise ValueError(f"gpu_count must be >= 1, got {count}")
-    return count
-
-
-def _user_count(item: dict[str, Any]) -> int:
-    """Positive user count for Pareto axes; open-loop uses 1."""
-    parallel = int(item["parallel"])
-    user_count = 1 if parallel < 0 else parallel
-    if user_count < 1:
-        raise ValueError(f"invalid parallel={parallel} for Pareto user count")
-    return user_count
+from benchmarks.metrics.aggregator import (
+    tokens_per_s_per_gpu,
+    tokens_per_s_per_user,
+    user_count_for_throughput,
+)
 
 
 def _prepare_point(item: dict[str, Any]) -> dict[str, Any]:
     """Build one scatter point from a sweep metrics dict."""
-    user_count = _user_count(item)
-    gpu_count = _infer_gpu_count(item)
+    parallel = int(item["parallel"])
+    user_count = user_count_for_throughput(parallel)
+    gpu_count = int(item["gpu_count"])
     tokens_per_second = float(item["throughput"]["token/s"])
     return {
-        "param_group": _param_group(item),
+        "param_group": str(item["parameter_group"]),
         "user_count": user_count,
-        "tokens_per_user": tokens_per_second / float(user_count),
-        "tokens_per_gpu": tokens_per_second / float(gpu_count),
+        "tokens_per_user": tokens_per_s_per_user(
+            tokens_per_second, parallel
+        ),
+        "tokens_per_gpu": tokens_per_s_per_gpu(
+            tokens_per_second, gpu_count
+        ),
     }
 
 
@@ -71,9 +52,9 @@ def _pareto_frontier(
     best_y = -math.inf
     for row in ordered:
         y_val = float(row["tokens_per_gpu"])
-        if y_val >= best_y - epsilon:
+        if y_val > best_y + epsilon:
             frontier.append(row)
-            best_y = max(best_y, y_val)
+            best_y = y_val
     frontier.sort(key=lambda row: float(row["tokens_per_user"]))
     return frontier
 

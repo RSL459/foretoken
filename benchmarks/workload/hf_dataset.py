@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Hugging Face dataset id and file-URI loaders."""
+"""Load Hugging Face dataset selectors and file URIs for workloads."""
 
 from __future__ import annotations
 
@@ -81,10 +81,22 @@ def resolve_hf_file_uri(uri: str) -> str:
         revision=revision,
     )
 
+_DEFAULT_SELECTORS = {
+    "KrisQ/StudyChat": "train",
+    "valeriol29/mooncake-traces": "conversation",
+}
+
 
 def parse_hf_dataset_spec(spec: str) -> tuple[str, str]:
-    """Parse ``org/name:split`` into ``(dataset_id, split)``."""
+    """Parse a supported dataset selector into ``(dataset_id, selector)``.
+
+    A selector may be a split or a builder config. Known trace datasets have
+    defaults; other datasets must use ``org/name:split``.
+    """
     if ":" not in spec:
+        selector = _DEFAULT_SELECTORS.get(spec)
+        if selector is not None:
+            return spec, selector
         raise ValueError(
             f"Invalid HuggingFace dataset spec {spec!r}. "
             "Use 'org/name:split' (split is required)."
@@ -98,8 +110,31 @@ def parse_hf_dataset_spec(spec: str) -> tuple[str, str]:
     return dataset_id, split
 
 
+def is_hf_dataset_spec(spec: str) -> bool:
+    """Return whether ``spec`` is a supported Hugging Face selector."""
+    try:
+        parse_hf_dataset_spec(spec)
+    except ValueError:
+        return False
+    return True
+
+
+def same_dataset_source(left: str, right: str) -> bool:
+    """Return whether two selectors resolve to the same dataset source."""
+    if left == right:
+        return True
+    try:
+        return parse_hf_dataset_spec(left) == parse_hf_dataset_spec(right)
+    except ValueError:
+        return False
+
+
 def _load_hf_data(dataset_id: str, split: str) -> Any:
-    """Load a streaming HF dataset for ``dataset_id`` / ``split``."""
+    """Stream an HF dataset for ``dataset_id`` / ``split``.
+
+    Some hubs publish named builder configs whose only data split is
+    ``train``; the CLI selector then selects that config name.
+    """
     configs = get_dataset_config_names(dataset_id)
     if split in configs:
         data_splits = get_dataset_split_names(dataset_id, split)

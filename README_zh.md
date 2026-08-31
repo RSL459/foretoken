@@ -111,74 +111,59 @@ helm upgrade --install foretoken \
 
 ### 2. 部署模型服务
 
-`examples/quickstart` 提供一套可直接使用的前端服务和单模型配置。如需运行双模型并验证基于队列的自动扩缩容，请参阅[多模型快速开始](examples/multi-model-quickstart/README_zh.md)。
+先在仓库根目录安装 Foretoken CLI。`examples/quickstart` 提供一套可直接使用的前端服务和单模型配置。如需运行双模型并验证基于队列的自动扩缩容，请参阅[多模型快速开始](examples/multi-model-quickstart/README_zh.md)。
 
 ```bash
-kubectl apply --server-side -k examples/quickstart
+pip install -e .
+foretoken deploy examples/quickstart
 ```
 
-### 3. 等待服务就绪
+该命令会应用 Kustomize 配置，在服务状态变化时输出进度，并在当前配置就绪后退出。
 
-```bash
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
-```
-
-### 4. 发送生成请求进行测试
+### 3. 发送生成请求进行测试
 
 #### 本地模式
 
-读取前端服务的访问地址并发送请求：
+解析前端服务 URL 并发送请求：
 
 ```bash
-kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' \
-  --namespace foretoken-demo \
-  --timeout=5m \
-  service/quickstart-frontend
-
-FORETOKEN_FRONTEND_ADDRESS=$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 
 curl --fail-with-body --no-buffer \
-  "http://${FORETOKEN_FRONTEND_ADDRESS}:8080/v1/chat/completions" \
+  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
 
 #### 网关模式
 
-使用由 Chart 创建的 HTTP 网关时，读取网关地址并携带配置的域名：
+使用由 Chart 创建的 HTTP 网关时，解析网关地址和路由域名：
 
 ```bash
-FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
-  --namespace foretoken-platform \
-  -o jsonpath='{.status.addresses[0].value}')
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
 curl --fail-with-body --no-buffer \
-  "http://${FORETOKEN_GATEWAY_ADDRESS}/v1/chat/completions" \
-  -H "Host: foretoken.example.com" \
+  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FORETOKEN_REQUEST_HOST" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
 
 复用平台已有网关时，使用该网关实际配置的域名、端口和 TLS。
 
-### 5. 评测服务吞吐
+### 4. 评测服务吞吐
 
-先在当前项目目录中安装 Foretoken 评测 CLI：
+在仓库根目录安装可选的评测依赖：
 
 ```bash
-python -m pip install ./benchmarks
+pip install -e '.[bench]'
 ```
 
 以下命令会复用已经运行的快速开始服务；服务尚未部署时，CLI 会创建配置中的资源，并在评测结束后只清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置提示词：
 
 ```bash
-foretoken bench --deploy examples/quickstart
+foretoken bench examples/quickstart
 ```
 
 默认仅在控制台显示结果。使用 `--output local` 将结果保存到本地，使用 `--output wandb` 发布到 W&B；两者也可同时使用。
@@ -196,8 +181,7 @@ foretoken bench \
 
 ```bash
 # 删除服务配置，停止服务并清理所辖资源：
-kubectl delete --wait=true --timeout=10m \
-  -k examples/quickstart
+foretoken delete examples/quickstart
 
 # 服务资源清理完成后，再卸载 Foretoken：
 helm uninstall foretoken \

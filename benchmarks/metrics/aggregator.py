@@ -11,7 +11,7 @@ from typing import Any, Optional
 import numpy as np
 
 
-def _percentile_stats(values: list[float]) -> dict[str, float | None]:
+def percentile_stats(values: list[float]) -> dict[str, float | None]:
     if not values:
         return {
             "mean": None,
@@ -19,7 +19,6 @@ def _percentile_stats(values: list[float]) -> dict[str, float | None]:
             "p95": None,
             "p99": None,
         }
-
     array = np.asarray(values, dtype=float)
     return {
         "mean": float(np.mean(array)),
@@ -49,6 +48,13 @@ def user_count_for_throughput(parallel: int) -> int:
 
 def tokens_per_s_per_user(tokens_per_second: float, parallel: int) -> float:
     return float(tokens_per_second) / float(user_count_for_throughput(parallel))
+
+
+def tokens_per_s_per_gpu(tokens_per_second: float, gpu_count: int) -> float:
+    """Normalize token throughput by the GPUs represented by one point."""
+    if gpu_count < 1:
+        raise ValueError(f"gpu_count must be >= 1, got {gpu_count}")
+    return float(tokens_per_second) / float(gpu_count)
 
 
 def attach_user_throughput(
@@ -124,10 +130,10 @@ class MetricsAggregator:
             "failed_num": failed_count,
             "success_rate": success_count / len(results) if len(results) else 0.0,
             "stream": streamed,
-            "latency": _percentile_stats(latencies),
-            "ttft": _percentile_stats(ttfts),
-            "tpot": _percentile_stats(tpots),
-            "itl": _percentile_stats(tpots),
+            "latency": percentile_stats(latencies),
+            "ttft": percentile_stats(ttfts),
+            "tpot": percentile_stats(tpots),
+            "itl": percentile_stats(tpots),
             "throughput": {
                 "request/s": len(results) / total_time,
                 "token/s": output_tokens / total_time,

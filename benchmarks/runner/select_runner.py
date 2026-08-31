@@ -12,13 +12,16 @@ from benchmarks.runner.multi_dataset import MultiDatasetRunner
 from benchmarks.runner.run_benchmark import RunBenchmark
 from benchmarks.runner.run_spec import RunSpec
 from benchmarks.runner.sweep import SweepRunner
+from benchmarks.runner.trace_runner import TraceRunner
 
 
 def select_runner(config: BenchConfig) -> Runner:
     """Choose the runner for this benchmark config (CLI top level only)."""
     config.validate()
+    if config.dataset.trace_path:
+        return TraceRunner(config)
     if config.param_sweep.bench_params:
         return SweepRunner(config)
-    if len(config.dataset.dataset) > 1:
+    if config.dataset.is_multi:
         return MultiDatasetRunner(config)
     return RunBenchmark(RunSpec(config=config))

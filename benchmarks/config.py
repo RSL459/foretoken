@@ -107,17 +107,31 @@ class DatasetConfig:
 
     Multiple JSONL/HF sources run sequentially; ``LoadConfig.number`` is the
     total request count across all of them.
+
+    ``trace_path`` supplies a timestamped replay schedule. Trace payloads come
+    from exactly one ``dataset`` source.
     """
 
     dataset: list[str] = field(default_factory=list)
     dataset_offset: int = 0
     tokenizer_path: str = ""
+    random_seed: int = 0
     min_prompt_length: int = 0
     max_prompt_length: int = 131072
     prefix_length: int = 0
     apply_chat_template: Optional[bool] = None
     prompt: str = ""
     max_turns: Optional[int] = None
+    trace_path: str = ""
+    trace_start: float = 0.0
+    trace_duration: Optional[float] = None
+    trace_max_concurrency: Optional[int] = None
+    trace_synthetic_prefix_reuse: bool = False
+
+    @property
+    def is_multi(self) -> bool:
+        """Return whether the workload declares more than one payload source."""
+        return len(self.dataset) > 1
 
     def resolve_apply_chat_template(self, url: str) -> bool:
         """Default to chat template when the URL is a chat/completions endpoint."""
@@ -131,7 +145,7 @@ class OutputConfig:
 
     destinations: tuple[str, ...] = ()
     output_dir: str = "results"
-    eval_suite: str = "none"
+    gpu_count: int = 1
     sla_auto_tune: bool = False
 
     def includes(self, destination: str) -> bool:
@@ -143,6 +157,8 @@ class OutputConfig:
         if unknown:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"unknown --output destination: {names}")
+        if self.gpu_count < 1:
+            raise ValueError(f"gpu_count must be >= 1, got {self.gpu_count}")
 
 
 @dataclass
@@ -156,7 +172,7 @@ class WandbConfig:
 
 @dataclass
 class ParamSweepConfig:
-    """Bench-params JSONL sweep against an already-running service."""
+    """Bench-params JSONL sweep for a Foretoken Kustomize deployment."""
 
     bench_params: str = ""
     num_runs: int = 1
@@ -181,17 +197,71 @@ class BenchConfig:
         self.load.validate()
         self.output.validate()
         dataset = self.dataset
-        if not dataset.prompt and not dataset.dataset:
+        has_trace = bool(dataset.trace_path)
+        if not has_trace and not dataset.prompt and not dataset.dataset:
             raise ValueError(
                 "No workload source. Pass --prompt or --dataset "
                 "(random | local JSONL | org/name:split | "
                 "hf://datasets/...)."
             )
-        if dataset.prompt and len(dataset.dataset) > 1:
+        if self.param_sweep.bench_params and dataset.is_multi:
+            raise ValueError(
+                "--bench-params cannot be combined with multiple --dataset sources"
+            )
+        if dataset.trace_synthetic_prefix_reuse and not has_trace:
+            raise ValueError("--trace-synthetic-prefix-reuse requires --trace")
+        if has_trace:
+            from benchmarks.workload.hf_dataset import same_dataset_source
+
+            if self.param_sweep.bench_params:
+                raise ValueError("--trace cannot be combined with --bench-params")
+            if dataset.prompt:
+                raise ValueError(
+                    "--trace requires --dataset; fixed --prompt payloads are "
+                    "not supported"
+                )
+            if len(dataset.dataset) != 1:
+                raise ValueError("--trace requires exactly one --dataset source")
+            if dataset.trace_start < 0:
+                raise ValueError("--trace-start must be >= 0")
+            if dataset.trace_duration is not None and dataset.trace_duration <= 0:
+                raise ValueError("--trace-duration must be > 0")
+            if (
+                dataset.trace_max_concurrency is not None
+                and dataset.trace_max_concurrency <= 0
+            ):
+                raise ValueError("--trace-max-concurrency must be > 0")
+            if self.load.open_loop or self.load.rate != -1:
+                raise ValueError(
+                    "--trace uses record timestamps; omit --rate and --open-loop"
+                )
+            if self.load.parallel != 1 or self.load.number != 100:
+                raise ValueError(
+                    "--trace replays the selected trace window; use "
+                    "--trace-max-concurrency instead of --parallel/--number"
+                )
+            if (
+                same_dataset_source(dataset.dataset[0], dataset.trace_path)
+                and dataset.dataset_offset
+            ):
+                raise ValueError(
+                    "--dataset-offset is not supported when --trace and "
+                    "--dataset use the same source"
+                )
+            if dataset.trace_synthetic_prefix_reuse:
+                if dataset.dataset != ["random"]:
+                    raise ValueError(
+                        "--trace-synthetic-prefix-reuse requires --dataset random"
+                    )
+                if dataset.prefix_length:
+                    raise ValueError(
+                        "--trace-synthetic-prefix-reuse cannot use --prefix-length"
+                    )
+        if dataset.prompt and dataset.is_multi:
             raise ValueError(
                 "--prompt cannot be combined with multiple --dataset values"
             )
-        if len(dataset.dataset) > 1 and "random" in dataset.dataset:
+        if dataset.is_multi and "random" in dataset.dataset:
             raise ValueError(
                 "--dataset random cannot be combined with other dataset sources"
             )
@@ -199,6 +269,8 @@ class BenchConfig:
             raise ValueError(
                 "--tokenizer-path is required when --dataset random"
             )
+        if not 0 <= dataset.random_seed <= 0xFFFFFFFF:
+            raise ValueError("--random-seed must be between 0 and 4294967295")
         if (
             dataset.dataset == ["random"]
             and dataset.max_prompt_length < dataset.min_prompt_length
@@ -210,7 +282,11 @@ class BenchConfig:
     def summary(self) -> str:
         """Human-readable config banner for the console."""
         dataset = self.dataset
-        if dataset.prompt:
+        if dataset.trace_path:
+            dataset_label = (
+                f"trace={dataset.trace_path}, payload={dataset.dataset[0]}"
+            )
+        elif dataset.prompt:
             dataset_label = "prompt=<fixed>"
         elif dataset.dataset == ["random"]:
             dataset_label = (
@@ -219,35 +295,58 @@ class BenchConfig:
                 f"min={dataset.min_prompt_length}, "
                 f"max={dataset.max_prompt_length})"
             )
-        elif len(dataset.dataset) > 1:
+        elif dataset.is_multi:
             dataset_label = f"{dataset.dataset} (total number across all)"
         else:
-            dataset_label = (
-                dataset.dataset[0] if dataset.dataset else "<none>"
-            )
-        open_loop = self.load.open_loop
-        if open_loop:
-            parallel_label = "unlimited (open-loop)"
-        else:
-            parallel_label = str(self.load.parallel)
+            dataset_label = dataset.dataset[0] if dataset.dataset else "<none>"
 
-        rate = float(self.load.rate)
-        if rate > 0:
-            mode = "open-loop" if open_loop else "closed-loop"
-            rate_label = f"{rate:g} req/s ({mode}, Poisson pacing)"
+        if dataset.trace_path:
+            parallel_line = ""
+            number_label = "trace-driven"
+            rate_label = "trace timestamps"
+            open_loop_line = ""
+            duration = (
+                "until end"
+                if dataset.trace_duration is None
+                else f"{dataset.trace_duration:g}s"
+            )
+            trace_lines = (
+                f"  Trace Window: start={dataset.trace_start:g}s, "
+                f"duration={duration}\n"
+                "  Trace Max  : "
+                f"{dataset.trace_max_concurrency or 'unlimited'}\n"
+            )
+            if dataset.trace_synthetic_prefix_reuse:
+                trace_lines += "  Trace Prefix: synthetic hash-id blocks\n"
         else:
-            rate_label = "INF (no pacing)"
+            open_loop = self.load.open_loop
+            parallel_label = (
+                "unlimited (open-loop)"
+                if open_loop
+                else str(self.load.parallel)
+            )
+            parallel_line = f"  Parallel   : {parallel_label}\n"
+            number_label = str(self.load.number)
+            rate = float(self.load.rate)
+            if rate > 0:
+                mode = "open-loop" if open_loop else "closed-loop"
+                rate_label = f"{rate:g} req/s ({mode}, Poisson pacing)"
+            else:
+                rate_label = "INF (no pacing)"
+            open_loop_line = f"  Open Loop  : {open_loop}\n"
+            trace_lines = ""
 
         return (
             "\n===== Foretoken Benchmark Configuration ====\n"
             f"  URL        : {self.endpoint.url}\n"
             f"  Model      : {self.endpoint.model}\n"
-            f"  Parallel   : {parallel_label}\n"
-            f"  Number     : {self.load.number}\n"
+            f"{parallel_line}"
+            f"  Number     : {number_label}\n"
             f"  Rate       : {rate_label}\n"
-            f"  Open Loop  : {open_loop}\n"
+            f"{open_loop_line}"
             f"  Stream     : {self.generation.stream}\n"
             f"  Dataset    : {dataset_label}\n"
+            f"{trace_lines}"
             "============================================\n"
         )
 

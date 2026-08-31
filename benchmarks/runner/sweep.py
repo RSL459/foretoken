@@ -12,7 +12,7 @@ from dataclasses import replace
 from typing import Any
 
 from benchmarks.config import ParamSweepConfig
-from benchmarks.logger.wandb import wandb_run_base, wandb_timestamp
+from benchmarks.logger.wandb import wandb_run_base
 from benchmarks.report.pareto import plot_sweep_pareto
 from benchmarks.report.summary import log_sweep_results
 from benchmarks.runner.base import Runner
@@ -43,16 +43,16 @@ class SweepRunner(Runner):
         if not combinations:
             raise ValueError("No bench-params combinations to run")
 
-        wandb_enabled = self.config.output.includes("wandb")
-        wandb_group = wandb_run_base(self.config) if wandb_enabled else None
-        experiment_name = sweep.experiment_name.strip()
-        if not experiment_name:
-            experiment_name = wandb_timestamp()
-        experiment_name = experiment_name.replace("/", "-")
-        experiment_dir = os.path.join(
-            self.config.output.output_dir, experiment_name
+        experiment_name = sweep.experiment_name.strip().replace("/", "-")
+        experiment_dir = (
+            os.path.join(self.config.output.output_dir, experiment_name)
+            if experiment_name
+            else None
         )
         writer = self.create_writer(experiment_dir)
+        experiment_dir = writer.output_dir
+        wandb_enabled = self.config.output.includes("wandb")
+        wandb_group = wandb_run_base(self.config) if wandb_enabled else None
 
         plan = {
             "mode": "sweep",
@@ -96,6 +96,12 @@ class SweepRunner(Runner):
         for bench_comb in combinations:
             comb_name = sanitize_filename(bench_comb.name)
             comb_root = os.path.join(experiment_dir, comb_name)
+            point_config = apply_bench_overrides(self.config, bench_comb)
+            point_config.validate()
+            point_config = replace(
+                point_config,
+                param_sweep=ParamSweepConfig(),
+            )
 
             for run_number in range(sweep.num_runs):
                 logger.info(
@@ -111,11 +117,6 @@ class SweepRunner(Runner):
                     if sweep.num_runs > 1
                     else comb_name
                 )
-                point_config = apply_bench_overrides(self.config, bench_comb)
-                point_config = replace(
-                    point_config,
-                    param_sweep=ParamSweepConfig(),
-                )
                 result = await RunBenchmark(
                     RunSpec(
                         config=point_config,
@@ -126,7 +127,9 @@ class SweepRunner(Runner):
                 ).run()
                 point = dict(result["metrics"])
                 point["combination"] = comb_name
+                point["parameter_group"] = str(bench_comb["_parameter_group"])
                 point["run_number"] = run_number
+                point["gpu_count"] = point_config.output.gpu_count
                 point["bench"] = dict(bench_comb)
                 point["label"] = f"{comb_name}|p={point['parallel']}"
                 all_points.append(point)

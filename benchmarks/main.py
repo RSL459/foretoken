@@ -13,9 +13,12 @@ from contextlib import nullcontext
 from dataclasses import replace
 
 from benchmarks.arguments import parse_arguments
-from benchmarks.deployment import DeploymentError, benchmark_deployment
+from benchmarks.deployment import benchmark_deployment
+from benchmarks.deployment.discovery import resolve_deployment_model
 from benchmarks.logger.cli import configure_logging, print_endpoint
 from benchmarks.runner.select_runner import select_runner
+from foretoken_cli.kubernetes import Kubectl, load_deployment
+from foretoken_cli.manifest import DeploymentError
 
 logger = logging.getLogger(__name__)
 
@@ -26,23 +29,46 @@ def main(argv: Sequence[str] | None = None) -> None:
         command = parse_arguments(argv)
         config = command.config
         if (
-            command.deploy
+            command.kustomize_path
             and not config.dataset.prompt
             and not config.dataset.dataset
         ):
             config.dataset = replace(config.dataset, prompt="Hello")
         config.validate()
+        if (
+            config.param_sweep.bench_params
+            and not config.param_sweep.dry_run
+            and not command.kustomize_path
+        ):
+            raise ValueError(
+                "--bench-params requires a Foretoken Kustomize deployment "
+                "so GPU capacity can be derived"
+            )
         configure_logging(not config.output.includes("quiet"))
-        service_context = (
-            benchmark_deployment(
-                command.deploy,
+        deployment_dry_run = bool(
+            command.kustomize_path and config.param_sweep.dry_run
+        )
+        if deployment_dry_run:
+            deployment = load_deployment(command.kustomize_path, Kubectl())
+            model, gpu_count = resolve_deployment_model(
+                deployment, config.endpoint.model
+            )
+            config.endpoint = replace(
+                config.endpoint,
+                url="<resolved after deployment>",
+                model=model,
+            )
+            config.output = replace(config.output, gpu_count=gpu_count)
+            service_context = nullcontext(None)
+        elif command.kustomize_path:
+            service_context = benchmark_deployment(
+                command.kustomize_path,
                 command.wait_timeout,
                 requested_model=config.endpoint.model,
                 api_key=config.endpoint.api_key,
             )
-            if command.deploy
-            else nullcontext(None)
-        )
+        else:
+            service_context = nullcontext(None)
         with service_context as endpoint:
             if endpoint is not None:
                 config.endpoint = replace(
@@ -51,12 +77,16 @@ def main(argv: Sequence[str] | None = None) -> None:
                     model=endpoint.model,
                     headers=endpoint.headers,
                 )
+                config.output = replace(
+                    config.output,
+                    gpu_count=endpoint.gpu_count,
+                )
                 if not config.output.includes("quiet"):
                     print_endpoint(endpoint.url, endpoint.models, endpoint.hostname)
 
             logger.info("%s", config.summary())
             result = asyncio.run(select_runner(config).run())
-            if result["metrics"]["success_num"] == 0:
+            if not result.get("dry_run") and result["metrics"]["success_num"] == 0:
                 raise SystemExit(1)
     except (DeploymentError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc

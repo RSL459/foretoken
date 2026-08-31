@@ -36,13 +36,13 @@
 评测 Foretoken 的 Kubernetes 部署。若服务已存在则直接复用；若尚未部署，CLI 会部署渲染后的资源，并在评测结束后仅清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置提示词：
 
 ```bash
-foretoken bench --deploy examples/quickstart
+foretoken bench examples/quickstart
 ```
 
 常用采样参数可直接指定；其他与 OpenAI 兼容的请求字段或后端扩展字段可通过 `--extra-body` 传入：
 
 ```bash
-foretoken bench --deploy examples/quickstart \
+foretoken bench examples/quickstart \
   --temperature 0 \
   --top-p 1 \
   --top-k 0 \
@@ -72,6 +72,25 @@ foretoken bench \
   --output local,wandb
 ```
 
+Trace 回放使用 `--trace` 提供到达时间，使用 `--dataset` 提供请求内容。
+它支持本地 JSONL、Hugging Face 数据集和 `hf://` 文件，并自动识别 StudyChat 或 Mooncake 格式。
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --trace KrisQ/StudyChat \
+  --dataset KrisQ/StudyChat \
+  --trace-start 600 \
+  --trace-duration 300 \
+  --trace-max-concurrency 32
+```
+
+时间窗口为 `[first + start, first + start + duration)`，窗口起点是回放时间零点。
+`--trace-max-concurrency` 限制 active 请求数，等待 slot 的时间计入 Replay delay。
+Mooncake 可以组合 random 或外部 dataset payload，也可以选择合成共享 prefix block。
+完整用法和运行截图见 [trace 示例](docs/examples_zh.md)。
+
 使用随机生成的提示词进行压测（需指定 tokenizer）：
 
 ```bash
@@ -80,6 +99,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset random \
   --tokenizer-path Qwen/Qwen3.6-27B \
+  --random-seed 0 \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
   --rate 5 \
@@ -113,23 +133,4 @@ foretoken bench \
 
 ### 参数扫描
 
-将组合写入 JSONL（见 `examples/bench_params.jsonl`）。`parallel` 可写成列表以扫描并发。例如：
-
-```jsonl
-{"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
-{"_benchmark_name": "n20", "parallel": [1, 2], "number": 20, "max_tokens": 128}
-```
-
-结束后会生成 Pareto 图（横轴 Tok/s/user，纵轴 Tok/s/GPU）：
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --dataset random \
-  --tokenizer-path Qwen/Qwen3.6-27B \
-  --min-prompt-length 128 --max-prompt-length 512 \
-  --bench-params examples/bench_params.jsonl \
-  --output local,wandb
-```
-
+评测 Foretoken Kustomize 部署时，通过 `--bench-params` 传入 JSONL 文件，比较请求执行配置和负载点。运行结果会记录全部负载点，并生成 Tok/s/user 对 Tok/s/GPU 的 Pareto 图。完整命令见[参数扫描示例](docs/examples_zh.md#参数扫描)。

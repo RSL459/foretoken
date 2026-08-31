@@ -39,13 +39,23 @@ class OpenAICompatClient:
         model: str,
         timeout: int,
         api_key: str,
-        max_connections: int,
+        max_connections: Optional[int],
         max_retries: int,
         headers: dict[str, str] | None = None,
     ):
         self.model = model
-        # Keepalive matches max so finished requests can be reused under the
-        # same concurrency budget; the client is closed at end of each run.
+        if max_connections is None:
+            limits = httpx.Limits(
+                max_connections=None,
+                max_keepalive_connections=None,
+            )
+        else:
+            # Keepalive matches max so finished requests can be reused under
+            # the same concurrency budget; the client is closed after a run.
+            limits = httpx.Limits(
+                max_connections=max_connections,
+                max_keepalive_connections=max_connections,
+            )
         self.client = AsyncOpenAI(
             base_url=_base_url(url),
             api_key=api_key,
@@ -53,10 +63,7 @@ class OpenAICompatClient:
             default_headers=headers,
             http_client=httpx.AsyncClient(
                 timeout=timeout,
-                limits=httpx.Limits(
-                    max_connections=max_connections,
-                    max_keepalive_connections=max_connections,
-                ),
+                limits=limits,
             ),
         )
 

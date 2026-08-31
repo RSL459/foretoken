@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from benchmarks.report.pareto import _infer_gpu_count
+from benchmarks.metrics.aggregator import tokens_per_s_per_gpu
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,10 @@ def _format_metric(value: Any, digits: int = 4) -> str:
     """Format a metric value for display; None becomes an em dash, otherwise a fixed-point float."""
     if value is None:
         return "—"
-    return f"{float(value):.{digits}f}"
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _percentile_row(name: str, stats: dict[str, Any], unit: str = "s") -> str:
@@ -37,10 +40,18 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
     parallel = metrics["parallel"]
     throughput = metrics["throughput"]
 
-    if int(parallel) < 0:
-        parallel_label = "unlimited (open-loop)"
+    if config.get("trace_path"):
+        trace_max = config.get("trace_max_concurrency")
+        concurrency_label = "Trace Max"
+        concurrency_value = (
+            "unlimited (trace)" if trace_max is None else str(trace_max)
+        )
+    elif int(parallel) < 0:
+        concurrency_label = "Parallel"
+        concurrency_value = "unlimited (open-loop)"
     else:
-        parallel_label = str(parallel)
+        concurrency_label = "Parallel"
+        concurrency_value = str(parallel)
 
     number = resolved["number"]
     rate = resolved["rate"]
@@ -49,7 +60,7 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
         "======== Foretoken Benchmark Result ========",
         f"  Model      : {config['model']}",
         f"  Requests   : {number}",
-        f"  Parallel   : {parallel_label}",
+        f"  {concurrency_label:<11}: {concurrency_value}",
     ]
     if config.get("datasets"):
         lines.append(f"  Datasets   : {config['datasets']}")
@@ -59,28 +70,39 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
         lines.append("  Open Loop  : True")
     if float(rate) > 0:
         lines.append(f"  Rate       : {rate} req/s")
-    streamed = bool(config.get("stream", metrics.get("stream", True)))
-    lines.append(f"  Stream     : {streamed}")
+    metric_lines = [
+        _percentile_row("Latency", metrics["latency"]),
+        _percentile_row("TTFT", metrics["ttft"]),
+    ]
+    if config.get("trace_path"):
+        metric_lines = [
+            _percentile_row("Request latency", metrics["latency"]),
+            _percentile_row("Request TTFT", metrics["ttft"]),
+            _percentile_row("Replay delay", metrics["replay_delay"]),
+            _percentile_row("Trace E2E TTFT", metrics["trace_e2e_ttft"]),
+            _percentile_row(
+                "Trace E2E latency", metrics["trace_e2e_latency"]
+            ),
+        ]
+    metric_lines.append(_percentile_row("TPOT", metrics["tpot"]))
+
     lines.extend(
         [
             f"  Success    : {metrics['success_num']}/"
             f"{metrics['request_num']} "
             f"({float(metrics['success_rate']) * 100:.2f}%)",
-            _percentile_row("Latency", metrics["latency"]),
-        ]
-    )
-    if streamed:
-        lines.append(_percentile_row("TTFT", metrics["ttft"]))
-        lines.append(_percentile_row("TPOT", metrics["tpot"]))
-    lines.extend(
-        [
+            *metric_lines,
             f"  Request/s  : {_format_metric(throughput['request/s'])}",
             f"  Token/s    : {_format_metric(throughput['token/s'])}",
-            f"  Tok/s/user : {_format_metric(throughput['token/s/user'])}",
             f"  Wall time  : {_format_metric(metrics['benchmark_time'])}s",
             "============================================",
         ]
     )
+    if not config.get("trace_path"):
+        lines.insert(
+            -2,
+            f"  Tok/s/user : {_format_metric(throughput['token/s/user'])}",
+        )
     logger.info("\n%s", "\n".join(lines))
 
 
@@ -103,8 +125,8 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
         rate = float(item["rate"])
         rate_label = "INF" if rate == -1 else f"{rate:g}"
         throughput = item["throughput"]
-        token_s_per_gpu = float(throughput["token/s"]) / float(
-            _infer_gpu_count(item)
+        token_s_per_gpu = tokens_per_s_per_gpu(
+            float(throughput["token/s"]), int(item["gpu_count"])
         )
         lines.append(
             f"{parallel_label:>10} {rate_label:>8} {int(item['number']):>8} "

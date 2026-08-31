@@ -36,13 +36,13 @@ The console summary is shown by default. Use `--output local` for local artifact
 Benchmark a Foretoken Kubernetes deployment. The CLI reuses it when already present; otherwise it deploys the rendered resources and removes only those resources after the benchmark. When neither `--prompt` nor `--dataset` is specified, it uses a short built-in prompt:
 
 ```bash
-foretoken bench --deploy examples/quickstart
+foretoken bench examples/quickstart
 ```
 
 Use the common sampling options directly and pass other OpenAI-compatible or backend-specific request fields through `--extra-body`:
 
 ```bash
-foretoken bench --deploy examples/quickstart \
+foretoken bench examples/quickstart \
   --temperature 0 \
   --top-p 1 \
   --top-k 0 \
@@ -72,6 +72,27 @@ foretoken bench \
   --output local,wandb
 ```
 
+Trace replay uses `--trace` for arrival timestamps and `--dataset` for payloads.
+It accepts local JSONL, Hugging Face datasets, or `hf://` files and detects
+StudyChat and Mooncake formats automatically.
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --trace KrisQ/StudyChat \
+  --dataset KrisQ/StudyChat \
+  --trace-start 600 \
+  --trace-duration 300 \
+  --trace-max-concurrency 32
+```
+
+The selected window is `[first + start, first + start + duration)`, with the
+window start as replay time zero. `--trace-max-concurrency` limits active
+requests, and slot waiting is included in Replay delay. Mooncake can pair trace
+timing with random or external dataset payloads and optionally synthesize shared
+prefix blocks. See [trace examples and screenshots](docs/examples.md).
+
 Random synthetic prompts (tokenizer required):
 
 ```bash
@@ -80,6 +101,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset random \
   --tokenizer-path Qwen/Qwen3.6-27B \
+  --random-seed 0 \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
   --rate 5 \
@@ -113,22 +135,4 @@ foretoken bench \
 
 ### Parameter sweep
 
-Put combinations in a JSONL file (`examples/bench_params.jsonl`). You can set `parallel` as a list to sweep concurrency. For example:
-
-```jsonl
-{"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
-{"_benchmark_name": "n20", "parallel": [1, 2], "number": 20, "max_tokens": 128}
-```
-
-After the run, a Pareto chart is written (`Tok/s/user` vs `Tok/s/GPU`):
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --dataset random \
-  --tokenizer-path Qwen/Qwen3.6-27B \
-  --min-prompt-length 128 --max-prompt-length 512 \
-  --bench-params examples/bench_params.jsonl \
-  --output local,wandb
-```
+When benchmarking a Foretoken Kustomize deployment, pass a JSONL file through `--bench-params` to compare request-execution configurations and load points. The run records every point and produces a Tok/s/user versus Tok/s/GPU Pareto chart. See the [parameter sweep example](docs/examples.md#parameter-sweep).

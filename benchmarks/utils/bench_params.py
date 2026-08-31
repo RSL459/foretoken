@@ -6,9 +6,7 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import fields, replace
-from pathlib import Path
 from typing import Any, Callable
 
 from evalscope.perf.arguments import Arguments
@@ -22,6 +20,7 @@ from benchmarks.config import (
     GenerationConfig,
     LoadConfig,
 )
+from benchmarks.workload.loader import load_jsonl
 
 __all__ = [
     "ParameterSweep",
@@ -53,7 +52,18 @@ _COERCE: dict[str, Callable[[Any], Any]] = {
     "dataset": _as_dataset,
     "max_tokens": Arguments._validate_max_tokens,
 }
-_SKIP_FIELDS = frozenset({"max_turns"})
+_SKIP_FIELDS = frozenset(
+    {
+        "max_turns",
+        "api_key",
+        "headers",
+        "trace_path",
+        "trace_start",
+        "trace_duration",
+        "trace_max_concurrency",
+        "trace_synthetic_prefix_reuse",
+    }
+)
 _BENCH_PARAM_FIELDS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     f.name: (section, _COERCE.get(f.name, _identity))
     for section, cls in (
@@ -72,33 +82,15 @@ def load_param_sweep(path: str) -> ParameterSweep:
     if not path:
         raise ValueError("--bench-params path is required for param sweep")
 
-    records: list[dict[str, object]] = []
-    for line_no, raw_line in enumerate(
-        Path(path).read_text(encoding="utf-8").splitlines(), start=1
-    ):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Invalid JSON on line {line_no} of {path}: {exc}"
-            ) from exc
+    points: list[dict[str, object]] = []
+    for line_no, record in load_jsonl(path, allow_comments=True):
         if not isinstance(record, dict):
             raise TypeError(
-                f"Each bench-params JSONL line must be an object, "
+                "Each bench-params JSONL line must be an object, "
                 f"got {type(record)} on line {line_no}"
             )
-        records.append(record)
-
-    return ParameterSweep.from_records(
-        [
-            dict(point)
-            for record in records
-            for point in expand_load_points(record)
-        ]
-    )
+        points.extend(dict(point) for point in expand_load_points(record))
+    return ParameterSweep.from_records(points)
 
 
 def _axis(record: dict[str, object], key: str, caster: type) -> list[Any] | None:
@@ -153,8 +145,13 @@ def expand_load_points(
     rest = {
         key: value
         for key, value in record.items()
-        if key not in (*_LOAD_CAST, "_benchmark_name")
+        if key not in (*_LOAD_CAST, "_benchmark_name", "_parameter_group")
     }
+    parameter_group = (
+        str(base_name)
+        if base_name is not None
+        else ParameterSweepItem(rest).name or "default"
+    )
 
     results: list[ParameterSweepItem] = []
     for index in range(count):
@@ -177,6 +174,7 @@ def expand_load_points(
         if number is not None and int(number) < 1:
             raise ValueError(f"number must be >= 1, got {number}")
 
+        point["_parameter_group"] = parameter_group
         if base_name is not None:
             if count > 1:
                 rate_value = point.get("rate")
@@ -205,7 +203,7 @@ def apply_bench_overrides(
     """Return a copy of ``config`` with bench-params overrides applied."""
     section_updates: dict[str, dict[str, Any]] = {}
     for raw_key, raw_value in dict(overrides).items():
-        if raw_key == "_benchmark_name":
+        if raw_key in {"_benchmark_name", "_parameter_group"}:
             continue
         field = _BENCH_PARAM_FIELDS.get(str(raw_key))
         if field is None:
