@@ -11,27 +11,21 @@
 
 ## 部署
 
-先安装 Foretoken 平台，再从仓库根目录执行：
+先安装 Foretoken 平台，再从仓库根目录安装 CLI 并部署：
 
 ```bash
-kubectl apply --server-side -k examples/quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
+pip install -e .
+foretoken deploy examples/quickstart
 ```
+
+该命令会在服务状态变化时输出进度，并在当前配置就绪后退出。
 
 ## 发送请求
 
-读取 `LoadBalancer` Service 的地址：
+解析前端服务 URL：
 
 ```bash
-export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
-export FRONTEND_URL="http://$FRONTEND_HOST:8080"
+FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 ```
 
 发送 OpenAI API 兼容格式的请求：
@@ -51,6 +45,5 @@ printf '\n'
 ## 清理
 
 ```bash
-kubectl delete --wait=true --timeout=10m \
-  -k examples/quickstart
+foretoken delete examples/quickstart
 ```

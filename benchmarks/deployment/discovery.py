@@ -13,14 +13,14 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from benchmarks.deployment.cluster import (
+from foretoken_cli.kubernetes import (
+    FrontendEndpoint,
     Kubectl,
-    NetworkAddress,
-    find_address,
+    resolve_frontend_endpoint,
     timeout_seconds,
-    wait_for_deployment,
+    wait_for_resources,
 )
-from benchmarks.deployment.manifest import DeploymentError, DeploymentResources
+from foretoken_cli.manifest import DeploymentError, ForetokenDeployment
 
 
 @dataclass(frozen=True)
@@ -51,13 +51,8 @@ def _select_model(models: Iterable[str], requested: str) -> str:
     return available[0]
 
 
-def _chat_url(address: NetworkAddress) -> str:
-    default_port = 443 if address.scheme == "https" else 80
-    host = address.host
-    authority = f"[{host}]" if ":" in host and not host.startswith("[") else host
-    if address.port != default_port:
-        authority = f"{authority}:{address.port}"
-    return f"{address.scheme}://{authority}/v1/chat/completions"
+def _chat_url(endpoint: FrontendEndpoint) -> str:
+    return f"{endpoint.url}/v1/chat/completions"
 
 
 def _api_root(chat_url: str) -> str:
@@ -103,7 +98,7 @@ def _wait_for_models(
 
 
 def discover_endpoint(
-    resources: DeploymentResources,
+    resources: ForetokenDeployment,
     kubectl: Kubectl,
     timeout: str,
     *,
@@ -113,10 +108,10 @@ def discover_endpoint(
     """Find the endpoint and model for rendered Foretoken resources."""
     wait_seconds = timeout_seconds(timeout)
     model = _select_model(resources.models.values(), requested_model)
-    wait_for_deployment(resources, kubectl, timeout)
-    address = find_address(resources, kubectl, wait_seconds)
-    url = _chat_url(address)
-    headers = {"Host": address.routing_host} if address.routing_host else {}
+    wait_for_resources(resources.service_refs(), kubectl, timeout)
+    endpoint = resolve_frontend_endpoint(resources, kubectl, timeout)
+    url = _chat_url(endpoint)
+    headers = {"Host": endpoint.routing_host} if endpoint.routing_host else {}
     models = _wait_for_models(
         url,
         headers,

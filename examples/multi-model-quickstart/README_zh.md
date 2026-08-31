@@ -16,25 +16,18 @@
 
 ## 基于队列的自动扩缩容
 
-Qwen 服务每 5 秒评估一次队列：
-
-- 出现排队请求时，每轮增加 1 个 ModelGroup，最多扩容到 3 个；
-- 队列为空且没有正在执行的请求时，每轮减少 1 个 ModelGroup，最少保留 1 个。
+Qwen 服务每 5 秒评估一次队列，以每个 Group 平均 1 个等待请求为容量目标，每轮最多增加 1 个 ModelGroup，并在 1–3 个 Group 之间扩缩。只有较低容量建议持续 5 分钟后才开始缩容。
 
 ## 部署
 
-先安装 Foretoken 平台，再从仓库根目录执行：
+先安装 Foretoken 平台，再从仓库根目录安装 CLI 并部署：
 
 ```bash
-kubectl apply --server-side -k examples/multi-model-quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-multi-model-demo \
-  --timeout=6m \
-  frontendservice/multi-model-frontend \
-  modelservice/multi-model-qwen3-0.6b \
-  modelservice/multi-model-llama3.2-1b
+pip install -e .
+foretoken deploy examples/multi-model-quickstart
 ```
+
+该命令会自动发现渲染配置中的全部模型，在服务状态变化时输出进度，并在当前配置就绪后退出。
 
 观察 Qwen 副本变化：
 
@@ -47,10 +40,7 @@ kubectl get modelpool,modelgroup \
 ## 发送请求
 
 ```bash
-export FRONTEND_HOST="$(kubectl get service multi-model-frontend \
-  --namespace foretoken-multi-model-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
-export FRONTEND_URL="http://$FRONTEND_HOST:8080"
+FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 ```
 
 请求 Qwen：
@@ -82,6 +72,5 @@ printf '\n'
 ## 清理
 
 ```bash
-kubectl delete --wait=true --timeout=10m \
-  -k examples/multi-model-quickstart
+foretoken delete examples/multi-model-quickstart
 ```

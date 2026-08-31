@@ -16,25 +16,18 @@ Each replica uses one GPU, so the cluster needs two to four schedulable GPUs. Fo
 
 ## Queue autoscaling
 
-The Qwen service evaluates its queue every five seconds:
-
-- queued requests add one ModelGroup per evaluation, up to three;
-- an empty queue with no active requests removes one ModelGroup per evaluation, down to one.
+The Qwen service evaluates its queue every five seconds. It calculates desired capacity from one average waiting request per Group, adds at most one ModelGroup per evaluation, and scales from one to three Groups. Scale down begins only after the recommendation has remained lower for five minutes.
 
 ## Deploy
 
-Install the Foretoken platform first, then run from the repository root:
+Install the Foretoken platform first, then install the CLI and deploy from the repository root:
 
 ```bash
-kubectl apply --server-side -k examples/multi-model-quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-multi-model-demo \
-  --timeout=6m \
-  frontendservice/multi-model-frontend \
-  modelservice/multi-model-qwen3-0.6b \
-  modelservice/multi-model-llama3.2-1b
+pip install -e .
+foretoken deploy examples/multi-model-quickstart
 ```
+
+The command discovers every model in the rendered configuration, reports service state changes, and exits when the current configuration is ready.
 
 Watch the Qwen replicas change:
 
@@ -47,10 +40,7 @@ kubectl get modelpool,modelgroup \
 ## Send requests
 
 ```bash
-export FRONTEND_HOST="$(kubectl get service multi-model-frontend \
-  --namespace foretoken-multi-model-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
-export FRONTEND_URL="http://$FRONTEND_HOST:8080"
+FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 ```
 
 Request Qwen:
@@ -82,6 +72,5 @@ printf '\n'
 ## Clean up
 
 ```bash
-kubectl delete --wait=true --timeout=10m \
-  -k examples/multi-model-quickstart
+foretoken delete examples/multi-model-quickstart
 ```
