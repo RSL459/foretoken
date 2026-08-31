@@ -23,8 +23,6 @@ from benchmarks.config import (
     EndpointConfig,
     WandbConfig,
 )
-
-
 @dataclass(frozen=True)
 class BenchCommand:
     """Run a benchmark against a deployment or existing endpoint."""
@@ -200,6 +198,46 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--trace",
+        dest="trace_path",
+        default=_default(DatasetConfig, "trace_path"),
+        help=(
+            "Timestamped schedule: local JSONL, known source org/repo, "
+            "HuggingFace org/name:split, or "
+            "hf://org/dataset/path/to/trace.jsonl; requires --dataset."
+        ),
+    )
+    parser.add_argument(
+        "--trace-start",
+        type=float,
+        default=_default(DatasetConfig, "trace_start"),
+        help="Start offset from the first trace timestamp, in seconds",
+    )
+    parser.add_argument(
+        "--trace-duration",
+        type=float,
+        default=_default(DatasetConfig, "trace_duration"),
+        help="Trace window duration in seconds; omit to replay to the end",
+    )
+    parser.add_argument(
+        "--trace-max-concurrency",
+        type=int,
+        default=_default(DatasetConfig, "trace_max_concurrency"),
+        help=(
+            "Optional cap on active trace requests; timestamps still control "
+            "arrival times"
+        ),
+    )
+    parser.add_argument(
+        "--trace-synthetic-prefix-reuse",
+        action="store_true",
+        default=_default(DatasetConfig, "trace_synthetic_prefix_reuse"),
+        help=(
+            "For Mooncake + random, synthesize deterministic 512-token "
+            "prefix blocks from trace hash_ids"
+        ),
+    )
+    parser.add_argument(
         "--dataset-offset",
         type=int,
         default=_default(DatasetConfig, "dataset_offset"),
@@ -209,6 +247,12 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "--tokenizer-path",
         default=_default(DatasetConfig, "tokenizer_path"),
         help="Tokenizer path (required for --dataset random)",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=_default(DatasetConfig, "random_seed"),
+        help="Random payload seed (default: 0)",
     )
     parser.add_argument(
         "--min-prompt-length",
@@ -378,12 +422,20 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
             dataset=namespace.dataset,
             dataset_offset=namespace.dataset_offset,
             tokenizer_path=namespace.tokenizer_path,
+            random_seed=namespace.random_seed,
             min_prompt_length=namespace.min_prompt_length,
             max_prompt_length=namespace.max_prompt_length,
             prefix_length=namespace.prefix_length,
             apply_chat_template=namespace.apply_chat_template,
             prompt=namespace.prompt,
             max_turns=namespace.max_turns,
+            trace_path=namespace.trace_path,
+            trace_start=namespace.trace_start,
+            trace_duration=namespace.trace_duration,
+            trace_max_concurrency=namespace.trace_max_concurrency,
+            trace_synthetic_prefix_reuse=(
+                namespace.trace_synthetic_prefix_reuse
+            ),
         ),
         output=OutputConfig(
             destinations=namespace.output,

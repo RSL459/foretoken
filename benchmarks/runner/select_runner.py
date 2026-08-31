@@ -10,11 +10,13 @@ from benchmarks.config import BenchConfig
 from benchmarks.runner.base import Runner
 from benchmarks.runner.multi_dataset import MultiDatasetRunner
 from benchmarks.runner.run_benchmark import RunBenchmark
+from benchmarks.runner.trace_runner import TraceRunner
 
 
 def select_runner(config: BenchConfig) -> Runner:
     """Choose runner from config.
 
+    - ``--trace`` selects ``TraceRunner``
     - multi-value ``--dataset`` selects ``MultiDatasetRunner``
     - ``load.is_sweep`` / param sweep are not implemented in this phase
     - otherwise selects ``RunBenchmark`` for a single-point load test
@@ -25,6 +27,8 @@ def select_runner(config: BenchConfig) -> Runner:
             "Parameter sweep is not implemented yet; omit "
             "--serve-params / --bench-params for a single run."
         )
+    if config.dataset.trace_path:
+        return TraceRunner(config)
     if config.load.is_sweep:
         raise NotImplementedError(
             "Load sweep (multi parallel/number/rate) is not implemented "

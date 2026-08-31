@@ -41,20 +41,24 @@ class Runner(ABC):
     async def run(self) -> dict[str, Any]:
         """Execute the benchmark and return a result dict."""
 
-    def make_client(self) -> OpenAICompatClient:
-        """Build an OpenAI-compatible client from ``config.endpoint`` / load."""
-        endpoint = self.config.endpoint
+    def connection_limit(self) -> Optional[int]:
+        """Return the HTTP pool size implied by the active workload."""
         load = self.config.load
+        return derive_max_connections(
+            parallel=load.parallel[0],
+            number=load.number[0],
+            open_loop=load.open_loop,
+        )
+
+    def create_client(self) -> OpenAICompatClient:
+        """Build an OpenAI-compatible client from ``config.endpoint``."""
+        endpoint = self.config.endpoint
         return OpenAICompatClient(
             endpoint.url,
             endpoint.model,
             timeout=endpoint.timeout,
             api_key=endpoint.api_key,
-            max_connections=derive_max_connections(
-                parallel=load.parallel[0],
-                number=load.number[0],
-                open_loop=load.open_loop,
-            ),
+            max_connections=self.connection_limit(),
             max_retries=endpoint.max_retries,
             headers=endpoint.headers,
         )
@@ -103,7 +107,7 @@ class Runner(ABC):
     def build_run_config(self, mode: str, load: dict[str, Any]) -> dict[str, Any]:
         """Build the per-run config dict used by summary and persistence."""
         config = self.config
-        return {
+        run_config = {
             "mode": mode,
             "model": config.endpoint.model,
             "url": config.endpoint.url,
@@ -118,6 +122,9 @@ class Runner(ABC):
                 "rate": load["rate"],
             },
         }
+        if config.dataset.dataset == ["random"]:
+            run_config["random_seed"] = config.dataset.random_seed
+        return run_config
 
     async def dispatch(
         self,
@@ -204,12 +211,15 @@ class Runner(ABC):
         rate: float,
         number: int,
         resolved_parallel: int,
+        include_user_throughput: bool = True,
     ) -> dict[str, Any]:
         """Aggregate raw dispatch output and attach per-user throughput."""
         metrics = MetricsAggregator().aggregate(raw)
         metrics["rate"] = rate
         metrics["number"] = number
-        attach_user_throughput(metrics, parallel=resolved_parallel)
+        metrics["parallel"] = resolved_parallel
+        if include_user_throughput:
+            attach_user_throughput(metrics, parallel=resolved_parallel)
         return metrics
 
     def save_results(
@@ -220,6 +230,7 @@ class Runner(ABC):
         metrics: dict[str, Any],
         *,
         wandb_logger: Optional[WandbLogger] = None,
+        wandb_trace_results: Optional[list[dict[str, Any]]] = None,
         config_snapshot: Optional[dict[str, Any]] = None,
     ) -> None:
         """Publish the selected console, JSON, and W&B results."""
@@ -231,6 +242,8 @@ class Runner(ABC):
         writer.save_json("metrics.json", metrics)
         if wandb_logger is not None:
             try:
+                if wandb_trace_results is not None:
+                    wandb_logger.log_trace_results(wandb_trace_results)
                 wandb_logger.log_metrics(metrics)
             finally:
                 wandb_logger.finish()

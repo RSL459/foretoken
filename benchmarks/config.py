@@ -148,17 +148,26 @@ class DatasetConfig:
 
     Multiple JSONL/HF sources run sequentially; ``LoadConfig.number`` is the
     total request count across all of them.
+
+    ``trace_path`` supplies a local, known remote, or Hugging Face timestamped
+    replay schedule. Trace payloads come from exactly one ``dataset`` source.
     """
 
     dataset: list[str] = field(default_factory=list)
     dataset_offset: int = 0
     tokenizer_path: str = ""
+    random_seed: int = 0
     min_prompt_length: int = 0
     max_prompt_length: int = 131072
     prefix_length: int = 0
     apply_chat_template: Optional[bool] = None
     prompt: str = ""
     max_turns: Optional[int] = None
+    trace_path: str = ""
+    trace_start: float = 0.0
+    trace_duration: Optional[float] = None
+    trace_max_concurrency: Optional[int] = None
+    trace_synthetic_prefix_reuse: bool = False
 
     @property
     def is_multi(self) -> bool:
@@ -243,11 +252,72 @@ class BenchConfig:
         self.load.validate()
         self.output.validate()
         dataset = self.dataset
-        if not dataset.prompt and not dataset.dataset:
+        has_trace = bool(dataset.trace_path)
+        has_standard_workload = bool(dataset.prompt or dataset.dataset)
+        if not has_trace and not has_standard_workload:
             raise ValueError(
                 "No workload source. Pass --prompt or --dataset "
                 "(random | local JSONL path | HuggingFace id)."
             )
+        if dataset.trace_synthetic_prefix_reuse and not has_trace:
+            raise ValueError("--trace-synthetic-prefix-reuse requires --trace")
+        if has_trace:
+            from benchmarks.workload.hf_dataset import same_dataset_source
+
+            if dataset.prompt:
+                raise ValueError(
+                    "--trace requires --dataset; fixed --prompt payloads are "
+                    "not supported"
+                )
+            if not dataset.dataset:
+                raise ValueError("--trace requires one --dataset payload source")
+            if dataset.trace_start < 0:
+                raise ValueError("--trace-start must be >= 0")
+            if (
+                dataset.trace_duration is not None
+                and dataset.trace_duration <= 0
+            ):
+                raise ValueError("--trace-duration must be > 0")
+            if (
+                dataset.trace_max_concurrency is not None
+                and dataset.trace_max_concurrency <= 0
+            ):
+                raise ValueError("--trace-max-concurrency must be > 0")
+            if self.load.is_sweep:
+                raise ValueError("Load sweeps are not supported with --trace")
+            if self.load.open_loop or any(rate != -1 for rate in self.load.rate):
+                raise ValueError(
+                    "--trace uses record timestamps; omit --rate and --open-loop"
+                )
+            if self.load.parallel != [1] or self.load.number != [100]:
+                raise ValueError(
+                    "--trace replays the selected trace window; use "
+                    "--trace-max-concurrency instead of --parallel/--number"
+                )
+            if dataset.is_multi:
+                raise ValueError(
+                    "Trace replay accepts one external --dataset source"
+                )
+            if (
+                len(dataset.dataset) == 1
+                and same_dataset_source(dataset.dataset[0], dataset.trace_path)
+                and dataset.dataset_offset
+            ):
+                raise ValueError(
+                    "--dataset-offset is not supported when --trace and "
+                    "--dataset use the same source"
+                )
+            if dataset.trace_synthetic_prefix_reuse:
+                if dataset.dataset != ["random"]:
+                    raise ValueError(
+                        "--trace-synthetic-prefix-reuse requires "
+                        "--dataset random"
+                    )
+                if dataset.prefix_length:
+                    raise ValueError(
+                        "--trace-synthetic-prefix-reuse cannot use "
+                        "--prefix-length"
+                    )
         if dataset.prompt and dataset.is_multi:
             raise ValueError(
                 "--prompt cannot be combined with multiple --dataset values"
@@ -260,6 +330,8 @@ class BenchConfig:
             raise ValueError(
                 "--tokenizer-path is required when --dataset random"
             )
+        if not 0 <= dataset.random_seed <= 0xFFFFFFFF:
+            raise ValueError("--random-seed must be between 0 and 4294967295")
         if (
             dataset.dataset == ["random"]
             and dataset.max_prompt_length < dataset.min_prompt_length
@@ -271,7 +343,11 @@ class BenchConfig:
     def summary(self) -> str:
         """Human-readable config banner for the console."""
         dataset = self.dataset
-        if dataset.prompt:
+        if dataset.trace_path:
+            dataset_label = (
+                f"trace={dataset.trace_path}, payload={dataset.dataset[0]}"
+            )
+        elif dataset.prompt:
             dataset_label = "prompt=<fixed>"
         elif dataset.dataset == ["random"]:
             dataset_label = (
@@ -287,20 +363,48 @@ class BenchConfig:
                 dataset.dataset[0] if dataset.dataset else "<none>"
             )
         open_loop = self.load.open_loop
-        if open_loop:
+        if dataset.trace_path:
+            number_label = "trace-driven"
+            rate_label = "trace timestamps"
+        elif open_loop:
             parallel_label = "unlimited (open-loop)"
+            number_label = str(self.load.number)
         else:
             parallel_label = str(self.load.parallel)
+            number_label = str(self.load.number)
 
-        if len(self.load.rate) == 1:
-            rate = float(self.load.rate[0])
-            if rate > 0:
-                mode = "open-loop" if open_loop else "closed-loop"
-                rate_label = f"{rate:g} req/s ({mode}, Poisson pacing)"
+        if not dataset.trace_path:
+            if len(self.load.rate) == 1:
+                rate = float(self.load.rate[0])
+                if rate > 0:
+                    mode = "open-loop" if open_loop else "closed-loop"
+                    rate_label = f"{rate:g} req/s ({mode}, Poisson pacing)"
+                else:
+                    rate_label = "INF (no pacing)"
             else:
-                rate_label = "INF (no pacing)"
-        else:
-            rate_label = str(self.load.rate)
+                rate_label = str(self.load.rate)
+
+        trace_lines = ""
+        if dataset.trace_path:
+            duration = (
+                "until end"
+                if dataset.trace_duration is None
+                else f"{dataset.trace_duration:g}s"
+            )
+            trace_lines = (
+                f"  Trace Window: start={dataset.trace_start:g}s, "
+                f"duration={duration}\n"
+                "  Trace Max  : "
+                f"{dataset.trace_max_concurrency or 'unlimited'}\n"
+            )
+            if dataset.trace_synthetic_prefix_reuse:
+                trace_lines += "  Trace Prefix: synthetic hash-id blocks\n"
+        parallel_line = ""
+        if not dataset.trace_path:
+            parallel_line = f"  Parallel   : {parallel_label}\n"
+        open_loop_line = ""
+        if not dataset.trace_path:
+            open_loop_line = f"  Open Loop  : {open_loop}\n"
 
         return (
             "\n============================================\n"
@@ -309,12 +413,13 @@ class BenchConfig:
             f"Configuration:\n"
             f"  URL        : {self.endpoint.url}\n"
             f"  Model      : {self.endpoint.model}\n"
-            f"  Parallel   : {parallel_label}\n"
-            f"  Number     : {self.load.number}\n"
+            f"{parallel_line}"
+            f"  Number     : {number_label}\n"
             f"  Rate       : {rate_label}\n"
-            f"  Open Loop  : {open_loop}\n"
+            f"{open_loop_line}"
             f"  Stream     : {self.generation.stream}\n"
             f"  Dataset    : {dataset_label}\n"
+            f"{trace_lines}"
         )
 
     def to_dict(self) -> dict[str, Any]:
