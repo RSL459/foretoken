@@ -185,6 +185,7 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
         kv_cache_usage: telemetry.kv_cache_usage,
         prompt_tokens_total: telemetry.prompt_tokens_total,
         generation_tokens_total: telemetry.generation_tokens_total,
+        avg_sequence_length: telemetry.avg_sequence_length,
         ttft_seconds: telemetry.ttft_seconds,
         tpot_seconds: telemetry.tpot_seconds,
         e2e_seconds: telemetry.e2e_seconds,

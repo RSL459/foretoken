@@ -41,17 +41,17 @@ impl RouteScorer for SequenceLengthAwareScorer {
         _: &mut (),
     ) -> Vec<RouteScore> {
         let decode_loads = decode_loads_by_pipeline_scope(candidates);
-        // 计算预估的总序列长度 (Prompt + 预估生成的 Token 数)
+        // Estimated total sequence length (prompt + expected generated tokens).
         let request_seq_len = request.token_count() as i64 + request.max_new_tokens() as i64;
 
         candidates
             .iter()
             .map(|candidate| {
-                // 1. 获取 KV Prefix 匹配情况
+                // 1. KV-prefix match facts.
                 let (tokens, tier, locality) = kv_prefix_best_match(request, candidate, kv);
 
-                // 2. 序列长度差异计算 (Sequence Length Penalty)
-                // 如果缺乏统计数据，则默认不产生惩罚
+                // 2. Sequence-length difference (sequence-length penalty). Without reported
+                // statistics, default to no penalty.
                 let candidate_avg_seq_len = candidate
                     .route_target_stats
                     .as_ref()
@@ -59,11 +59,12 @@ impl RouteScorer for SequenceLengthAwareScorer {
                     .and_then(|len| i64::try_from(len).ok())
                     .unwrap_or(request_seq_len);
 
-                // 绝对差异按 Chunk 大小做平滑，使惩罚量与并发负载(个位数~几十)同一量级
+                // Smooth the absolute difference by chunk size so the penalty lands in the same
+                // magnitude as concurrent load (single digits to tens).
                 let seq_len_diff_penalty = request_seq_len.abs_diff(candidate_avg_seq_len) as i64
                     / SEQUENCE_LENGTH_PENALTY_DIVISOR;
 
-                // 3. 计算基础负载与下游节点负载
+                // 3. Base load plus downstream node load.
                 let downstream = if candidate.role == ModelServerRole::Prefill {
                     decode_loads
                         .get(&candidate.pipeline_scope_id)
@@ -75,7 +76,7 @@ impl RouteScorer for SequenceLengthAwareScorer {
 
                 let base_load = load(candidate).saturating_add(downstream);
 
-                // 结合基础负载与序列长度差异惩罚 (值越大代表负面影响越大)
+                // Combine base load and the sequence-length penalty (larger means worse).
                 let total_penalty = base_load.saturating_add(seq_len_diff_penalty);
 
                 RouteScore {

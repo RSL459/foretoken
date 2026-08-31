@@ -39,21 +39,21 @@ impl RouteScorer for SessionAwareScorer {
     ) -> Vec<RouteScore> {
         let decode_loads = decode_loads_by_pipeline_scope(candidates);
 
-        // 获取请求中携带的 Session 标识或先前的亲和目标节点（若存在）
+        // The session identity carried by the request, or the previously-affine target (if any).
         let session_target = request.session_target_id();
 
         candidates
             .iter()
             .map(|candidate| {
-                // 1. 判断当前候选节点是否命中该会话的亲和性（Session Affinity Match）
+                // 1. Whether this candidate holds the session's affinity (session affinity match).
                 let is_session_hit = session_target
                     .map(|target_id| target_id == candidate.route_target_id.as_str())
                     .unwrap_or(false);
 
-                // 2. 计算 KV Cache 前缀匹配情况
+                // 2. KV-cache prefix match facts.
                 let (tokens, tier, locality) = kv_prefix_best_match(request, candidate, kv);
 
-                // 3. 计算 downstream Decode 节点的负载
+                // 3. Downstream Decode node load.
                 let downstream = if candidate.role == ModelServerRole::Prefill {
                     decode_loads
                         .get(&candidate.pipeline_scope_id)
@@ -63,10 +63,10 @@ impl RouteScorer for SessionAwareScorer {
                     0
                 };
 
-                // 4. 若命中 Session 粘性节点，提高 locality_preference 权重或匹配 Tokens 偏好
-                //    确保相同 Session 的请求优先落到记录过的历史节点上
+                // 4. On a session-sticky hit, raise locality_preference so requests in the same
+                //    session prefer the previously-recorded node.
                 let final_locality = if is_session_hit {
-                    // 给 Session 命中赋予最高档的局部性偏好加成
+                    // Give a session hit the highest locality-preference bonus.
                     locality.saturating_add(10)
                 } else {
                     locality

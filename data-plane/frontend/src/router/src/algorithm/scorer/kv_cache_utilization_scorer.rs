@@ -53,8 +53,9 @@ impl RouteScorer for KvCacheUtilizationScorer {
 
                 let base_load = load(candidate).saturating_add(downstream);
 
-                // KV Cache 利用率惩罚：利用率过高会因容量不足而反复换页(Thrashing)，拖垮吞吐。
-                // 超过 80% 后惩罚随利用率陡增；低于 80% 仅施加轻微的基础惩罚。
+                // KV-cache utilization penalty: excessive utilization causes repeated eviction
+                // (thrashing) from capacity pressure, degrading throughput. Above 80% the penalty
+                // rises steeply with utilization; below 80% only a light base penalty applies.
                 let kv_utilization_penalty = candidate
                     .route_target_stats
                     .as_ref()

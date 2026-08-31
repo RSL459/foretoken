@@ -36,7 +36,7 @@ impl RouteScorer for LoraAwareScorer {
         _: &mut (),
     ) -> Vec<RouteScore> {
         let decode_loads = decode_loads_by_pipeline_scope(candidates);
-        // 获取当前请求所需要的 LoRA Adapter 标识
+        // The LoRA adapter requested by this request.
         let request_lora_id = request.lora_id();
 
         candidates
@@ -44,8 +44,8 @@ impl RouteScorer for LoraAwareScorer {
             .map(|candidate| {
                 let (tokens, tier, mut locality) = kv_prefix_best_match(request, candidate, kv);
 
-                // LoRA Affinity Match (LoRA 亲和性匹配)
-                // 检查候选节点是否已经在显存中激活了该 LoRA Adapter
+                // LoRA affinity match: check whether the candidate already has that adapter loaded
+                // in GPU memory.
                 if let Some(req_lora) = request_lora_id {
                     let has_lora_loaded = candidate
                         .route_target_stats
@@ -59,7 +59,7 @@ impl RouteScorer for LoraAwareScorer {
                         .unwrap_or(false);
 
                     if has_lora_loaded {
-                        // 给予高优先级的 Locality 偏好，确保避免不必要的权重换入/换出(Swap in/out)开销
+                        // Grant a high locality preference to avoid unnecessary adapter swap in/out overhead.
                         locality = locality.saturating_add(20);
                     }
                 }

@@ -33,7 +33,7 @@ impl LatencyAwareScorer {
     /// by the expected number of generated tokens, falling back to the reported end-to-end average
     /// when the finer-grained gauges are absent. Queue delay is added on top using the scheduler
     /// waiting-request count (or total running requests when the queue gauge is missing).
-    fn estimate_candidate_latency(&self, candidate: &RouteCandidate, request: &RouterRequest) -> i64 {
+    fn estimate_candidate_latency(candidate: &RouteCandidate, request: &RouterRequest) -> i64 {
         candidate
             .route_target_stats
             .as_ref()
@@ -88,7 +88,7 @@ impl RouteScorer for LatencyAwareScorer {
                 // lexicographic RouteScore, so longer readable prefixes dominate this estimate.
                 let (tokens, tier, locality) = kv_prefix_best_match(request, candidate, kv);
 
-                let candidate_latency = self.estimate_candidate_latency(candidate, request);
+                let candidate_latency = Self::estimate_candidate_latency(candidate, request);
 
                 // Downstream Decode load impact for Prefill nodes. This is a request count added
                 // as a penalty magnitude, not a physical latency: both are heuristic penalties
