@@ -24,9 +24,9 @@
 
 - 控制台中的易读汇总结果
 - 本地保存的配置、原始结果和指标，方便事后复查
-- 可选的 Weights & Biases（W&B）实验记录与图表，便于跨次运行比较和配置选择
+- W&B 可用时上传实验记录与图表
 
-默认显示控制台汇总。使用 `--output local` 保存本地产物；完成 `wandb login` 后，使用 `--output local,wandb` 上传运行结果。加入 `quiet` 可关闭控制台输出。本地文件保存在 `--output-dir` 指定的目录中。
+默认显示控制台汇总、保存本地产物并上传 W&B。W&B 不可用时会给出提示并继续保存本地结果。使用 `--output local` 可关闭上传，加入 `quiet` 可关闭控制台输出。本地文件保存在 `--output-dir` 指定的目录中。
 
 ## 示例
 
@@ -65,8 +65,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset /path/to/conversation.jsonl \
   --parallel 4 \
-  --number 20 \
-  --output local
+  --number 20
 ```
 
 轨迹回放使用 `--trace` 提供到达时间，使用 `--dataset` 提供请求内容。
@@ -99,8 +98,7 @@ foretoken bench \
   --random-seed 0 \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
-  --rate 5 \
-  --output local
+  --rate 5
 ```
 
 Hugging Face 数据集 ID（数据行格式：`messages` / `prompt` / `user`[+`system`]）：
@@ -111,8 +109,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
   --parallel 4 \
-  --number 20 \
-  --output local
+  --number 20
 ```
 
 多个 JSONL 和 Hugging Face 数据源可用逗号分隔。`--number` 由全部数据源共享并按顺序分配；不能整除时，前面的数据源各多一个请求。各数据源按顺序运行，随后合并结果。启用 W&B 输出时，一次实验对应一个 **group**，每个数据集对应一个 **run**：
@@ -123,8 +120,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset /path/a.jsonl,org/name:train,/path/b.jsonl \
   --parallel 4 \
-  --number 30 \
-  --output local
+  --number 30
 ```
 
 ### 参数扫描

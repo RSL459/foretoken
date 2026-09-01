@@ -143,7 +143,7 @@ class DatasetConfig:
 class OutputConfig:
     """Result destinations, location, and analysis knobs."""
 
-    destinations: tuple[str, ...] = ()
+    destinations: tuple[str, ...] = ("local", "wandb")
     output_dir: str = "results"
     gpu_count: int = 1
     sla_auto_tune: bool = False

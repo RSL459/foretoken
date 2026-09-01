@@ -194,7 +194,14 @@ class WandbLogger:
             init_kwargs["group"] = group
         if wandb_config.entity:
             init_kwargs["entity"] = wandb_config.entity
-        self._run = wandb.init(**init_kwargs)
+        try:
+            self._run = wandb.init(**init_kwargs)
+        except wandb.errors.Error as exc:
+            logger.warning(
+                "W&B unavailable; continuing with local results: %s",
+                exc,
+            )
+            return
         self._active = True
         logger.info(
             "W&B logging enabled: project=%s name=%s group=%s concurrency=%s rate=%s",

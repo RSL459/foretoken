@@ -10,7 +10,7 @@
 foretoken bench examples/quickstart
 ```
 
-以下示例连接已经运行的服务。完成 `wandb login` 后，将 `--output local` 改为 `--output local,wandb` 可复现 W&B 图表。
+以下示例连接已经运行的服务。默认上传 W&B；W&B 不可用时，评测会继续保存本地结果。
 
 # 数据集来源
 
@@ -35,8 +35,7 @@ foretoken bench \
   --random-seed 0 \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
-  --rate 5 \
-  --output local
+  --rate 5
 ```
 
 ![随机数据集评测输出](imgs/random-dataset-benchmark-output.png)
@@ -51,8 +50,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset weijiezz/foretoken-trace:conversation \
   --parallel 4 \
-  --number 20 \
-  --output local
+  --number 20
 ```
 
 ![Hugging Face 数据集评测输出](imgs/huggingface-dataset-benchmark-output.png)
@@ -67,8 +65,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset /path/to/conversation.jsonl \
   --parallel 4 \
-  --number 20 \
-  --output local
+  --number 20
 ```
 
 ![本地数据集评测输出](imgs/local-dataset-benchmark-output.png)
@@ -87,8 +84,7 @@ foretoken bench \
   --trace-max-concurrency 16 \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
-  --output-dir results/trace-studychat \
-  --output local
+  --output-dir results/trace-studychat
 ```
 
 ![StudyChat 轨迹评测输出](imgs/trace-studychat-benchmark-output.png)
@@ -107,8 +103,7 @@ foretoken bench \
   --trace-max-concurrency 16 \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
-  --output-dir results/trace-mooncake-dataset \
-  --output local
+  --output-dir results/trace-mooncake-dataset
 ```
 
 ![Mooncake 轨迹与 StudyChat 评测输出](imgs/trace-mooncake-studychat-benchmark-output.png)
@@ -129,8 +124,7 @@ foretoken bench \
   --trace-max-concurrency 16 \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
-  --output-dir results/trace-mooncake-random \
-  --output local
+  --output-dir results/trace-mooncake-random
 ```
 
 ![Mooncake 轨迹与随机请求评测输出](imgs/trace-mooncake-random-benchmark-output.png)
@@ -152,8 +146,7 @@ foretoken bench \
   --trace-max-concurrency 16 \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
-  --output-dir results/trace-mooncake-prefix \
-  --output local
+  --output-dir results/trace-mooncake-prefix
 ```
 
 ![Mooncake 合成前缀回放评测输出](imgs/trace-mooncake-prefix-reuse-benchmark-output.png)
@@ -168,8 +161,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
   --parallel 4 \
-  --number 20 \
-  --output local
+  --number 20
 ```
 
 ![多数据集 W&B 对比](imgs/multi-dataset-wandb-comparison.png)
@@ -193,8 +185,7 @@ foretoken bench examples/quickstart \
   --dataset random \
   --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 512 \
-  --bench-params benchmarks/examples/bench_params.jsonl \
-  --output local
+  --bench-params benchmarks/examples/bench_params.jsonl
 ```
 
 实验会保存全部负载点，并生成 `pareto/PARETO.png`，比较每用户和每 GPU 的输出 token/s。

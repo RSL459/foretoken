@@ -10,7 +10,7 @@ Deploy or reuse the Quick Start service, discover its model and endpoint, and cl
 foretoken bench examples/quickstart
 ```
 
-The remaining examples use an existing endpoint. After `wandb login`, change `--output local` to `--output local,wandb` to reproduce the W&B charts.
+The remaining examples use an existing endpoint. W&B upload is enabled by default; if W&B is unavailable, the benchmark continues with local results.
 
 # Dataset sources
 
@@ -35,8 +35,7 @@ foretoken bench \
   --random-seed 0 \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
-  --rate 5 \
-  --output local
+  --rate 5
 ```
 
 ![Random dataset benchmark output](imgs/random-dataset-benchmark-output.png)
@@ -51,8 +50,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset weijiezz/foretoken-trace:conversation \
   --parallel 4 \
-  --number 20 \
-  --output local
+  --number 20
 ```
 
 ![Hugging Face dataset benchmark output](imgs/huggingface-dataset-benchmark-output.png)
@@ -67,8 +65,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset /path/to/conversation.jsonl \
   --parallel 4 \
-  --number 20 \
-  --output local
+  --number 20
 ```
 
 ![Local dataset benchmark output](imgs/local-dataset-benchmark-output.png)
@@ -87,8 +84,7 @@ foretoken bench \
   --trace-max-concurrency 16 \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
-  --output-dir results/trace-studychat \
-  --output local
+  --output-dir results/trace-studychat
 ```
 
 ![StudyChat trace benchmark output](imgs/trace-studychat-benchmark-output.png)
@@ -107,8 +103,7 @@ foretoken bench \
   --trace-max-concurrency 16 \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
-  --output-dir results/trace-mooncake-dataset \
-  --output local
+  --output-dir results/trace-mooncake-dataset
 ```
 
 ![Mooncake trace with StudyChat benchmark output](imgs/trace-mooncake-studychat-benchmark-output.png)
@@ -129,8 +124,7 @@ foretoken bench \
   --trace-max-concurrency 16 \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
-  --output-dir results/trace-mooncake-random \
-  --output local
+  --output-dir results/trace-mooncake-random
 ```
 
 ![Mooncake trace with random payload benchmark output](imgs/trace-mooncake-random-benchmark-output.png)
@@ -152,8 +146,7 @@ foretoken bench \
   --trace-max-concurrency 16 \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
-  --output-dir results/trace-mooncake-prefix \
-  --output local
+  --output-dir results/trace-mooncake-prefix
 ```
 
 ![Mooncake synthetic prefix replay benchmark output](imgs/trace-mooncake-prefix-reuse-benchmark-output.png)
@@ -168,8 +161,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
   --parallel 4 \
-  --number 20 \
-  --output local
+  --number 20
 ```
 
 ![Multi-dataset W&B comparison](imgs/multi-dataset-wandb-comparison.png)
@@ -193,8 +185,7 @@ foretoken bench examples/quickstart \
   --dataset random \
   --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 512 \
-  --bench-params benchmarks/examples/bench_params.jsonl \
-  --output local
+  --bench-params benchmarks/examples/bench_params.jsonl
 ```
 
 The experiment writes every point and `pareto/PARETO.png`, which compares output tokens/s/user with output tokens/s/GPU.

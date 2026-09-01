@@ -24,9 +24,9 @@ It can discover a Foretoken service from Kustomize or connect to an existing Ope
 
 - Readable summary results in the console
 - Locally saved configs, raw results, and metrics for later review
-- Optional Weights & Biases (W&B) experiment logs and charts for cross-run comparison and config selection
+- Weights & Biases (W&B) experiment logs and charts when W&B is available
 
-The console summary is shown by default. Use `--output local` for local artifacts. After `wandb login`, use `--output local,wandb` to upload the run. Add `quiet` to suppress console output. Local files are written under `--output-dir`.
+By default, the benchmark shows a console summary, saves local artifacts, and uploads to W&B. If W&B is unavailable, it warns and continues with local results. Use `--output local` to disable upload or add `quiet` to suppress console output. Local files are written under `--output-dir`.
 
 ## Examples
 
@@ -65,8 +65,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset /path/to/conversation.jsonl \
   --parallel 4 \
-  --number 20 \
-  --output local
+  --number 20
 ```
 
 Trace replay uses `--trace` for arrival timestamps and `--dataset` for payloads.
@@ -101,8 +100,7 @@ foretoken bench \
   --random-seed 0 \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
-  --rate 5 \
-  --output local
+  --rate 5
 ```
 
 Hugging Face dataset ID (rows: `messages`, `prompt`, or `user`[+`system`]):
@@ -113,8 +111,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
   --parallel 4 \
-  --number 20 \
-  --output local
+  --number 20
 ```
 
 Multiple JSONL and Hugging Face sources can be comma-separated. `--number` is shared across all sources and divided in source order; earlier sources receive one extra request when needed. Sources run sequentially, then their results are merged. With W&B output, the experiment is one **group** and each dataset is one **run**:
@@ -125,8 +122,7 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset /path/a.jsonl,org/name:train,/path/b.jsonl \
   --parallel 4 \
-  --number 30 \
-  --output local
+  --number 30
 ```
 
 ### Parameter sweep
