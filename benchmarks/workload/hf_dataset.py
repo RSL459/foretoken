@@ -12,6 +12,7 @@ from datasets import get_dataset_config_names, get_dataset_split_names, load_dat
 from huggingface_hub import hf_hub_download
 
 _HF_DATASETS_PREFIX = "hf://datasets/"
+_HF_FILE_URI_FORMAT = "hf://datasets/<org>/<repo>[@<revision>]/<path>"
 
 
 def is_hf_file_uri(source: str) -> bool:
@@ -25,22 +26,15 @@ def parse_hf_file_uri(uri: str) -> tuple[str, Optional[str], str]:
     Returns ``(repo_id, revision_or_none, filename)``.
     """
     if not uri.startswith(_HF_DATASETS_PREFIX):
-        if uri.startswith("hf://"):
-            raise ValueError(
-                f"Invalid HF file URI {uri!r}. "
-                "Use hf://datasets/{{repo_id}}[@{{revision}}]/path} "
-                "(repo type 'datasets' is required)."
-            )
         raise ValueError(
-            f"Invalid HF file URI {uri!r}. "
-            "Use hf://datasets/{{repo_id}}[@{{revision}}]/path}."
+            f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
         )
 
     remainder = uri[len(_HF_DATASETS_PREFIX) :]
     if not remainder or remainder.startswith("/"):
         raise ValueError(
             f"Invalid HF file URI {uri!r}. "
-            "Use hf://datasets/{{repo_id}}[@{{revision}}]/path}."
+            f"Use {_HF_FILE_URI_FORMAT}."
         )
 
     if "@" in remainder:
@@ -48,13 +42,13 @@ def parse_hf_file_uri(uri: str) -> tuple[str, Optional[str], str]:
         if not repo_id or "/" not in after_at:
             raise ValueError(
                 f"Invalid HF file URI {uri!r}. "
-                "Use hf://datasets/{{repo_id}}@{{revision}}/{{path}}."
+                f"Use {_HF_FILE_URI_FORMAT}."
             )
         revision, filename = after_at.split("/", 1)
         if not revision or not filename:
             raise ValueError(
                 f"Invalid HF file URI {uri!r}. "
-                "Use hf://datasets/{{repo_id}}@{{revision}}/{{path}}."
+                f"Use {_HF_FILE_URI_FORMAT}."
             )
         return repo_id, revision, filename
 
@@ -67,7 +61,7 @@ def parse_hf_file_uri(uri: str) -> tuple[str, Optional[str], str]:
         return parts[0], None, parts[1]
     raise ValueError(
         f"Invalid HF file URI {uri!r}. "
-        "Use hf://datasets/{{repo_id}}[@{{revision}}]/path}."
+        f"Use {_HF_FILE_URI_FORMAT}."
     )
 
 
@@ -98,13 +92,13 @@ def parse_hf_dataset_spec(spec: str) -> tuple[str, str]:
         if selector is not None:
             return spec, selector
         raise ValueError(
-            f"Invalid HuggingFace dataset spec {spec!r}. "
+            f"Invalid Hugging Face dataset spec {spec!r}. "
             "Use 'org/name:split' (split is required)."
         )
     dataset_id, split = spec.rsplit(":", 1)
     if not dataset_id or not split:
         raise ValueError(
-            f"Invalid HuggingFace dataset spec {spec!r}. "
+            f"Invalid Hugging Face dataset spec {spec!r}. "
             "Use 'org/name:split'."
         )
     return dataset_id, split
@@ -140,7 +134,7 @@ def _load_hf_data(dataset_id: str, split: str) -> Any:
         data_splits = get_dataset_split_names(dataset_id, split)
         if len(data_splits) != 1:
             raise ValueError(
-                f"HuggingFace dataset {dataset_id!r} config {split!r} has "
+                f"Hugging Face dataset {dataset_id!r} config {split!r} has "
                 f"multiple data splits {data_splits}; expected exactly one."
             )
         return load_dataset(
@@ -153,7 +147,7 @@ def _load_hf_data(dataset_id: str, split: str) -> Any:
 
 
 def iter_hf_rows(spec: str) -> Iterator[tuple[int, Any]]:
-    """Yield ``(row_index, row_dict)`` from a HuggingFace dataset spec."""
+    """Yield ``(row_index, row_dict)`` from a Hugging Face dataset spec."""
     dataset_id, split = parse_hf_dataset_spec(spec)
     data = _load_hf_data(dataset_id, split)
     for row_index, row in enumerate(data):

@@ -41,8 +41,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             and not command.kustomize_path
         ):
             raise ValueError(
-                "--bench-params requires a Foretoken Kustomize deployment "
-                "so GPU capacity can be derived"
+                "--bench-params requires a Foretoken Kustomize deployment"
             )
         configure_logging(not config.output.includes("quiet"))
         deployment_dry_run = bool(

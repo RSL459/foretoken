@@ -80,7 +80,7 @@ _BENCH_PARAM_FIELDS: dict[str, tuple[str, Callable[[Any], Any]]] = {
 def load_param_sweep(path: str) -> ParameterSweep:
     """Load a bench-params JSONL file (one JSON object per line)."""
     if not path:
-        raise ValueError("--bench-params path is required for param sweep")
+        raise ValueError("Parameter sweep requires --bench-params PATH")
 
     points: list[dict[str, object]] = []
     for line_no, record in load_jsonl(path, allow_comments=True):
@@ -181,7 +181,7 @@ def expand_load_points(
                 if rate_value is None:
                     r_tag = "x"
                 elif float(rate_value) == -1:
-                    r_tag = "inf"
+                    r_tag = "-1"
                 else:
                     r_tag = f"{float(rate_value):g}"
                 point["_benchmark_name"] = (

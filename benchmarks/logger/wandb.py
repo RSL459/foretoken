@@ -20,31 +20,31 @@ from benchmarks.metrics.aggregator import percentile_stats
 logger = logging.getLogger(__name__)
 
 _SYSTEM_STATS_INTERVAL_S = 1.0
-_TIME_TAKEN = "Test Duration"
-_CONCURRENCY = "Concurrency"
-_REQUEST_RATE = "Request Rate"
-_TOTAL_REQUESTS = "Total Requests"
-_SUCCEED_REQUESTS = "Success Requests"
-_FAILED_REQUESTS = "Failed Requests"
-_REQUEST_THROUGHPUT = "Request Throughput"
-_AVERAGE_LATENCY = "Avg Latency"
-_AVERAGE_INPUT_TOKENS = "Avg Input Tokens"
-_OUTPUT_TOKEN_THROUGHPUT = "Output Throughput"
-_TOTAL_TOKEN_THROUGHPUT = "Total Throughput"
-_AVERAGE_TTFT = "Avg TTFT"
-_AVERAGE_TPOT = "Avg TPOT"
-_AVERAGE_ITL = "Avg ITL"
-_AVERAGE_OUTPUT_TOKENS = "Avg Output Tokens"
+_TIME_TAKEN = "Benchmark duration (s)"
+_CONCURRENCY = "Concurrency limit"
+_REQUEST_RATE = "Arrival rate (req/s)"
+_TOTAL_REQUESTS = "Requests"
+_SUCCEED_REQUESTS = "Successful requests"
+_FAILED_REQUESTS = "Failed requests"
+_REQUEST_THROUGHPUT = "Request throughput (req/s)"
+_AVERAGE_LATENCY = "Mean latency (s)"
+_AVERAGE_INPUT_TOKENS = "Mean input tokens"
+_OUTPUT_TOKEN_THROUGHPUT = "Output throughput (tokens/s)"
+_TOTAL_TOKEN_THROUGHPUT = "Total throughput (tokens/s)"
+_AVERAGE_TTFT = "Mean TTFT (ms)"
+_AVERAGE_TPOT = "Mean TPOT (ms)"
+_AVERAGE_ITL = "Mean ITL (ms)"
+_AVERAGE_OUTPUT_TOKENS = "Mean output tokens"
 
 _TRACE_MAX_BUCKETS = 10_000
-_TRACE_TIME = "Trace scheduled time (s)"
+_TRACE_TIME = "Scheduled trace time (s)"
 _TRACE_PERCENTILE_METRICS = (
     ("latency", "Request latency (s)", 1.0),
     ("ttft", "Request TTFT (ms)", 1000.0),
     ("tpot", "TPOT (ms)", 1000.0),
     ("replay_delay", "Replay delay (s)", 1.0),
-    ("trace_e2e_ttft", "Trace E2E TTFT (ms)", 1000.0),
-    ("trace_e2e_latency", "Trace E2E latency (s)", 1.0),
+    ("trace_e2e_ttft", "End-to-end TTFT (ms)", 1000.0),
+    ("trace_e2e_latency", "End-to-end latency (s)", 1.0),
 )
 _TRACE_HISTORY_KEYS = {
     "request/s": "Trace/Scheduled requests (req/s)",

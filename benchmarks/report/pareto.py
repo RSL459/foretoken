@@ -102,10 +102,15 @@ def _plot_pareto_scatter(fig_path: Path, points: list[dict[str, Any]]) -> None:
             zorder=3,
         )
 
-    ax.set_xlabel("Tokens/s/user")
-    ax.set_ylabel("Tokens/s/GPU")
+    ax.set_xlabel("Output tokens/s/user")
+    ax.set_ylabel("Output tokens/s/GPU")
     ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)
-    ax.legend(title="Params", fontsize=8, title_fontsize=9, framealpha=0.9)
+    ax.legend(
+        title="Parameter group",
+        fontsize=8,
+        title_fontsize=9,
+        framealpha=0.9,
+    )
     fig.tight_layout()
     fig.savefig(fig_path)
     plt.close(fig)
@@ -115,7 +120,7 @@ def plot_sweep_pareto(
     results: list[dict[str, Any]],
     output_dir: str | Path,
 ) -> Path:
-    """Plot Tok/s/user vs Tok/s/GPU.
+    """Plot Output tokens/s/user vs Output tokens/s/GPU.
 
     Color = parameter combination; marker size = concurrency.
     Writes ``pareto/PARETO.png`` under ``output_dir``.

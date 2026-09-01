@@ -30,7 +30,7 @@ class LoadConfig:
 
     parallel: int = 1
     number: int = 100
-    # -1 = no pacing; >0 = Poisson pacing. Open-loop needs open_loop=True.
+    # -1 = as fast as possible; >0 = Poisson arrivals.
     rate: float = -1.0
     open_loop: bool = False
 
@@ -38,11 +38,11 @@ class LoadConfig:
     def validate_point(*, parallel: int, rate: float) -> None:
         """Reject load points that would hang or silently drop pacing."""
         if parallel < 1:
-            raise ValueError(f"parallel must be >= 1, got {parallel}")
+            raise ValueError(f"--parallel must be >= 1; got {parallel}")
         rate_value = float(rate)
         if rate_value != -1 and rate_value <= 0:
             raise ValueError(
-                f"rate must be -1 (no pacing) or > 0, got {rate}"
+                f"--rate must be -1 (send as fast as possible) or > 0; got {rate}"
             )
 
     def validate(self) -> None:
@@ -313,27 +313,27 @@ class BenchConfig:
             trace_lines = (
                 f"  Trace Window: start={dataset.trace_start:g}s, "
                 f"duration={duration}\n"
-                "  Trace Max  : "
-                f"{dataset.trace_max_concurrency or 'unlimited'}\n"
+                "  Trace concurrency: "
+                f"{dataset.trace_max_concurrency or 'no limit'}\n"
             )
             if dataset.trace_synthetic_prefix_reuse:
                 trace_lines += "  Trace Prefix: synthetic hash-id blocks\n"
         else:
             open_loop = self.load.open_loop
             parallel_label = (
-                "unlimited (open-loop)"
+                "no concurrency limit"
                 if open_loop
                 else str(self.load.parallel)
             )
-            parallel_line = f"  Parallel   : {parallel_label}\n"
+            parallel_line = f"  Concurrency: {parallel_label}\n"
             number_label = str(self.load.number)
             rate = float(self.load.rate)
             if rate > 0:
                 mode = "open-loop" if open_loop else "closed-loop"
-                rate_label = f"{rate:g} req/s ({mode}, Poisson pacing)"
+                rate_label = f"{rate:g} req/s ({mode}, Poisson arrivals)"
             else:
-                rate_label = "INF (no pacing)"
-            open_loop_line = f"  Open Loop  : {open_loop}\n"
+                rate_label = "no rate limit"
+            open_loop_line = f"  Open-loop  : {open_loop}\n"
             trace_lines = ""
 
         return (
@@ -341,8 +341,8 @@ class BenchConfig:
             f"  URL        : {self.endpoint.url}\n"
             f"  Model      : {self.endpoint.model}\n"
             f"{parallel_line}"
-            f"  Number     : {number_label}\n"
-            f"  Rate       : {rate_label}\n"
+            f"  Requests   : {number_label}\n"
+            f"  Arrival rate: {rate_label}\n"
             f"{open_loop_line}"
             f"  Stream     : {self.generation.stream}\n"
             f"  Dataset    : {dataset_label}\n"

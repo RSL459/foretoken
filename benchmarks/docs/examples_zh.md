@@ -10,11 +10,7 @@
 foretoken bench examples/quickstart
 ```
 
-以下示例连接已经运行的服务：
-
-```bash
-FRONTEND_URL=http://127.0.0.1:8008
-```
+以下示例连接已经运行的服务。完成 `wandb login` 后，将 `--output local` 改为 `--output local,wandb` 可复现 W&B 图表。
 
 # 数据集来源
 
@@ -40,12 +36,12 @@ foretoken bench \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
   --rate 5 \
-  --output local,wandb
+  --output local
 ```
 
-![Random dataset benchmark output](imgs/random-dataset-benchmark-output.png)
+![随机数据集评测输出](imgs/random-dataset-benchmark-output.png)
 
-![Random dataset W&B dashboard](imgs/random-dataset-wandb-dashboard.png)
+![随机数据集 W&B 面板](imgs/random-dataset-wandb-dashboard.png)
 
 # Hugging Face 数据集
 
@@ -56,12 +52,12 @@ foretoken bench \
   --dataset weijiezz/foretoken-trace:conversation \
   --parallel 4 \
   --number 20 \
-  --output local,wandb
+  --output local
 ```
 
-![Hugging Face dataset benchmark output](imgs/huggingface-dataset-benchmark-output.png)
+![Hugging Face 数据集评测输出](imgs/huggingface-dataset-benchmark-output.png)
 
-![Hugging Face dataset W&B dashboard](imgs/huggingface-dataset-wandb-dashboard.png)
+![Hugging Face 数据集 W&B 面板](imgs/huggingface-dataset-wandb-dashboard.png)
 
 # 本地数据集
 
@@ -72,14 +68,14 @@ foretoken bench \
   --dataset /path/to/conversation.jsonl \
   --parallel 4 \
   --number 20 \
-  --output local,wandb
+  --output local
 ```
 
-![Local dataset benchmark output](imgs/local-dataset-benchmark-output.png)
+![本地数据集评测输出](imgs/local-dataset-benchmark-output.png)
 
-![Local dataset W&B dashboard](imgs/local-dataset-wandb-dashboard.png)
+![本地数据集 W&B 面板](imgs/local-dataset-wandb-dashboard.png)
 
-# StudyChat trace 与数据集
+# StudyChat 轨迹与数据集
 
 ```
 foretoken bench \
@@ -92,14 +88,14 @@ foretoken bench \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
   --output-dir results/trace-studychat \
-  --output local,wandb
+  --output local
 ```
 
-![StudyChat trace benchmark output](imgs/trace-studychat-benchmark-output.png)
+![StudyChat 轨迹评测输出](imgs/trace-studychat-benchmark-output.png)
 
-![StudyChat trace W&B dashboard](imgs/trace-studychat-wandb-dashboard.png)
+![StudyChat 轨迹 W&B 面板](imgs/trace-studychat-wandb-dashboard.png)
 
-# Mooncake trace 与 StudyChat 数据集
+# Mooncake 轨迹与 StudyChat 数据集
 
 ```
 foretoken bench \
@@ -112,14 +108,14 @@ foretoken bench \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
   --output-dir results/trace-mooncake-dataset \
-  --output local,wandb
+  --output local
 ```
 
-![Mooncake trace with StudyChat benchmark output](imgs/trace-mooncake-studychat-benchmark-output.png)
+![Mooncake 轨迹与 StudyChat 评测输出](imgs/trace-mooncake-studychat-benchmark-output.png)
 
-![Mooncake trace with StudyChat W&B dashboard](imgs/trace-mooncake-studychat-wandb-dashboard.png)
+![Mooncake 轨迹与 StudyChat W&B 面板](imgs/trace-mooncake-studychat-wandb-dashboard.png)
 
-# Mooncake trace 与随机数据
+# Mooncake 轨迹与随机数据
 
 ```
 foretoken bench \
@@ -134,14 +130,14 @@ foretoken bench \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
   --output-dir results/trace-mooncake-random \
-  --output local,wandb
+  --output local
 ```
 
-![Mooncake trace with random payload benchmark output](imgs/trace-mooncake-random-benchmark-output.png)
+![Mooncake 轨迹与随机请求评测输出](imgs/trace-mooncake-random-benchmark-output.png)
 
-![Mooncake trace with random payload W&B dashboard](imgs/trace-mooncake-random-wandb-dashboard.png)
+![Mooncake 轨迹与随机请求 W&B 面板](imgs/trace-mooncake-random-wandb-dashboard.png)
 
-# Mooncake trace 与合成前缀复用
+# Mooncake 轨迹与合成前缀复用
 
 ```
 foretoken bench \
@@ -157,12 +153,12 @@ foretoken bench \
   --max-tokens 64 --temperature 0 \
   --timeout 90 --max-retries 0 \
   --output-dir results/trace-mooncake-prefix \
-  --output local,wandb
+  --output local
 ```
 
-![Mooncake synthetic prefix replay benchmark output](imgs/trace-mooncake-prefix-reuse-benchmark-output.png)
+![Mooncake 合成前缀回放评测输出](imgs/trace-mooncake-prefix-reuse-benchmark-output.png)
 
-![Mooncake synthetic prefix replay W&B dashboard](imgs/trace-mooncake-prefix-reuse-wandb-dashboard.png)
+![Mooncake 合成前缀回放 W&B 面板](imgs/trace-mooncake-prefix-reuse-wandb-dashboard.png)
 
 # 多数据集
 
@@ -173,17 +169,17 @@ foretoken bench \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
   --parallel 4 \
   --number 20 \
-  --output local,wandb
+  --output local
 ```
 
-![Multi-dataset W&B comparison](imgs/multi-dataset-wandb-comparison.png)
+![多数据集 W&B 对比](imgs/multi-dataset-wandb-comparison.png)
 
-![Multi-dataset benchmark output](imgs/multi-dataset-benchmark-output.png)
+![多数据集评测输出](imgs/multi-dataset-benchmark-output.png)
 
 
 # 参数扫描
 
-通过 `--bench-params` 传入 JSONL 文件，每行覆盖请求执行字段。`parallel`、`number` 或 `rate` 的列表值会展开为独立负载点。
+通过 `--bench-params` 传入 JSONL 文件，每行覆盖请求执行字段。`parallel`、`number` 或 `rate` 的列表值会展开为独立负载点；`rate` 为 `-1` 时按最快速度发送请求。
 
 示例（`benchmarks/examples/bench_params.jsonl`）：
 
@@ -198,13 +194,13 @@ foretoken bench examples/quickstart \
   --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 512 \
   --bench-params benchmarks/examples/bench_params.jsonl \
-  --output local,wandb
+  --output local
 ```
 
-实验会保存全部负载点，并生成 `pareto/PARETO.png`（Tok/s/user 对 Tok/s/GPU）。
+实验会保存全部负载点，并生成 `pareto/PARETO.png`，比较每用户和每 GPU 的输出 token/s。
 
-![Pareto frontier](imgs/PARETO.png)
+![Pareto 前沿](imgs/PARETO.png)
 
-![Sweep benchmark output](imgs/sweep-benchmark-output.png)
+![参数扫描评测输出](imgs/sweep-benchmark-output.png)
 
-![Sweep W&B comparison](imgs/sweep-wandb-comparison.png)
+![参数扫描 W&B 对比](imgs/sweep-wandb-comparison.png)

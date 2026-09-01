@@ -42,15 +42,15 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
 
     if config.get("trace_path"):
         trace_max = config.get("trace_max_concurrency")
-        concurrency_label = "Trace Max"
+        concurrency_label = "Trace concurrency"
         concurrency_value = (
-            "unlimited (trace)" if trace_max is None else str(trace_max)
+            "no concurrency limit" if trace_max is None else str(trace_max)
         )
     elif int(parallel) < 0:
-        concurrency_label = "Parallel"
-        concurrency_value = "unlimited (open-loop)"
+        concurrency_label = "Concurrency"
+        concurrency_value = "no concurrency limit"
     else:
-        concurrency_label = "Parallel"
+        concurrency_label = "Concurrency"
         concurrency_value = str(parallel)
 
     number = resolved["number"]
@@ -67,9 +67,9 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
     elif config.get("dataset"):
         lines.append(f"  Dataset    : {config['dataset']}")
     if config["open_loop"]:
-        lines.append("  Open Loop  : True")
+        lines.append("  Open-loop  : True")
     if float(rate) > 0:
-        lines.append(f"  Rate       : {rate} req/s")
+        lines.append(f"  Arrival rate: {rate} req/s")
     metric_lines = [
         _percentile_row("Latency", metrics["latency"]),
         _percentile_row("TTFT", metrics["ttft"]),
@@ -79,9 +79,9 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
             _percentile_row("Request latency", metrics["latency"]),
             _percentile_row("Request TTFT", metrics["ttft"]),
             _percentile_row("Replay delay", metrics["replay_delay"]),
-            _percentile_row("Trace E2E TTFT", metrics["trace_e2e_ttft"]),
+            _percentile_row("End-to-end TTFT", metrics["trace_e2e_ttft"]),
             _percentile_row(
-                "Trace E2E latency", metrics["trace_e2e_latency"]
+                "End-to-end latency", metrics["trace_e2e_latency"]
             ),
         ]
     metric_lines.append(_percentile_row("TPOT", metrics["tpot"]))
@@ -92,48 +92,49 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
             f"{metrics['request_num']} "
             f"({float(metrics['success_rate']) * 100:.2f}%)",
             *metric_lines,
-            f"  Request/s  : {_format_metric(throughput['request/s'])}",
-            f"  Token/s    : {_format_metric(throughput['token/s'])}",
-            f"  Wall time  : {_format_metric(metrics['benchmark_time'])}s",
+            f"  Requests/s : {_format_metric(throughput['request/s'])}",
+            f"  Output tokens/s: {_format_metric(throughput['token/s'])}",
+            f"  Benchmark time: {_format_metric(metrics['benchmark_time'])}s",
             "============================================",
         ]
     )
     if not config.get("trace_path"):
         lines.insert(
             -2,
-            f"  Tok/s/user : {_format_metric(throughput['token/s/user'])}",
+            f"  Output tokens/s/user: "
+            f"{_format_metric(throughput['token/s/user'])}",
         )
     logger.info("\n%s", "\n".join(lines))
 
 
 def log_sweep_results(results: list[dict[str, Any]]) -> None:
-    """Log one row per load-sweep point."""
+    """Log one row per parameter-sweep point."""
     header = (
-        f"{'Parallel':>10} {'Rate':>8} {'Number':>8} "
-        f"{'Token/s':>10} {'Tok/s/user':>10} {'Tok/s/GPU':>10} "
-        f"{'P99 Lat':>10}"
+        f"{'Concurrency':>12} {'Arrival rate':>12} {'Requests':>8} "
+        f"{'Output tokens/s':>15} {'Output tokens/s/user':>20} "
+        f"{'Output tokens/s/GPU':>19} {'P99 latency':>12}"
     )
     lines = [
-        "============= Load Sweep Result ============",
+        "========== Parameter Sweep Results =========",
         header,
     ]
     for item in results:
         parallel = item["parallel"]
         parallel_label = (
-            "open" if int(parallel) < 0 else str(int(parallel))
+            "open-loop" if int(parallel) < 0 else str(int(parallel))
         )
         rate = float(item["rate"])
-        rate_label = "INF" if rate == -1 else f"{rate:g}"
+        rate_label = "no limit" if rate == -1 else f"{rate:g}"
         throughput = item["throughput"]
         token_s_per_gpu = tokens_per_s_per_gpu(
             float(throughput["token/s"]), int(item["gpu_count"])
         )
         lines.append(
-            f"{parallel_label:>10} {rate_label:>8} {int(item['number']):>8} "
-            f"{_format_metric(throughput['token/s'], 2):>10} "
-            f"{_format_metric(throughput['token/s/user'], 2):>10} "
-            f"{_format_metric(token_s_per_gpu, 2):>10} "
-            f"{_format_metric(item['latency']['p99'], 3):>10}"
+            f"{parallel_label:>12} {rate_label:>12} {int(item['number']):>8} "
+            f"{_format_metric(throughput['token/s'], 2):>15} "
+            f"{_format_metric(throughput['token/s/user'], 2):>20} "
+            f"{_format_metric(token_s_per_gpu, 2):>19} "
+            f"{_format_metric(item['latency']['p99'], 3):>12}"
         )
     lines.append("============================================")
     logger.info("\n%s", "\n".join(lines))

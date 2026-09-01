@@ -41,7 +41,7 @@ class SweepRunner(Runner):
 
         combinations = list(load_param_sweep(sweep.bench_params))
         if not combinations:
-            raise ValueError("No bench-params combinations to run")
+            raise ValueError("Parameter sweep contains no combinations")
 
         experiment_name = sweep.experiment_name.strip().replace("/", "-")
         experiment_dir = (

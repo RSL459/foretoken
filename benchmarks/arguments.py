@@ -52,12 +52,12 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "kustomize_path",
         nargs="?",
         metavar="PATH",
-        help="Kustomize root to deploy or reuse for this benchmark",
+        help="Kustomize directory to deploy or reuse",
     )
     parser.add_argument(
         "--url",
         default="",
-        help="Existing OpenAI-compatible API URL",
+        help="Existing OpenAI-compatible chat-completions URL",
     )
     parser.add_argument(
         "--model",
@@ -90,31 +90,28 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "--parallel",
         type=int,
         default=_default(LoadConfig, "parallel"),
-        help="Concurrency (closed-loop). Sweep via --bench-params list values",
+        help="Maximum concurrent requests; ignored with --open-loop",
     )
     parser.add_argument(
         "--number",
         type=int,
         default=_default(LoadConfig, "number"),
-        help=(
-            "Request count (total across all --dataset values when multiple). "
-            "Sweep via --bench-params list values"
-        ),
+        help="Requests per run; total across multiple dataset sources",
     )
     parser.add_argument(
         "--rate",
         type=float,
         default=_default(LoadConfig, "rate"),
         help=(
-            "Arrival rate (req/s). Must be -1 (no pacing) or > 0 (Poisson). "
-            "Still closed-loop unless --open-loop. Sweep via --bench-params"
+            "Arrival rate (req/s): -1 sends as fast as possible; "
+            ">0 uses Poisson arrivals"
         ),
     )
     parser.add_argument(
         "--open-loop",
         action="store_true",
         default=_default(LoadConfig, "open_loop"),
-        help="Open-loop: no concurrency limit; optionally pace with --rate",
+        help="Remove the concurrency limit; positive --rate still schedules arrivals",
     )
 
     # Generation
@@ -193,11 +190,8 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         type=lambda value: [item.strip() for item in value.split(",") if item.strip()],
         default=_default(DatasetConfig, "dataset"),
         help=(
-            "Workload source(s), comma-separated: 'random', local JSONL "
-            "path(s), Hugging Face id(s) ('org/name:split'), and/or "
-            "HF file URIs ('hf://datasets/org/name[@rev]/path/to.jsonl'). "
-            "Multiple sources run sequentially; --number is the total "
-            "across all"
+            "Comma-separated sources: random, JSONL path, Hugging Face "
+            "org/name:split, or hf://datasets/...; --number is shared"
         ),
     )
     parser.add_argument(
@@ -205,10 +199,8 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         dest="trace_path",
         default=_default(DatasetConfig, "trace_path"),
         help=(
-            "Timestamped schedule: local JSONL, known source org/repo, "
-            "Hugging Face org/name:split, or "
-            "hf://datasets/org/name[@rev]/path/to/trace.jsonl; "
-            "requires --dataset."
+            "Trace source: JSONL path, supported trace dataset, or "
+            "hf://datasets/...; requires --dataset"
         ),
     )
     parser.add_argument(
@@ -280,7 +272,7 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "--apply-chat-template",
         action=argparse.BooleanOptionalAction,
         default=_default(DatasetConfig, "apply_chat_template"),
-        help="Apply chat template (default: auto from URL)",
+        help="Apply the chat template; defaults on for /chat/completions URLs",
     )
     parser.add_argument(
         "--prompt",
@@ -327,8 +319,10 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--wandb-run-name",
         default=_default(WandbConfig, "run_name"),
-        help="W&B name base; default {model}_{YYYYMMDD_HHMMSS}; "
-        "runs become {base}_{config}",
+        help=(
+            "W&B run-name prefix; child runs append their label. "
+            "Default: {model}_{YYYYMMDD_HHMMSS}"
+        ),
     )
 
     # Param sweep
@@ -336,27 +330,25 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "--bench-params",
         default=_default(ParamSweepConfig, "bench_params"),
         help=(
-            "JSONL path of bench parameter combinations that change request "
-            "execution (load/generation/dataset/endpoint). "
-            "parallel/number/rate may be lists"
+            "JSONL parameter combinations; parallel, number, and rate may be lists"
         ),
     )
     parser.add_argument(
         "--num-runs",
         type=int,
         default=_default(ParamSweepConfig, "num_runs"),
-        help="Repeats per bench-params combination",
+        help="Runs per parameter combination",
     )
     parser.add_argument(
         "--dry-run",
         action=argparse.BooleanOptionalAction,
         default=_default(ParamSweepConfig, "dry_run"),
-        help="Print bench-params plan without executing",
+        help="Print the sweep plan without sending requests",
     )
     parser.add_argument(
         "--experiment-name",
         default=_default(ParamSweepConfig, "experiment_name"),
-        help="Param-sweep experiment subdir under --output-dir",
+        help="Sweep directory name under --output-dir",
     )
 
 

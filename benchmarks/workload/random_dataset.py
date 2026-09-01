@@ -39,7 +39,7 @@ _TOKENIZER_ALLOW_PATTERNS = (
 def resolve_tokenizer_path(tokenizer_path: str) -> str:
     """Resolve ``tokenizer_path`` to a local directory.
 
-    Existing local paths are returned as-is; HuggingFace repo ids are fetched
+    Existing local paths are returned as-is; Hugging Face repo ids are fetched
     with ``_TOKENIZER_ALLOW_PATTERNS`` only.
     """
     local = Path(tokenizer_path).expanduser()
@@ -47,7 +47,7 @@ def resolve_tokenizer_path(tokenizer_path: str) -> str:
         return str(local.resolve())
 
     logger.info(
-        "Resolving tokenizer from HuggingFace repo %r",
+        "Resolving tokenizer from Hugging Face repo %r",
         tokenizer_path,
     )
     return snapshot_download(

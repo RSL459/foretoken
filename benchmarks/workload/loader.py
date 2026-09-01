@@ -112,7 +112,7 @@ def _load_hf_requests(spec: str, number: int, offset: int) -> list[dict[str, Any
 
     if len(requests) < number:
         raise ValueError(
-            f"Loaded {len(requests)} requests from HuggingFace {spec!r} "
+            f"Loaded {len(requests)} requests from Hugging Face {spec!r} "
             f"(offset={offset}), need {number}"
         )
     return requests

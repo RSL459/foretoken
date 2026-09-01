@@ -83,7 +83,8 @@ def benchmark_deployment(
     presence = _service_presence(resources, kubectl)
     if any(presence) and not all(presence):
         raise DeploymentError(
-            "deployment is partially present; apply or delete it explicitly before benchmarking"
+            "The Foretoken deployment is only partially present. "
+            "Apply or delete it, then rerun the benchmark"
         )
 
     created: tuple[dict[str, Any], ...] = ()
