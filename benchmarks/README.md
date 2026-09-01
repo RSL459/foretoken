@@ -4,32 +4,29 @@ English | [简体中文](README_zh.md)
 
 `benchmarks/` is the evaluation module for Foretoken.
 
-It can discover a deployed Foretoken service from its Kustomize configuration or connect to an existing OpenAI-compatible endpoint, then measure performance, compare configurations, and check whether answer quality meets the bar. The goal is reproducible experiments that answer: can this service hold latency and throughput, and is the quality good enough?
+It can discover a Foretoken service from Kustomize or connect to an existing OpenAI-compatible endpoint. Use it to run repeatable latency and throughput experiments.
 
 ## When to Use It
 
 - You want latency and throughput at a given concurrency or arrival rate.
 - You want to compare concurrency, request count, generation settings, or server configs.
-- You want to confirm the model is not only fast, but also correct on answers and tool use.
 - You want a suitable load point or capacity plan under latency and throughput targets.
 
 ## Main Features
 
 | Feature | Description |
 |---|---|
-| Performance benchmark | Stress the inference service and measure latency, throughput, time to first token, and related metrics |
+| Performance benchmark | Send controlled load and measure latency, throughput, time to first token, and related metrics |
 | Load sweep | Sweep concurrency, request count, or arrival rate to see how performance changes |
-| Parameter sweep | Combine server and bench parameters to compare configurations in batch |
-| Correctness evaluation | Check answer quality and tool calling, not speed alone |
-| SLO evaluation | Search or simulate against latency and quality targets to guide capacity and autoscaling |
+| Parameter sweep | Compare request and load configurations in batch |
 
 ## What It Produces
 
 - Readable summary results in the console
 - Locally saved configs, raw results, and metrics for later review
-- Optional Weights & Biases (W&B) experiment logs and charts for cross-run comparison and config selection
+- Weights & Biases (W&B) experiment logs and charts when W&B is available
 
-The console summary is shown by default. Use `--output local` for local artifacts, `--output wandb` for W&B, or a comma-separated combination. Add `quiet` to suppress console output. Local files are written under `--output-dir`.
+By default, the benchmark shows a console summary, saves local artifacts, and uploads to W&B. If W&B is unavailable, it warns and continues with local results. Use `--output local` to disable upload or add `quiet` to suppress console output. Local files are written under `--output-dir`.
 
 ## Examples
 
@@ -66,10 +63,9 @@ Local dataset file:
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
-  --dataset foretoken/conversation.jsonl \
+  --dataset /path/to/conversation.jsonl \
   --parallel 4 \
-  --number 20 \
-  --output local,wandb
+  --number 20
 ```
 
 Trace replay uses `--trace` for arrival timestamps and `--dataset` for payloads.
@@ -89,9 +85,9 @@ foretoken bench \
 
 The selected window is `[first + start, first + start + duration)`, with the
 window start as replay time zero. `--trace-max-concurrency` limits active
-requests, and slot waiting is included in Replay delay. Mooncake can pair trace
-timing with random or external dataset payloads and optionally synthesize shared
-prefix blocks. See [trace examples and screenshots](doc/examples.md).
+requests, and time waiting for a concurrency slot is included in replay delay.
+Mooncake can pair trace timing with randomly generated or dataset-backed request
+content and can synthesize shared prefix blocks. See [trace examples and screenshots](docs/examples.md).
 
 Random synthetic prompts (tokenizer required):
 
@@ -104,11 +100,10 @@ foretoken bench \
   --random-seed 0 \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
-  --rate 5 \
-  --output local,wandb
+  --rate 5
 ```
 
-HuggingFace dataset id (rows: `messages`, `prompt`, or `user`[+`system`]):
+Hugging Face dataset ID (rows: `messages`, `prompt`, or `user`[+`system`]):
 
 ```bash
 foretoken bench \
@@ -116,12 +111,10 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
   --parallel 4 \
-  --number 20 \
-  --output local,wandb
+  --number 20
 ```
 
-Multiple JSONL / HuggingFace sources can be comma-separated. `--number` is the total request count across all sources. Requests are divided in source order; when the total is not divisible evenly, each earlier source receives one extra request. Sources run sequentially, then raw results are merged and metrics recomputed. When `wandb` is selected,
-the experiment is one W&B **group** and each dataset is its own **run**:
+Multiple JSONL and Hugging Face sources can be comma-separated. `--number` is shared across all sources and divided in source order; earlier sources receive one extra request when needed. Sources run sequentially, then their results are merged. With W&B output, the experiment is one **group** and each dataset is one **run**:
 
 ```bash
 foretoken bench \
@@ -129,6 +122,9 @@ foretoken bench \
   --model Qwen3.6-27B \
   --dataset /path/a.jsonl,org/name:train,/path/b.jsonl \
   --parallel 4 \
-  --number 30 \
-  --output local,wandb
+  --number 30
 ```
+
+### Parameter sweep
+
+When benchmarking a Foretoken Kustomize deployment, pass a JSONL file through `--bench-params` to compare request-execution configurations and load points. The run records every point and produces a Pareto chart of output tokens/s/user versus output tokens/s/GPU. See the [parameter sweep example](docs/examples.md#parameter-sweep).

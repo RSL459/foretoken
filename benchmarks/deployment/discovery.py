@@ -32,6 +32,7 @@ class BenchmarkEndpoint:
     models: tuple[str, ...]
     headers: dict[str, str]
     hostname: str
+    gpu_count: int
 
 
 def _select_model(models: Iterable[str], requested: str) -> str:
@@ -53,6 +54,37 @@ def _select_model(models: Iterable[str], requested: str) -> str:
 
 def _chat_url(endpoint: FrontendEndpoint) -> str:
     return f"{endpoint.url}/v1/chat/completions"
+
+
+def _model_gpu_count(
+    deployment: ForetokenDeployment, model: str
+) -> int:
+    """Return configured GPUs across ModelServices serving one model."""
+    total = 0
+    for document in deployment.objects:
+        if document.get("kind") != "ModelService":
+            continue
+        spec = document.get("spec") or {}
+        if str(spec.get("model") or "") != model:
+            continue
+        requests = ((spec.get("resources") or {}).get("requests") or {})
+        gpu_count = int((requests.get("gpu") or {}).get("count") or 0)
+        replicas = int(spec.get("replicas") or 1)
+        nodes = int(spec.get("nodes") or 1)
+        total += gpu_count * replicas * nodes
+    if total < 1:
+        raise DeploymentError(
+            f"deployment does not declare GPU capacity for model {model!r}"
+        )
+    return total
+
+
+def resolve_deployment_model(
+    deployment: ForetokenDeployment, requested_model: str
+) -> tuple[str, int]:
+    """Return the selected model and configured GPU capacity."""
+    model = _select_model(deployment.models.values(), requested_model)
+    return model, _model_gpu_count(deployment, model)
 
 
 def _api_root(chat_url: str) -> str:
@@ -107,7 +139,7 @@ def discover_endpoint(
 ) -> BenchmarkEndpoint:
     """Find the endpoint and model for rendered Foretoken resources."""
     wait_seconds = timeout_seconds(timeout)
-    model = _select_model(resources.models.values(), requested_model)
+    model, gpu_count = resolve_deployment_model(resources, requested_model)
     wait_for_resources(resources.service_refs(), kubectl, timeout)
     endpoint = resolve_frontend_endpoint(resources, kubectl, timeout)
     url = _chat_url(endpoint)
@@ -124,4 +156,11 @@ def discover_endpoint(
             f"model {model!r} is not advertised by the frontend; "
             f"available models: {', '.join(models)}"
         )
-    return BenchmarkEndpoint(url, model, models, headers, resources.hostname)
+    return BenchmarkEndpoint(
+        url,
+        model,
+        models,
+        headers,
+        resources.hostname,
+        gpu_count,
+    )
