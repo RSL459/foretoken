@@ -142,6 +142,8 @@ Introduce each command block with a sentence that states what the reader is abou
 
 Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations. Update both when user-visible behavior changes.
 
+Write every language version independently for its readers rather than using another language as a sentence-by-sentence template. English documentation should use clear, natural technical English; Chinese documentation should use natural Chinese prose and established Chinese technical terms. Preserve exact commands, field names, type names, and algorithm identifiers when readers need to recognize or enter them, and explain uncommon identifiers in the surrounding language on first use. Avoid untranslated ordinary words when that language has a clear expression. Review each language version on its own for fluency; equivalent capability does not require identical sentence structure.
+
 ## Change and PR discipline
 
 Keep each PR focused on one responsibility and make its final diff the smallest maintainable expression of that change.
