@@ -33,6 +33,7 @@ pub struct BackendTelemetry {
     pub kv_cache_usage: Option<f64>,
     pub prompt_tokens_total: Option<u64>,
     pub generation_tokens_total: Option<u64>,
+    pub avg_sequence_length: Option<u64>,
     pub ttft_seconds: CumulativeHistogram,
     pub tpot_seconds: CumulativeHistogram,
     pub e2e_seconds: CumulativeHistogram,
@@ -138,6 +139,8 @@ pub struct VllmBackend {
     max_concurrent_requests: u64,
     engine_labels: Vec<EngineLabels>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
+    admitted_requests: AtomicU64,
+    total_sequence_length: AtomicU64,
 }
 
 impl VllmBackend {
@@ -159,6 +162,8 @@ impl VllmBackend {
             max_concurrent_requests,
             engine_labels,
             boundary_latency: Arc::new(Mutex::new(BoundaryLatencyMetrics::new())),
+            admitted_requests: AtomicU64::new(0),
+            total_sequence_length: AtomicU64::new(0),
         }
     }
 
@@ -313,6 +318,11 @@ impl Backend for VllmBackend {
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
         let request_id = request.request_id.clone();
+        let sequence_length =
+            request.prompt_token_ids.len() as u64 + request.sampling_params.max_tokens as u64;
+        self.admitted_requests.fetch_add(1, Ordering::AcqRel);
+        self.total_sequence_length
+            .fetch_add(sequence_length, Ordering::AcqRel);
         let stream = llm
             .generate(request.into())
             .await
@@ -339,6 +349,11 @@ impl Backend for VllmBackend {
             .lock()
             .expect("boundary latency metrics lock poisoned")
             .snapshot();
+        let admitted_requests = self.admitted_requests.load(Ordering::Acquire);
+        let avg_sequence_length = self
+            .total_sequence_length
+            .load(Ordering::Acquire)
+            .checked_div(admitted_requests);
 
         BackendTelemetry {
             running_requests: self.running_requests.load(Ordering::Acquire),
@@ -348,6 +363,7 @@ impl Backend for VllmBackend {
             kv_cache_usage: vllm.kv_cache_usage,
             prompt_tokens_total: vllm.prompt_tokens_total,
             generation_tokens_total: vllm.generation_tokens_total,
+            avg_sequence_length,
             ttft_seconds,
             tpot_seconds,
             e2e_seconds,

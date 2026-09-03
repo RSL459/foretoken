@@ -174,6 +174,8 @@ pub struct TelemetryResponse {
     pub kv_cache_usage: Option<f64>,
     pub prompt_tokens_total: Option<u64>,
     pub generation_tokens_total: Option<u64>,
+    #[serde(default)]
+    pub avg_sequence_length: Option<u64>,
     pub ttft_seconds: CumulativeHistogram,
     pub tpot_seconds: CumulativeHistogram,
     pub e2e_seconds: CumulativeHistogram,

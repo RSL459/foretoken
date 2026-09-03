@@ -159,9 +159,22 @@ spec:
                     description: RouterScorerAlgorithm identifies a compiled Router
                       Scorer.
                     enum:
-                    - uniform
-                    - least_loaded
+                    - capacity_aware
+                    - kv_cache_utilization
                     - kv_least_loaded
+                    - latency_aware
+                    - least_loaded
+                    - lora_aware
+                    - mmcache_affinity
+                    - prefix
+                    - prefix_decay
+                    - queue_depth
+                    - running_request
+                    - sequence_length_aware
+                    - session_aware
+                    - throughput_aware
+                    - uniform
+                    - weighted_sum
                     type: string
                 type: object
               timeouts:

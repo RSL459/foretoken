@@ -13,19 +13,20 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
+from evalscope.perf.multi_turn_args import _sample_int_or_range as sample_max_tokens
 from tqdm.asyncio import tqdm as tqdm_asyncio
 
 from benchmarks.client.openai_client import (
     OpenAICompatClient,
     derive_max_connections,
 )
-from benchmarks.config import BenchConfig
+from benchmarks.config import BenchConfig, LoadConfig
+from benchmarks.logger.wandb import WandbLogger
 from benchmarks.metrics.aggregator import (
     MetricsAggregator,
     attach_user_throughput,
 )
 from benchmarks.report.summary import log_summary
-from benchmarks.logger.wandb import WandbLogger
 from benchmarks.storage.result_writer import ResultWriter
 
 logger = logging.getLogger(__name__)
@@ -36,53 +37,62 @@ class Runner(ABC):
 
     def __init__(self, config: BenchConfig):
         self.config = config
+        self._generation_overrides = config.generation.request_overrides()
 
     @abstractmethod
     async def run(self) -> dict[str, Any]:
         """Execute the benchmark and return a result dict."""
 
-    def connection_limit(self) -> Optional[int]:
-        """Return the HTTP pool size implied by the active workload."""
-        load = self.config.load
-        return derive_max_connections(
-            parallel=load.parallel[0],
-            number=load.number[0],
-            open_loop=load.open_loop,
-        )
+    def create_client(self, parallel: int, number: int) -> OpenAICompatClient:
+        """Create an OpenAI-compatible client sized for one load point.
 
-    def create_client(self) -> OpenAICompatClient:
-        """Build an OpenAI-compatible client from ``config.endpoint``."""
+        Caller owns ``close()``. Pool capacity follows ``parallel`` /
+        ``number`` / ``open_loop`` for that point only.
+        """
         endpoint = self.config.endpoint
+        load = self.config.load
         return OpenAICompatClient(
             endpoint.url,
             endpoint.model,
             timeout=endpoint.timeout,
             api_key=endpoint.api_key,
-            max_connections=self.connection_limit(),
+            max_connections=derive_max_connections(
+                parallel=parallel,
+                number=number,
+                open_loop=load.open_loop,
+            ),
             max_retries=endpoint.max_retries,
             headers=endpoint.headers,
         )
 
-    def make_writer(self) -> ResultWriter:
-        """Create the local JSON writer selected for this benchmark."""
+    def create_writer(self, output_dir: Optional[str] = None) -> ResultWriter:
+        """Create a local JSON writer for this run or experiment root.
+
+        With ``output_dir``, use that exact artifact directory (child point /
+        source). Otherwise create a timestamp under ``config.output.output_dir``.
+        """
+        enabled = self.config.output.includes("local")
+        if output_dir is not None:
+            return ResultWriter(output_dir=output_dir, enabled=enabled)
         return ResultWriter(
             root_dir=self.config.output.output_dir,
-            enabled=self.config.output.includes("local"),
+            enabled=enabled,
         )
 
-    def make_wandb_logger(
+    def create_wandb_logger(
         self,
         writer: ResultWriter,
         load: dict[str, Any],
-        *,
         name_suffix: Optional[str] = None,
         group: Optional[str] = None,
-        config: Optional[BenchConfig] = None,
     ) -> WandbLogger:
-        """Start W&B when selected as a result destination."""
+        """Start a W&B run for one load point when W&B is a result destination.
+
+        Caller owns ``finish()``.
+        """
         wandb_logger = WandbLogger()
         wandb_logger.start(
-            config if config is not None else self.config,
+            self.config,
             output_dir=writer.output_dir,
             parallel=int(load["resolved_parallel"]),
             rate=float(load["rate"]),
@@ -92,14 +102,14 @@ class Runner(ABC):
         return wandb_logger
 
     def default_load(self) -> dict[str, Any]:
-        """Return the first load-point fields from ``config.load``."""
+        """Return the load-point fields from ``config.load``."""
         load = self.config.load
-        parallel = load.parallel[0]
+        parallel = int(load.parallel)
         open_loop = load.open_loop
         return {
             "parallel": parallel,
-            "number": load.number[0],
-            "rate": float(load.rate[0]),
+            "number": int(load.number),
+            "rate": float(load.rate),
             "open_loop": open_loop,
             "resolved_parallel": -1 if open_loop else parallel,
         }
@@ -126,6 +136,25 @@ class Runner(ABC):
             run_config["random_seed"] = config.dataset.random_seed
         return run_config
 
+    async def generate_request(
+        self,
+        client: OpenAICompatClient,
+        *,
+        prompt: str | None = None,
+        messages: list[dict[str, Any]] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Send one request using the runner's resolved generation config."""
+        generation = self.config.generation
+        return await client.generate(
+            prompt=prompt,
+            messages=messages,
+            tools=tools,
+            max_tokens=sample_max_tokens(generation.max_tokens),
+            stream=generation.stream,
+            extra_body=self._generation_overrides,
+        )
+
     async def dispatch(
         self,
         client: OpenAICompatClient,
@@ -135,13 +164,13 @@ class Runner(ABC):
         rate: float,
         open_loop: bool,
     ) -> dict[str, Any]:
-        """Dispatch requests with closed/open-loop concurrency and optional rate pacing."""
-        generation = self.config.generation
-        max_tokens = generation.max_tokens
-        extra_body = generation.request_overrides()
+        """Dispatch requests with closed/open-loop concurrency and optional rate pacing.
 
+        Does not close ``client``; the caller that created it owns cleanup.
+        """
         request_count = len(requests)
-        has_pacing = rate != -1 and rate > 0
+        LoadConfig.validate_point(parallel=int(parallel), rate=float(rate))
+        has_pacing = float(rate) > 0
         semaphore: Optional[asyncio.Semaphore] = (
             None if open_loop else asyncio.Semaphore(parallel)
         )
@@ -157,14 +186,13 @@ class Runner(ABC):
             if semaphore is not None:
                 await semaphore.acquire()
             try:
-                result = await client.generate(
+                result = await self.generate_request(
+                    client,
                     prompt=request.get("prompt"),
                     messages=request.get("messages"),
                     tools=request.get("tools"),
-                    max_tokens=max_tokens,
-                    stream=generation.stream,
-                    extra_body=extra_body,
                 )
+                result["end_time"] = time.perf_counter() - start_time
                 results[index] = result
             finally:
                 if semaphore is not None:
@@ -193,7 +221,6 @@ class Runner(ABC):
                 )
         finally:
             progress_bar.close()
-            await client.close()
 
         end_time = time.perf_counter()
         logger.info("Benchmark finished!")
@@ -213,8 +240,14 @@ class Runner(ABC):
         resolved_parallel: int,
         include_user_throughput: bool = True,
     ) -> dict[str, Any]:
-        """Aggregate raw dispatch output and attach per-user throughput."""
+        """Aggregate raw output and optionally attach per-user throughput."""
         metrics = MetricsAggregator().aggregate(raw)
+        configured_stream = bool(self.config.generation.stream)
+        if metrics["stream"] != configured_stream:
+            raise RuntimeError(
+                "recorded stream mode does not match the requests that ran: "
+                f"config={configured_stream} results={metrics['stream']}"
+            )
         metrics["rate"] = rate
         metrics["number"] = number
         metrics["parallel"] = resolved_parallel

@@ -205,6 +205,7 @@ fn telemetry(at_ms: u64, tokens: u64, histogram: CumulativeHistogram) -> Telemet
         kv_cache_usage: Some(0.0),
         prompt_tokens_total: Some(tokens),
         generation_tokens_total: Some(tokens / 2),
+        avg_sequence_length: None,
         ttft_seconds: histogram.clone(),
         tpot_seconds: histogram.clone(),
         e2e_seconds: histogram,
