@@ -19,6 +19,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
+// TestFrontendRoutingSnapshotAndReadinessContract protects Gateway routing publication and readiness as one frontend lifecycle.
 func TestFrontendRoutingSnapshotAndReadinessContract(t *testing.T) {
 	ctx := context.Background()
 	frontend := &inferencev1alpha1.FrontendService{
@@ -40,6 +41,10 @@ func TestFrontendRoutingSnapshotAndReadinessContract(t *testing.T) {
 		if _, err := r.Reconcile(ctx, request); err != nil {
 			t.Fatal(err)
 		}
+	}
+	frontendService := get(t, ctx, c, request.NamespacedName, new(corev1.Service))
+	if frontendService.Labels["inference.foretoken.io/frontend-service"] != frontend.Name || len(frontendService.Spec.Ports) != 1 || frontendService.Spec.Ports[0].Name != "http" {
+		t.Fatalf("frontend service discovery contract = %#v", frontendService)
 	}
 	var deployments appsv1.DeploymentList
 	if err := c.List(ctx, &deployments, client.InNamespace(frontend.Namespace)); err != nil {
@@ -94,6 +99,7 @@ func TestFrontendRoutingSnapshotAndReadinessContract(t *testing.T) {
 	}
 }
 
+// TestFrontendLocalModeNeedsNoGateway protects local LoadBalancer readiness from depending on Gateway resources.
 func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 	ctx := context.Background()
 	frontend := &inferencev1alpha1.FrontendService{

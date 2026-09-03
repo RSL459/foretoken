@@ -26,6 +26,10 @@ frontend:
     namespace: gateway-system
     sectionName: https
 
+# auto enables integration when the cluster provides the Prometheus Operator CRDs.
+observability:
+  mode: auto
+
 runtime:
   vllm:
     image: registry.example.com/foretoken/model-server:dev

@@ -45,6 +45,8 @@ const (
 	modelGroupFieldOwner           = "foretoken-modelgroup-controller"
 	controlPlanePodLabel           = "app.kubernetes.io/name"
 	controlPlanePodLabelValue      = "foretoken-control-plane"
+	metricsScraperNamespaceLabel   = "inference.foretoken.io/metrics-scraper"
+	metricsScraperNamespaceValue   = "true"
 )
 
 // ModelGroupReconciler owns the Kubernetes workload for one execution Group.
@@ -124,6 +126,7 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	return ctrl.Result{}, nil
 }
 
+// validateModelPoolOwnership verifies that the referenced ModelPool controls the ModelGroup.
 func (reconciler *ModelGroupReconciler) validateModelPoolOwnership(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
 	pool := new(inferencev1alpha1.ModelPool)
 	key := client.ObjectKey{Namespace: group.Namespace, Name: group.Spec.ModelPoolRef.Name}
@@ -138,6 +141,7 @@ func (reconciler *ModelGroupReconciler) validateModelPoolOwnership(ctx context.C
 
 // Workload reconciliation and desired resources.
 
+// reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
 func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment, error) {
 	desired, err := desiredDeployment(group, reconciler.ImagePullSecrets)
 	if err != nil {
@@ -171,6 +175,7 @@ func modelGroupLabels(group *inferencev1alpha1.ModelGroup) map[string]string {
 	return labels
 }
 
+// desiredDeployment builds the isolated model-server workload from a resolved ModelGroup contract.
 func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference) (*appsv1.Deployment, error) {
 	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
 	if err != nil {
@@ -347,6 +352,7 @@ func modelGroupServiceName(group *inferencev1alpha1.ModelGroup) string {
 	return serviceNamePrefix + prefix + "-" + identity
 }
 
+// reconcileService applies the stable Service owned by the ModelGroup.
 func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
 	labels := modelGroupLabels(group)
 	desired := &corev1.Service{
@@ -398,6 +404,7 @@ func modelServerProbe(path string, periodSeconds, failureThreshold int32) *corev
 	}
 }
 
+// reconcileNetworkPolicy allows the frontend, control plane, runtime peers, and trusted metrics-scraper namespaces to reach a ModelGroup.
 func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
 	labels := modelGroupLabels(group)
 	protocol := corev1.ProtocolTCP
@@ -420,6 +427,11 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 		},
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &modelServerPort}},
 	}}
+	ingress[0].From = append(ingress[0].From, networkingv1.NetworkPolicyPeer{
+		NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+			metricsScraperNamespaceLabel: metricsScraperNamespaceValue,
+		}},
+	})
 	if group.Spec.PDRuntime != nil {
 		// Mooncake opens bidirectional runtime side channels on dynamic ports
 		// after bootstrap. Restrict them to the same controller-owned P/D linked processing unit.
@@ -546,6 +558,7 @@ func modelGroupDeploymentAvailable(deployment *appsv1.Deployment) bool {
 	return false
 }
 
+// updateStatus projects workload availability and scheduler capacity into ModelGroup status.
 func (reconciler *ModelGroupReconciler) updateStatus(ctx context.Context, group *inferencev1alpha1.ModelGroup, state modelGroupStatusState) error {
 	base := group.DeepCopy()
 	group.Status.Phase = state.phase

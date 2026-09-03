@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
+from evalscope.perf.multi_turn_args import IntOrRange
+
 
 @dataclass
 class EndpointConfig:
@@ -26,79 +28,35 @@ class EndpointConfig:
 class LoadConfig:
     """Concurrency, request count, arrival rate, and open/closed loop."""
 
-    parallel: list[int] = field(default_factory=lambda: [1])
-    number: list[int] = field(default_factory=lambda: [100])
-    # -1 = no pacing; >0 = Poisson pacing. Open-loop needs open_loop=True.
-    rate: list[float] = field(default_factory=lambda: [-1.0])
+    parallel: int = 1
+    number: int = 100
+    # -1 = as fast as possible; >0 = Poisson arrivals.
+    rate: float = -1.0
     open_loop: bool = False
 
-    @property
-    def is_sweep(self) -> bool:
-        return len(self.parallel) > 1 or len(self.number) > 1 or len(self.rate) > 1
-
-    def sweep_points(self) -> list[tuple[int, int, float]]:
-        """``(parallel, number, rate)`` triples for each load point."""
-        if len(self.rate) > 1:
-            if len(self.number) == len(self.rate):
-                return [
-                    (self.parallel[0], number, float(rate))
-                    for number, rate in zip(self.number, self.rate)
-                ]
-            return [
-                (self.parallel[0], self.number[0], float(rate))
-                for rate in self.rate
-            ]
-        if len(self.parallel) > 1:
-            if len(self.number) == len(self.parallel):
-                return [
-                    (parallel, number, float(self.rate[0]))
-                    for parallel, number in zip(self.parallel, self.number)
-                ]
-            return [
-                (parallel, self.number[0], float(self.rate[0]))
-                for parallel in self.parallel
-            ]
-        if len(self.number) > 1:
-            return [
-                (self.parallel[0], number, float(self.rate[0]))
-                for number in self.number
-            ]
-        return [(self.parallel[0], self.number[0], float(self.rate[0]))]
+    @staticmethod
+    def validate_point(*, parallel: int, rate: float) -> None:
+        """Reject load points that would hang or silently drop pacing."""
+        if parallel < 1:
+            raise ValueError(f"--parallel must be >= 1; got {parallel}")
+        rate_value = float(rate)
+        if rate_value != -1 and rate_value <= 0:
+            raise ValueError(
+                f"--rate must be -1 (send as fast as possible) or > 0; got {rate}"
+            )
 
     def validate(self) -> None:
-        """Reject incompatible open-loop / multi-list sweep combinations."""
-        if self.open_loop and len(self.parallel) > 1:
-            raise ValueError(
-                "--open-loop uses unlimited concurrency; do not "
-                "combine with a multi-value --parallel list. Use a "
-                "single --parallel or sweep --number / --rate instead."
-            )
-        if len(self.rate) > 1 and len(self.parallel) > 1:
-            raise ValueError(
-                "Cannot sweep both --rate and --parallel at once; "
-                "pass one multi-value list at a time."
-            )
-        if len(self.rate) > 1 and len(self.number) > 1:
-            if len(self.number) != len(self.rate):
-                raise ValueError(
-                    "--number list must match --rate length when both "
-                    f"are multi-value; got number={len(self.number)}, "
-                    f"rate={len(self.rate)}."
-                )
-        elif len(self.parallel) > 1 and len(self.number) > 1:
-            if len(self.number) != len(self.parallel):
-                raise ValueError(
-                    "--number list must match --parallel length when both "
-                    f"are multi-value; got number={len(self.number)}, "
-                    f"parallel={len(self.parallel)}."
-                )
+        """Validate load settings."""
+        self.validate_point(parallel=int(self.parallel), rate=float(self.rate))
+        if self.number < 1:
+            raise ValueError(f"--number must be >= 1, got {self.number}")
 
 
 @dataclass
 class GenerationConfig:
     """Sampling and generation parameters for each request."""
 
-    max_tokens: int = 128
+    max_tokens: IntOrRange = 128
     stream: bool = True
     top_p: Optional[float] = None
     top_k: Optional[int] = None
@@ -143,25 +101,36 @@ class DatasetConfig:
     ``dataset`` is a list of unified source selectors:
     - ``random``: synthetic prompts (requires ``tokenizer_path``; alone only)
     - local JSONL path: one messages/prompt object per line
-    - HuggingFace id: ``org/name:split`` (same row shape; split required,
-      and may be a non-standard split/config name)
+    - Hugging Face id: ``org/name:split`` (split required)
+    - Hugging Face file URI: ``hf://datasets/{repo}[@{revision}]/{path}``
+      (cached via Hub, then read as JSONL)
 
     Multiple JSONL/HF sources run sequentially; ``LoadConfig.number`` is the
     total request count across all of them.
+
+    ``trace_path`` supplies a timestamped replay schedule. Trace payloads come
+    from exactly one ``dataset`` source.
     """
 
     dataset: list[str] = field(default_factory=list)
     dataset_offset: int = 0
     tokenizer_path: str = ""
+    random_seed: int = 0
     min_prompt_length: int = 0
     max_prompt_length: int = 131072
     prefix_length: int = 0
     apply_chat_template: Optional[bool] = None
     prompt: str = ""
     max_turns: Optional[int] = None
+    trace_path: str = ""
+    trace_start: float = 0.0
+    trace_duration: Optional[float] = None
+    trace_max_concurrency: Optional[int] = None
+    trace_synthetic_prefix_reuse: bool = False
 
     @property
     def is_multi(self) -> bool:
+        """Return whether the workload declares more than one payload source."""
         return len(self.dataset) > 1
 
     def resolve_apply_chat_template(self, url: str) -> bool:
@@ -174,10 +143,9 @@ class DatasetConfig:
 class OutputConfig:
     """Result destinations, location, and analysis knobs."""
 
-    destinations: tuple[str, ...] = ()
+    destinations: tuple[str, ...] = ("local", "wandb")
     output_dir: str = "results"
     gpu_count: int = 1
-    eval_suite: str = "none"
     sla_auto_tune: bool = False
 
     def includes(self, destination: str) -> bool:
@@ -189,6 +157,8 @@ class OutputConfig:
         if unknown:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"unknown --output destination: {names}")
+        if self.gpu_count < 1:
+            raise ValueError(f"gpu_count must be >= 1, got {self.gpu_count}")
 
 
 @dataclass
@@ -201,28 +171,13 @@ class WandbConfig:
 
 
 @dataclass
-class EngineMetricsConfig:
-    """Engine Prometheus ``/metrics`` collection."""
-
-    collect: bool = True
-    url: str = ""
-    interval: float = 1.0
-
-
-@dataclass
 class ParamSweepConfig:
-    """Serve × bench parameter product sweep."""
+    """Bench-params JSONL sweep for a Foretoken Kustomize deployment."""
 
-    serve_params: str = ""
     bench_params: str = ""
-    link_vars: str = ""
     num_runs: int = 1
     dry_run: bool = False
     experiment_name: str = ""
-
-    @property
-    def enabled(self) -> bool:
-        return bool(self.serve_params or self.bench_params)
 
 
 @dataclass
@@ -235,7 +190,6 @@ class BenchConfig:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
-    engine: EngineMetricsConfig = field(default_factory=EngineMetricsConfig)
     param_sweep: ParamSweepConfig = field(default_factory=ParamSweepConfig)
 
     def validate(self) -> None:
@@ -243,11 +197,66 @@ class BenchConfig:
         self.load.validate()
         self.output.validate()
         dataset = self.dataset
-        if not dataset.prompt and not dataset.dataset:
+        has_trace = bool(dataset.trace_path)
+        if not has_trace and not dataset.prompt and not dataset.dataset:
             raise ValueError(
                 "No workload source. Pass --prompt or --dataset "
-                "(random | local JSONL path | HuggingFace id)."
+                "(random | local JSONL | org/name:split | "
+                "hf://datasets/...)."
             )
+        if self.param_sweep.bench_params and dataset.is_multi:
+            raise ValueError(
+                "--bench-params cannot be combined with multiple --dataset sources"
+            )
+        if dataset.trace_synthetic_prefix_reuse and not has_trace:
+            raise ValueError("--trace-synthetic-prefix-reuse requires --trace")
+        if has_trace:
+            from benchmarks.workload.hf_dataset import same_dataset_source
+
+            if self.param_sweep.bench_params:
+                raise ValueError("--trace cannot be combined with --bench-params")
+            if dataset.prompt:
+                raise ValueError(
+                    "--trace requires --dataset; fixed --prompt payloads are "
+                    "not supported"
+                )
+            if len(dataset.dataset) != 1:
+                raise ValueError("--trace requires exactly one --dataset source")
+            if dataset.trace_start < 0:
+                raise ValueError("--trace-start must be >= 0")
+            if dataset.trace_duration is not None and dataset.trace_duration <= 0:
+                raise ValueError("--trace-duration must be > 0")
+            if (
+                dataset.trace_max_concurrency is not None
+                and dataset.trace_max_concurrency <= 0
+            ):
+                raise ValueError("--trace-max-concurrency must be > 0")
+            if self.load.open_loop or self.load.rate != -1:
+                raise ValueError(
+                    "--trace uses record timestamps; omit --rate and --open-loop"
+                )
+            if self.load.parallel != 1 or self.load.number != 100:
+                raise ValueError(
+                    "--trace replays the selected trace window; use "
+                    "--trace-max-concurrency instead of --parallel/--number"
+                )
+            if (
+                same_dataset_source(dataset.dataset[0], dataset.trace_path)
+                and dataset.dataset_offset
+            ):
+                raise ValueError(
+                    "--dataset-offset is not supported when --trace and "
+                    "--dataset use the same source"
+                )
+            if dataset.trace_synthetic_prefix_reuse:
+                if dataset.dataset != ["random"]:
+                    raise ValueError(
+                        "--trace-synthetic-prefix-reuse requires --dataset random"
+                    )
+                if dataset.prefix_length:
+                    raise ValueError(
+                        "--trace-synthetic-prefix-reuse cannot use --prefix-length"
+                    )
         if dataset.prompt and dataset.is_multi:
             raise ValueError(
                 "--prompt cannot be combined with multiple --dataset values"
@@ -260,6 +269,8 @@ class BenchConfig:
             raise ValueError(
                 "--tokenizer-path is required when --dataset random"
             )
+        if not 0 <= dataset.random_seed <= 0xFFFFFFFF:
+            raise ValueError("--random-seed must be between 0 and 4294967295")
         if (
             dataset.dataset == ["random"]
             and dataset.max_prompt_length < dataset.min_prompt_length
@@ -271,7 +282,11 @@ class BenchConfig:
     def summary(self) -> str:
         """Human-readable config banner for the console."""
         dataset = self.dataset
-        if dataset.prompt:
+        if dataset.trace_path:
+            dataset_label = (
+                f"trace={dataset.trace_path}, payload={dataset.dataset[0]}"
+            )
+        elif dataset.prompt:
             dataset_label = "prompt=<fixed>"
         elif dataset.dataset == ["random"]:
             dataset_label = (
@@ -283,38 +298,56 @@ class BenchConfig:
         elif dataset.is_multi:
             dataset_label = f"{dataset.dataset} (total number across all)"
         else:
-            dataset_label = (
-                dataset.dataset[0] if dataset.dataset else "<none>"
-            )
-        open_loop = self.load.open_loop
-        if open_loop:
-            parallel_label = "unlimited (open-loop)"
-        else:
-            parallel_label = str(self.load.parallel)
+            dataset_label = dataset.dataset[0] if dataset.dataset else "<none>"
 
-        if len(self.load.rate) == 1:
-            rate = float(self.load.rate[0])
+        if dataset.trace_path:
+            parallel_line = ""
+            number_label = "trace-driven"
+            rate_label = "trace timestamps"
+            open_loop_line = ""
+            duration = (
+                "until end"
+                if dataset.trace_duration is None
+                else f"{dataset.trace_duration:g}s"
+            )
+            trace_lines = (
+                f"  Trace Window: start={dataset.trace_start:g}s, "
+                f"duration={duration}\n"
+                "  Trace concurrency: "
+                f"{dataset.trace_max_concurrency or 'no limit'}\n"
+            )
+            if dataset.trace_synthetic_prefix_reuse:
+                trace_lines += "  Trace Prefix: synthetic hash-id blocks\n"
+        else:
+            open_loop = self.load.open_loop
+            parallel_label = (
+                "no concurrency limit"
+                if open_loop
+                else str(self.load.parallel)
+            )
+            parallel_line = f"  Concurrency: {parallel_label}\n"
+            number_label = str(self.load.number)
+            rate = float(self.load.rate)
             if rate > 0:
                 mode = "open-loop" if open_loop else "closed-loop"
-                rate_label = f"{rate:g} req/s ({mode}, Poisson pacing)"
+                rate_label = f"{rate:g} req/s ({mode}, Poisson arrivals)"
             else:
-                rate_label = "INF (no pacing)"
-        else:
-            rate_label = str(self.load.rate)
+                rate_label = "no rate limit"
+            open_loop_line = f"  Open-loop  : {open_loop}\n"
+            trace_lines = ""
 
         return (
-            "\n============================================\n"
-            " Foretoken Benchmark\n"
-            "============================================\n"
-            f"Configuration:\n"
+            "\n===== Foretoken Benchmark Configuration ====\n"
             f"  URL        : {self.endpoint.url}\n"
             f"  Model      : {self.endpoint.model}\n"
-            f"  Parallel   : {parallel_label}\n"
-            f"  Number     : {self.load.number}\n"
-            f"  Rate       : {rate_label}\n"
-            f"  Open Loop  : {open_loop}\n"
+            f"{parallel_line}"
+            f"  Requests   : {number_label}\n"
+            f"  Arrival rate: {rate_label}\n"
+            f"{open_loop_line}"
             f"  Stream     : {self.generation.stream}\n"
             f"  Dataset    : {dataset_label}\n"
+            f"{trace_lines}"
+            "============================================\n"
         )
 
     def to_dict(self) -> dict[str, Any]:

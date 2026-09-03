@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// TestModelGroupWorkloadContract protects Deployment, Service, networking, and role-specific ModelGroup materialization.
 func TestModelGroupWorkloadContract(t *testing.T) {
 	ctx := context.Background()
 	t.Run("aggregate workload owns isolated serving resources", func(t *testing.T) {
@@ -43,12 +44,16 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 			t.Fatalf("model-server image pull secrets = %#v", pod.ImagePullSecrets)
 		}
 		serviceObject := get(t, ctx, c, request.NamespacedName, new(corev1.Service))
-		if !metav1.IsControlledBy(serviceObject, group) || serviceObject.Spec.Selector["inference.foretoken.io/model-group"] != group.Name {
+		if !metav1.IsControlledBy(serviceObject, group) || serviceObject.Spec.Selector["inference.foretoken.io/model-group"] != group.Name || len(serviceObject.Spec.Ports) != 1 || serviceObject.Spec.Ports[0].Name != "model-server" {
 			t.Fatalf("service contract = %#v", serviceObject)
 		}
 		policy := get(t, ctx, c, request.NamespacedName, new(networkingv1.NetworkPolicy))
-		if !metav1.IsControlledBy(policy, group) || len(policy.Spec.Ingress) != 1 || len(policy.Spec.Ingress[0].From) != 2 {
+		if !metav1.IsControlledBy(policy, group) || len(policy.Spec.Ingress) != 1 || len(policy.Spec.Ingress[0].From) != 3 {
 			t.Fatalf("network policy = %#v", policy.Spec)
+		}
+		metricsPeer := policy.Spec.Ingress[0].From[2]
+		if metricsPeer.NamespaceSelector == nil || metricsPeer.NamespaceSelector.MatchLabels["inference.foretoken.io/metrics-scraper"] != "true" {
+			t.Fatalf("metrics peer = %#v", metricsPeer)
 		}
 		current := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelGroup))
 		if condition := meta.FindStatusCondition(current.Status.Conditions, "WorkloadMaterialized"); condition == nil || condition.Status != metav1.ConditionTrue {

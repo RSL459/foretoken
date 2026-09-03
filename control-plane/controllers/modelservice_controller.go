@@ -11,10 +11,10 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sync"
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
@@ -34,24 +34,30 @@ const (
 	conditionIntentCompiled    = "IntentCompiled"
 	conditionPoolsMaterialized = "PoolsMaterialized"
 	conditionReady             = "Ready"
-	maxDesiredGroups           = int32(1<<31 - 1)
+	maxDesiredReplicas         = int32(1<<31 - 1)
 	defaultScalingPollInterval = 5 * time.Second
-	defaultMetricsMaxAge       = 15 * time.Second
 )
 
-var defaultAutoscaler = autoscaling.Manual()
-
-// PoolMetricsProvider supplies one read-only, target-attributed demand observation.
-// Implementations must not modify Kubernetes resources or autoscaling algorithms.
-type PoolMetricsProvider interface {
-	Observation(context.Context, core.TargetID) (core.DemandObservation, error)
+// ScalingMetricsProvider supplies one read-only, target-attributed metrics snapshot.
+// Implementations collect metrics without mutating Kubernetes resources or autoscaling state.
+type ScalingMetricsProvider interface {
+	Snapshot(context.Context, core.TargetID) (core.MetricsSnapshot, error)
 }
 
 // ModelServiceReconciler compiles ModelService intent and owns ModelPool specs.
 type ModelServiceReconciler struct {
 	client.Client
-	Autoscaler          *autoscaling.Autoscaler
-	PoolMetricsProvider PoolMetricsProvider
+	MetricsProvider ScalingMetricsProvider
+
+	recommendationHistoryOnce sync.Once
+	recommendationHistory     *core.RecommendationHistory
+}
+
+func (reconciler *ModelServiceReconciler) autoscalingRecommendationHistory() *core.RecommendationHistory {
+	reconciler.recommendationHistoryOnce.Do(func() {
+		reconciler.recommendationHistory = core.NewRecommendationHistory()
+	})
+	return reconciler.recommendationHistory
 }
 
 // SetupWithManager registers the ModelService controller and its owned resources.
@@ -135,11 +141,12 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 		return ctrl.Result{}, err
 	}
 	if scaling.Autoscaler.Automatic() {
-		return ctrl.Result{RequeueAfter: scaling.TriggerInterval}, nil
+		return ctrl.Result{RequeueAfter: scaling.PollingInterval}, nil
 	}
 	return ctrl.Result{}, nil
 }
 
+// reconcilePools converges compiled ModelPool contracts and retains service-selected serving pools.
 func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) error {
 	owned, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
@@ -207,6 +214,7 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 	return nil
 }
 
+// commitServingGeneration atomically selects only fully prepared ModelPool revisions for frontend routing.
 func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, error) {
 	// Keep routing on the last complete cohort until every nonzero Pool has prepared a
 	// compatible revision. The final status patch is the service-level atomic commit point.
@@ -281,6 +289,7 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 	return true, nil
 }
 
+// serviceReadiness verifies that the selected serving generation remains routable.
 func (reconciler *ModelServiceReconciler) serviceReadiness(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, string, string, error) {
 	pools, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
@@ -386,6 +395,7 @@ func modelPoolTransitioning(pool *inferencev1alpha1.ModelPool) bool {
 	return condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == pool.Generation
 }
 
+// reconcileDelete removes owned ModelPools before releasing the ModelService finalizer.
 func (reconciler *ModelServiceReconciler) reconcileDelete(ctx context.Context, service *inferencev1alpha1.ModelService) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(service, modelServiceFinalizer) {
 		return ctrl.Result{}, nil
@@ -411,6 +421,7 @@ func (reconciler *ModelServiceReconciler) reconcileDelete(ctx context.Context, s
 	return ctrl.Result{}, nil
 }
 
+// ownedPools returns ModelPools whose reference and controller owner both identify the ModelService.
 func (reconciler *ModelServiceReconciler) ownedPools(ctx context.Context, service *inferencev1alpha1.ModelService) ([]inferencev1alpha1.ModelPool, error) {
 	var list inferencev1alpha1.ModelPoolList
 	if err := reconciler.List(ctx, &list, client.InNamespace(service.Namespace)); err != nil {
@@ -444,6 +455,7 @@ type modelServiceState struct {
 	autoscaling *[]inferencev1alpha1.AutoscalingTargetStatus
 }
 
+// updateStatus publishes compilation, pool, readiness, and autoscaling results for the ModelService.
 func (reconciler *ModelServiceReconciler) updateStatus(ctx context.Context, service *inferencev1alpha1.ModelService, state modelServiceState) error {
 	base := service.DeepCopy()
 	service.Status.ObservedGeneration = service.Generation
@@ -502,6 +514,7 @@ func modelServicePoolStore(service *inferencev1alpha1.ModelService, name string)
 	return nil
 }
 
+// modelServicesForKVService maps a KVService update to ModelServices that reference it.
 func (reconciler *ModelServiceReconciler) modelServicesForKVService(ctx context.Context, object client.Object) []reconcile.Request {
 	var services inferencev1alpha1.ModelServiceList
 	if err := reconciler.List(ctx, &services, client.InNamespace(object.GetNamespace())); err != nil {

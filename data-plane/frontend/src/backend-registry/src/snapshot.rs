@@ -32,8 +32,6 @@ pub struct SnapshotModel {
     pub tokenizer_revision: String,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
-    #[serde(default)]
-    pub max_input_tokens: Option<usize>,
     pub admission_target_sets: Vec<RouteTargetSet>,
 }
 
@@ -150,6 +148,9 @@ pub struct ModelIdentity {
     pub capabilities: BTreeSet<String>,
 }
 impl ServingSnapshot {
+    /// Returns each model's deterministically ordered, controller-owned admission target sets.
+    ///
+    /// Registry projection consumes these sets to attribute request admission; malformed or conflicting ownership is rejected.
     // Prefer the controller-projected logical targets in `models`. Model-less snapshots fall
     // back to topology-derived targets, then all sets are ordered and deduplicated consistently.
     pub fn admission_target_sets(
@@ -225,6 +226,9 @@ impl ServingSnapshot {
         Ok(targets)
     }
 
+    /// Returns the consistent model identity declared across all snapshot topology records.
+    ///
+    /// Registry projection uses this validation before materializing routes; the returned map is derived for the caller.
     pub fn model_identities(&self) -> Result<BTreeMap<String, ModelIdentity>, SnapshotError> {
         let mut identities = BTreeMap::new();
         for (model, revision, tokenizer, tokenizer_revision, capabilities) in self
@@ -295,8 +299,6 @@ impl ServingSnapshot {
 }
 #[derive(Debug, Error)]
 pub enum SnapshotError {
-    #[error("routing snapshot is not valid JSON: {0}")]
-    Parse(serde_json::Error),
     #[error("routing snapshot version must be greater than zero")]
     InvalidVersion,
     #[error("routing snapshot has an incomplete model or tokenizer identity")]
@@ -325,12 +327,8 @@ pub enum SnapshotError {
     ConflictingIdentity(String),
     #[error("routing snapshot endpoint {endpoint:?} is invalid: {message}")]
     InvalidEndpoint { endpoint: String, message: String },
-    #[error("routing snapshot component {0:?} has conflicting KV index endpoint or scope")]
-    ConflictingKvEventSource(String),
     #[error("routing snapshot has incomplete E/P/D component {0:?}")]
     IncompleteEpdComponent(RouteTargetId),
-    #[error("routing snapshot E/P/D component {0:?} has an invalid EC or KV transfer contract")]
-    InvalidEpdTransferContract(RouteTargetId),
     #[error(
         "routing configuration E/P/D linked processing unit {0:?} is incomplete, inconsistent, or not a static triplet"
     )]
