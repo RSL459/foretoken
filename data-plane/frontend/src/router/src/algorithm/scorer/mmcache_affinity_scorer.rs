@@ -38,11 +38,7 @@ impl MmcacheAffinityScorer {
     ///
     /// Multimodal requests are more sensitive to cache exhaustion than text requests because they
     /// cannot fall back on prefix reuse, so the penalty escalates faster beyond 80% utilization.
-    fn mm_cache_pressure_penalty(
-        &self,
-        candidate: &RouteCandidate,
-        is_multimodal: bool,
-    ) -> i64 {
+    fn mm_cache_pressure_penalty(&self, candidate: &RouteCandidate, is_multimodal: bool) -> i64 {
         if !is_multimodal {
             return 0;
         }

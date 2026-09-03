@@ -3,21 +3,21 @@
 
 //! Candidate scoring and Scorer implementations.
 
-mod kv_least_loaded_scorer;
-mod least_loaded_scorer;
-mod uniform_scorer;
-mod session_aware_scorer;
-mod latency_aware_scorer;
-mod sequence_length_aware_scorer;
+mod capacity_aware_scorer;
 mod kv_cache_utilization_scorer;
+mod kv_least_loaded_scorer;
+mod latency_aware_scorer;
+mod least_loaded_scorer;
 mod lora_aware_scorer;
 mod mmcache_affinity_scorer;
+mod prefix_decay_scorer;
 mod prefix_scorer;
 mod queue_depth_scorer;
 mod running_request_scorer;
-mod capacity_aware_scorer;
-mod prefix_decay_scorer;
+mod sequence_length_aware_scorer;
+mod session_aware_scorer;
 mod throughput_aware_scorer;
+mod uniform_scorer;
 mod weighted_sum_scorer;
 
 use std::collections::BTreeMap;
@@ -27,21 +27,21 @@ use foretoken_model_protocol::{KvCacheLocality, KvStorageTier, ModelServerRole};
 
 use crate::{RouteCandidate, RouteScore, RouterRequest};
 
-pub use kv_least_loaded_scorer::KvLeastLoadedScorer;
-pub use least_loaded_scorer::LeastLoadedScorer;
-pub use session_aware_scorer::SessionAwareScorer;
-pub use uniform_scorer::UniformScorer;
-pub use latency_aware_scorer::LatencyAwareScorer;
-pub use sequence_length_aware_scorer::SequenceLengthAwareScorer;
+pub use capacity_aware_scorer::CapacityAwareScorer;
 pub use kv_cache_utilization_scorer::KvCacheUtilizationScorer;
+pub use kv_least_loaded_scorer::KvLeastLoadedScorer;
+pub use latency_aware_scorer::LatencyAwareScorer;
+pub use least_loaded_scorer::LeastLoadedScorer;
 pub use lora_aware_scorer::LoraAwareScorer;
 pub use mmcache_affinity_scorer::MmcacheAffinityScorer;
+pub use prefix_decay_scorer::PrefixDecayScorer;
 pub use prefix_scorer::PrefixScorer;
 pub use queue_depth_scorer::QueueDepthScorer;
 pub use running_request_scorer::RunningRequestScorer;
-pub use capacity_aware_scorer::CapacityAwareScorer;
-pub use prefix_decay_scorer::PrefixDecayScorer;
+pub use sequence_length_aware_scorer::SequenceLengthAwareScorer;
+pub use session_aware_scorer::SessionAwareScorer;
 pub use throughput_aware_scorer::ThroughputAwareScorer;
+pub use uniform_scorer::UniformScorer;
 pub use weighted_sum_scorer::WeightedSumScorer;
 
 /// Scores the complete filtered compatible, healthy route target snapshot for one routing round.

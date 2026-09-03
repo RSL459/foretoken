@@ -74,7 +74,9 @@ impl RouteScorer for ThroughputAwareScorer {
                     0
                 };
 
-                let total_penalty = self.throughput_penalty(candidate).saturating_add(downstream);
+                let total_penalty = self
+                    .throughput_penalty(candidate)
+                    .saturating_add(downstream);
 
                 RouteScore {
                     matched_tokens: tokens,

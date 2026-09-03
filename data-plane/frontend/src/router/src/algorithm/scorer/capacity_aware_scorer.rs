@@ -73,7 +73,9 @@ impl RouteScorer for CapacityAwareScorer {
                     0
                 };
 
-                let headroom = self.remaining_capacity(candidate).saturating_sub(downstream);
+                let headroom = self
+                    .remaining_capacity(candidate)
+                    .saturating_sub(downstream);
 
                 RouteScore {
                     matched_tokens: tokens,

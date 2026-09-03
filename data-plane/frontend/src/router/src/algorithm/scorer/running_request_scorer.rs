@@ -64,9 +64,7 @@ impl RouteScorer for RunningRequestScorer {
                     0
                 };
 
-                let total_running = self
-                    .running_requests(candidate)
-                    .saturating_add(downstream);
+                let total_running = self.running_requests(candidate).saturating_add(downstream);
 
                 RouteScore {
                     matched_tokens: tokens,

@@ -85,13 +85,21 @@ fn candidate(id: &str, role: ModelServerRole, stats: RouteTargetStats) -> RouteC
 #[test]
 fn prefix_decay_reduces_a_saturated_candidates_cache_credit() {
     let candidates = vec![
-        candidate("busy", ModelServerRole::Aggregate, target_stats(|stats| {
-            stats.running_requests = 8;
-            stats.max_concurrent_requests = 8;
-        })),
-        candidate("idle", ModelServerRole::Aggregate, target_stats(|stats| {
-            stats.max_concurrent_requests = 8;
-        })),
+        candidate(
+            "busy",
+            ModelServerRole::Aggregate,
+            target_stats(|stats| {
+                stats.running_requests = 8;
+                stats.max_concurrent_requests = 8;
+            }),
+        ),
+        candidate(
+            "idle",
+            ModelServerRole::Aggregate,
+            target_stats(|stats| {
+                stats.max_concurrent_requests = 8;
+            }),
+        ),
     ];
     let scored = PrefixDecayScorer.score(&request(), &candidates, &Facts, &mut ());
 
@@ -106,14 +114,22 @@ fn prefix_decay_reduces_a_saturated_candidates_cache_credit() {
 #[test]
 fn throughput_aware_prefers_higher_observed_throughput() {
     let candidates = vec![
-        candidate("slow", ModelServerRole::Aggregate, target_stats(|stats| {
-            stats.prompt_tokens_per_second = Some(5.0);
-            stats.generation_tokens_per_second = Some(5.0);
-        })),
-        candidate("fast", ModelServerRole::Aggregate, target_stats(|stats| {
-            stats.prompt_tokens_per_second = Some(500.0);
-            stats.generation_tokens_per_second = Some(500.0);
-        })),
+        candidate(
+            "slow",
+            ModelServerRole::Aggregate,
+            target_stats(|stats| {
+                stats.prompt_tokens_per_second = Some(5.0);
+                stats.generation_tokens_per_second = Some(5.0);
+            }),
+        ),
+        candidate(
+            "fast",
+            ModelServerRole::Aggregate,
+            target_stats(|stats| {
+                stats.prompt_tokens_per_second = Some(500.0);
+                stats.generation_tokens_per_second = Some(500.0);
+            }),
+        ),
     ];
     let scored = ThroughputAwareScorer.score(&request(), &candidates, &Facts, &mut ());
 
@@ -124,24 +140,32 @@ fn throughput_aware_prefers_higher_observed_throughput() {
 fn weighted_sum_trades_load_against_latency() {
     let candidates = vec![
         // More loaded but far lower latency: the weighted composite still prefers it.
-        candidate("busy-fast", ModelServerRole::Aggregate, target_stats(|stats| {
-            stats.running_requests = 4;
-            stats.max_concurrent_requests = 8;
-            stats.e2e_latency = Some(RouteTargetLatencyStats {
-                samples: 1,
-                average_ms: 100.0,
-                p95_ms: None,
-            });
-        })),
+        candidate(
+            "busy-fast",
+            ModelServerRole::Aggregate,
+            target_stats(|stats| {
+                stats.running_requests = 4;
+                stats.max_concurrent_requests = 8;
+                stats.e2e_latency = Some(RouteTargetLatencyStats {
+                    samples: 1,
+                    average_ms: 100.0,
+                    p95_ms: None,
+                });
+            }),
+        ),
         // Idle but very high latency.
-        candidate("idle-slow", ModelServerRole::Aggregate, target_stats(|stats| {
-            stats.max_concurrent_requests = 8;
-            stats.e2e_latency = Some(RouteTargetLatencyStats {
-                samples: 1,
-                average_ms: 10_000.0,
-                p95_ms: None,
-            });
-        })),
+        candidate(
+            "idle-slow",
+            ModelServerRole::Aggregate,
+            target_stats(|stats| {
+                stats.max_concurrent_requests = 8;
+                stats.e2e_latency = Some(RouteTargetLatencyStats {
+                    samples: 1,
+                    average_ms: 10_000.0,
+                    p95_ms: None,
+                });
+            }),
+        ),
     ];
     let scored = WeightedSumScorer.score(&request(), &candidates, &Facts, &mut ());
 

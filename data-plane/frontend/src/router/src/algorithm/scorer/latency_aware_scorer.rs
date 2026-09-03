@@ -56,7 +56,8 @@ impl LatencyAwareScorer {
                     .unwrap_or(0);
 
                 let processing_ms = if ttft_ms > 0 || tpot_ms > 0 {
-                    ttft_ms.saturating_add(tpot_ms.saturating_mul(i64::from(request.max_new_tokens())))
+                    ttft_ms
+                        .saturating_add(tpot_ms.saturating_mul(i64::from(request.max_new_tokens())))
                 } else {
                     stats
                         .e2e_latency
@@ -102,8 +103,7 @@ impl RouteScorer for LatencyAwareScorer {
                     0
                 };
 
-                let total_estimated_latency =
-                    candidate_latency.saturating_add(downstream_load);
+                let total_estimated_latency = candidate_latency.saturating_add(downstream_load);
 
                 // Negate latency score because Picker ranks higher scores as better candidate choices
                 RouteScore {
