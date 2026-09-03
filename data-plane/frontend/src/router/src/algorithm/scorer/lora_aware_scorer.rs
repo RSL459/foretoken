@@ -15,7 +15,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "lora_aware",
-        factory: || Arc::new(LoraAwareScorer::default()),
+        factory: || Arc::new(LoraAwareScorer),
     }
 }
 

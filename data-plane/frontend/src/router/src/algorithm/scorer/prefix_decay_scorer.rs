@@ -14,7 +14,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "prefix_decay",
-        factory: || Arc::new(PrefixDecayScorer::default()),
+        factory: || Arc::new(PrefixDecayScorer),
     }
 }
 

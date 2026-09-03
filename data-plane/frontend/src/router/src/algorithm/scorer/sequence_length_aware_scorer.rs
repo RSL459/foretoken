@@ -15,7 +15,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "sequence_length_aware",
-        factory: || Arc::new(SequenceLengthAwareScorer::default()),
+        factory: || Arc::new(SequenceLengthAwareScorer),
     }
 }
 

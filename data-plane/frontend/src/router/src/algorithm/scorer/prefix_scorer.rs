@@ -13,7 +13,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "prefix",
-        factory: || Arc::new(PrefixScorer::default()),
+        factory: || Arc::new(PrefixScorer),
     }
 }
 

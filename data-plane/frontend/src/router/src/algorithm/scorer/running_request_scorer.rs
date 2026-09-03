@@ -14,7 +14,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "running_request",
-        factory: || Arc::new(RunningRequestScorer::default()),
+        factory: || Arc::new(RunningRequestScorer),
     }
 }
 

@@ -14,7 +14,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "queue_depth",
-        factory: || Arc::new(QueueDepthScorer::default()),
+        factory: || Arc::new(QueueDepthScorer),
     }
 }
 

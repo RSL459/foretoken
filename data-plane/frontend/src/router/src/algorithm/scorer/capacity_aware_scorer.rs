@@ -14,7 +14,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "capacity_aware",
-        factory: || Arc::new(CapacityAwareScorer::default()),
+        factory: || Arc::new(CapacityAwareScorer),
     }
 }
 

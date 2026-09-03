@@ -14,7 +14,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "weighted_sum",
-        factory: || Arc::new(WeightedSumScorer::default()),
+        factory: || Arc::new(WeightedSumScorer),
     }
 }
 

@@ -14,7 +14,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "session_aware",
-        factory: || Arc::new(SessionAwareScorer::default()),
+        factory: || Arc::new(SessionAwareScorer),
     }
 }
 

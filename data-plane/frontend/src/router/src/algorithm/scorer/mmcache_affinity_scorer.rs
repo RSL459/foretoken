@@ -14,7 +14,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "mmcache_affinity",
-        factory: || Arc::new(MmcacheAffinityScorer::default()),
+        factory: || Arc::new(MmcacheAffinityScorer),
     }
 }
 

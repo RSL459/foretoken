@@ -15,7 +15,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "kv_cache_utilization",
-        factory: || Arc::new(KvCacheUtilizationScorer::default()),
+        factory: || Arc::new(KvCacheUtilizationScorer),
     }
 }
 

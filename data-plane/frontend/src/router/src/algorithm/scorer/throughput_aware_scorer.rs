@@ -14,7 +14,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "throughput_aware",
-        factory: || Arc::new(ThroughputAwareScorer::default()),
+        factory: || Arc::new(ThroughputAwareScorer),
     }
 }
 

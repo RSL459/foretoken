@@ -14,7 +14,7 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescri
 inventory::submit! {
     ScorerDescriptor {
         name: "latency_aware",
-        factory: || Arc::new(LatencyAwareScorer::default()),
+        factory: || Arc::new(LatencyAwareScorer),
     }
 }
 
