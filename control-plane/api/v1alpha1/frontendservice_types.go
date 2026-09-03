@@ -25,7 +25,7 @@ type FrontendTimeouts struct {
 type RouterFilterAlgorithm string
 
 // RouterScorerAlgorithm identifies a compiled Router Scorer.
-// +kubebuilder:validation:Enum=uniform;least_loaded;kv_least_loaded
+// +kubebuilder:validation:Enum=uniform;least_loaded;kv_least_loaded;prefix
 type RouterScorerAlgorithm string
 
 // RouterPickerAlgorithm identifies a compiled Router Picker.
@@ -38,6 +38,7 @@ const (
 	RouterScorerUniform       RouterScorerAlgorithm = "uniform"
 	RouterScorerLeastLoaded   RouterScorerAlgorithm = "least_loaded"
 	RouterScorerKVLeastLoaded RouterScorerAlgorithm = "kv_least_loaded"
+	RouterScorerPrefix        RouterScorerAlgorithm = "prefix"
 
 	RouterPickerMax        RouterPickerAlgorithm = "max"
 	RouterPickerRoundRobin RouterPickerAlgorithm = "round_robin"

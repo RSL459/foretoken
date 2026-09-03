@@ -5,17 +5,19 @@
 
 mod kv_least_loaded_scorer;
 mod least_loaded_scorer;
+mod prefix_scorer;
 mod uniform_scorer;
 
 use std::collections::BTreeMap;
 
 use foretoken_kv_indexer::KvPrefixIndexer;
-use foretoken_model_protocol::ModelServerRole;
+use foretoken_model_protocol::{KvCacheLocality, KvStorageTier, ModelServerRole};
 
 use crate::{RouteCandidate, RouteScore, RouterRequest};
 
 pub use kv_least_loaded_scorer::KvLeastLoadedScorer;
 pub use least_loaded_scorer::LeastLoadedScorer;
+pub use prefix_scorer::PrefixScorer;
 pub use uniform_scorer::UniformScorer;
 
 /// Scores the complete filtered compatible, healthy route target snapshot for one routing round.
@@ -72,4 +74,73 @@ pub(crate) fn decode_loads_by_pipeline_scope(
             .or_insert_with(|| load(candidate));
     }
     loads
+}
+
+/// Returns the best readable KV-prefix match for a prompt-consuming candidate.
+///
+/// The tuple is already converted to the lexicographic fields used by `RouteScore`:
+/// `(matched_tokens, tier_preference, locality_preference)`. Providers outside this crate are not
+/// trusted to have filtered unknown locality, so an unspecified locality is equivalent to no
+/// confirmed cache match.
+pub(crate) fn kv_prefix_best_match(
+    request: &RouterRequest,
+    candidate: &RouteCandidate,
+    kv: &dyn KvPrefixIndexer,
+) -> (i64, i8, i8) {
+    if !matches!(
+        candidate.role,
+        ModelServerRole::Aggregate | ModelServerRole::Prefill
+    ) {
+        // Decode consumes generated tokens, not the prompt KV prefix.
+        return (0, 0, 0);
+    }
+
+    let lookup = request.kv_prefix_lookup(
+        candidate.route_target_id.as_str(),
+        candidate.data_parallel_rank,
+    );
+    match lookup.map_or_else(
+        foretoken_kv_indexer::KvPrefixQueryResult::Unavailable,
+        |lookup| kv.prefix_matches(lookup),
+    ) {
+        foretoken_kv_indexer::KvPrefixQueryResult::Matches(matches) => matches
+            .into_iter()
+            .filter(|matched| matched.placement.locality != KvCacheLocality::Unspecified)
+            .max_by_key(|matched| {
+                (
+                    matched.matched_tokens,
+                    tier_preference(matched.placement.tier),
+                    locality_preference(matched.placement.locality),
+                )
+            })
+            .map(|matched| {
+                (
+                    i64::try_from(matched.matched_tokens).unwrap_or(i64::MAX),
+                    tier_preference(matched.placement.tier),
+                    locality_preference(matched.placement.locality),
+                )
+            })
+            .unwrap_or((0, 0, 0)),
+        foretoken_kv_indexer::KvPrefixQueryResult::Unavailable(_) => (0, 0, 0),
+    }
+}
+
+/// Lexicographic policy deliberately has no measured weights.
+fn tier_preference(tier: KvStorageTier) -> i8 {
+    match tier {
+        KvStorageTier::Device => 4,
+        KvStorageTier::HostPinned => 3,
+        KvStorageTier::Disk => 2,
+        KvStorageTier::External => 1,
+    }
+}
+
+/// Lexicographic policy deliberately has no measured weights.
+fn locality_preference(locality: KvCacheLocality) -> i8 {
+    match locality {
+        // The scorer filters this value before ranking; retain zero for exhaustive typed handling.
+        KvCacheLocality::Unspecified => 0,
+        KvCacheLocality::Local => 2,
+        KvCacheLocality::Remote => 1,
+    }
 }

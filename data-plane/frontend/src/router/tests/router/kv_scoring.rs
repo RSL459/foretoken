@@ -11,7 +11,7 @@ use foretoken_kv_indexer::{
     KvPrefixUnavailableReason,
 };
 use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier, ModelServerRole};
-use foretoken_router::algorithm::LeastLoadedScorer;
+use foretoken_router::algorithm::{LeastLoadedScorer, PrefixScorer};
 use foretoken_router::{
     KvLeastLoadedScorer, PipelineRouter, RouteCandidate, RouteScorer, RouteTargetId,
     RouteTargetStats, Router,
@@ -156,6 +156,21 @@ fn kv_scoring_is_prefix_tier_locality_load_and_keeps_unavailable_candidates() {
     assert_eq!(score("unspecified").matched_tokens, 0);
     assert_eq!(score("unavailable").matched_tokens, 0);
     assert_eq!(score("decode").matched_tokens, 0);
+}
+
+// Protects prefix-only routing from allowing target load to override a longer reusable prefix.
+#[test]
+fn prefix_scoring_ignores_load_after_cache_locality() {
+    let candidates = vec![
+        candidate("remote", ModelServerRole::Aggregate, 0),
+        candidate("longer-disk", ModelServerRole::Aggregate, 99),
+    ];
+
+    let scores = PrefixScorer.score(&request(), &candidates, &PrefixFacts, &mut ());
+
+    assert_eq!(scores[0].load, 0);
+    assert_eq!(scores[1].load, 0);
+    assert!(scores[1] > scores[0]);
 }
 
 // Protects prefill scoring from using Decode load in another pipeline scope.

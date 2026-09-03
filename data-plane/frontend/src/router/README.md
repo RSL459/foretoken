@@ -66,6 +66,7 @@ The system includes or plans the following compile-ready policy implementations:
   - Storage tier preference: Device (4) > HostPinned (3) > Disk (2) > External (1).
   - Physical locality preference: Local (2) > Remote (1).
   - Current load: When prefix conditions match, prefers lower overall load (including downstream Decode nodes).
+- `prefix`: Pure KV cache locality policy. Compares matched prefix length, storage tier, and physical locality in that order, and deliberately ignores route-target load.
 - `least_loaded`: Absolute low-load priority policy. Uses the larger of model-server admitted requests and vLLM scheduler running-plus-waiting requests, and automatically aggregates downstream associated loads.
 - `uniform`: Uniform scoring policy. Assigns the same score to all candidate nodes, typically paired with `round_robin` for random or round-robin routing.
 - `weighted_round_robin`: Weighted round-robin based on preset node weights (GPU compute power, VRAM size, etc.), allowing higher-performance nodes to handle more requests.

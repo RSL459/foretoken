@@ -162,6 +162,7 @@ spec:
                     - uniform
                     - least_loaded
                     - kv_least_loaded
+                    - prefix
                     type: string
                 type: object
               timeouts:

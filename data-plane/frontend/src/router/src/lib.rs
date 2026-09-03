@@ -9,7 +9,7 @@ mod request;
 mod route_target_stats;
 mod selection;
 
-pub use algorithm::{KvLeastLoadedScorer, RouteFilter, RoutePicker, RouteScorer};
+pub use algorithm::{KvLeastLoadedScorer, PrefixScorer, RouteFilter, RoutePicker, RouteScorer};
 pub use inventory::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetSet,
     ScalingTarget, ScalingTargetKind,
