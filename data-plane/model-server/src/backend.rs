@@ -350,11 +350,10 @@ impl Backend for VllmBackend {
             .expect("boundary latency metrics lock poisoned")
             .snapshot();
         let admitted_requests = self.admitted_requests.load(Ordering::Acquire);
-        let avg_sequence_length = if admitted_requests > 0 {
-            Some(self.total_sequence_length.load(Ordering::Acquire) / admitted_requests)
-        } else {
-            None
-        };
+        let avg_sequence_length = self
+            .total_sequence_length
+            .load(Ordering::Acquire)
+            .checked_div(admitted_requests);
 
         BackendTelemetry {
             running_requests: self.running_requests.load(Ordering::Acquire),
