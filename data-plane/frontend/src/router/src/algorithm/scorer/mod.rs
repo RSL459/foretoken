@@ -3,6 +3,7 @@
 
 //! Candidate scoring and Scorer implementations.
 
+mod kv_cache_utilization_scorer;
 mod kv_least_loaded_scorer;
 mod least_loaded_scorer;
 mod uniform_scorer;
@@ -14,6 +15,7 @@ use foretoken_model_protocol::ModelServerRole;
 
 use crate::{RouteCandidate, RouteScore, RouterRequest};
 
+pub use kv_cache_utilization_scorer::KvCacheUtilizationScorer;
 pub use kv_least_loaded_scorer::KvLeastLoadedScorer;
 pub use least_loaded_scorer::LeastLoadedScorer;
 pub use uniform_scorer::UniformScorer;
@@ -91,6 +93,22 @@ pub(crate) fn pipeline_sum_penalties(
     candidates: &[RouteCandidate],
     metric: impl Fn(&RouteCandidate) -> Option<i64>,
 ) -> Option<Vec<i64>> {
+    pipeline_penalties(candidates, metric, |left, right| left.saturating_add(right))
+}
+
+/// Returns the largest stage penalty on each candidate's executable pipeline.
+pub(crate) fn pipeline_max_penalties(
+    candidates: &[RouteCandidate],
+    metric: impl Fn(&RouteCandidate) -> Option<i64>,
+) -> Option<Vec<i64>> {
+    pipeline_penalties(candidates, metric, i64::max)
+}
+
+fn pipeline_penalties(
+    candidates: &[RouteCandidate],
+    metric: impl Fn(&RouteCandidate) -> Option<i64>,
+    combine: impl Fn(i64, i64) -> i64,
+) -> Option<Vec<i64>> {
     let values = candidates.iter().map(&metric).collect::<Option<Vec<_>>>()?;
     let prefill = role_min_by_pipeline_scope(candidates, ModelServerRole::Prefill, &metric)?;
     let decode = role_min_by_pipeline_scope(candidates, ModelServerRole::Decode, &metric)?;
@@ -108,10 +126,10 @@ pub(crate) fn pipeline_sum_penalties(
                     .copied()
                     .unwrap_or(0);
                 match candidate.role {
-                    ModelServerRole::Encoder => own
-                        .saturating_add(downstream_prefill)
-                        .saturating_add(downstream_decode),
-                    ModelServerRole::Prefill => own.saturating_add(downstream_decode),
+                    ModelServerRole::Encoder => {
+                        combine(combine(own, downstream_prefill), downstream_decode)
+                    }
+                    ModelServerRole::Prefill => combine(own, downstream_decode),
                     ModelServerRole::Aggregate | ModelServerRole::Decode => own,
                 }
             })
@@ -144,4 +162,13 @@ pub(crate) fn metric_score(penalty: i64) -> RouteScore {
         locality_preference: 0,
         load: penalty.saturating_neg(),
     }
+}
+
+/// Encodes a finite, non-negative floating-point penalty as a monotonic integer.
+pub(crate) fn ordered_nonnegative_f64(value: f64) -> Option<i64> {
+    if !value.is_finite() || value < 0.0 {
+        return None;
+    }
+    let normalized = if value == 0.0 { 0.0 } else { value };
+    i64::try_from(normalized.to_bits()).ok()
 }
