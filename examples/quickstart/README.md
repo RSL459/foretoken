@@ -11,21 +11,27 @@ This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica using 
 
 ## Deploy
 
-Install the Foretoken platform first, then install the CLI and deploy from the repository root:
+Install the Foretoken platform first, then run from the repository root:
 
 ```bash
-pip install -e .
-foretoken deploy examples/quickstart
-```
+kubectl apply --server-side -k examples/quickstart
 
-The command reports each service state as it changes and exits when the current configuration is ready.
+kubectl wait --for=condition=Ready \
+  --namespace foretoken-demo \
+  --timeout=6m \
+  frontendservice/quickstart-frontend \
+  modelservice/quickstart-qwen3-0.6b
+```
 
 ## Send a request
 
-Resolve the frontend URL:
+Read the `LoadBalancer` Service address:
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
+  --namespace foretoken-demo \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
+export FRONTEND_URL="http://$FRONTEND_HOST:8080"
 ```
 
 Send an OpenAI-compatible request:
@@ -45,5 +51,6 @@ printf '\n'
 ## Clean up
 
 ```bash
-foretoken delete examples/quickstart
+kubectl delete --wait=true --timeout=10m \
+  -k examples/quickstart
 ```

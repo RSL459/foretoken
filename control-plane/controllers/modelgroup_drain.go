@@ -36,13 +36,11 @@ const (
 	modelServerTelemetryVersion = 2
 )
 
-type modelServerTelemetry struct {
-	Version                  uint8   `json:"version"`
-	CollectedAtUnixMS        uint64  `json:"collected_at_unix_ms"`
-	Accepting                bool    `json:"accepting"`
-	RunningRequests          uint64  `json:"running_requests"`
-	SchedulerRunningRequests *uint64 `json:"scheduler_running_requests"`
-	SchedulerWaitingRequests *uint64 `json:"scheduler_waiting_requests"`
+type drainTelemetry struct {
+	Version               uint8  `json:"version"`
+	Accepting             bool   `json:"accepting"`
+	RunningRequests       uint64 `json:"running_requests"`
+	MaxConcurrentRequests uint64 `json:"max_concurrent_requests"`
 }
 
 type frontendDiagnostics struct {
@@ -52,7 +50,7 @@ type frontendDiagnostics struct {
 // ModelGroupDrainClient observes frontend generations and controls group-local admission.
 type ModelGroupDrainClient interface {
 	FrontendGeneration(context.Context, string) (uint64, error)
-	CloseAdmission(context.Context, string) (modelServerTelemetry, error)
+	CloseAdmission(context.Context, string) (drainTelemetry, error)
 }
 
 type httpModelGroupDrainClient struct {
@@ -88,25 +86,25 @@ func (client *httpModelGroupDrainClient) FrontendGeneration(ctx context.Context,
 }
 
 // CloseAdmission closes model-server admission and returns its current drain telemetry.
-func (client *httpModelGroupDrainClient) CloseAdmission(ctx context.Context, endpoint string) (modelServerTelemetry, error) {
+func (client *httpModelGroupDrainClient) CloseAdmission(ctx context.Context, endpoint string) (drainTelemetry, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/internal/admission/close", nil)
 	if err != nil {
-		return modelServerTelemetry{}, err
+		return drainTelemetry{}, err
 	}
 	response, err := client.client.Do(request)
 	if err != nil {
-		return modelServerTelemetry{}, err
+		return drainTelemetry{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return modelServerTelemetry{}, fmt.Errorf("admission close returned HTTP %d", response.StatusCode)
+		return drainTelemetry{}, fmt.Errorf("admission close returned HTTP %d", response.StatusCode)
 	}
-	var telemetry modelServerTelemetry
+	var telemetry drainTelemetry
 	if err := json.NewDecoder(response.Body).Decode(&telemetry); err != nil {
-		return modelServerTelemetry{}, fmt.Errorf("decode admission close response: %w", err)
+		return drainTelemetry{}, fmt.Errorf("decode admission close response: %w", err)
 	}
 	if telemetry.Version != modelServerTelemetryVersion {
-		return modelServerTelemetry{}, fmt.Errorf("unsupported model-server telemetry version %d", telemetry.Version)
+		return drainTelemetry{}, fmt.Errorf("unsupported model-server telemetry version %d", telemetry.Version)
 	}
 	return telemetry, nil
 }

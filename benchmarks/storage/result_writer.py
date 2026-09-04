@@ -28,6 +28,13 @@ class ResultWriter:
         if enabled:
             os.makedirs(self.output_dir, exist_ok=True)
 
+    def child(self, name: str) -> "ResultWriter":
+        """Return a writer rooted at ``output_dir/name``."""
+        return ResultWriter(
+            output_dir=os.path.join(self.output_dir, name),
+            enabled=self.enabled,
+        )
+
     def save_json(self, filename: str, data: Any) -> Optional[str]:
         if not self.enabled:
             return None

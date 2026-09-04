@@ -13,14 +13,14 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from foretoken_cli.kubernetes import (
-    FrontendEndpoint,
+from benchmarks.deployment.cluster import (
     Kubectl,
-    resolve_frontend_endpoint,
+    NetworkAddress,
+    find_address,
     timeout_seconds,
-    wait_for_resources,
+    wait_for_deployment,
 )
-from foretoken_cli.manifest import DeploymentError, ForetokenDeployment
+from benchmarks.deployment.manifest import DeploymentError, DeploymentResources
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,6 @@ class BenchmarkEndpoint:
     models: tuple[str, ...]
     headers: dict[str, str]
     hostname: str
-    gpu_count: int
 
 
 def _select_model(models: Iterable[str], requested: str) -> str:
@@ -52,39 +51,13 @@ def _select_model(models: Iterable[str], requested: str) -> str:
     return available[0]
 
 
-def _chat_url(endpoint: FrontendEndpoint) -> str:
-    return f"{endpoint.url}/v1/chat/completions"
-
-
-def _model_gpu_count(
-    deployment: ForetokenDeployment, model: str
-) -> int:
-    """Return configured GPUs across ModelServices serving one model."""
-    total = 0
-    for document in deployment.objects:
-        if document.get("kind") != "ModelService":
-            continue
-        spec = document.get("spec") or {}
-        if str(spec.get("model") or "") != model:
-            continue
-        requests = ((spec.get("resources") or {}).get("requests") or {})
-        gpu_count = int((requests.get("gpu") or {}).get("count") or 0)
-        replicas = int(spec.get("replicas") or 1)
-        nodes = int(spec.get("nodes") or 1)
-        total += gpu_count * replicas * nodes
-    if total < 1:
-        raise DeploymentError(
-            f"deployment does not declare GPU capacity for model {model!r}"
-        )
-    return total
-
-
-def resolve_deployment_model(
-    deployment: ForetokenDeployment, requested_model: str
-) -> tuple[str, int]:
-    """Return the selected model and configured GPU capacity."""
-    model = _select_model(deployment.models.values(), requested_model)
-    return model, _model_gpu_count(deployment, model)
+def _chat_url(address: NetworkAddress) -> str:
+    default_port = 443 if address.scheme == "https" else 80
+    host = address.host
+    authority = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    if address.port != default_port:
+        authority = f"{authority}:{address.port}"
+    return f"{address.scheme}://{authority}/v1/chat/completions"
 
 
 def _api_root(chat_url: str) -> str:
@@ -130,7 +103,7 @@ def _wait_for_models(
 
 
 def discover_endpoint(
-    resources: ForetokenDeployment,
+    resources: DeploymentResources,
     kubectl: Kubectl,
     timeout: str,
     *,
@@ -139,11 +112,11 @@ def discover_endpoint(
 ) -> BenchmarkEndpoint:
     """Find the endpoint and model for rendered Foretoken resources."""
     wait_seconds = timeout_seconds(timeout)
-    model, gpu_count = resolve_deployment_model(resources, requested_model)
-    wait_for_resources(resources.service_refs(), kubectl, timeout)
-    endpoint = resolve_frontend_endpoint(resources, kubectl, timeout)
-    url = _chat_url(endpoint)
-    headers = {"Host": endpoint.routing_host} if endpoint.routing_host else {}
+    model = _select_model(resources.models.values(), requested_model)
+    wait_for_deployment(resources, kubectl, timeout)
+    address = find_address(resources, kubectl, wait_seconds)
+    url = _chat_url(address)
+    headers = {"Host": address.routing_host} if address.routing_host else {}
     models = _wait_for_models(
         url,
         headers,
@@ -156,11 +129,4 @@ def discover_endpoint(
             f"model {model!r} is not advertised by the frontend; "
             f"available models: {', '.join(models)}"
         )
-    return BenchmarkEndpoint(
-        url,
-        model,
-        models,
-        headers,
-        resources.hostname,
-        gpu_count,
-    )
+    return BenchmarkEndpoint(url, model, models, headers, resources.hostname)

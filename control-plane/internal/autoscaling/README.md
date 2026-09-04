@@ -1,81 +1,65 @@
 # Autoscaling
 
-The public API scales service replicas. The controller materializes each replica as one complete ModelGroup and never scales individual Pods, ranks, or E/P/D members independently.
+Autoscaling operates on complete ModelGroups. It never scales individual Pods, ranks, or E/P/D members independently.
+
+The controller first decides whether the current observations should be evaluated. A decision algorithm then calculates `DesiredCapacity`, the desired number of complete Groups. An adjustment algorithm applies the configured bounds and per-round change limits. Core lifecycle rules produce the final `ScalingDecision`, and the ModelService controller writes the applied capacity to `ModelPool.spec.desiredGroups`.
 
 ```text
 ScalingSnapshot
 → TriggerDecision
-→ ReplicaRecommendation
-→ ReplicaAdjustment
+→ DesiredCapacity
+→ ScalingAdjustment
 → ScalingDecision
 ```
 
-- **Trigger** decides whether the current observation can be evaluated. The built-in `periodic` trigger accepts every complete fresh observation supplied by the controller polling loop.
-- **Decision** calculates desired capacity. `queue` follows Kubernetes HPA `AverageValue` semantics; `queue_threshold` provides one-replica recommendations at absolute backlog boundaries.
-- **Adjustment** applies stabilization, hard bounds, and a fixed one-replica step. A recent higher recommendation delays scale down in the same way as an HPA stabilization window.
-- **Resolver** enforces lifecycle ownership. Capacity changes wait for an in-progress ModelGroup transition, while configured min/max bounds remain mandatory.
+A trigger may hold the current capacity before `DesiredCapacity` is calculated. Missing, stale, or incomplete observations also hold current capacity instead of being interpreted as zero demand.
 
-The public Trigger block may be omitted; it defaults to `periodic` evaluation every five seconds. The controller accepts observations from the latest three polling intervals, so the default freshness limit is 15 seconds. Missing, stale, or incomplete observations hold current capacity and are never interpreted as zero demand. Automatic scaling maintains at least one replica; scale-to-zero is not supported.
+## Output case
 
-## Queue demand
-
-The controller combines two independently owned sources:
+For a Pool with two requested Groups and one routable Group, assume the queue observation contains five waiting requests. The built-in queue algorithm requests one additional complete Group, and the step adjustment allows that change in the current round:
 
 ```text
-runtime preparation queue
-+ max(backend dispatch queue, inference scheduler waiting requests)
+ScalingSnapshot:
+  target:
+    kind: Pool
+    name: aggregate
+    uid: 8c88ee9a-c10f-41fd-98ef-a09d256b5213
+  capacity.requestedGroups: 2
+  capacity.routableGroups: 1
+  observation.queueRequests: 5
+  limits: [1, 8]
+
+TriggerDecision:
+  disposition: Fire
+  reason: Periodic
+
+DesiredCapacity:
+  disposition: Apply
+  groups: 3
+  reason: QueuePressure
+
+ScalingAdjustment:
+  adjustedGroups: 3
+  reason: StepUp
+
+ScalingDecision:
+  target:
+    kind: Pool
+    name: aggregate
+    uid: 8c88ee9a-c10f-41fd-98ef-a09d256b5213
+  appliedGroups: 3
+  direction: Up
+
+ModelPool[aggregate].spec.desiredGroups: 2 → 3
 ```
 
-Runtime preparation is independent demand. Backend dispatch and scheduler gauges can briefly observe the same request, so only their larger aggregate is counted. Active model-server requests prevent idle scale down.
-
-## Built-in decisions
-
-### `queue`
+`DesiredCapacity.groups` is the capacity calculated from demand. `adjustedGroups` and `appliedGroups` show what this reconciliation round applies after adjustment and lifecycle rules.
 
 ```text
-desiredReplicas = ceil(queueRequests / targetAverageQueuedRequests)
+autoscaling/
+├── core/       # fixed inputs, interfaces, pipeline, and result rules
+├── algorithm/  # replaceable trigger, decision, and adjustment algorithms
+└── tests/      # behavior tests for the public autoscaling contracts
 ```
 
-A positive queue can recommend either higher or lower capacity from the average-value formula. With no queued requests, active requests hold current capacity; a fully idle target recommends zero and `minReplicas` supplies the automatic capacity floor.
-
-### `queue_threshold`
-
-```text
-queueRequests > scaleUpQueuedRequests
-→ recommend currentReplicas + 1
-
-queueRequests <= scaleDownQueuedRequests and activeRequests == 0
-→ recommend currentReplicas - 1
-```
-
-This mode serves users who reason about absolute service backlog rather than average queue per replica.
-
-## Built-in adjustments
-
-- `direct` applies the Decision recommendation immediately after min/max clipping. It has no stabilization configuration.
-- `step` changes at most one replica per trigger and supports independent scale-up and scale-down stabilization windows.
-
-## Example
-
-Top-level `spec.replicas` sets initial capacity. After startup, autoscaling keeps the service within `minReplicas` and `maxReplicas`.
-
-```yaml
-autoscaling:
-  minReplicas: 1
-  maxReplicas: 8
-  trigger:
-    algorithm: periodic
-    interval: 5s
-  decision:
-    algorithm: queue
-    queue:
-      targetAverageQueuedRequests: 1
-  adjustment:
-    algorithm: step
-    scaleUp:
-      stabilizationWindow: 0s
-    scaleDown:
-      stabilizationWindow: 300s
-```
-
-`desiredReplicas`, `adjustedReplicas`, and `appliedReplicas` in status show the output of Decision, Adjustment, and lifecycle resolution respectively. Trigger, Decision, Adjustment, and Constraint reasons are reported separately.
+Implementations register under stable lower-snake-case names. Empty, duplicate, unknown, or invalid selections return explicit errors.

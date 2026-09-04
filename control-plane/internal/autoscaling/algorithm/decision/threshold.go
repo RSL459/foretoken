@@ -9,13 +9,13 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 )
 
-type Queue struct{ TargetQueuePerRoutableGroup int64 }
+type Threshold struct{ ScaleUpQueue int64 }
 
-// Name identifies the queue decision algorithm for registry consumers.
-func (Queue) Name() string { return "queue" }
+// Name identifies the threshold decision algorithm for registry consumers.
+func (Threshold) Name() string { return "threshold" }
 
-// CalculateDesiredCapacity adjusts one group when queue pressure exceeds routable capacity or becomes idle.
-func (queue Queue) CalculateDesiredCapacity(_ context.Context, s core.ScalingSnapshot) (core.DesiredCapacity, error) {
+// CalculateDesiredCapacity adjusts one group when observed queue pressure crosses the configured threshold.
+func (threshold Threshold) CalculateDesiredCapacity(_ context.Context, s core.ScalingSnapshot) (core.DesiredCapacity, error) {
 	current := s.Capacity.RequestedGroups
 	switch s.Observation.State {
 	case core.ObservationUnavailable:
@@ -29,13 +29,9 @@ func (queue Queue) CalculateDesiredCapacity(_ context.Context, s core.ScalingSna
 	default:
 		return rec(current, core.DesiredCapacityInsufficientData, core.DesiredCapacityReasonObservationUnavailable, "demand observations are unavailable"), nil
 	}
-	supply := s.Capacity.RoutableGroups
-	if supply < 1 {
-		supply = 1
-	}
-	if exceeds(s.Observation.QueueRequests, queue.TargetQueuePerRoutableGroup, supply) {
+	if s.Observation.QueueRequests > threshold.ScaleUpQueue {
 		if current < s.Limits.MaxGroups {
-			return rec(current+1, core.DesiredCapacityApply, core.DesiredCapacityReasonQueuePressure, "queue pressure exceeds routable capacity"), nil
+			return rec(current+1, core.DesiredCapacityApply, core.DesiredCapacityReasonQueuePressure, "queue pressure exceeds the configured threshold"), nil
 		}
 		return rec(current, core.DesiredCapacityHold, core.DesiredCapacityReasonAtMaximum, "queue pressure is high but the target is at its maximum"), nil
 	}
@@ -47,26 +43,12 @@ func (queue Queue) CalculateDesiredCapacity(_ context.Context, s core.ScalingSna
 	}
 	return rec(current, core.DesiredCapacityHold, core.DesiredCapacityReasonStable, "current capacity matches observed demand"), nil
 }
-func exceeds(requests, target int64, supply int32) bool {
-	if requests <= 0 {
-		return false
-	}
-	if target <= 0 {
-		return true
-	}
-	groups := int64(supply)
-	q, r := requests/groups, requests%groups
-	return q > target || q == target && r > 0
-}
-func rec(desired int32, d core.DesiredCapacityDisposition, r core.DesiredCapacityReason, m string) core.DesiredCapacity {
-	return core.DesiredCapacity{Disposition: d, Groups: desired, Reason: r, Message: m}
-}
 func init() {
-	if err := algorithm.RegisterDecisionAlgorithm("queue", func(config core.DecisionConfig) (core.DecisionAlgorithm, error) {
-		if config.TargetQueuePerRoutableGroup < 0 {
-			return nil, fmt.Errorf("autoscaling targetQueuePerRoutableGroup must be non-negative")
+	if err := algorithm.RegisterDecisionAlgorithm("threshold", func(config core.DecisionConfig) (core.DecisionAlgorithm, error) {
+		if config.ScaleUpQueue < 0 {
+			return nil, fmt.Errorf("autoscaling scaleUpQueue must be non-negative")
 		}
-		return Queue{config.TargetQueuePerRoutableGroup}, nil
+		return Threshold{config.ScaleUpQueue}, nil
 	}); err != nil {
 		panic(err)
 	}

@@ -69,8 +69,6 @@ Catch only errors the caller can handle. Broad exception handling must not turn 
 
 Names should describe domain responsibility and ownership without relying on the current discussion. Prefer `create_client`, `metrics_url`, or `model_group` over vague verbs and generic nouns.
 
-Keep values at the narrowest scope that owns them. A value used by one function belongs inside that function; use a module-level constant only when multiple functions share it or it represents a module-wide external contract. Do not move configuration into file globals merely for convenience.
-
 Keep related stages readable as one flow. Extract a function when it owns a meaningful stage or lifecycle, not merely to shorten another function. Avoid fragmenting sequential logic into thin helpers that force readers to jump between files.
 
 Comments explain information the code cannot express clearly:
@@ -92,8 +90,7 @@ Follow the surrounding code and the executable checks for each subtree.
 
 - **Rust data plane:** run `make verify-data-plane`. It checks formatting, compilation, tests, and Clippy for first-party workspace packages.
 - **Go control plane:** run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
-- **Python CLI:** keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.
-- **Python benchmarks:** follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected benchmark command or runner path.
+- **Python benchmarks:** follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected CLI or runner path.
 - **Helm and Kubernetes YAML:** run Helm lint and render the changed modes. Verify generated resources, values schema, selectors, ports, namespaces, and network access as one deployment contract.
 - **Repository-wide files:** run `pre-commit run --all-files` for file hygiene, structured formats, merge conflicts, secret detection, and GitHub Actions linting.
 
@@ -138,11 +135,7 @@ Learn from the organization and ownership of those documents; do not combine or 
 
 User documentation should begin with purpose and a minimal executable example. Move exhaustive configuration, architecture, and troubleshooting details behind the main path. Describe only implemented behavior and necessary limits. Do not publish PR plans, acceptance criteria, implementation diaries, private wire contracts, source-file tours, or future capabilities as current behavior.
 
-Introduce each command block with a sentence that states what the reader is about to do and, when relevant, what the command produces or where to continue. A heading alone is not sufficient context. Present mutually exclusive alternatives, such as pip and uv, with separate prose labels and code blocks instead of `# or` comments inside one block. Keep commands in one block only when readers should run them in sequence.
-
 Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations. Update both when user-visible behavior changes.
-
-Write every language version independently for its readers rather than using another language as a sentence-by-sentence template. English documentation should use clear, natural technical English; Chinese documentation should use natural Chinese prose and established Chinese technical terms. Preserve exact commands, field names, type names, and algorithm identifiers when readers need to recognize or enter them, and explain uncommon identifiers in the surrounding language on first use. Avoid untranslated ordinary words when that language has a clear expression. Review each language version on its own for fluency; equivalent capability does not require identical sentence structure.
 
 ## Change and PR discipline
 

@@ -19,6 +19,10 @@ from benchmarks.workload.trace_workload import load_trace_workload
 class TraceRunner(Runner):
     """Replay recorded user turns while retaining dataset-provided context."""
 
+    def connection_limit(self) -> int | None:
+        """Match the HTTP pool to the trace active-request ceiling."""
+        return self.config.dataset.trace_max_concurrency
+
     async def _send(
         self,
         client: OpenAICompatClient,
@@ -28,12 +32,15 @@ class TraceRunner(Runner):
         scheduled_at: float,
         trace_offset_s: float,
     ) -> tuple[int, dict[str, Any]]:
+        generation = self.config.generation
         actual_send_at = time.perf_counter()
-        result = await self.generate_request(
-            client,
+        result = await client.generate(
             prompt=request.prompt,
             messages=request.messages,
             tools=request.tools,
+            max_tokens=generation.max_tokens,
+            stream=generation.stream,
+            extra_body=generation.request_overrides(),
         )
         result["source_index"] = request.source_index
         result["conversation_id"] = request.conversation_id
@@ -145,31 +152,16 @@ class TraceRunner(Runner):
 
     async def run(self) -> dict[str, Any]:
         dataset = self.config.dataset
-        (
-            trace_window_start_s,
-            trace_format,
-            payload_source,
-            requests,
-        ) = load_trace_workload(self.config)
-        request_count = len(requests)
-        if request_count < 1:
-            raise ValueError("selected trace window contains no requests")
-
         max_concurrency = dataset.trace_max_concurrency
-        active_limit = (
-            request_count
-            if max_concurrency is None
-            else min(max_concurrency, request_count)
-        )
         reported_parallel = -1 if max_concurrency is None else max_concurrency
         reporting_load = {
             "parallel": reported_parallel,
-            "number": request_count,
+            "number": 0,
             "rate": -1.0,
             "open_loop": False,
             "resolved_parallel": reported_parallel,
         }
-        writer = self.create_writer()
+        writer = self.make_writer()
         run_config = self.build_run_config("trace", reporting_load)
         run_config.update(
             {
@@ -182,20 +174,29 @@ class TraceRunner(Runner):
                 "trace_synthetic_prefix_reuse": (
                     dataset.trace_synthetic_prefix_reuse
                 ),
-                "trace_format": trace_format,
-                "payload_source": payload_source,
             }
         )
-        wandb_logger = self.create_wandb_logger(writer, reporting_load)
-        client = self.create_client(active_limit, request_count)
+        wandb_logger = self.make_wandb_logger(writer, reporting_load)
+        client = self.create_client()
 
         try:
+            (
+                trace_window_start_s,
+                trace_format,
+                payload_source,
+                requests,
+            ) = load_trace_workload(self.config)
+            run_config["trace_format"] = trace_format
+            run_config["payload_source"] = payload_source
             raw_output = await self._replay(
                 client,
                 requests,
                 max_concurrency=max_concurrency,
                 trace_window_start_s=trace_window_start_s,
             )
+            request_count = len(raw_output["results"])
+            run_config["number"] = request_count
+            run_config["resolved"]["number"] = request_count
             metrics = self.aggregate_metrics(
                 raw_output,
                 rate=-1.0,

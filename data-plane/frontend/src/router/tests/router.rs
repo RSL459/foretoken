@@ -11,8 +11,6 @@ mod kv_scoring;
 mod picker_behavior;
 #[path = "router/pipeline.rs"]
 mod pipeline;
-#[path = "router/scorer_behavior.rs"]
-mod scorer_behavior;
 #[path = "router/session.rs"]
 mod session;
 #[path = "router/support.rs"]

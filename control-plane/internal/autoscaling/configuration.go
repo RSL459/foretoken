@@ -9,12 +9,13 @@ type TriggerAlgorithmName string
 type AdjustmentAlgorithmName string
 
 const (
-	DecisionAlgorithmManual         DecisionAlgorithmName   = "manual"
-	DecisionAlgorithmQueue          DecisionAlgorithmName   = "queue"
-	DecisionAlgorithmQueueThreshold DecisionAlgorithmName   = "queue_threshold"
-	TriggerAlgorithmPeriodic        TriggerAlgorithmName    = "periodic"
-	AdjustmentAlgorithmDirect       AdjustmentAlgorithmName = "direct"
-	AdjustmentAlgorithmStep         AdjustmentAlgorithmName = "step"
+	DecisionAlgorithmManual    DecisionAlgorithmName   = "manual"
+	DecisionAlgorithmQueue     DecisionAlgorithmName   = "queue"
+	DecisionAlgorithmThreshold DecisionAlgorithmName   = "threshold"
+	TriggerAlgorithmPeriodic   TriggerAlgorithmName    = "periodic"
+	TriggerAlgorithmWatermark  TriggerAlgorithmName    = "watermark"
+	AdjustmentAlgorithmDirect  AdjustmentAlgorithmName = "direct"
+	AdjustmentAlgorithmStep    AdjustmentAlgorithmName = "step"
 )
 
 type Configuration struct {
@@ -22,5 +23,5 @@ type Configuration struct {
 	TriggerAlgorithm    TriggerAlgorithmName
 	AdjustmentAlgorithm AdjustmentAlgorithmName
 	Decision            core.DecisionConfig
-	Adjustment          core.AdjustmentConfig
+	Trigger             core.TriggerConfig
 }

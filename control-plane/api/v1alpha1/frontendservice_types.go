@@ -25,7 +25,7 @@ type FrontendTimeouts struct {
 type RouterFilterAlgorithm string
 
 // RouterScorerAlgorithm identifies a compiled Router Scorer.
-// +kubebuilder:validation:Enum=capacity_aware;kv_cache_utilization;kv_least_loaded;latency_aware;least_loaded;lora_aware;mmcache_affinity;prefix;prefix_decay;queue_depth;running_request;sequence_length_aware;session_aware;throughput_aware;uniform;weighted_sum
+// +kubebuilder:validation:Enum=uniform;least_loaded;kv_least_loaded
 type RouterScorerAlgorithm string
 
 // RouterPickerAlgorithm identifies a compiled Router Picker.
@@ -35,22 +35,9 @@ type RouterPickerAlgorithm string
 const (
 	RouterFilterAllowAll RouterFilterAlgorithm = "allow_all"
 
-	RouterScorerCapacityAware       RouterScorerAlgorithm = "capacity_aware"
-	RouterScorerKVCacheUtilization  RouterScorerAlgorithm = "kv_cache_utilization"
-	RouterScorerKVLeastLoaded       RouterScorerAlgorithm = "kv_least_loaded"
-	RouterScorerLatencyAware        RouterScorerAlgorithm = "latency_aware"
-	RouterScorerLeastLoaded         RouterScorerAlgorithm = "least_loaded"
-	RouterScorerLoraAware           RouterScorerAlgorithm = "lora_aware"
-	RouterScorerMmcacheAffinity     RouterScorerAlgorithm = "mmcache_affinity"
-	RouterScorerPrefix              RouterScorerAlgorithm = "prefix"
-	RouterScorerPrefixDecay         RouterScorerAlgorithm = "prefix_decay"
-	RouterScorerQueueDepth          RouterScorerAlgorithm = "queue_depth"
-	RouterScorerRunningRequest      RouterScorerAlgorithm = "running_request"
-	RouterScorerSequenceLengthAware RouterScorerAlgorithm = "sequence_length_aware"
-	RouterScorerSessionAware        RouterScorerAlgorithm = "session_aware"
-	RouterScorerThroughputAware     RouterScorerAlgorithm = "throughput_aware"
-	RouterScorerUniform             RouterScorerAlgorithm = "uniform"
-	RouterScorerWeightedSum         RouterScorerAlgorithm = "weighted_sum"
+	RouterScorerUniform       RouterScorerAlgorithm = "uniform"
+	RouterScorerLeastLoaded   RouterScorerAlgorithm = "least_loaded"
+	RouterScorerKVLeastLoaded RouterScorerAlgorithm = "kv_least_loaded"
 
 	RouterPickerMax        RouterPickerAlgorithm = "max"
 	RouterPickerRoundRobin RouterPickerAlgorithm = "round_robin"

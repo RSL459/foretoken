@@ -11,10 +11,10 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"sync"
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
@@ -34,30 +34,24 @@ const (
 	conditionIntentCompiled    = "IntentCompiled"
 	conditionPoolsMaterialized = "PoolsMaterialized"
 	conditionReady             = "Ready"
-	maxDesiredReplicas         = int32(1<<31 - 1)
+	maxDesiredGroups           = int32(1<<31 - 1)
 	defaultScalingPollInterval = 5 * time.Second
+	defaultMetricsMaxAge       = 15 * time.Second
 )
 
-// ScalingMetricsProvider supplies one read-only, target-attributed metrics snapshot.
-// Implementations collect metrics without mutating Kubernetes resources or autoscaling state.
-type ScalingMetricsProvider interface {
-	Snapshot(context.Context, core.TargetID) (core.MetricsSnapshot, error)
+var defaultAutoscaler = autoscaling.Manual()
+
+// PoolMetricsProvider supplies one read-only, target-attributed demand observation.
+// Implementations must not modify Kubernetes resources or autoscaling algorithms.
+type PoolMetricsProvider interface {
+	Observation(context.Context, core.TargetID) (core.DemandObservation, error)
 }
 
 // ModelServiceReconciler compiles ModelService intent and owns ModelPool specs.
 type ModelServiceReconciler struct {
 	client.Client
-	MetricsProvider ScalingMetricsProvider
-
-	recommendationHistoryOnce sync.Once
-	recommendationHistory     *core.RecommendationHistory
-}
-
-func (reconciler *ModelServiceReconciler) autoscalingRecommendationHistory() *core.RecommendationHistory {
-	reconciler.recommendationHistoryOnce.Do(func() {
-		reconciler.recommendationHistory = core.NewRecommendationHistory()
-	})
-	return reconciler.recommendationHistory
+	Autoscaler          *autoscaling.Autoscaler
+	PoolMetricsProvider PoolMetricsProvider
 }
 
 // SetupWithManager registers the ModelService controller and its owned resources.
@@ -141,7 +135,7 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 		return ctrl.Result{}, err
 	}
 	if scaling.Autoscaler.Automatic() {
-		return ctrl.Result{RequeueAfter: scaling.PollingInterval}, nil
+		return ctrl.Result{RequeueAfter: scaling.TriggerInterval}, nil
 	}
 	return ctrl.Result{}, nil
 }

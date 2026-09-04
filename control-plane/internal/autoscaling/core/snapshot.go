@@ -40,54 +40,50 @@ type TargetID struct {
 	Kind             TargetKind
 	Role             TargetRole
 }
-
-type MetricsState string
+type ObservationState string
 
 const (
-	MetricsUnavailable MetricsState = "Unavailable"
-	MetricsFresh       MetricsState = "Fresh"
-	MetricsStale       MetricsState = "Stale"
+	ObservationUnavailable ObservationState = "Unavailable"
+	ObservationFresh       ObservationState = "Fresh"
+	ObservationStale       ObservationState = "Stale"
 )
 
-type MetricsWindow struct {
+type ObservationWindow struct {
 	Start       time.Time // Local collection start.
-	End         time.Time // Oldest source sample included in the snapshot.
+	End         time.Time // Oldest source sample included in the aggregate.
 	CollectedAt time.Time // Local collection completion.
 	Samples     int32
 	Complete    bool
 }
-
-// MetricsSnapshot contains the complete backend-neutral metrics available for one evaluation.
-type MetricsSnapshot struct {
-	State           MetricsState
-	Window          MetricsWindow
-	WaitingRequests int64
-	RunningRequests int64
-	ActiveRequests  int64
+type DemandObservation struct {
+	State          ObservationState
+	Window         ObservationWindow
+	QueueRequests  int64
+	ActiveRequests int64
 }
-
-type ReplicaState struct {
-	BaselineReplicas     int32
-	RequestedReplicas    int32
-	ReadyReplicas        int32
-	RoutableReplicas     int32
-	PendingReplicas      int32
-	ProvisioningReplicas int32
-	DrainingReplicas     int32
-	TerminatingReplicas  int32
-	FailedReplicas       int32
-	Transitioning        bool
+type CapacityState struct {
+	BaselineGroups     int32
+	RequestedGroups    int32
+	ReadyGroups        int32
+	RoutableGroups     int32
+	PendingGroups      int32
+	ProvisioningGroups int32
+	DrainingGroups     int32
+	TerminatingGroups  int32
+	FailedGroups       int32
+	Transitioning      bool
 }
-
-type ReplicaLimits struct {
-	MinReplicas int32
-	MaxReplicas int32
+type CapacityLimits struct {
+	MinGroups          int32
+	MaxGroups          int32
+	MaxScaleUpGroups   int32
+	MaxScaleDownGroups int32
 }
-
 type ScalingSnapshot struct {
+	ID          string
 	Target      TargetID
 	EvaluatedAt time.Time
-	Replicas    ReplicaState
-	Limits      ReplicaLimits
-	Metrics     MetricsSnapshot
+	Capacity    CapacityState
+	Limits      CapacityLimits
+	Observation DemandObservation
 }

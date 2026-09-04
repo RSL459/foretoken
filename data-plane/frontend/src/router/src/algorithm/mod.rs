@@ -9,9 +9,4 @@ pub mod scorer;
 
 pub use filter::{AllowAllFilter, RouteFilter};
 pub use picker::{MaxPicker, RoundRobinPicker, RoutePicker};
-pub use scorer::{
-    CapacityAwareScorer, KvCacheUtilizationScorer, KvLeastLoadedScorer, LatencyAwareScorer,
-    LeastLoadedScorer, LoraAwareScorer, MmcacheAffinityScorer, PrefixDecayScorer, PrefixScorer,
-    QueueDepthScorer, RouteScorer, RunningRequestScorer, SequenceLengthAwareScorer,
-    SessionAwareScorer, ThroughputAwareScorer, UniformScorer, WeightedSumScorer,
-};
+pub use scorer::{KvLeastLoadedScorer, LeastLoadedScorer, RouteScorer, UniformScorer};
