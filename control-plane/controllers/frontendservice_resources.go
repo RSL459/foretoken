@@ -60,15 +60,15 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	servingConfigMap := frontendServingConfigMapName(frontend)
 	routerFilter := frontend.Spec.RouterPipeline.Filter
 	if routerFilter == "" {
-		routerFilter = inferencev1alpha1.RouterFilterAllowAll
+		routerFilter = inferencev1alpha1.DefaultRouterFilter
 	}
 	routerScorer := frontend.Spec.RouterPipeline.Scorer
 	if routerScorer == "" {
-		routerScorer = inferencev1alpha1.RouterScorerKVLeastLoaded
+		routerScorer = inferencev1alpha1.DefaultRouterScorer
 	}
 	routerPicker := frontend.Spec.RouterPipeline.Picker
 	if routerPicker == "" {
-		routerPicker = inferencev1alpha1.RouterPickerRoundRobin
+		routerPicker = inferencev1alpha1.DefaultRouterPicker
 	}
 	frontendEnv := []corev1.EnvVar{
 		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},

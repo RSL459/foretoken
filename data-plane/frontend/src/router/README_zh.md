@@ -151,7 +151,7 @@ src/algorithm/picker/
 mod my_algorithm;
 ```
 
-不需要修改中央算法清单，也不依赖源码扫描、runtime plugin loader、`build.rs` 或 codegen。Router 启动时会校验配置引用的算法名称；空名称、重复名称和未知名称都会返回明确错误。
+不需要修改中央算法清单，也不依赖源码扫描、runtime plugin loader、`build.rs` 或 codegen。控制面的 CRD 接受 lower-snake-case 名称，不枚举 Filter、Scorer 或 Picker 实现；Frontend 注册表会在启动时校验配置引用的算法名称，空名称、重复名称和未知名称都会返回明确错误。因此，新增已编译路由算法不需要修改 Go API 或 CRD。
 
 ## 请求级 Context
 

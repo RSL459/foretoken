@@ -148,7 +148,7 @@ Use `inventory::submit!` to register a stable name and factory at compile time, 
 mod my_algorithm;
 ```
 
-No central algorithm catalog, source scanning, runtime plugin loader, `build.rs`, or code generation is required. The Router validates configured algorithm names at startup; empty, duplicate, and unknown names return explicit errors.
+No central algorithm catalog, source scanning, runtime plugin loader, `build.rs`, or code generation is required. The control-plane CRD accepts lower-snake-case names without enumerating Filter, Scorer, or Picker implementations. The Frontend registry validates configured algorithm names at startup; empty, duplicate, and unknown names return explicit errors. Adding a compiled routing algorithm therefore does not require a Go API or CRD change.
 
 ## Request-local Context
 

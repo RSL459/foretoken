@@ -141,27 +141,18 @@ spec:
                 properties:
                   filter:
                     default: allow_all
-                    description: RouterFilterAlgorithm identifies a compiled Router
-                      Filter.
-                    enum:
-                    - allow_all
+                    description: RouterFilterAlgorithm names a Filter that the selected
+                      Frontend image validates at startup.
                     type: string
                   picker:
                     default: round_robin
-                    description: RouterPickerAlgorithm identifies a compiled Router
-                      Picker.
-                    enum:
-                    - max
-                    - round_robin
+                    description: RouterPickerAlgorithm names a Picker that the selected
+                      Frontend image validates at startup.
                     type: string
                   scorer:
                     default: kv_least_loaded
-                    description: RouterScorerAlgorithm identifies a compiled Router
-                      Scorer.
-                    enum:
-                    - uniform
-                    - least_loaded
-                    - kv_least_loaded
+                    description: RouterScorerAlgorithm names a Scorer that the selected
+                      Frontend image validates at startup.
                     type: string
                 type: object
               timeouts:

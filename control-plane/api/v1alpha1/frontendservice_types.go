@@ -20,27 +20,24 @@ type FrontendTimeouts struct {
 	StreamIdle Duration `json:"streamIdle"`
 }
 
-// RouterFilterAlgorithm identifies a compiled Router Filter.
-// +kubebuilder:validation:Enum=allow_all
+// RouterFilterAlgorithm names a Filter that the selected Frontend image validates at startup.
 type RouterFilterAlgorithm string
 
-// RouterScorerAlgorithm identifies a compiled Router Scorer.
-// +kubebuilder:validation:Enum=uniform;least_loaded;kv_least_loaded
+// RouterScorerAlgorithm names a Scorer that the selected Frontend image validates at startup.
 type RouterScorerAlgorithm string
 
-// RouterPickerAlgorithm identifies a compiled Router Picker.
-// +kubebuilder:validation:Enum=max;round_robin
+// RouterPickerAlgorithm names a Picker that the selected Frontend image validates at startup.
 type RouterPickerAlgorithm string
 
 const (
-	RouterFilterAllowAll RouterFilterAlgorithm = "allow_all"
+	// DefaultRouterFilter is used when a FrontendService does not select a Filter.
+	DefaultRouterFilter RouterFilterAlgorithm = "allow_all"
 
-	RouterScorerUniform       RouterScorerAlgorithm = "uniform"
-	RouterScorerLeastLoaded   RouterScorerAlgorithm = "least_loaded"
-	RouterScorerKVLeastLoaded RouterScorerAlgorithm = "kv_least_loaded"
+	// DefaultRouterScorer is used when a FrontendService does not select a Scorer.
+	DefaultRouterScorer RouterScorerAlgorithm = "kv_least_loaded"
 
-	RouterPickerMax        RouterPickerAlgorithm = "max"
-	RouterPickerRoundRobin RouterPickerAlgorithm = "round_robin"
+	// DefaultRouterPicker is used when a FrontendService does not select a Picker.
+	DefaultRouterPicker RouterPickerAlgorithm = "round_robin"
 )
 
 // RouterPipeline selects each independently composable routing algorithm stage.
