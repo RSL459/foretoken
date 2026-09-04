@@ -70,6 +70,7 @@ Router 从 `RouteInventory` 获取路由目标。只有模型、输入限制和�
   1. 模型服务器已经接纳但尚未完成的请求数；
   2. vLLM 调度器中正在运行与等待处理的请求总数。
   对于 Prefill/Decode 分离式推理，Prefill 候选项还会加上同一流水线中负载最低的 Decode 候选项负载。
+- `running_request`：优先选择 vLLM 调度器中当前运行请求数最少的可执行流水线。如果任一候选项缺少该指标，则整轮回退到 `least_loaded`。
 - `uniform`：为所有候选项赋予相同得分，通常与 `round_robin` 组合使用，实现均匀的轮询路由。
 - `weighted_round_robin`：基于预设的节点权重（GPU 算力大小、显存容量等）进行加权轮询，让性能更强的节点承担更多请求。
 - `lowest_latency`：基于目标节点近期的平均响应延迟，如 TTFT（首个 token 时延）或 TPOT（每个输出 token 的时延）进行评分，优先路由给响应最快的节点。

@@ -67,6 +67,7 @@ The system includes or plans the following compile-ready policy implementations:
   - Physical locality preference: Local (2) > Remote (1).
   - Current load: When prefix conditions match, prefers lower overall load (including downstream Decode nodes).
 - `least_loaded`: Absolute low-load priority policy. Uses the larger of model-server admitted requests and vLLM scheduler running-plus-waiting requests, and automatically aggregates downstream associated loads.
+- `running_request`: Prefers the executable pipeline with the fewest requests currently running in the vLLM scheduler. If any candidate lacks this gauge, the complete round falls back to `least_loaded`.
 - `uniform`: Uniform scoring policy. Assigns the same score to all candidate nodes, typically paired with `round_robin` for random or round-robin routing.
 - `weighted_round_robin`: Weighted round-robin based on preset node weights (GPU compute power, VRAM size, etc.), allowing higher-performance nodes to handle more requests.
 - `lowest_latency`: Scores based on target nodes' recent average response latencies (such as TTFT - Time to First Token, or TPOT - Time Per Output Token), prioritizing the fastest responding nodes.
