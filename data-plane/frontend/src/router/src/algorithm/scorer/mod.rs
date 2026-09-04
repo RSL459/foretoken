@@ -5,6 +5,7 @@
 
 mod kv_least_loaded_scorer;
 mod least_loaded_scorer;
+mod queue_depth_scorer;
 mod uniform_scorer;
 
 use std::collections::BTreeMap;
@@ -16,6 +17,7 @@ use crate::{RouteCandidate, RouteScore, RouterRequest};
 
 pub use kv_least_loaded_scorer::KvLeastLoadedScorer;
 pub use least_loaded_scorer::LeastLoadedScorer;
+pub use queue_depth_scorer::QueueDepthScorer;
 pub use uniform_scorer::UniformScorer;
 
 /// Scores the complete filtered compatible, healthy route target snapshot for one routing round.
