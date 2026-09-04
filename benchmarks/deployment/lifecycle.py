@@ -13,9 +13,14 @@ from typing import Any
 
 import yaml
 
+from benchmarks.deployment.cluster import Kubectl
 from benchmarks.deployment.discovery import BenchmarkEndpoint, discover_endpoint
-from foretoken_cli.kubernetes import Kubectl, load_deployment
-from foretoken_cli.manifest import DeploymentError, ForetokenDeployment
+from benchmarks.deployment.manifest import (
+    DeploymentError,
+    DeploymentResources,
+    deployment_path,
+    parse_deployment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,24 +37,23 @@ def _object_identity(document: dict[str, Any]) -> tuple[str, str, str]:
     return kind, name, namespace
 
 
-def _service_presence(resources: ForetokenDeployment, kubectl: Kubectl) -> list[bool]:
+def _service_presence(resources: DeploymentResources, kubectl: Kubectl) -> list[bool]:
     return [
-        kubectl.exists(resource.kind, resource.name, resource.namespace)
-        for resource in resources.service_refs()
+        kubectl.exists("frontendservice", resources.frontend, resources.namespace),
+        *(
+            kubectl.exists("modelservice", name, resources.namespace)
+            for name in resources.models
+        ),
     ]
 
 
 def _new_objects(
-    resources: ForetokenDeployment, kubectl: Kubectl
+    resources: DeploymentResources, kubectl: Kubectl
 ) -> tuple[dict[str, Any], ...]:
-    missing_services = {
-        (resource.kind, resource.name, resource.namespace)
-        for resource in resources.service_refs()
-    }
     created: list[dict[str, Any]] = []
     for document in resources.objects:
-        identity = _object_identity(document)
-        if identity in missing_services or not kubectl.exists(*identity):
+        kind, name, namespace = _object_identity(document)
+        if not kubectl.exists(kind, name, namespace):
             created.append(document)
     return tuple(created)
 
@@ -57,7 +61,6 @@ def _new_objects(
 def _delete_objects(
     kubectl: Kubectl, objects: tuple[dict[str, Any], ...], timeout: str
 ) -> None:
-    """Delete benchmark-owned objects, removing namespaces after their contents."""
     namespaced = tuple(
         document for document in objects if document.get("kind") != "Namespace"
     )
@@ -66,12 +69,12 @@ def _delete_objects(
     )
     for group in (namespaced, namespaces):
         if group:
-            kubectl.delete(yaml.safe_dump_all(group), timeout)
+            kubectl.delete_yaml(yaml.safe_dump_all(group), timeout)
 
 
 @contextmanager
 def benchmark_deployment(
-    kustomize_path: str,
+    deployment: str,
     timeout: str,
     *,
     requested_model: str,
@@ -79,20 +82,20 @@ def benchmark_deployment(
 ) -> Iterator[BenchmarkEndpoint]:
     """Reuse an existing Foretoken deployment or own it for this benchmark."""
     kubectl = Kubectl()
-    resources = load_deployment(kustomize_path, kubectl)
+    path = deployment_path(deployment)
+    resources = parse_deployment(path, kubectl.kustomize(path))
     presence = _service_presence(resources, kubectl)
     if any(presence) and not all(presence):
         raise DeploymentError(
-            "The Foretoken deployment is only partially present. "
-            "Apply or delete it, then rerun the benchmark"
+            "deployment is partially present; apply or delete it explicitly before benchmarking"
         )
 
     created: tuple[dict[str, Any], ...] = ()
     if not any(presence):
         created = _new_objects(resources, kubectl)
-        logger.info("Deploying Foretoken service from %s", resources.path)
+        logger.info("Deploying Foretoken service from %s", path)
         try:
-            kubectl.apply(resources.rendered)
+            kubectl.apply_kustomize(path)
         except Exception:
             _delete_objects(kubectl, created, timeout)
             raise
@@ -107,5 +110,5 @@ def benchmark_deployment(
         )
     finally:
         if created:
-            logger.info("Cleaning up Foretoken service from %s", resources.path)
+            logger.info("Cleaning up Foretoken service from %s", path)
             _delete_objects(kubectl, created, timeout)

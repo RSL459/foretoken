@@ -143,20 +143,6 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .zip(scores)
             .map(|(candidate, score)| ScoredCandidate { candidate, score })
             .collect::<Vec<_>>();
-        // TEMP(scorer-debug): dump every scored candidate so idle-cluster tie-breaks are visible.
-        for candidate in &scored {
-            eprintln!(
-                "ROUTE_SCORE model={} target={} role={:?} dp={} score=(matched={}, tier={}, locality={}, load={})",
-                candidate.candidate.model,
-                candidate.candidate.route_target_id.as_str(),
-                candidate.candidate.role,
-                candidate.candidate.data_parallel_rank,
-                candidate.score.matched_tokens,
-                candidate.score.tier_preference,
-                candidate.score.locality_preference,
-                candidate.score.load,
-            );
-        }
         let selectable = scored
             .iter()
             .filter(|candidate| eligible(&candidate.candidate, &scored))
@@ -170,14 +156,6 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .picker
             .pick(request, &selectable, customized_context)
             .ok_or(RouteError::EmptyPickerResult)?;
-        eprintln!(
-            "ROUTE_SCORE picked={} target={}",
-            picked.0,
-            selectable
-                .get(picked.0)
-                .map(|c| c.candidate.route_target_id.as_str())
-                .unwrap_or("<none>"),
-        );
         selectable
             .get(picked.0)
             .map(|candidate| candidate.candidate.clone())

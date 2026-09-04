@@ -2,23 +2,18 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "foretoken-cli"
-version = "0.0.1"
-description = "Command-line tools for deploying and evaluating Foretoken services"
-readme = "cli/README.md"
-license = "Apache-2.0"
+name = "foretoken-benchmarks"
+version = "0.1.0"
+description = "Foretoken inference benchmarks"
+readme = "README.md"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 authors = [{ name = "Foretoken contributors" }]
 dependencies = [
-    "PyYAML>=6.0",
-]
-
-[project.optional-dependencies]
-bench = [
     "datasets>=2.14",
     "evalscope>=1.10",
     "httpx>=0.27",
@@ -26,21 +21,22 @@ bench = [
     "matplotlib>=3.7",
     "numpy>=1.24",
     "openai>=1.40",
+    "PyYAML>=6.0",
     "tqdm>=4.65",
     "transformers>=4.40",
-    "vllm>=0.18",
     "wandb>=0.16",
 ]
+
+[project.optional-dependencies]
 dev = [
     "pytest>=7.0",
 ]
 
 [project.scripts]
-foretoken = "foretoken_cli.main:main"
+foretoken = "benchmarks.main:main"
 
 [tool.setuptools]
 packages = [
-    "foretoken_cli",
     "benchmarks",
     "benchmarks.client",
     "benchmarks.deployment",
@@ -49,7 +45,8 @@ packages = [
     "benchmarks.report",
     "benchmarks.runner",
     "benchmarks.storage",
-    "benchmarks.utils",
     "benchmarks.workload",
 ]
-package-dir = { foretoken_cli = "cli/foretoken_cli", benchmarks = "benchmarks" }
+
+[tool.setuptools.package-dir]
+benchmarks = "."

@@ -5,8 +5,8 @@
 package autoscaling
 
 import (
+	"context"
 	"errors"
-
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
 	_ "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm/adjustment"
 	_ "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm/decision"
@@ -36,19 +36,20 @@ func New(configuration Configuration) (*Autoscaler, error) {
 	if !automatic {
 		adjustmentName = string(AdjustmentAlgorithmDirect)
 	}
-	adjustment, err := algorithm.BuildAdjustment(adjustmentName, configuration.Adjustment)
+	adjustment, err := algorithm.BuildAdjustment(adjustmentName)
 	if err != nil {
 		return nil, err
 	}
 	pipeline := core.Pipeline{DecisionAlgorithm: decision, AdjustmentAlgorithm: adjustment, Automatic: automatic}
 	if !automatic {
 		pipeline.Resolver.AllowDuringTransition = true
-	} else {
+	}
+	if automatic {
 		triggerName := string(configuration.TriggerAlgorithm)
 		if triggerName == "" {
 			triggerName = string(TriggerAlgorithmPeriodic)
 		}
-		trigger, err := algorithm.BuildTrigger(triggerName)
+		trigger, err := algorithm.BuildTrigger(triggerName, configuration.Trigger)
 		if err != nil {
 			return nil, err
 		}
@@ -79,10 +80,23 @@ func (autoscaler *Autoscaler) TriggerAlgorithmName() string {
 	return autoscaler.pipeline.TriggerAlgorithm.Name()
 }
 
+// AdjustmentAlgorithmName reports the configured adjustment algorithm for status consumers.
+func (autoscaler *Autoscaler) AdjustmentAlgorithmName() string {
+	if autoscaler == nil || autoscaler.pipeline.AdjustmentAlgorithm == nil {
+		return ""
+	}
+	return autoscaler.pipeline.AdjustmentAlgorithm.Name()
+}
+
 // Plan evaluates scaling snapshots through the configured autoscaling pipeline.
-func (autoscaler *Autoscaler) Plan(snapshots []core.ScalingSnapshot) ([]core.ScalingDecision, error) {
+func (autoscaler *Autoscaler) Plan(ctx context.Context, snapshots []core.ScalingSnapshot) ([]core.ScalingDecision, error) {
 	if autoscaler == nil {
 		return nil, ErrAutoscalerRequired
 	}
-	return autoscaler.pipeline.Plan(snapshots)
+	return autoscaler.pipeline.Plan(ctx, snapshots)
+}
+
+// NewWithAlgorithms assembles an Autoscaler from caller-provided algorithms.
+func NewWithAlgorithms(decision core.DecisionAlgorithm, trigger core.TriggerAlgorithm, adjustment core.AdjustmentAlgorithm, automatic bool) *Autoscaler {
+	return &Autoscaler{pipeline: core.Pipeline{DecisionAlgorithm: decision, TriggerAlgorithm: trigger, AdjustmentAlgorithm: adjustment, Automatic: automatic}}
 }

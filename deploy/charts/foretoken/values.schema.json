@@ -178,31 +178,27 @@
     "observability": {
       "type": "object",
       "required": [
-        "mode"
+        "serviceMonitor"
       ],
       "properties": {
-        "mode": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "enabled",
-            "disabled"
-          ]
-        },
-        "additionalLabels": {
+        "serviceMonitor": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
+          "required": [
+            "enabled"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "interval": {
+              "type": "string"
+            },
+            "scrapeTimeout": {
+              "type": "string"
+            }
           }
-        },
-        "interval": {
-          "type": "string"
-        },
-        "scrapeTimeout": {
-          "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "runtime": {
       "type": "object",

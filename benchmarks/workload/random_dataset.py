@@ -39,7 +39,7 @@ _TOKENIZER_ALLOW_PATTERNS = (
 def resolve_tokenizer_path(tokenizer_path: str) -> str:
     """Resolve ``tokenizer_path`` to a local directory.
 
-    Existing local paths are returned as-is; Hugging Face repo ids are fetched
+    Existing local paths are returned as-is; HuggingFace repo ids are fetched
     with ``_TOKENIZER_ALLOW_PATTERNS`` only.
     """
     local = Path(tokenizer_path).expanduser()
@@ -47,7 +47,7 @@ def resolve_tokenizer_path(tokenizer_path: str) -> str:
         return str(local.resolve())
 
     logger.info(
-        "Resolving tokenizer from Hugging Face repo %r",
+        "Resolving tokenizer from HuggingFace repo %r",
         tokenizer_path,
     )
     return snapshot_download(
@@ -74,8 +74,8 @@ def _build_perf_arguments(
         dataset="random",
         tokenizer_path=tokenizer_path,
         number=number,
-        parallel=config.load.parallel,
-        rate=float(config.load.rate),
+        parallel=config.load.parallel[0],
+        rate=float(config.load.rate[0]),
         open_loop=config.load.open_loop,
         min_prompt_length=min_prompt_length,
         max_prompt_length=max_prompt_length,
@@ -159,7 +159,7 @@ def generate_random_requests(
     np.random.seed(dataset.random_seed)
     tokenizer_path = resolve_tokenizer_path(dataset.tokenizer_path)
     if input_lengths is None:
-        count = config.load.number if number is None else number
+        count = config.load.number[0] if number is None else number
         return _generate_random_requests(
             config,
             tokenizer_path=tokenizer_path,

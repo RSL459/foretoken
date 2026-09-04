@@ -45,10 +45,6 @@ pub struct RouteTargetStats {
     pub tpot: Option<RouteTargetLatencyStats>,
     /// End-to-end request latency over `observed_window`.
     pub e2e_latency: Option<RouteTargetLatencyStats>,
-    /// Average sequence length of admitted requests, when the model server reports it.
-    pub avg_sequence_length: Option<u64>,
-    /// LoRA adapter names currently resident in GPU memory, when the model server reports them.
-    pub loaded_lora_adapters: Vec<String>,
 }
 
 /// Reads locally cached route target statistics without request-path network I/O.

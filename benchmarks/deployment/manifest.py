@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Render and identify Foretoken serving resources from Kustomize."""
+
+"""Kustomize parsing for Foretoken benchmark service discovery."""
 
 from __future__ import annotations
 
@@ -13,48 +14,22 @@ import yaml
 
 
 class DeploymentError(RuntimeError):
-    """A Foretoken deployment cannot be applied or inspected."""
+    """A deployment configuration cannot identify a reachable service."""
 
 
 @dataclass(frozen=True)
-class ResourceRef:
-    """A namespaced Foretoken resource selected for status inspection."""
+class DeploymentResources:
+    """Public serving resources rendered from one deployment configuration."""
 
-    kind: str
-    name: str
-    namespace: str
-
-    @property
-    def display_name(self) -> str:
-        """Return the user-facing kind and resource name."""
-        return f"{self.kind}/{self.name}"
-
-
-@dataclass(frozen=True)
-class ForetokenDeployment:
-    """Rendered Kustomize payload and its user-facing Foretoken services."""
-
-    path: Path
-    rendered: str
     namespace: str
     frontend: str
     hostname: str
     models: dict[str, str]
     objects: tuple[dict[str, Any], ...]
 
-    def service_refs(self) -> tuple[ResourceRef, ...]:
-        """Return the services whose current generation defines deployment readiness."""
-        return (
-            ResourceRef("FrontendService", self.frontend, self.namespace),
-            *(
-                ResourceRef("ModelService", name, self.namespace)
-                for name in self.models
-            ),
-        )
-
 
 def deployment_path(path_value: str) -> Path:
-    """Return a validated Kustomize root supplied by a CLI caller."""
+    """Return a validated Kustomize root path."""
     path = Path(path_value).expanduser().resolve()
     if not path.is_dir():
         raise DeploymentError(f"deployment directory not found: {path}")
@@ -64,7 +39,7 @@ def deployment_path(path_value: str) -> Path:
     return path
 
 
-def parse_deployment(path: Path, rendered: str) -> ForetokenDeployment:
+def parse_deployment(path: Path, rendered: str) -> DeploymentResources:
     """Extract the public frontend and models from rendered Kubernetes YAML."""
     try:
         documents = [item for item in yaml.safe_load_all(rendered) if item is not None]
@@ -82,34 +57,24 @@ def parse_deployment(path: Path, rendered: str) -> ForetokenDeployment:
                 f"rendered document {index} is not a Kubernetes object"
             )
         metadata = document.get("metadata") or {}
-        api_version = str(document.get("apiVersion") or "")
         kind = document.get("kind")
-        if kind not in {"FrontendService", "ModelService"}:
-            continue
-        if not api_version.startswith("inference.foretoken.io/"):
-            continue
-
-        namespaces.add(str(metadata.get("namespace") or "").strip())
+        if kind in {"FrontendService", "ModelService"}:
+            namespaces.add(str(metadata.get("namespace") or "").strip())
         if kind == "FrontendService":
             frontends.append(document)
-            continue
-
-        name = str(metadata.get("name") or "").strip()
-        model = str((document.get("spec") or {}).get("model") or "").strip()
-        if not name or not model:
-            raise DeploymentError(
-                "each ModelService requires metadata.name and spec.model"
-            )
-        models[name] = model
+        elif kind == "ModelService":
+            name = str(metadata.get("name") or "").strip()
+            model = str((document.get("spec") or {}).get("model") or "").strip()
+            if not name or not model:
+                raise DeploymentError(
+                    "each ModelService requires metadata.name and spec.model"
+                )
+            models[name] = model
 
     if len(frontends) != 1:
-        raise DeploymentError(
-            "a deployment must render exactly one Foretoken FrontendService"
-        )
+        raise DeploymentError("a deployment must render exactly one FrontendService")
     if not models:
-        raise DeploymentError(
-            "a deployment must render at least one Foretoken ModelService"
-        )
+        raise DeploymentError("a deployment must render at least one ModelService")
     if len(namespaces) != 1:
         raise DeploymentError(
             "FrontendService and ModelService resources must share one namespace"
@@ -121,9 +86,7 @@ def parse_deployment(path: Path, rendered: str) -> ForetokenDeployment:
     if not name:
         raise DeploymentError("FrontendService requires metadata.name")
     hostname = str((frontend.get("spec") or {}).get("hostname") or "").strip()
-    return ForetokenDeployment(
-        path=path,
-        rendered=rendered,
+    return DeploymentResources(
         namespace=next(iter(namespaces)),
         frontend=name,
         hostname=hostname,

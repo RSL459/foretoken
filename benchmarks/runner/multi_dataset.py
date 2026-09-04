@@ -7,17 +7,16 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from dataclasses import replace
+from datetime import datetime
 from typing import Any
 
 from benchmarks.config import allocate_dataset_counts
-from benchmarks.logger.wandb import wandb_run_base
 from benchmarks.metrics.aggregator import merge_raw_outputs
+from benchmarks.report.summary import log_summary
 from benchmarks.runner.base import Runner
-from benchmarks.runner.run_benchmark import RunBenchmark
-from benchmarks.runner.run_spec import RunSpec
+from benchmarks.workload.loader import load_requests
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +27,10 @@ def _child_dir_name(index: int, source: str) -> str:
 
 
 class MultiDatasetRunner(Runner):
-    """Allocate sources, run each point via ``RunBenchmark``, merge raw output.
+    """Run each dataset sequentially, then merge raw outputs and reaggregate.
 
-    Owns the experiment-root writer. Merged metrics are saved locally only
-    (no extra W&B run); each source is its own W&B run under one group.
+    W&B: one experiment is one ``group``; each dataset is its own ``run``.
+    Merged metrics are saved locally only (no extra W&B run).
     """
 
     async def run(self) -> dict[str, Any]:
@@ -39,13 +38,15 @@ class MultiDatasetRunner(Runner):
         sources = list(self.config.dataset.dataset)
         total = int(load["number"])
         counts = allocate_dataset_counts(total, len(sources))
-        writer = self.create_writer()
+        writer = self.make_writer()
         run_config = self.build_run_config("multi_dataset", load)
         run_config["datasets"] = sources
         run_config["dataset_numbers"] = counts
 
-        wandb_enabled = self.config.output.includes("wandb")
-        wandb_group = wandb_run_base(self.config) if wandb_enabled else None
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        wandb_group = (
+            self.config.wandb.run_name or f"{self.config.endpoint.model}_{stamp}"
+        )
 
         raw_outputs: list[dict[str, Any]] = []
         for index, (source, count) in enumerate(zip(sources, counts)):
@@ -64,21 +65,65 @@ class MultiDatasetRunner(Runner):
                 source,
                 count,
             )
+            requests = load_requests(self.config, source=source, number=count)
             child_name = _child_dir_name(index, source)
-            child_config = replace(
+            child = writer.child(child_name)
+            child_config = {
+                key: value
+                for key, value in run_config.items()
+                if key not in ("datasets", "dataset_numbers")
+            }
+            child_config.update(
+                {
+                    "dataset": source,
+                    "number": count,
+                    "resolved": {
+                        **run_config["resolved"],
+                        "number": count,
+                    },
+                }
+            )
+            per_dataset_config = replace(
                 self.config,
                 dataset=replace(self.config.dataset, dataset=[source]),
-                load=replace(self.config.load, number=count),
             )
-            result = await RunBenchmark(
-                RunSpec(
-                    config=child_config,
-                    label=child_name,
-                    output_dir=os.path.join(writer.output_dir, child_name),
-                    wandb_group=wandb_group,
+            wandb_logger = self.make_wandb_logger(
+                child,
+                load,
+                name_suffix=child_name,
+                group=wandb_group,
+                config=per_dataset_config,
+            )
+            try:
+                raw_output = await self.dispatch(
+                    self.create_client(),
+                    requests,
+                    parallel=load["parallel"],
+                    rate=load["rate"],
+                    open_loop=load["open_loop"],
                 )
-            ).run()
-            raw_outputs.append(result["raw"])
+                metrics = self.aggregate_metrics(
+                    raw_output,
+                    rate=load["rate"],
+                    number=count,
+                    resolved_parallel=load["resolved_parallel"],
+                )
+                if not self.config.output.includes("quiet"):
+                    log_summary(child_config, metrics)
+                child.save_json(
+                    "config.json",
+                    {**per_dataset_config.to_dict(), **child_config},
+                )
+                child.save_json("raw_output.json", raw_output["results"])
+                child.save_json("metrics.json", metrics)
+                if wandb_logger.enabled:
+                    wandb_logger.log_metrics(metrics)
+                raw_outputs.append(raw_output)
+            except Exception:
+                wandb_logger.finish()
+                raise
+            else:
+                wandb_logger.finish()
 
         if not raw_outputs:
             raise ValueError(

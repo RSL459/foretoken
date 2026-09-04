@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Build request list from prompt, random, JSONL, or Hugging Face sources."""
+"""Build request list from prompt, random, JSONL path, or HuggingFace dataset id."""
 
 from __future__ import annotations
 
@@ -11,24 +11,18 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from benchmarks.config import BenchConfig, DatasetConfig
-from benchmarks.workload.hf_dataset import (
-    is_hf_file_uri,
-    iter_hf_rows,
-    resolve_hf_file_uri,
-)
+from benchmarks.workload.hf_dataset import iter_hf_rows
 
 
-def load_jsonl(
-    path: Path | str, *, allow_comments: bool = False
-) -> Iterator[tuple[int, Any]]:
-    """Yield parsed non-empty JSONL lines with their one-based line numbers."""
+def load_jsonl(path: Path | str) -> Iterator[tuple[int, Any]]:
+    """Yield ``(line_no, parsed_object)`` for non-empty JSONL lines."""
     jsonl_path = Path(path)
     if not jsonl_path.is_file():
         raise FileNotFoundError(f"JSONL not found: {jsonl_path}")
     with jsonl_path.open("r", encoding="utf-8") as file:
         for line_no, line in enumerate(file, start=1):
             line = line.strip()
-            if not line or (allow_comments and line.startswith("#")):
+            if not line:
                 continue
             try:
                 yield line_no, json.loads(line)
@@ -112,7 +106,7 @@ def _load_hf_requests(spec: str, number: int, offset: int) -> list[dict[str, Any
 
     if len(requests) < number:
         raise ValueError(
-            f"Loaded {len(requests)} requests from Hugging Face {spec!r} "
+            f"Loaded {len(requests)} requests from HuggingFace {spec!r} "
             f"(offset={offset}), need {number}"
         )
     return requests
@@ -164,14 +158,13 @@ def load_requests(
     source: Optional[str] = None,
     number: Optional[int] = None,
 ) -> list[dict[str, Any]]:
-    """Load requests from prompt, random, local JSONL, or Hugging Face sources.
+    """Load requests from prompt, random, local JSONL, or HuggingFace dataset id.
 
     ``source`` / ``number`` override the config when a multi-dataset runner
     loads one share of the total request count.
     """
     dataset: DatasetConfig = config.dataset
-    count = config.load.number if number is None else number
-    offset = int(dataset.dataset_offset)
+    count = config.load.number[0] if number is None else number
 
     if dataset.prompt and source is None:
         return [{"prompt": dataset.prompt} for _ in range(count)]
@@ -180,8 +173,7 @@ def load_requests(
         if not dataset.dataset:
             raise ValueError(
                 "No workload source. Pass --prompt or --dataset "
-                "(random | local JSONL | org/name:split | "
-                "hf://datasets/...)."
+                "(random | local JSONL path | HuggingFace id)."
             )
         if len(dataset.dataset) != 1:
             raise ValueError(
@@ -194,12 +186,12 @@ def load_requests(
 
         return generate_random_requests(config, number=count)
 
-    if is_hf_file_uri(source) or source.startswith("hf://"):
-        local_path = resolve_hf_file_uri(source)
-        return _load_jsonl_requests(local_path, number=count, offset=offset)
-
     path = Path(source)
     if path.is_file():
-        return _load_jsonl_requests(str(path), number=count, offset=offset)
+        return _load_jsonl_requests(
+            str(path), number=count, offset=int(dataset.dataset_offset)
+        )
 
-    return _load_hf_requests(source, number=count, offset=offset)
+    return _load_hf_requests(
+        source, number=count, offset=int(dataset.dataset_offset)
+    )

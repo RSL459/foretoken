@@ -38,11 +38,10 @@ frontend:
 
 # Integrates Foretoken metric endpoints with an existing Prometheus Operator.
 observability:
-  # auto discovers the required APIs during installation; enabled supports offline rendering and GitOps.
-  mode: auto
-  additionalLabels: {}
-  interval: ""
-  scrapeTimeout: ""
+  serviceMonitor:
+    enabled: false
+    interval: ""
+    scrapeTimeout: ""
 
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:

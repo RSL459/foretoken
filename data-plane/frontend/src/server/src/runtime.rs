@@ -3,7 +3,7 @@
 
 //! Owns immutable model runtimes and request dispatch.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -15,7 +15,7 @@ use foretoken_chat::{
     ParserSelection,
 };
 use foretoken_llm_facade::{LlmFacadeError, LlmFacadeResolver, TokenStream};
-use foretoken_router::{RouteDecision, RouteTargetId, RouteTargetSet, Router, RouterRequest};
+use foretoken_router::{RouteDecision, RouteTargetSet, Router, RouterRequest};
 use foretoken_text::{
     Prompt, SamplingParams, TextDecodeOptions, TextRequest, TextRequestProcessor,
 };
@@ -357,39 +357,6 @@ struct RuntimeSlot {
     control: Arc<dyn RuntimeControl>,
 }
 
-/// Forgets a session's affinity after this long without a follow-up request.
-const SESSION_AFFINITY_TTL: Duration = Duration::from_secs(3600);
-
-/// Remembers the route target last selected for a session so `session_aware` re-affines follow-up
-/// requests to the same node.
-struct SessionAffinityStore {
-    entries: Mutex<HashMap<String, (RouteTargetId, Instant)>>,
-}
-
-impl SessionAffinityStore {
-    fn new() -> Self {
-        Self {
-            entries: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn get(&self, session_id: &str) -> Option<RouteTargetId> {
-        let mut entries = self.entries.lock().expect("session affinity lock poisoned");
-        let now = Instant::now();
-        entries.retain(|_, (_, observed)| {
-            now.saturating_duration_since(*observed) <= SESSION_AFFINITY_TTL
-        });
-        entries.get(session_id).map(|(target, _)| target.clone())
-    }
-
-    fn record(&self, session_id: String, target: RouteTargetId) {
-        self.entries
-            .lock()
-            .expect("session affinity lock poisoned")
-            .insert(session_id, (target, Instant::now()));
-    }
-}
-
 /// Real adapter: each request loads one immutable runtime state before lowering and routing.
 pub struct RuntimeGeneration {
     slot: ArcSwapOption<RuntimeSlot>,
@@ -397,7 +364,6 @@ pub struct RuntimeGeneration {
     publication_updates: tokio::sync::watch::Sender<u64>,
     accepting: AtomicBool,
     request_timeout: Duration,
-    session_affinity: SessionAffinityStore,
 }
 
 impl RuntimeGeneration {
@@ -413,7 +379,6 @@ impl RuntimeGeneration {
             publication_updates,
             accepting: AtomicBool::new(true),
             request_timeout,
-            session_affinity: SessionAffinityStore::new(),
         }
     }
 
@@ -505,7 +470,7 @@ impl RuntimeGeneration {
                 return Err(GenerationError::ModelNotFound);
             };
             if queued.is_none() {
-                queued = Some(foretoken_metrics::QueueGuard::runtime_preparation(&targets));
+                queued = Some(foretoken_metrics::QueueGuard::new(&targets));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero()
@@ -540,21 +505,12 @@ impl RuntimeGeneration {
                 }
             })?;
         let generate_request = prepared.generate_request;
-        let session_target = generate_request
-            .session_id
-            .as_deref()
-            .and_then(|id| self.session_affinity.get(id));
-        let context = RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()))
-            .with_session_target_id(session_target);
+        let context = RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()));
         let mut session = slot.state.router.start(context);
         let initial = session
             .select_initial()
             .map_err(|_| GenerationError::Unavailable)?;
-        if let Some(session_id) = &generate_request.session_id {
-            self.session_affinity
-                .record(session_id.clone(), initial.route_target_id.clone());
-        }
-        let _queue = foretoken_metrics::QueueGuard::backend_dispatch(&initial.admission_targets);
+        let _queue = foretoken_metrics::QueueGuard::new(&initial.admission_targets);
         let (decision, backend_stream) = execute_workflow(
             &*slot.state.resolver,
             &mut *session,

@@ -349,7 +349,6 @@ async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
             kv_cache_usage: Some(0.75),
             prompt_tokens_total: Some(12),
             generation_tokens_total: Some(8),
-            avg_sequence_length: Some(6),
             ttft_seconds: histogram.clone(),
             tpot_seconds: histogram.clone(),
             e2e_seconds: histogram,
@@ -393,7 +392,6 @@ async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
     assert_eq!(telemetry["kv_cache_usage"], 0.75);
     assert_eq!(telemetry["prompt_tokens_total"], 12);
     assert_eq!(telemetry["generation_tokens_total"], 8);
-    assert_eq!(telemetry["avg_sequence_length"], 6);
     assert_eq!(
         telemetry["ttft_seconds"],
         serde_json::json!({

@@ -88,8 +88,6 @@ impl RouteTargetStatsHistory {
             ttft: latency(&baseline.ttft_seconds, &current.ttft_seconds),
             tpot: latency(&baseline.tpot_seconds, &current.tpot_seconds),
             e2e_latency: latency(&baseline.e2e_seconds, &current.e2e_seconds),
-            avg_sequence_length: current.avg_sequence_length,
-            loaded_lora_adapters: vec![],
         })
     }
 }
