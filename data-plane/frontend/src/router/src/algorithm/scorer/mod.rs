@@ -91,10 +91,7 @@ pub(crate) fn pipeline_sum_penalties(
     candidates: &[RouteCandidate],
     metric: impl Fn(&RouteCandidate) -> Option<i64>,
 ) -> Option<Vec<i64>> {
-    let values = candidates
-        .iter()
-        .map(&metric)
-        .collect::<Option<Vec<_>>>()?;
+    let values = candidates.iter().map(&metric).collect::<Option<Vec<_>>>()?;
     let prefill = role_min_by_pipeline_scope(candidates, ModelServerRole::Prefill, &metric)?;
     let decode = role_min_by_pipeline_scope(candidates, ModelServerRole::Decode, &metric)?;
     Some(

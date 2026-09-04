@@ -222,12 +222,7 @@ fn missing_route_target_telemetry_ranks_below_a_measured_target() {
     unknown.route_target_stats = None;
     let measured = candidate("measured", ModelServerRole::Aggregate, 100);
 
-    let scores = LeastLoadedScorer.score(
-        &request(),
-        &[unknown, measured],
-        &PrefixFacts,
-        &mut (),
-    );
+    let scores = LeastLoadedScorer.score(&request(), &[unknown, measured], &PrefixFacts, &mut ());
 
     assert!(scores[1] > scores[0]);
 }
