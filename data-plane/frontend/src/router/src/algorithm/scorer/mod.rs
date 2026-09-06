@@ -127,9 +127,7 @@ pub(crate) fn normalized_penalty_contributions(
     {
         return None;
     }
-    let Some(minimum) = values.iter().copied().reduce(f64::min) else {
-        return None;
-    };
+    let minimum = values.iter().copied().reduce(f64::min)?;
     let maximum = values.iter().copied().reduce(f64::max)?;
     let range = maximum - minimum;
     penalties
