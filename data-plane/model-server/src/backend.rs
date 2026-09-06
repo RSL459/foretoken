@@ -511,7 +511,7 @@ impl Backend for VllmBackend {
                 active.by_data_parallel_rank.clone(),
             )
         };
-        let (ttft_seconds, tpot_seconds, e2e_seconds, latency_by_rank) = self
+        let latency = self
             .boundary_latency
             .lock()
             .expect("boundary latency metrics lock poisoned")
@@ -525,7 +525,8 @@ impl Backend for VllmBackend {
                     .by_data_parallel_rank
                     .get(rank)
                     .expect("configured EngineCore rank has metric labels");
-                let (ttft, tpot, e2e) = latency_by_rank
+                let rank_latency = latency
+                    .by_data_parallel_rank
                     .get(rank)
                     .expect("configured EngineCore rank has latency accumulators")
                     .clone();
@@ -542,9 +543,9 @@ impl Backend for VllmBackend {
                         kv_cache_usage: vllm.kv_cache_usage,
                         prompt_tokens_total: vllm.prompt_tokens_total,
                         generation_tokens_total: vllm.generation_tokens_total,
-                        ttft_seconds: ttft,
-                        tpot_seconds: tpot,
-                        e2e_seconds: e2e,
+                        ttft_seconds: rank_latency.ttft,
+                        tpot_seconds: rank_latency.tpot,
+                        e2e_seconds: rank_latency.e2e,
                     },
                 )
             })
@@ -560,9 +561,9 @@ impl Backend for VllmBackend {
             kv_cache_usage: vllm.kv_cache_usage,
             prompt_tokens_total: vllm.prompt_tokens_total,
             generation_tokens_total: vllm.generation_tokens_total,
-            ttft_seconds,
-            tpot_seconds,
-            e2e_seconds,
+            ttft_seconds: latency.aggregate.ttft,
+            tpot_seconds: latency.aggregate.tpot,
+            e2e_seconds: latency.aggregate.e2e,
         }
     }
 

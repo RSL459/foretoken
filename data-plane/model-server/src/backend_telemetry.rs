@@ -73,6 +73,14 @@ struct LatencyHistograms {
     e2e: BoundaryHistogram,
 }
 
+/// Owned cumulative latency values for one aggregate or data-parallel rank.
+#[derive(Clone)]
+pub(crate) struct LatencySnapshot {
+    pub(crate) ttft: CumulativeHistogram,
+    pub(crate) tpot: CumulativeHistogram,
+    pub(crate) e2e: CumulativeHistogram,
+}
+
 impl LatencyHistograms {
     fn new() -> Self {
         Self {
@@ -82,19 +90,19 @@ impl LatencyHistograms {
         }
     }
 
-    fn snapshot(
-        &self,
-    ) -> (
-        CumulativeHistogram,
-        CumulativeHistogram,
-        CumulativeHistogram,
-    ) {
-        (
-            self.ttft.snapshot(),
-            self.tpot.snapshot(),
-            self.e2e.snapshot(),
-        )
+    fn snapshot(&self) -> LatencySnapshot {
+        LatencySnapshot {
+            ttft: self.ttft.snapshot(),
+            tpot: self.tpot.snapshot(),
+            e2e: self.e2e.snapshot(),
+        }
     }
+}
+
+/// Aggregate and exact-rank latency snapshots published by the backend adapter.
+pub(crate) struct BoundaryLatencySnapshot {
+    pub(crate) aggregate: LatencySnapshot,
+    pub(crate) by_data_parallel_rank: BTreeMap<u32, LatencySnapshot>,
 }
 
 pub(crate) struct BoundaryLatencyMetrics {
@@ -151,28 +159,15 @@ impl BoundaryLatencyMetrics {
     }
 
     /// Returns owned cumulative histograms for the backend telemetry publisher without resetting them.
-    pub(crate) fn snapshot(
-        &self,
-    ) -> (
-        CumulativeHistogram,
-        CumulativeHistogram,
-        CumulativeHistogram,
-        BTreeMap<
-            u32,
-            (
-                CumulativeHistogram,
-                CumulativeHistogram,
-                CumulativeHistogram,
-            ),
-        >,
-    ) {
-        let (ttft, tpot, e2e) = self.aggregate.snapshot();
-        let by_rank = self
-            .by_data_parallel_rank
-            .iter()
-            .map(|(rank, histograms)| (*rank, histograms.snapshot()))
-            .collect();
-        (ttft, tpot, e2e, by_rank)
+    pub(crate) fn snapshot(&self) -> BoundaryLatencySnapshot {
+        BoundaryLatencySnapshot {
+            aggregate: self.aggregate.snapshot(),
+            by_data_parallel_rank: self
+                .by_data_parallel_rank
+                .iter()
+                .map(|(rank, histograms)| (*rank, histograms.snapshot()))
+                .collect(),
+        }
     }
 }
 
