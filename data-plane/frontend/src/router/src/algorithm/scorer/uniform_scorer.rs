@@ -5,7 +5,7 @@
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
-use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest};
+use crate::{RouteCandidate, RouteScore, RouteScorer, RouteScorerResult, RouterRequest};
 
 /// Assigns the same score to every candidate.
 #[derive(Default)]
@@ -19,7 +19,10 @@ impl RouteScorer for UniformScorer {
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
         customized_context: &mut (),
-    ) -> Vec<RouteScore> {
-        vec![RouteScore::default(); candidates.len()]
+    ) -> RouteScorerResult {
+        RouteScorerResult::Scored(vec![
+            RouteScore::new(1.0).expect("uniform score is valid");
+            candidates.len()
+        ])
     }
 }

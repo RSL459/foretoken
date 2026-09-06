@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use foretoken_model_protocol::{
-    CumulativeHistogram, CumulativeHistogramBucket, RuntimeMetadataResponse, RuntimeModelIdentity,
+    CumulativeHistogram, CumulativeHistogramBucket, DataParallelRankTelemetry,
+    RuntimeMetadataResponse, RuntimeModelIdentity,
 };
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::{
@@ -54,7 +55,7 @@ impl Default for RecordingBackend {
             aborts: Mutex::new(Vec::new()),
             telemetry: BackendTelemetry {
                 running_requests: 0,
-                max_concurrent_requests: 7,
+                max_running_requests: 7,
                 ..Default::default()
             },
             metrics: Ok(OPENMETRICS_FIXTURE),
@@ -343,9 +344,29 @@ async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
     let backend = Arc::new(RecordingBackend {
         telemetry: BackendTelemetry {
             running_requests: 3,
-            max_concurrent_requests: 7,
+            max_running_requests: 7,
             scheduler_running_requests: Some(2),
             scheduler_waiting_requests: Some(1),
+            active_prefill_tokens: Some(9),
+            by_data_parallel_rank: [(
+                0,
+                DataParallelRankTelemetry {
+                    running_requests: 3,
+                    max_running_requests: 7,
+                    scheduler_running_requests: Some(2),
+                    scheduler_waiting_requests: Some(1),
+                    active_prefill_tokens: 9,
+                    inflight_tokens: 64,
+                    kv_cache_usage: Some(0.75),
+                    prompt_tokens_total: Some(12),
+                    generation_tokens_total: Some(8),
+                    ttft_seconds: histogram.clone(),
+                    tpot_seconds: histogram.clone(),
+                    e2e_seconds: histogram.clone(),
+                },
+            )]
+            .into_iter()
+            .collect(),
             kv_cache_usage: Some(0.75),
             prompt_tokens_total: Some(12),
             generation_tokens_total: Some(8),
@@ -383,12 +404,17 @@ async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
     assert_eq!(telemetry.status(), StatusCode::OK);
     let telemetry: serde_json::Value =
         serde_json::from_slice(&telemetry.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(telemetry["version"], 2);
+    assert_eq!(telemetry["version"], 5);
     assert!(telemetry["collected_at_unix_ms"].as_u64().is_some());
     assert_eq!(telemetry["accepting"], false);
     assert_eq!(telemetry["running_requests"], 3);
     assert_eq!(telemetry["scheduler_running_requests"], 2);
     assert_eq!(telemetry["scheduler_waiting_requests"], 1);
+    assert_eq!(telemetry["active_prefill_tokens"], 9);
+    assert_eq!(
+        telemetry["by_data_parallel_rank"]["0"]["inflight_tokens"],
+        64
+    );
     assert_eq!(telemetry["kv_cache_usage"], 0.75);
     assert_eq!(telemetry["prompt_tokens_total"], 12);
     assert_eq!(telemetry["generation_tokens_total"], 8);

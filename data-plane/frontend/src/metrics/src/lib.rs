@@ -12,7 +12,11 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use foretoken_router::{RouteTargetSet, ScalingTarget, ScalingTargetKind};
+use foretoken_model_protocol::ModelServerRole;
+use foretoken_router::{
+    RouteScore, RouteScorerResult, RouteTargetSet, RoutingFallback, RoutingObserver, ScalingTarget,
+    ScalingTargetKind,
+};
 use serde::Serialize;
 
 pub use vllm_metrics::*;
@@ -86,6 +90,87 @@ fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, QueueCounts>> {
     queued()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ScoreTotals {
+    count: u64,
+    sum: f64,
+}
+
+#[derive(Default)]
+struct RoutingMetrics {
+    scorer_evaluations: BTreeMap<(String, &'static str), u64>,
+    scorer_unavailable: BTreeMap<(String, &'static str), u64>,
+    scorer_scores: BTreeMap<String, ScoreTotals>,
+    fallbacks: BTreeMap<&'static str, u64>,
+    selections: BTreeMap<&'static str, ScoreTotals>,
+}
+
+static ROUTING: OnceLock<Mutex<RoutingMetrics>> = OnceLock::new();
+
+fn routing_lock() -> MutexGuard<'static, RoutingMetrics> {
+    ROUTING
+        .get_or_init(|| Mutex::new(RoutingMetrics::default()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Process-level observer for low-cardinality scorer availability, scores, and final decisions.
+#[derive(Default)]
+pub struct RoutingMetricsObserver;
+
+impl RoutingObserver for RoutingMetricsObserver {
+    fn observe_scorer(&self, name: &str, result: &RouteScorerResult) {
+        let mut metrics = routing_lock();
+        let outcome = if matches!(result, RouteScorerResult::Scored(_)) {
+            "scored"
+        } else {
+            "unavailable"
+        };
+        *metrics
+            .scorer_evaluations
+            .entry((name.to_owned(), outcome))
+            .or_default() += 1;
+        match result {
+            RouteScorerResult::Scored(scores) => {
+                let totals = metrics.scorer_scores.entry(name.to_owned()).or_default();
+                for score in scores.iter().copied().filter(|score| score.is_applicable()) {
+                    totals.count = totals.count.saturating_add(1);
+                    totals.sum += score.value();
+                }
+            }
+            RouteScorerResult::Unavailable(reason) => {
+                *metrics
+                    .scorer_unavailable
+                    .entry((name.to_owned(), reason.as_str()))
+                    .or_default() += 1;
+            }
+        }
+    }
+
+    fn observe_fallback(&self, fallback: RoutingFallback) {
+        *routing_lock()
+            .fallbacks
+            .entry(fallback.as_str())
+            .or_default() += 1;
+    }
+
+    fn observe_selection(&self, role: ModelServerRole, score: RouteScore) {
+        let mut metrics = routing_lock();
+        let totals = metrics.selections.entry(role_label(role)).or_default();
+        totals.count = totals.count.saturating_add(1);
+        totals.sum += score.value();
+    }
+}
+
+fn role_label(role: ModelServerRole) -> &'static str {
+    match role {
+        ModelServerRole::Aggregate => "aggregate",
+        ModelServerRole::Encoder => "encoder",
+        ModelServerRole::Prefill => "prefill",
+        ModelServerRole::Decode => "decode",
+    }
 }
 
 /// RAII ownership of one request waiting for admission to a fixed target set.
@@ -187,6 +272,7 @@ fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
                 body = without_eof.to_owned();
             }
             body.push_str(&render_admission_metrics());
+            body.push_str(&render_routing_metrics());
             if let Some((state, reason, sources_healthy, sources_total)) = kv_index {
                 body.push_str(&format!("# TYPE foretoken_kv_index_enabled gauge\nforetoken_kv_index_enabled {}\n# TYPE foretoken_kv_index_degraded gauge\nforetoken_kv_index_degraded{{reason=\"{}\"}} {}\n# TYPE foretoken_kv_index_sources_healthy gauge\nforetoken_kv_index_sources_healthy {}\n# TYPE foretoken_kv_index_sources_total gauge\nforetoken_kv_index_sources_total {}\n", usize::from(!matches!(state, "disabled" | "unavailable")), escape_label(reason.unwrap_or("none")), usize::from(state == "degraded"), sources_healthy, sources_total));
             }
@@ -214,6 +300,55 @@ fn render_admission_metrics() -> String {
             .runtime_preparation
             .saturating_add(counts.backend_dispatch);
         body.push_str(&format!("foretoken_upstream_queued_requests{{service_uid=\"{}\",target_kind=\"{}\",target_id=\"{}\"}} {}\n", escape_label(&target.service_uid), escape_label(&target.target_kind), escape_label(&target.target_id), value));
+    }
+    body
+}
+
+fn render_routing_metrics() -> String {
+    let metrics = routing_lock();
+    let mut body = String::from(
+        "# TYPE foretoken_router_scorer_evaluations_total counter\n# HELP foretoken_router_scorer_evaluations_total Configured scorer evaluations by outcome.\n",
+    );
+    for ((scorer, result), value) in &metrics.scorer_evaluations {
+        body.push_str(&format!(
+            "foretoken_router_scorer_evaluations_total{{scorer=\"{}\",result=\"{}\"}} {}\n",
+            escape_label(scorer),
+            result,
+            value
+        ));
+    }
+    body.push_str("# TYPE foretoken_router_scorer_unavailable_total counter\n# HELP foretoken_router_scorer_unavailable_total Scorer evaluations omitted from composition by reason.\n");
+    for ((scorer, reason), value) in &metrics.scorer_unavailable {
+        body.push_str(&format!(
+            "foretoken_router_scorer_unavailable_total{{scorer=\"{}\",reason=\"{}\"}} {}\n",
+            escape_label(scorer),
+            reason,
+            value
+        ));
+    }
+    body.push_str("# TYPE foretoken_router_scorer_score summary\n# HELP foretoken_router_scorer_score Normalized applicable candidate scores produced by each configured scorer.\n");
+    for (scorer, totals) in &metrics.scorer_scores {
+        body.push_str(&format!(
+            "foretoken_router_scorer_score_sum{{scorer=\"{}\"}} {}\nforetoken_router_scorer_score_count{{scorer=\"{}\"}} {}\n",
+            escape_label(scorer),
+            totals.sum,
+            escape_label(scorer),
+            totals.count
+        ));
+    }
+    body.push_str("# TYPE foretoken_router_fallback_total counter\n");
+    for (fallback, value) in &metrics.fallbacks {
+        body.push_str(&format!(
+            "foretoken_router_fallback_total{{strategy=\"{}\"}} {}\n",
+            fallback, value
+        ));
+    }
+    body.push_str("# TYPE foretoken_router_selections_total counter\n# TYPE foretoken_router_selected_score summary\n");
+    for (role, totals) in &metrics.selections {
+        body.push_str(&format!(
+            "foretoken_router_selections_total{{role=\"{}\"}} {}\nforetoken_router_selected_score_sum{{role=\"{}\"}} {}\nforetoken_router_selected_score_count{{role=\"{}\"}} {}\n",
+            role, totals.count, role, totals.sum, role, totals.count
+        ));
     }
     body
 }

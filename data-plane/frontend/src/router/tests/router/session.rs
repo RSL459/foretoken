@@ -11,23 +11,35 @@ use foretoken_model_protocol::ModelServerRole;
 use super::support::{TestStatsReader, inventory, inventory_with_unhealthy, request, route, stats};
 use foretoken_router::algorithm::{AllowAllFilter, LeastLoadedScorer, MaxPicker};
 use foretoken_router::{
-    PipelineRouter, RouteError, RouteTargetId, RouteTargetStats, Router, RouterPipeline,
+    PipelineRouter, RouteError, RouteTargetId, RouteTargetRankStats, RouteTargetStats, Router,
+    RouterPipeline,
 };
 
 fn target_stats(running_requests: u64) -> RouteTargetStats {
-    RouteTargetStats {
-        collected_at_unix_ms: 1,
-        observed_window: Duration::from_secs(60),
+    let rank = RouteTargetRankStats {
         running_requests,
-        max_concurrent_requests: 8,
+        max_running_requests: 8,
         scheduler_running_requests: Some(1),
         scheduler_waiting_requests: Some(2),
+        active_prefill_tokens: 0,
+        inflight_tokens: 0,
         kv_cache_usage: Some(0.5),
         prompt_tokens_per_second: Some(100.0),
         generation_tokens_per_second: Some(50.0),
         ttft: None,
         tpot: None,
         e2e_latency: None,
+    };
+    RouteTargetStats {
+        collected_at_unix_ms: 1,
+        observed_window: Duration::from_secs(60),
+        running_requests,
+        max_running_requests: 8,
+        scheduler_running_requests: Some(1),
+        scheduler_waiting_requests: Some(2),
+        by_data_parallel_rank: [(0, rank)].into_iter().collect(),
+        loaded_lora_adapters: vec![],
+        kv_cache_usage: Some(0.5),
     }
 }
 
@@ -128,4 +140,46 @@ fn decode_uses_fresh_candidate_stats_and_is_not_bound_during_prefill_selection()
         session.select_decode().unwrap().route_target_id.as_str(),
         "d2"
     );
+}
+
+// Protects exact pending-dispatch ownership from telemetry-timestamp guesses and leaked counts.
+#[test]
+fn pending_selection_is_released_by_its_dispatch_completion() {
+    let stat_values = stats();
+    stat_values.lock().unwrap().extend([
+        (RouteTargetId::new("a"), target_stats(0)),
+        (RouteTargetId::new("b"), target_stats(0)),
+    ]);
+    let router = PipelineRouter::with_pipeline(
+        inventory(vec![
+            route("a", ModelServerRole::Aggregate),
+            route("b", ModelServerRole::Aggregate),
+        ]),
+        RouterPipeline::new(
+            Arc::new(AllowAllFilter),
+            Arc::new(LeastLoadedScorer),
+            Arc::new(MaxPicker),
+        ),
+    )
+    .with_route_target_stats_reader(Arc::new(TestStatsReader::new(stat_values)));
+
+    let request_with_id = |id: &str| {
+        let mut value = request();
+        Arc::get_mut(&mut value.generate_request)
+            .expect("test request has one owner")
+            .request_id = id.into();
+        value
+    };
+    let mut first_session = router.start(request_with_id("first"));
+    let first = first_session.select_initial().unwrap();
+    assert_eq!(first.route_target_id.as_str(), "a");
+
+    let mut second_session = router.start(request_with_id("second"));
+    let second = second_session.select_initial().unwrap();
+    assert_eq!(second.route_target_id.as_str(), "b");
+
+    first_session.dispatch_complete(&first);
+    let mut third_session = router.start(request_with_id("third"));
+    let third = third_session.select_initial().unwrap();
+    assert_eq!(third.route_target_id.as_str(), "a");
 }

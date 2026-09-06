@@ -10,9 +10,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
-use crate::{RouteFilter, RoutePicker, RouteScorer, RouterPipeline};
+use crate::algorithm::scorer::CompositeScorer;
+use crate::selection::observer::NoopRoutingObserver;
+use crate::{RouteFilter, RoutePicker, RouteScorer, RouterPipeline, RoutingObserver};
 
-/// A Filter implementation compiled into this binary.
+/// A Filter implementation compiled into this binary and selectable without control-plane changes.
 pub struct FilterDescriptor {
     /// Stable configuration name.
     pub name: &'static str,
@@ -21,16 +23,60 @@ pub struct FilterDescriptor {
 }
 inventory::collect!(FilterDescriptor);
 
-/// A Scorer implementation compiled into this binary.
+/// A Scorer implementation compiled into this binary and selectable without control-plane changes.
 pub struct ScorerDescriptor {
     /// Stable configuration name.
     pub name: &'static str,
+    /// Raw signal families consumed by the formula, used to reject accidental double counting.
+    pub signals: &'static [ScorerSignal],
+    /// Whether the formula exposes one normalized signal suitable for weighted composition.
+    pub composition: ScorerComposition,
     /// Constructs the implementation selected by `name`.
     pub factory: fn() -> Arc<dyn RouteScorer>,
 }
 inventory::collect!(ScorerDescriptor);
 
-/// A Picker implementation compiled into this binary.
+/// One authoritative raw observation family consumed by a scorer formula.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ScorerSignal {
+    Prefix,
+    OutstandingRequests,
+    RunningRequests,
+    QueueDepth,
+    TokenLoad,
+    Load,
+    KvCache,
+    LoraAffinity,
+    MultimodalAffinity,
+    SessionAffinity,
+}
+
+impl fmt::Display for ScorerSignal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Prefix => "prefix",
+            Self::OutstandingRequests => "outstanding_requests",
+            Self::RunningRequests => "running_requests",
+            Self::QueueDepth => "queue_depth",
+            Self::TokenLoad => "token_load",
+            Self::Load => "load",
+            Self::KvCache => "kv_cache",
+            Self::LoraAffinity => "lora_affinity",
+            Self::MultimodalAffinity => "multimodal_affinity",
+            Self::SessionAffinity => "session_affinity",
+        };
+        formatter.write_str(value)
+    }
+}
+
+/// Declares whether one scorer's normalized values can be mixed with independent components.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScorerComposition {
+    Composable,
+    Exclusive,
+}
+
+/// A Picker implementation compiled into this binary and selectable without control-plane changes.
 pub struct PickerDescriptor {
     /// Stable configuration name.
     pub name: &'static str,
@@ -138,32 +184,80 @@ macro_rules! algorithm_name_wrapper {
 }
 
 algorithm_name_wrapper!(FilterAlgorithm, "allow_all");
-algorithm_name_wrapper!(ScorerAlgorithm, "kv_least_loaded");
+algorithm_name_wrapper!(ScorerAlgorithm, "least_loaded");
 algorithm_name_wrapper!(PickerAlgorithm, "round_robin");
 
+/// One scorer component and its positive dimensionless influence in the configured composite.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScorerConfig {
+    /// Compiled scorer selected by stable name.
+    pub name: ScorerAlgorithm,
+    /// Relative component influence. Weights are renormalized when a signal is unavailable.
+    #[serde(default = "default_scorer_weight")]
+    pub weight: f64,
+}
+
+impl Default for ScorerConfig {
+    fn default() -> Self {
+        Self {
+            name: ScorerAlgorithm::default(),
+            weight: default_scorer_weight(),
+        }
+    }
+}
+
+fn default_scorer_weight() -> f64 {
+    1.0
+}
+
+fn default_scorers() -> Vec<ScorerConfig> {
+    vec![ScorerConfig::default()]
+}
+
 /// Configured algorithms selected for each Router pipeline stage.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RouterPipelineConfig {
     /// Filter used before scoring.
     #[serde(default)]
     pub filter: FilterAlgorithm,
-    /// Scorer used to rank filtered candidates.
-    #[serde(default)]
-    pub scorer: ScorerAlgorithm,
+    /// Independent scorers combined to rank filtered candidates.
+    #[serde(default = "default_scorers")]
+    pub scorers: Vec<ScorerConfig>,
     /// Picker used to select one scored candidate.
     #[serde(default)]
     pub picker: PickerAlgorithm,
 }
 
+impl Default for RouterPipelineConfig {
+    fn default() -> Self {
+        Self {
+            filter: FilterAlgorithm::default(),
+            scorers: default_scorers(),
+            picker: PickerAlgorithm::default(),
+        }
+    }
+}
+
 impl RouterPipelineConfig {
     /// Builds the selected Filter, Scorer, and Picker implementations compiled into this binary.
     pub fn build(&self) -> Result<RouterPipeline, RouterPipelineConfigError> {
+        self.build_with_observer(Arc::new(NoopRoutingObserver))
+    }
+
+    /// Builds the configured pipeline and publishes bounded scorer diagnostics to `observer`.
+    pub fn build_with_observer(
+        &self,
+        observer: Arc<dyn RoutingObserver>,
+    ) -> Result<RouterPipeline, RouterPipelineConfigError> {
         validate_descriptors()?;
+        let scorer = configured_scorer(&self.scorers, observer.clone())?;
         Ok(RouterPipeline::new(
             filter_factory(self.filter.as_str())?(),
-            scorer_factory(self.scorer.as_str())?(),
+            scorer,
             picker_factory(self.picker.as_str())?(),
-        ))
+        )
+        .with_observer(observer))
     }
 
     /// Validates all compiled descriptors and configured names before serving begins.
@@ -183,15 +277,56 @@ fn filter_factory(name: &str) -> Result<fn() -> Arc<dyn RouteFilter>, RouterPipe
         })
 }
 
-fn scorer_factory(name: &str) -> Result<fn() -> Arc<dyn RouteScorer>, RouterPipelineConfigError> {
+fn scorer_descriptor(name: &str) -> Result<&'static ScorerDescriptor, RouterPipelineConfigError> {
     inventory::iter::<ScorerDescriptor>
         .into_iter()
         .find(|descriptor| descriptor.name == name)
-        .map(|descriptor| descriptor.factory)
         .ok_or_else(|| RouterPipelineConfigError::UnknownAlgorithm {
             category: "scorer",
             name: name.to_owned(),
         })
+}
+
+fn configured_scorer(
+    configured: &[ScorerConfig],
+    observer: Arc<dyn RoutingObserver>,
+) -> Result<Arc<dyn RouteScorer>, RouterPipelineConfigError> {
+    if configured.is_empty() {
+        return Err(RouterPipelineConfigError::EmptyScorers);
+    }
+    let mut names = std::collections::BTreeSet::new();
+    let mut signals = std::collections::BTreeMap::new();
+    let mut components = Vec::with_capacity(configured.len());
+    for component in configured {
+        let name = component.name.as_str();
+        if !component.weight.is_finite() || component.weight <= 0.0 {
+            return Err(RouterPipelineConfigError::InvalidScorerWeight {
+                name: name.to_owned(),
+            });
+        }
+        if !names.insert(name) {
+            return Err(RouterPipelineConfigError::DuplicateConfiguredScorer {
+                name: name.to_owned(),
+            });
+        }
+        let descriptor = scorer_descriptor(name)?;
+        if configured.len() > 1 && descriptor.composition == ScorerComposition::Exclusive {
+            return Err(RouterPipelineConfigError::ExclusiveScorer {
+                name: name.to_owned(),
+            });
+        }
+        for signal in descriptor.signals {
+            if let Some(previous) = signals.insert(*signal, name) {
+                return Err(RouterPipelineConfigError::OverlappingScorerSignal {
+                    signal: *signal,
+                    first: previous.to_owned(),
+                    second: name.to_owned(),
+                });
+            }
+        }
+        components.push((name.to_owned(), (descriptor.factory)(), component.weight));
+    }
+    Ok(Arc::new(CompositeScorer::configured(components, observer)) as Arc<dyn RouteScorer>)
 }
 
 fn picker_factory(name: &str) -> Result<fn() -> Arc<dyn RoutePicker>, RouterPipelineConfigError> {
@@ -212,6 +347,19 @@ fn validate_descriptors() -> Result<(), RouterPipelineConfigError> {
             .into_iter()
             .map(|descriptor| descriptor.name),
     )?;
+    for descriptor in inventory::iter::<ScorerDescriptor> {
+        let mut signals = std::collections::BTreeSet::new();
+        if let Some(signal) = descriptor
+            .signals
+            .iter()
+            .find(|signal| !signals.insert(**signal))
+        {
+            return Err(RouterPipelineConfigError::DuplicateDescriptorSignal {
+                name: descriptor.name.to_owned(),
+                signal: *signal,
+            });
+        }
+    }
     validate_descriptor_names(
         "scorer",
         inventory::iter::<ScorerDescriptor>
@@ -253,6 +401,25 @@ pub enum RouterPipelineConfigError {
     /// A configured name was empty.
     #[error("router algorithm name must not be empty")]
     EmptyName,
+    /// No scorer component was configured.
+    #[error("router pipeline requires at least one scorer")]
+    EmptyScorers,
+    /// A configured component weight was not finite and positive.
+    #[error("router scorer {name:?} weight must be finite and positive")]
+    InvalidScorerWeight { name: String },
+    /// The same scorer was configured twice.
+    #[error("router scorer {name:?} is configured more than once")]
+    DuplicateConfiguredScorer { name: String },
+    /// A relative or internally composite policy was mixed with another scorer.
+    #[error("router scorer {name:?} is a complete policy and cannot be composed")]
+    ExclusiveScorer { name: String },
+    /// Two configured formulas consume the same authoritative signal family.
+    #[error("router scorers {first:?} and {second:?} both consume {signal}")]
+    OverlappingScorerSignal {
+        signal: ScorerSignal,
+        first: String,
+        second: String,
+    },
     /// A compiled implementation omitted its name.
     #[error("compiled {category} descriptor has an empty name")]
     EmptyDescriptorName { category: &'static str },
@@ -262,6 +429,9 @@ pub enum RouterPipelineConfigError {
         category: &'static str,
         name: String,
     },
+    /// One compiled descriptor declared the same raw signal more than once.
+    #[error("compiled scorer {name:?} declares {signal} more than once")]
+    DuplicateDescriptorSignal { name: String, signal: ScorerSignal },
     /// The configuration selected no compiled implementation.
     #[error("unknown compiled {category} algorithm {name:?}")]
     UnknownAlgorithm {

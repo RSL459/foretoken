@@ -25,7 +25,7 @@ pub(crate) async fn execute_workflow(
     // The router chooses only the initial stage. Encoder output prepares prefill transfer state,
     // and decode is selected only after prefill completes within the same routing session.
     match initial.role {
-        ModelServerRole::Aggregate => execute_aggregate(resolver, initial, request).await,
+        ModelServerRole::Aggregate => execute_aggregate(resolver, session, initial, request).await,
         ModelServerRole::Prefill => {
             execute_pd(
                 resolver,
@@ -38,7 +38,8 @@ pub(crate) async fn execute_workflow(
             .await
         }
         ModelServerRole::Encoder => {
-            let (descriptor, cleanup) = execute_encoder(resolver, initial, request.clone()).await?;
+            let (descriptor, cleanup) =
+                execute_encoder(resolver, session, initial, request.clone()).await?;
             let prefill = session.select_prefill().map_err(unavailable)?;
             execute_pd(
                 resolver,
@@ -70,16 +71,43 @@ async fn admitted_generate(
         .map_err(GenerationError::from)
 }
 
+// Keeps the frontend-local reservation until the selected model server has accepted or rejected
+// the dispatch. The model server's active-request telemetry owns load after a successful return.
+async fn dispatch_generate(
+    resolver: &dyn LlmFacadeResolver,
+    session: &mut dyn foretoken_router::RouteSession,
+    decision: &RouteDecision,
+    stage: RouteStage,
+    request: vllm_llm::GenerateRequest,
+) -> Result<
+    (
+        std::sync::Arc<dyn foretoken_llm_facade::LlmFacade>,
+        TokenStream,
+    ),
+    GenerationError,
+> {
+    let result = async {
+        let facade = resolver
+            .resolve_stage(decision, stage)
+            .ok_or(GenerationError::Internal)?;
+        let stream =
+            admitted_generate(facade.clone(), request, decision.data_parallel_rank).await?;
+        Ok((facade, stream))
+    }
+    .await;
+    session.dispatch_complete(decision);
+    result
+}
+
 async fn execute_aggregate(
     resolver: &dyn LlmFacadeResolver,
+    session: &mut dyn foretoken_router::RouteSession,
     decision: RouteDecision,
     request: vllm_llm::GenerateRequest,
 ) -> Result<(RouteDecision, TokenStream), GenerationError> {
-    let facade = resolver
-        .resolve_stage(&decision, RouteStage::Aggregate)
-        .ok_or(GenerationError::Internal)?;
     let request_id = request.request_id.clone();
-    let stream = admitted_generate(facade.clone(), request, decision.data_parallel_rank).await?;
+    let (facade, stream) =
+        dispatch_generate(resolver, session, &decision, RouteStage::Aggregate, request).await?;
     Ok((decision, abort_on_drop(facade, request_id, stream)))
 }
 
@@ -87,17 +115,16 @@ async fn execute_aggregate(
 // alive after extracting the descriptor so a failure in later P/D stages can cancel it.
 async fn execute_encoder(
     resolver: &dyn LlmFacadeResolver,
+    session: &mut dyn foretoken_router::RouteSession,
     decision: RouteDecision,
     request: vllm_llm::GenerateRequest,
 ) -> Result<(serde_json::Value, MultiStageCleanup), GenerationError> {
-    let facade = resolver
-        .resolve_stage(&decision, RouteStage::Encoder)
-        .ok_or(GenerationError::Internal)?;
     let request = encoder_stage_request(request).map_err(GenerationError::from)?;
     let request_id = request.request_id.clone();
     let mut cleanup = MultiStageCleanup::new();
-    cleanup.register(facade.clone(), request_id);
-    let stream = admitted_generate(facade, request, decision.data_parallel_rank).await?;
+    let (facade, stream) =
+        dispatch_generate(resolver, session, &decision, RouteStage::Encoder, request).await?;
+    cleanup.register(facade, request_id);
     let descriptor = consume_encoder(stream)
         .await
         .map_err(GenerationError::from)?;
@@ -114,9 +141,6 @@ async fn execute_pd(
     descriptor: Option<serde_json::Value>,
     mut cleanup: MultiStageCleanup,
 ) -> Result<(RouteDecision, TokenStream), GenerationError> {
-    let facade = resolver
-        .resolve_stage(&prefill_decision, RouteStage::Prefill)
-        .ok_or(GenerationError::Internal)?;
     let bootstrap = resolver
         .bootstrap_endpoint(&prefill_decision)
         .ok_or(GenerationError::Internal)?;
@@ -127,9 +151,15 @@ async fn execute_pd(
         inject_ec_transfer_params(&mut prefill_request, descriptor);
     }
     let prefill_id = prefill_request.request_id.clone();
-    cleanup.register(facade.clone(), prefill_id);
-    let stream =
-        admitted_generate(facade, prefill_request, prefill_decision.data_parallel_rank).await?;
+    let (facade, stream) = dispatch_generate(
+        resolver,
+        session,
+        &prefill_decision,
+        RouteStage::Prefill,
+        prefill_request,
+    )
+    .await?;
+    cleanup.register(facade, prefill_id);
     consume_prefill(stream)
         .await
         .map_err(GenerationError::from)?;
@@ -138,16 +168,15 @@ async fn execute_pd(
     // Decode routing, resolution, admission, cancellation, and abnormal stream termination.
     let decode = session.select_decode().map_err(unavailable)?;
     let decode_decision = decode;
-    let decode_facade = resolver
-        .resolve_stage(&decode_decision, RouteStage::Decode)
-        .ok_or(GenerationError::Internal)?;
     let decode_id = decode_request.request_id.clone();
-    cleanup.register(decode_facade.clone(), decode_id);
-    let stream = admitted_generate(
-        decode_facade,
+    let (decode_facade, stream) = dispatch_generate(
+        resolver,
+        session,
+        &decode_decision,
+        RouteStage::Decode,
         decode_request,
-        decode_decision.data_parallel_rank,
     )
     .await?;
+    cleanup.register(decode_facade, decode_id);
     Ok((decode_decision, cleanup.with_stream(stream)))
 }

@@ -11,7 +11,7 @@ use foretoken_model_protocol::ModelServerRole;
 use super::support::{inventory, request, route};
 use foretoken_router::{
     CandidateIndex, PipelineRouter, RouteCandidate, RouteFilter, RoutePicker, RouteScore,
-    RouteScorer, Router, RouterPipeline, RouterRequest, ScoredCandidate,
+    RouteScorer, RouteScorerResult, Router, RouterPipeline, RouterRequest, ScoredCandidate,
 };
 
 #[derive(Default)]
@@ -58,7 +58,7 @@ impl RouteScorer<RoutingContext> for ContextScorer {
         candidates: &[RouteCandidate],
         _: &dyn KvPrefixIndexer,
         context: &mut RoutingContext,
-    ) -> Vec<RouteScore> {
+    ) -> RouteScorerResult {
         // Consume the round established by Filter. Picker consumes this value below.
         context.scorer_round = context.rounds;
         context.trace.events.lock().unwrap().push(format!(
@@ -71,7 +71,10 @@ impl RouteScorer<RoutingContext> for ContextScorer {
             .lock()
             .unwrap()
             .push(candidates.iter().map(|candidate| candidate.role).collect());
-        vec![RouteScore::default(); candidates.len()]
+        RouteScorerResult::Scored(vec![
+            RouteScore::new(1.0).expect("uniform score is valid");
+            candidates.len()
+        ])
     }
 }
 
@@ -159,16 +162,8 @@ fn customized_context_is_request_owned_and_shared_by_filter_scorer_picker_across
                 ModelServerRole::Encoder,
                 ModelServerRole::Prefill
             ],
-            vec![
-                ModelServerRole::Decode,
-                ModelServerRole::Encoder,
-                ModelServerRole::Prefill
-            ],
-            vec![
-                ModelServerRole::Decode,
-                ModelServerRole::Encoder,
-                ModelServerRole::Prefill
-            ],
+            vec![ModelServerRole::Decode, ModelServerRole::Prefill],
+            vec![ModelServerRole::Decode],
         ]
     );
     assert_eq!(

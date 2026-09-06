@@ -18,6 +18,9 @@ pub trait RouteSession: Send {
 
     /// Selects one Decode model-server route from a fresh snapshot after Prefill completes.
     fn select_decode(&mut self) -> Result<RouteDecision, RouteError>;
+
+    /// Releases the exact process-local reservation after a dispatch attempt completes.
+    fn dispatch_complete(&mut self, _decision: &RouteDecision) {}
 }
 
 /// Creates isolated request-local routing state for tokenized generation requests.

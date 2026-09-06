@@ -207,7 +207,7 @@ async fn close_admission(State(state): State<AppState>) -> Json<TelemetryRespons
 fn telemetry_response(state: &AppState) -> TelemetryResponse {
     let telemetry = state.backend.telemetry();
     TelemetryResponse {
-        version: 2,
+        version: 5,
         collected_at_unix_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -219,9 +219,11 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
             .health
             .running_requests()
             .max(telemetry.running_requests),
-        max_concurrent_requests: telemetry.max_concurrent_requests,
+        max_running_requests: telemetry.max_running_requests,
         scheduler_running_requests: telemetry.scheduler_running_requests,
         scheduler_waiting_requests: telemetry.scheduler_waiting_requests,
+        active_prefill_tokens: telemetry.active_prefill_tokens,
+        by_data_parallel_rank: telemetry.by_data_parallel_rank,
         kv_cache_usage: telemetry.kv_cache_usage,
         prompt_tokens_total: telemetry.prompt_tokens_total,
         generation_tokens_total: telemetry.generation_tokens_total,

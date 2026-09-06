@@ -5,24 +5,13 @@
 
 use foretoken_router::{
     FilterAlgorithm, PickerAlgorithm, RouterPipelineConfig, RouterPipelineConfigError,
-    ScorerAlgorithm,
+    ScorerAlgorithm, ScorerConfig,
 };
 
-// Protects every documented built-in router algorithm from missing compile-time registration.
+// Protects the complete descriptor registry and default pipeline from invalid registration.
 #[test]
-fn every_compiled_builtin_name_parses_and_builds() {
-    for (filter, scorer, picker) in [
-        ("allow_all", "uniform", "max"),
-        ("allow_all", "least_loaded", "round_robin"),
-        ("allow_all", "kv_least_loaded", "round_robin"),
-    ] {
-        let config = RouterPipelineConfig {
-            filter: filter.parse().unwrap(),
-            scorer: scorer.parse().unwrap(),
-            picker: picker.parse().unwrap(),
-        };
-        let _ = config.build().unwrap();
-    }
+fn compiled_registry_and_default_pipeline_validate() {
+    RouterPipelineConfig::default().validate().unwrap();
 }
 
 // Protects user configuration from empty or unavailable algorithm names while allowing opaque names.
@@ -35,7 +24,10 @@ fn empty_and_unknown_names_are_explicit_errors() {
     assert!("community-scorer".parse::<ScorerAlgorithm>().is_ok());
     let unknown = RouterPipelineConfig {
         filter: "allow_all".parse().unwrap(),
-        scorer: "community-scorer".parse().unwrap(),
+        scorers: vec![ScorerConfig {
+            name: "community-scorer".parse().unwrap(),
+            weight: 1.0,
+        }],
         picker: PickerAlgorithm::default(),
     };
     assert!(matches!(
@@ -44,5 +36,25 @@ fn empty_and_unknown_names_are_explicit_errors() {
             category: "scorer",
             name,
         }) if name == "community-scorer"
+    ));
+
+    let configured = |names: &[&str]| RouterPipelineConfig {
+        filter: FilterAlgorithm::default(),
+        scorers: names
+            .iter()
+            .map(|name| ScorerConfig {
+                name: name.parse().unwrap(),
+                weight: 1.0,
+            })
+            .collect(),
+        picker: PickerAlgorithm::default(),
+    };
+    assert!(matches!(
+        configured(&["least_loaded", "least_loaded"]).validate(),
+        Err(RouterPipelineConfigError::DuplicateConfiguredScorer { .. })
+    ));
+    assert!(matches!(
+        configured(&["least_loaded", "uniform"]).validate(),
+        Err(RouterPipelineConfigError::ExclusiveScorer { .. })
     ));
 }

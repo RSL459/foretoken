@@ -7,7 +7,9 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use foretoken_router::{FilterAlgorithm, PickerAlgorithm, RouterPipelineConfig, ScorerAlgorithm};
+use foretoken_router::{
+    FilterAlgorithm, PickerAlgorithm, RouterPipelineConfig, ScorerAlgorithm, ScorerConfig,
+};
 
 const SERVING_SNAPSHOT_ENV: &str = "FORETOKEN_SERVING_SNAPSHOT";
 const LISTEN_ADDRESS_ENV: &str = "FORETOKEN_LISTEN_ADDRESS";
@@ -16,6 +18,7 @@ const STREAM_IDLE_SECONDS_ENV: &str = "FORETOKEN_STREAM_IDLE_SECONDS";
 const KV_INDEX_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const ROUTER_FILTER_ENV: &str = "FORETOKEN_ROUTER_FILTER";
 const ROUTER_SCORER_ENV: &str = "FORETOKEN_ROUTER_SCORER";
+const ROUTER_SCORERS_ENV: &str = "FORETOKEN_ROUTER_SCORERS";
 const ROUTER_PICKER_ENV: &str = "FORETOKEN_ROUTER_PICKER";
 pub(crate) struct RuntimeConfig {
     pub(crate) serving_snapshot: PathBuf,
@@ -48,13 +51,41 @@ impl RuntimeConfig {
 pub(crate) fn router_pipeline_from_env(
     get_env: impl Fn(&str) -> Result<String, env::VarError>,
 ) -> Result<RouterPipelineConfig, String> {
+    let defaults = RouterPipelineConfig::default();
     let pipeline = RouterPipelineConfig {
         filter: optional_algorithm(&get_env, ROUTER_FILTER_ENV, FilterAlgorithm::default())?,
-        scorer: optional_algorithm(&get_env, ROUTER_SCORER_ENV, ScorerAlgorithm::default())?,
+        scorers: configured_scorers(&get_env, defaults.scorers)?,
         picker: optional_algorithm(&get_env, ROUTER_PICKER_ENV, PickerAlgorithm::default())?,
     };
     pipeline.validate().map_err(|error| error.to_string())?;
     Ok(pipeline)
+}
+
+// Accepts the controller's current scalar setting until it starts publishing the scorer list.
+// The plural setting wins when both are present so the migration has one deterministic boundary.
+fn configured_scorers(
+    get_env: &impl Fn(&str) -> Result<String, env::VarError>,
+    default: Vec<ScorerConfig>,
+) -> Result<Vec<ScorerConfig>, String> {
+    match get_env(ROUTER_SCORERS_ENV) {
+        Ok(value) => serde_json::from_str(&value)
+            .map_err(|error| format!("invalid {ROUTER_SCORERS_ENV}: {error}")),
+        Err(env::VarError::NotUnicode(_)) => {
+            Err(format!("{ROUTER_SCORERS_ENV} must be valid UTF-8"))
+        }
+        Err(env::VarError::NotPresent) => match get_env(ROUTER_SCORER_ENV) {
+            Ok(value) => Ok(vec![ScorerConfig {
+                name: value
+                    .parse::<ScorerAlgorithm>()
+                    .map_err(|error| error.to_string())?,
+                weight: 1.0,
+            }]),
+            Err(env::VarError::NotUnicode(_)) => {
+                Err(format!("{ROUTER_SCORER_ENV} must be valid UTF-8"))
+            }
+            Err(env::VarError::NotPresent) => Ok(default),
+        },
+    }
 }
 
 fn optional_algorithm<T>(

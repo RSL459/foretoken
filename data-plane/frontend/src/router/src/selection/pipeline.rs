@@ -5,7 +5,8 @@
 
 use std::sync::Arc;
 
-use crate::{RouteFilter, RoutePicker, RouteScorer, RouterRequest};
+use crate::selection::observer::NoopRoutingObserver;
+use crate::{RouteFilter, RoutePicker, RouteScorer, RouterRequest, RoutingObserver};
 
 /// Filter, Scorer, Picker, and per-request customized context factory.
 pub struct RouterPipeline<C: Send + 'static = ()> {
@@ -15,6 +16,8 @@ pub struct RouterPipeline<C: Send + 'static = ()> {
     pub(super) scorer: Arc<dyn RouteScorer<C>>,
     /// Final scored-candidate picker.
     pub(super) picker: Arc<dyn RoutePicker<C>>,
+    /// Low-cardinality scorer and selection observer.
+    pub(super) observer: Arc<dyn RoutingObserver>,
     /// Creates isolated algorithm context for each request.
     pub(super) customized_context_factory: Arc<dyn Fn(&RouterRequest) -> C + Send + Sync>,
 }
@@ -40,7 +43,14 @@ impl<C: Send + 'static> RouterPipeline<C> {
             filter,
             scorer,
             picker,
+            observer: Arc::new(NoopRoutingObserver),
             customized_context_factory: Arc::new(customized_context_factory),
         }
+    }
+
+    /// Attaches the process-level observer that consumes scorer and selection events.
+    pub fn with_observer(mut self, observer: Arc<dyn RoutingObserver>) -> Self {
+        self.observer = observer;
+        self
     }
 }

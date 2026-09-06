@@ -22,6 +22,7 @@ use crate::route_target_stats::RouteTargetStatsHistory;
 use crate::snapshot::{ServingSnapshot, SnapshotError};
 
 const ROUTE_TARGET_STATS_RETENTION: Duration = Duration::from_secs(300);
+const ROUTE_TARGET_STATS_MAXIMUM_AGE: Duration = Duration::from_secs(5);
 
 pub struct BackendRegistry {
     model_routes: ModelRouteTable,
@@ -315,7 +316,11 @@ impl RouteInventory for BackendRegistry {
 
 impl RouteTargetStatsReader for BackendRegistry {
     fn stats(&self, route_target_id: &RouteTargetId, window: Duration) -> Option<RouteTargetStats> {
-        self.stats.lock().ok()?.get(route_target_id)?.stats(window)
+        self.stats
+            .lock()
+            .ok()?
+            .get(route_target_id)?
+            .stats(window, ROUTE_TARGET_STATS_MAXIMUM_AGE)
     }
 }
 
@@ -351,7 +356,7 @@ async fn telemetry(client: &reqwest::Client, endpoint: &str) -> Option<Telemetry
         return None;
     }
     let response: TelemetryResponse = response.json().await.ok()?;
-    (response.version == 2).then_some(response)
+    (response.version == 5).then_some(response)
 }
 async fn ready(client: &reqwest::Client, endpoint: &str) -> bool {
     matches!(client.get(format!("{}/readyz",endpoint.trim_end_matches('/'))).send().await,Ok(response) if response.status().is_success())

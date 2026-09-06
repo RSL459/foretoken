@@ -9,16 +9,22 @@ mod request;
 mod route_target_stats;
 mod selection;
 
-pub use algorithm::{KvLeastLoadedScorer, RouteFilter, RoutePicker, RouteScorer};
+pub use algorithm::{
+    LeastLoadedScorer, RouteFilter, RoutePicker, RouteScorer, RouteScorerResult,
+    ScorerUnavailableReason, UniformScorer,
+};
 pub use inventory::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetSet,
     ScalingTarget, ScalingTargetKind,
 };
 pub use request::RouterRequest;
-pub use route_target_stats::{RouteTargetLatencyStats, RouteTargetStats, RouteTargetStatsReader};
+pub use route_target_stats::{
+    RouteTargetLatencyStats, RouteTargetRankStats, RouteTargetStats, RouteTargetStatsReader,
+};
 pub use selection::{
     AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, PickerAlgorithm,
     PickerDescriptor, PipelineRouter, RouteCandidate, RouteError, RouteScore, RouteSession, Router,
-    RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError, ScoredCandidate,
-    ScorerAlgorithm, ScorerDescriptor,
+    RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError, RoutingFallback,
+    RoutingObserver, ScoredCandidate, ScorerAlgorithm, ScorerComposition, ScorerConfig,
+    ScorerDescriptor, ScorerSignal,
 };

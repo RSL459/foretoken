@@ -5,6 +5,7 @@
 
 mod candidate;
 mod config;
+mod observer;
 mod pipeline;
 mod pipeline_router;
 mod session;
@@ -12,8 +13,10 @@ mod session;
 pub use candidate::{CandidateIndex, RouteCandidate, RouteScore, ScoredCandidate};
 pub use config::{
     AlgorithmName, FilterAlgorithm, FilterDescriptor, PickerAlgorithm, PickerDescriptor,
-    RouterPipelineConfig, RouterPipelineConfigError, ScorerAlgorithm, ScorerDescriptor,
+    RouterPipelineConfig, RouterPipelineConfigError, ScorerAlgorithm, ScorerComposition,
+    ScorerConfig, ScorerDescriptor, ScorerSignal,
 };
+pub use observer::{RoutingFallback, RoutingObserver};
 pub use pipeline::RouterPipeline;
 pub use pipeline_router::PipelineRouter;
 pub use session::{RouteError, RouteSession, Router};

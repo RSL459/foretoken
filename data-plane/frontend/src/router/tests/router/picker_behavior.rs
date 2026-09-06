@@ -12,7 +12,7 @@ use super::support::{inventory, request, route};
 use foretoken_router::algorithm::{AllowAllFilter, UniformScorer};
 use foretoken_router::{
     CandidateIndex, PipelineRouter, RouteCandidate, RouteError, RouteFilter, RoutePicker,
-    RouteScore, RouteScorer, Router, RouterPipeline, RouterRequest, ScoredCandidate,
+    RouteScorer, RouteScorerResult, Router, RouterPipeline, RouterRequest, ScoredCandidate,
 };
 
 struct InvalidPicker;
@@ -83,8 +83,8 @@ impl RouteScorer for InvalidScorer {
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
         customized_context: &mut (),
-    ) -> Vec<RouteScore> {
-        vec![]
+    ) -> RouteScorerResult {
+        RouteScorerResult::Scored(vec![])
     }
 }
 

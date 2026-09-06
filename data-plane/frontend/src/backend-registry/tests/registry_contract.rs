@@ -13,8 +13,8 @@ use foretoken_backend_registry::{
 use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::{LlmFacadeResolver, RouteStage};
 use foretoken_model_protocol::{
-    CumulativeHistogram, CumulativeHistogramBucket, ModelServerRole, RuntimeMetadataResponse,
-    RuntimeModelIdentity, TelemetryResponse,
+    CumulativeHistogram, CumulativeHistogramBucket, DataParallelRankTelemetry, ModelServerRole,
+    RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
 };
 use foretoken_router::{
     RouteDecision, RouteInventory, RouteTargetId, RouteTargetSet, RouteTargetStatsReader,
@@ -208,13 +208,33 @@ fn histogram(count: u64, sum_seconds: f64, first_bucket: u64) -> CumulativeHisto
 
 fn telemetry(at_ms: u64, tokens: u64, histogram: CumulativeHistogram) -> TelemetryResponse {
     TelemetryResponse {
-        version: 2,
+        version: 5,
         collected_at_unix_ms: at_ms,
         accepting: true,
         running_requests: 0,
-        max_concurrent_requests: 1,
+        max_running_requests: 1,
         scheduler_running_requests: Some(0),
         scheduler_waiting_requests: Some(0),
+        active_prefill_tokens: Some(0),
+        by_data_parallel_rank: [(
+            0,
+            DataParallelRankTelemetry {
+                running_requests: 0,
+                max_running_requests: 1,
+                scheduler_running_requests: Some(0),
+                scheduler_waiting_requests: Some(0),
+                active_prefill_tokens: 0,
+                inflight_tokens: 0,
+                kv_cache_usage: Some(0.0),
+                prompt_tokens_total: Some(tokens),
+                generation_tokens_total: Some(tokens / 2),
+                ttft_seconds: histogram.clone(),
+                tpot_seconds: histogram.clone(),
+                e2e_seconds: histogram.clone(),
+            },
+        )]
+        .into_iter()
+        .collect(),
         kv_cache_usage: Some(0.0),
         prompt_tokens_total: Some(tokens),
         generation_tokens_total: Some(tokens / 2),
@@ -359,18 +379,35 @@ async fn telemetry_history_derives_windows_and_rejects_counter_resets() {
     let target = RouteTargetId::new("a");
 
     registry.refresh_backend_readiness().await;
+    let initial = registry.stats(&target, Duration::from_secs(150)).unwrap();
+    assert_eq!(initial.observed_window, Duration::ZERO);
+    assert_eq!(initial.scheduler_waiting_requests, Some(0));
+    assert_eq!(
+        initial.by_data_parallel_rank[&0].prompt_tokens_per_second,
+        None
+    );
     *telemetry_state.lock().unwrap() = telemetry(151_000, 400, histogram(4, 0.8, 2));
     registry.refresh_backend_readiness().await;
 
     let stats = registry.stats(&target, Duration::from_secs(150)).unwrap();
     assert_eq!(stats.observed_window, Duration::from_secs(150));
-    assert_eq!(stats.prompt_tokens_per_second, Some(2.0));
-    assert_eq!(stats.generation_tokens_per_second, Some(1.0));
-    assert_eq!(stats.ttft.unwrap().p95_ms, Some(500.0));
+    let rank = &stats.by_data_parallel_rank[&0];
+    assert_eq!(rank.active_prefill_tokens, 0);
+    assert_eq!(rank.inflight_tokens, 0);
+    assert_eq!(rank.prompt_tokens_per_second, Some(2.0));
+    assert_eq!(rank.generation_tokens_per_second, Some(1.0));
+    assert_eq!(rank.ttft.as_ref().unwrap().p95_ms, Some(500.0));
 
     *telemetry_state.lock().unwrap() = telemetry(302_000, 10, histogram(1, 0.1, 1));
     registry.refresh_backend_readiness().await;
-    assert!(registry.stats(&target, Duration::from_secs(150)).is_none());
+    let reset = registry.stats(&target, Duration::from_secs(150)).unwrap();
+    assert_eq!(reset.observed_window, Duration::ZERO);
+    assert_eq!(reset.scheduler_running_requests, Some(0));
+    assert_eq!(
+        reset.by_data_parallel_rank[&0].prompt_tokens_per_second,
+        None
+    );
+    assert_eq!(reset.by_data_parallel_rank[&0].ttft, None);
 
     telemetry_state.lock().unwrap().accepting = false;
     registry.refresh_backend_readiness().await;

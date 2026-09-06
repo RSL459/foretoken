@@ -126,7 +126,7 @@ impl RuntimeBuilder {
             PipelineRouter::with_pipeline(
                 registry.clone(),
                 self.router_pipeline
-                    .build()
+                    .build_with_observer(Arc::new(foretoken_metrics::RoutingMetricsObserver))
                     .map_err(|error| RuntimeBuildError::RouterPipeline(error.to_string()))?,
             )
             .with_kv_prefix_indexer(kv_indexer)

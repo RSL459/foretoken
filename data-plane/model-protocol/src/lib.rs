@@ -161,6 +161,24 @@ pub struct CumulativeHistogram {
     pub sum_seconds: f64,
     pub buckets: Vec<CumulativeHistogramBucket>,
 }
+/// Current gauges, counters, and request facts for one exact data-parallel rank.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DataParallelRankTelemetry {
+    pub running_requests: u64,
+    pub max_running_requests: u64,
+    pub scheduler_running_requests: Option<u64>,
+    pub scheduler_waiting_requests: Option<u64>,
+    pub active_prefill_tokens: u64,
+    pub inflight_tokens: u64,
+    pub kv_cache_usage: Option<f64>,
+    pub prompt_tokens_total: Option<u64>,
+    pub generation_tokens_total: Option<u64>,
+    pub ttft_seconds: CumulativeHistogram,
+    pub tpot_seconds: CumulativeHistogram,
+    pub e2e_seconds: CumulativeHistogram,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TelemetryResponse {
@@ -168,9 +186,13 @@ pub struct TelemetryResponse {
     pub collected_at_unix_ms: u64,
     pub accepting: bool,
     pub running_requests: u64,
-    pub max_concurrent_requests: u64,
+    pub max_running_requests: u64,
     pub scheduler_running_requests: Option<u64>,
     pub scheduler_waiting_requests: Option<u64>,
+    #[serde(default)]
+    pub active_prefill_tokens: Option<u64>,
+    /// Complete per-engine observations keyed by the DP rank used for request dispatch.
+    pub by_data_parallel_rank: BTreeMap<u32, DataParallelRankTelemetry>,
     pub kv_cache_usage: Option<f64>,
     pub prompt_tokens_total: Option<u64>,
     pub generation_tokens_total: Option<u64>,

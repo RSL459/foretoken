@@ -9,6 +9,7 @@ license.workspace = true
 
 [dependencies]
 axum.workspace = true
+foretoken-model-protocol.workspace = true
 foretoken-router = { path = "../router" }
 serde.workspace = true
 vllm-metrics.workspace = true

@@ -12,6 +12,7 @@ async-trait.workspace = true
 foretoken-backend-registry = { path = "../backend-registry" }
 foretoken-kv-indexer = { path = "../kv-indexer" }
 foretoken-llm-facade = { path = "../llm-facade" }
+foretoken-metrics = { path = "../metrics" }
 foretoken-router = { path = "../router" }
 foretoken-server = { path = "../server" }
 foretoken-text = { path = "../text" }
@@ -19,6 +20,3 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-foretoken-metrics = { path = "../metrics" }

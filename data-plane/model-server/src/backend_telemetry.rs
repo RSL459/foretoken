@@ -3,6 +3,8 @@
 
 //! Typed reads of vLLM metrics and cumulative model-server latency observations.
 
+use std::collections::BTreeMap;
+
 use foretoken_model_protocol::{CumulativeHistogram, CumulativeHistogramBucket};
 use vllm_metrics::{EngineLabels, METRICS};
 
@@ -65,15 +67,14 @@ impl BoundaryHistogram {
     }
 }
 
-pub(crate) struct BoundaryLatencyMetrics {
+struct LatencyHistograms {
     ttft: BoundaryHistogram,
     tpot: BoundaryHistogram,
     e2e: BoundaryHistogram,
 }
 
-impl BoundaryLatencyMetrics {
-    /// Creates empty latency accumulators owned by the vLLM backend adapter.
-    pub(crate) fn new() -> Self {
+impl LatencyHistograms {
+    fn new() -> Self {
         Self {
             ttft: BoundaryHistogram::new(TTFT_BUCKETS_SECONDS),
             tpot: BoundaryHistogram::new(TPOT_BUCKETS_SECONDS),
@@ -81,23 +82,7 @@ impl BoundaryLatencyMetrics {
         }
     }
 
-    /// Records one engine-boundary TTFT sample for the stream adapter's telemetry snapshot.
-    pub(crate) fn observe_ttft(&mut self, seconds: f64) {
-        self.ttft.observe(seconds);
-    }
-
-    /// Records one engine-boundary TPOT sample for the stream adapter's telemetry snapshot.
-    pub(crate) fn observe_tpot(&mut self, seconds: f64) {
-        self.tpot.observe(seconds);
-    }
-
-    /// Records one engine-boundary end-to-end sample for the stream adapter's telemetry snapshot.
-    pub(crate) fn observe_e2e(&mut self, seconds: f64) {
-        self.e2e.observe(seconds);
-    }
-
-    /// Returns owned cumulative histograms for the backend telemetry publisher without resetting them.
-    pub(crate) fn snapshot(
+    fn snapshot(
         &self,
     ) -> (
         CumulativeHistogram,
@@ -112,7 +97,95 @@ impl BoundaryLatencyMetrics {
     }
 }
 
+pub(crate) struct BoundaryLatencyMetrics {
+    aggregate: LatencyHistograms,
+    by_data_parallel_rank: BTreeMap<u32, LatencyHistograms>,
+}
+
+impl BoundaryLatencyMetrics {
+    /// Creates empty aggregate and per-rank latency accumulators owned by the backend adapter.
+    pub(crate) fn new(ranks: impl IntoIterator<Item = u32>) -> Self {
+        Self {
+            aggregate: LatencyHistograms::new(),
+            by_data_parallel_rank: ranks
+                .into_iter()
+                .map(|rank| (rank, LatencyHistograms::new()))
+                .collect(),
+        }
+    }
+
+    /// Records one engine-boundary TTFT sample for the stream adapter's telemetry snapshot.
+    pub(crate) fn observe_ttft(&mut self, rank: Option<u32>, seconds: f64) {
+        self.aggregate.ttft.observe(seconds);
+        if let Some(rank) = rank {
+            self.by_data_parallel_rank
+                .entry(rank)
+                .or_insert_with(LatencyHistograms::new)
+                .ttft
+                .observe(seconds);
+        }
+    }
+
+    /// Records one engine-boundary TPOT sample for the stream adapter's telemetry snapshot.
+    pub(crate) fn observe_tpot(&mut self, rank: Option<u32>, seconds: f64) {
+        self.aggregate.tpot.observe(seconds);
+        if let Some(rank) = rank {
+            self.by_data_parallel_rank
+                .entry(rank)
+                .or_insert_with(LatencyHistograms::new)
+                .tpot
+                .observe(seconds);
+        }
+    }
+
+    /// Records one engine-boundary end-to-end sample for the stream adapter's telemetry snapshot.
+    pub(crate) fn observe_e2e(&mut self, rank: Option<u32>, seconds: f64) {
+        self.aggregate.e2e.observe(seconds);
+        if let Some(rank) = rank {
+            self.by_data_parallel_rank
+                .entry(rank)
+                .or_insert_with(LatencyHistograms::new)
+                .e2e
+                .observe(seconds);
+        }
+    }
+
+    /// Returns owned cumulative histograms for the backend telemetry publisher without resetting them.
+    pub(crate) fn snapshot(
+        &self,
+    ) -> (
+        CumulativeHistogram,
+        CumulativeHistogram,
+        CumulativeHistogram,
+        BTreeMap<
+            u32,
+            (
+                CumulativeHistogram,
+                CumulativeHistogram,
+                CumulativeHistogram,
+            ),
+        >,
+    ) {
+        let (ttft, tpot, e2e) = self.aggregate.snapshot();
+        let by_rank = self
+            .by_data_parallel_rank
+            .iter()
+            .map(|(rank, histograms)| (*rank, histograms.snapshot()))
+            .collect();
+        (ttft, tpot, e2e, by_rank)
+    }
+}
+
 pub(crate) struct VllmMetricsSnapshot {
+    pub(crate) scheduler_running_requests: Option<u64>,
+    pub(crate) scheduler_waiting_requests: Option<u64>,
+    pub(crate) kv_cache_usage: Option<f64>,
+    pub(crate) prompt_tokens_total: Option<u64>,
+    pub(crate) generation_tokens_total: Option<u64>,
+    pub(crate) by_data_parallel_rank: BTreeMap<u32, VllmRankMetricsSnapshot>,
+}
+
+pub(crate) struct VllmRankMetricsSnapshot {
     pub(crate) scheduler_running_requests: Option<u64>,
     pub(crate) scheduler_waiting_requests: Option<u64>,
     pub(crate) kv_cache_usage: Option<f64>,
@@ -160,6 +233,41 @@ pub(crate) fn read_vllm_metrics(engine_labels: &[EngineLabels]) -> VllmMetricsSn
                 .get(labels)
                 .map(|metric| metric.get())
         }),
+        by_data_parallel_rank: engine_labels
+            .iter()
+            .map(|labels| {
+                (
+                    labels.engine,
+                    VllmRankMetricsSnapshot {
+                        scheduler_running_requests: METRICS
+                            .scheduler
+                            .scheduler_running
+                            .get(labels)
+                            .map(|metric| metric.get()),
+                        scheduler_waiting_requests: METRICS
+                            .scheduler
+                            .scheduler_waiting
+                            .get(labels)
+                            .map(|metric| metric.get()),
+                        kv_cache_usage: METRICS
+                            .scheduler
+                            .kv_cache_usage
+                            .get(labels)
+                            .map(|metric| metric.get()),
+                        prompt_tokens_total: METRICS
+                            .request
+                            .prompt_tokens
+                            .get(labels)
+                            .map(|metric| metric.get()),
+                        generation_tokens_total: METRICS
+                            .request
+                            .generation_tokens
+                            .get(labels)
+                            .map(|metric| metric.get()),
+                    },
+                )
+            })
+            .collect(),
     }
 }
 

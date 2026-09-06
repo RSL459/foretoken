@@ -92,7 +92,7 @@ func TestHTTPScalingMetricsProviderUsesSchedulerBacklog(t *testing.T) {
 	provider.httpClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		body := `{"version":2,"collected_at_unix_ms":1000,"targets":[{"service_uid":"service-uid","target_kind":"Pool","target_id":"pool-uid","runtime_queued_requests":2,"dispatch_queued_requests":1}]}`
 		if request.URL.Path == "/v1/internal/telemetry" {
-			body = `{"version":2,"collected_at_unix_ms":900,"accepting":true,"running_requests":3,"max_concurrent_requests":256,"scheduler_running_requests":2,"scheduler_waiting_requests":5,"kv_cache_usage":0.5,"prompt_tokens_total":0,"generation_tokens_total":0,"ttft_seconds":{"count":0,"sum_seconds":0,"buckets":[]},"tpot_seconds":{"count":0,"sum_seconds":0,"buckets":[]},"e2e_seconds":{"count":0,"sum_seconds":0,"buckets":[]}}`
+			body = `{"version":5,"collected_at_unix_ms":900,"accepting":true,"running_requests":3,"max_running_requests":256,"scheduler_running_requests":2,"scheduler_waiting_requests":5,"kv_cache_usage":0.5,"prompt_tokens_total":0,"generation_tokens_total":0,"ttft_seconds":{"count":0,"sum_seconds":0,"buckets":[]},"tpot_seconds":{"count":0,"sum_seconds":0,"buckets":[]},"e2e_seconds":{"count":0,"sum_seconds":0,"buckets":[]}}`
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: request}, nil
 	})

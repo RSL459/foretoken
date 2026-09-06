@@ -1254,6 +1254,7 @@ name = "foretoken-metrics"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "foretoken-model-protocol",
  "foretoken-router",
  "serde",
  "vllm-metrics",

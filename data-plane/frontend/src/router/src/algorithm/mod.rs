@@ -7,7 +7,10 @@
 macro_rules! declare_router_algorithms {
     (
         descriptor = $descriptor:ident;
-        $( $module:ident => $algorithm:ident = $name:literal ),+ $(,)?
+        $(
+            $module:ident => $algorithm:ident = $name:literal
+            $( { $( $field:ident: $value:expr ),* $(,)? } )?
+        ),+ $(,)?
     ) => {
         $(
             mod $module;
@@ -16,6 +19,7 @@ macro_rules! declare_router_algorithms {
             inventory::submit! {
                 $crate::$descriptor {
                     name: $name,
+                    $( $( $field: $value, )* )?
                     factory: || std::sync::Arc::new($algorithm::default()),
                 }
             }
@@ -29,4 +33,6 @@ pub mod scorer;
 
 pub use filter::{AllowAllFilter, RouteFilter};
 pub use picker::{MaxPicker, RoundRobinPicker, RoutePicker};
-pub use scorer::{KvLeastLoadedScorer, LeastLoadedScorer, RouteScorer, UniformScorer};
+pub use scorer::{
+    LeastLoadedScorer, RouteScorer, RouteScorerResult, ScorerUnavailableReason, UniformScorer,
+};

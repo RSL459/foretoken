@@ -1,69 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Public KV scorer behavior tests.
+//! Public scorer telemetry and KV request behavior tests.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use foretoken_kv_indexer::{
-    KvPrefixIndexer, KvPrefixLookup, KvPrefixMatch, KvPrefixMatches, KvPrefixQueryResult,
+    KvPrefixIndexer, KvPrefixLookup, KvPrefixMatches, KvPrefixQueryResult,
     KvPrefixUnavailableReason,
 };
-use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier, ModelServerRole};
-use foretoken_router::algorithm::LeastLoadedScorer;
+use foretoken_model_protocol::ModelServerRole;
+use foretoken_router::algorithm::{AllowAllFilter, LeastLoadedScorer, MaxPicker};
 use foretoken_router::{
-    KvLeastLoadedScorer, PipelineRouter, RouteCandidate, RouteScorer, RouteTargetId,
-    RouteTargetStats, Router,
+    PipelineRouter, RouteCandidate, RouteScorer, RouteTargetId, RouteTargetRankStats,
+    RouteTargetStats, Router, RouterPipeline,
 };
 
-use super::support::{inventory, request, route};
+use super::support::{TestStatsReader, inventory, request, route, stats};
 
-struct PrefixFacts;
+struct NoKvFacts;
 
-impl KvPrefixIndexer for PrefixFacts {
-    fn prefix_matches(&self, lookup: KvPrefixLookup<'_>) -> KvPrefixQueryResult {
-        match lookup.route_target_id {
-            "remote" => KvPrefixQueryResult::Matches(KvPrefixMatches::new(vec![prefix(
-                8,
-                KvStorageTier::Device,
-                KvCacheLocality::Remote,
-            )])),
-            "local" => KvPrefixQueryResult::Matches(KvPrefixMatches::new(vec![prefix(
-                8,
-                KvStorageTier::Device,
-                KvCacheLocality::Local,
-            )])),
-            "longer-disk" => KvPrefixQueryResult::Matches(KvPrefixMatches::new(vec![prefix(
-                9,
-                KvStorageTier::Disk,
-                KvCacheLocality::Remote,
-            )])),
-            "unspecified" => KvPrefixQueryResult::Matches(KvPrefixMatches::new(vec![prefix(
-                8,
-                KvStorageTier::Device,
-                KvCacheLocality::Unspecified,
-            )])),
-            "decode" => KvPrefixQueryResult::Matches(KvPrefixMatches::new(vec![prefix(
-                99,
-                KvStorageTier::Device,
-                KvCacheLocality::Local,
-            )])),
-            _ => KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::SourceUnhealthy),
-        }
-    }
-}
-
-fn prefix(tokens: usize, tier: KvStorageTier, locality: KvCacheLocality) -> KvPrefixMatch {
-    KvPrefixMatch {
-        event_source_id: "source".into(),
-        model_group_id: "owner".into(),
-        epoch: "epoch".into(),
-        dp_rank: 0,
-        placement: KvPlacement { tier, locality },
-        matched_complete_blocks: 1,
-        matched_tokens: tokens,
-        last_matched_hash: None,
+impl KvPrefixIndexer for NoKvFacts {
+    fn prefix_matches(&self, _: KvPrefixLookup<'_>) -> KvPrefixQueryResult {
+        KvPrefixQueryResult::Matches(KvPrefixMatches::default())
     }
 }
 
@@ -91,19 +51,30 @@ fn kv_lookup_rejects_requests_with_separate_cache_semantics() {
 }
 
 fn target_stats(running_requests: u64) -> Arc<RouteTargetStats> {
-    Arc::new(RouteTargetStats {
-        collected_at_unix_ms: 1,
-        observed_window: Duration::from_secs(60),
+    let rank = RouteTargetRankStats {
         running_requests,
-        max_concurrent_requests: 8,
+        max_running_requests: 128,
         scheduler_running_requests: None,
         scheduler_waiting_requests: None,
+        active_prefill_tokens: 0,
+        inflight_tokens: 0,
         kv_cache_usage: None,
         prompt_tokens_per_second: None,
         generation_tokens_per_second: None,
         ttft: None,
         tpot: None,
         e2e_latency: None,
+    };
+    Arc::new(RouteTargetStats {
+        collected_at_unix_ms: 1,
+        observed_window: Duration::from_secs(60),
+        running_requests,
+        max_running_requests: 128,
+        scheduler_running_requests: None,
+        scheduler_waiting_requests: None,
+        by_data_parallel_rank: [(0, rank)].into_iter().collect(),
+        loaded_lora_adapters: vec![],
+        kv_cache_usage: None,
     })
 }
 
@@ -119,129 +90,64 @@ fn candidate(id: &str, role: ModelServerRole, load: u64) -> RouteCandidate {
         pipeline_scope_id: route.pipeline_scope_id,
         data_parallel_rank: 0,
         route_target_stats: Some(target_stats(load)),
+        pending_requests: 0,
+        pending_tokens: 0,
     }
 }
 
-// Protects KV scoring order and keeps unavailable locality distinct from a confirmed miss.
-#[test]
-fn kv_scoring_is_prefix_tier_locality_load_and_keeps_unavailable_candidates() {
-    let candidates = vec![
-        candidate("remote", ModelServerRole::Aggregate, 1),
-        candidate("local", ModelServerRole::Aggregate, 8),
-        candidate("longer-disk", ModelServerRole::Aggregate, 99),
-        candidate("unspecified", ModelServerRole::Aggregate, 0),
-        candidate("unavailable", ModelServerRole::Aggregate, 0),
-        candidate("decode", ModelServerRole::Decode, 0),
-    ];
-    let scored = KvLeastLoadedScorer.score(&request(), &candidates, &PrefixFacts, &mut ());
-    let score = |id: &str| {
-        let index = [
-            "remote",
-            "local",
-            "longer-disk",
-            "unspecified",
-            "unavailable",
-            "decode",
-        ]
-        .iter()
-        .position(|candidate_id| *candidate_id == id)
-        .expect("known scorer input");
-        scored[index]
-    };
-
-    assert!(score("longer-disk") > score("local"));
-    assert!(score("local") > score("remote"));
-    assert!(score("remote") > score("unavailable"));
-    assert_eq!(score("unspecified"), score("unavailable"));
-    assert_eq!(score("unspecified").matched_tokens, 0);
-    assert_eq!(score("unavailable").matched_tokens, 0);
-    assert_eq!(score("decode").matched_tokens, 0);
-}
-
-// Protects prefill scoring from using Decode load in another pipeline scope.
+// Protects path projection from combining a Prefill target with another pipeline's Decode load.
 #[test]
 fn prefill_downstream_load_is_scoped_to_its_pipeline_scope() {
-    let candidates = || {
-        let mut prefill_a = candidate("prefill-a", ModelServerRole::Prefill, 0);
-        let mut decode_a = candidate("decode-a", ModelServerRole::Decode, 100);
-        let mut prefill_b = candidate("prefill-b", ModelServerRole::Prefill, 10);
-        let mut decode_b = candidate("decode-b", ModelServerRole::Decode, 1);
-        prefill_a.pipeline_scope_id = Some("pipeline-scope-a".into());
-        decode_a.pipeline_scope_id = Some("pipeline-scope-a".into());
-        prefill_b.pipeline_scope_id = Some("pipeline-scope-b".into());
-        decode_b.pipeline_scope_id = Some("pipeline-scope-b".into());
-        vec![prefill_a, decode_a, prefill_b, decode_b]
-    };
+    let mut prefill_a = route("prefill-a", ModelServerRole::Prefill);
+    let mut decode_a = route("decode-a", ModelServerRole::Decode);
+    let mut prefill_b = route("prefill-b", ModelServerRole::Prefill);
+    let mut decode_b = route("decode-b", ModelServerRole::Decode);
+    prefill_a.pipeline_scope_id = Some("pipeline-scope-a".into());
+    decode_a.pipeline_scope_id = Some("pipeline-scope-a".into());
+    prefill_b.pipeline_scope_id = Some("pipeline-scope-b".into());
+    decode_b.pipeline_scope_id = Some("pipeline-scope-b".into());
+    let observations = stats();
+    observations.lock().unwrap().extend([
+        (RouteTargetId::new("prefill-a"), (*target_stats(0)).clone()),
+        (RouteTargetId::new("decode-a"), (*target_stats(100)).clone()),
+        (RouteTargetId::new("prefill-b"), (*target_stats(10)).clone()),
+        (RouteTargetId::new("decode-b"), (*target_stats(1)).clone()),
+    ]);
+    let router = PipelineRouter::with_pipeline(
+        inventory(vec![prefill_a, decode_a, prefill_b, decode_b]),
+        RouterPipeline::new(
+            Arc::new(AllowAllFilter),
+            Arc::new(LeastLoadedScorer),
+            Arc::new(MaxPicker),
+        ),
+    )
+    .with_route_target_stats_reader(Arc::new(TestStatsReader::new(observations)))
+    .with_kv_prefix_indexer(Arc::new(NoKvFacts));
 
-    let request = request();
-    let candidates = candidates();
-    let scored = [
-        LeastLoadedScorer.score(&request, &candidates, &PrefixFacts, &mut ()),
-        KvLeastLoadedScorer.score(&request, &candidates, &PrefixFacts, &mut ()),
-    ];
-
-    for round in scored {
-        let score = |id: &str| {
-            let index = match id {
-                "prefill-a" => 0,
-                "decode-a" => 1,
-                "prefill-b" => 2,
-                "decode-b" => 3,
-                _ => panic!("unknown scorer input"),
-            };
-            round[index]
-        };
-        assert!(score("prefill-b") > score("prefill-a"));
-    }
+    assert_eq!(
+        router
+            .start(request())
+            .select_initial()
+            .unwrap()
+            .route_target_id,
+        RouteTargetId::new("prefill-b")
+    );
 }
 
-// Protects load-aware routing from ignoring requests queued inside the vLLM scheduler.
+// Protects AIBrix least-request semantics from double-counting the scheduler queue.
 #[test]
-fn load_scoring_uses_scheduler_backlog_without_double_counting_admission() {
-    let mut idle = candidate("idle", ModelServerRole::Aggregate, 1);
+fn least_loaded_uses_model_server_outstanding_requests() {
+    let idle = candidate("idle", ModelServerRole::Aggregate, 1);
     let mut queued = candidate("queued", ModelServerRole::Aggregate, 2);
-    Arc::get_mut(idle.route_target_stats.as_mut().unwrap())
-        .unwrap()
-        .scheduler_running_requests = Some(1);
     let queued_stats = Arc::get_mut(queued.route_target_stats.as_mut().unwrap()).unwrap();
-    queued_stats.scheduler_running_requests = Some(2);
-    queued_stats.scheduler_waiting_requests = Some(5);
+    let queued_rank = queued_stats.by_data_parallel_rank.get_mut(&0).unwrap();
+    queued_rank.scheduler_running_requests = Some(2);
+    queued_rank.scheduler_waiting_requests = Some(5);
 
-    let candidates = vec![idle, queued];
-    let scores = LeastLoadedScorer.score(&request(), &candidates, &PrefixFacts, &mut ());
+    let scores = LeastLoadedScorer.score(&request(), &[idle, queued], &NoKvFacts, &mut ());
+    let scores = scores.scores().expect("current load is present");
 
-    assert_eq!(scores[0].load, -1);
-    assert_eq!(scores[1].load, -7);
+    assert_eq!(scores[0].value(), 1.0);
+    assert_eq!(scores[1].value(), 0.0);
     assert!(scores[0] > scores[1]);
-}
-
-struct RankFacts;
-
-impl KvPrefixIndexer for RankFacts {
-    fn prefix_matches(&self, lookup: KvPrefixLookup<'_>) -> KvPrefixQueryResult {
-        let matched_tokens = if lookup.data_parallel_rank == 1 {
-            16
-        } else {
-            1
-        };
-        KvPrefixQueryResult::Matches(KvPrefixMatches::new(vec![prefix(
-            matched_tokens,
-            KvStorageTier::Device,
-            KvCacheLocality::Local,
-        )]))
-    }
-}
-
-// Protects data-parallel routing from collapsing rank-specific KV locality.
-#[test]
-fn data_parallel_kv_rank_winner_is_selected_from_an_exact_rank_query() {
-    let mut aggregate = route("dp-two", ModelServerRole::Aggregate);
-    aggregate.data_parallel_size = 2;
-    let router = PipelineRouter::new(inventory(vec![aggregate]))
-        .with_kv_prefix_indexer(std::sync::Arc::new(RankFacts));
-
-    let selected = router.start(request()).select_initial().unwrap();
-
-    assert_eq!(selected.route_target_id, RouteTargetId::new("dp-two"));
-    assert_eq!(selected.data_parallel_rank, 1);
 }

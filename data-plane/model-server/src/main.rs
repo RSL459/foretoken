@@ -78,10 +78,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut client_health = client.subscribe_health();
-    let max_concurrent_requests = client
+    let max_running_requests_by_rank = client
         .ready_responses()
         .into_iter()
-        .try_fold(0_u64, |total, ready| total.checked_add(ready.max_num_seqs))
+        .map(|ready| (ready.data_parallel_rank, ready.max_num_seqs))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    max_running_requests_by_rank
+        .values()
+        .try_fold(0_u64, |total, maximum| total.checked_add(*maximum))
         .ok_or_else(|| std::io::Error::other("EngineCore max_num_seqs sum overflowed"))?;
     let metadata = RuntimeMetadataResponse {
         version: 1,
@@ -122,7 +126,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     health.set_client_healthy(true);
     health.set_accepting(true);
-    let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
+    let backend = Arc::new(VllmBackend::new(
+        Llm::new(client),
+        max_running_requests_by_rank,
+    ));
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
     let listener = match TcpListener::bind(config.listen_address).await {
