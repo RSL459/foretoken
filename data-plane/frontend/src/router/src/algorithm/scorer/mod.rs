@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+// SPDX-FileCopyrightText: Copyright 2025 The Kubernetes Authors
 
 //! Candidate scoring and Scorer implementations.
 
@@ -8,7 +9,7 @@ use std::collections::BTreeMap;
 use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 
-use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
+use crate::{RouteCandidate, RouteScore, RouteTargetStats, RouterRequest, RoutingProgress};
 
 // Each entry declares the module, re-exports the implementation, and binds its user-facing Scorer name.
 // For example, `kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded"` maps
@@ -17,7 +18,43 @@ declare_router_algorithms! {
     descriptor = ScorerDescriptor;
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
     least_loaded_scorer => LeastLoadedScorer = "least_loaded",
+    queue_depth_scorer => QueueDepthScorer = "queue_depth",
     uniform_scorer => UniformScorer = "uniform",
+}
+
+/// Applies llm-d's relative request-count formula to the selected scheduler gauge.
+///
+/// An unobserved gauge has llm-d's initial endpoint value of zero. Subtract counts before converting
+/// to floating point, preserving differences between large adjacent counts. Equal counts score one.
+fn relative_request_scores(
+    candidates: &[RouteCandidate],
+    read: impl Fn(&RouteTargetStats) -> Option<u64>,
+) -> Vec<RouteScore> {
+    let counts = candidates
+        .iter()
+        .map(|candidate| {
+            candidate
+                .route_target_stats
+                .as_deref()
+                .and_then(&read)
+                .unwrap_or(0)
+        })
+        .collect::<Vec<_>>();
+    let Some(minimum) = counts.iter().copied().min() else {
+        return Vec::new();
+    };
+    let maximum = counts.iter().copied().max().expect("nonempty counts");
+    counts
+        .into_iter()
+        .map(|count| RouteScore {
+            preference: if maximum == minimum {
+                1.0
+            } else {
+                (maximum - count) as f64 / (maximum - minimum) as f64
+            },
+            ..RouteScore::default()
+        })
+        .collect()
 }
 
 /// Scores the complete filtered compatible, healthy route target snapshot for one routing round.
