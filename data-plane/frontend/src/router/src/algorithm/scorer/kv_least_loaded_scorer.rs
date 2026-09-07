@@ -81,6 +81,7 @@ impl RouteScorer for KvLeastLoadedScorer {
                     tier_preference: tier,
                     locality_preference: locality,
                     load: load(candidate).saturating_add(downstream).saturating_neg(),
+                    ..RouteScore::default()
                 }
             })
             .collect()
