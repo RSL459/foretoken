@@ -18,12 +18,20 @@ spec:
 | Stage | Current values | Default | Effect |
 | --- | --- | --- | --- |
 | Filter | `allow_all` | `allow_all` | Retains every compatible, healthy target |
-| Scorer | `kv_least_loaded`, `least_loaded`, `uniform` | `kv_least_loaded` | Ranks retained targets |
+| Scorer | `kv_least_loaded`, `least_loaded`, `uniform`, `kv_cache_utilization` | `kv_least_loaded` | Ranks retained targets |
 | Picker | `max`, `round_robin` | `round_robin` | Selects among the highest-scoring targets |
 
 Each pipeline stage selects an algorithm by name. Deployments with additional routing implementations can use their names in the same `routerPipeline` fields.
 
 `kv_least_loaded` prefers confirmed local KV-prefix locality, then lower load. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
+
+Set `scorer` to `kv_cache_utilization` to prefer lower measured KV-cache utilization.
+
+This policy uses current Model Server endpoint gauges. It does not add prefix locality,
+pending dispatches, or downstream-stage load. All DP ranks of one Model Server share its
+endpoint score; this policy does not distinguish load between ranks. Gauges are usable after
+the first telemetry response, without waiting for the rate observation window. A gauge that has
+never been reported is treated as zero; a later omission preserves its previous value.
 
 A request becomes a candidate only when its model, input limit, requested capabilities, and target health are compatible. The Router evaluates aggregate and disaggregated topologies published by the Controller. In Prefill/Decode and Encoder/Prefill/Decode topologies, it keeps stage selections within their controller-defined pipeline scope.
 

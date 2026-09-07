@@ -34,3 +34,25 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 ## 多阶段路由
 
 算法对完整的兼容、健康候选项快照进行评分。Picker 执行前，Router 会将候选项限制到当前执行阶段和已选择的控制器定义 pipeline scope。这样既保持聚合、P/D 和 E/P/D 的执行 ownership，也允许 Scorer 考虑关联阶段的负载。
+
+## 指标打分契约
+
+`kv_cache_utilization` 打分器对应 llm-d-router 的 `d8d22ea8f7d412f2a7e61ec415d11b24322a7938` 版本：
+
+| Foretoken scorer | llm-d 源码 | 输入 | 分数 |
+| --- | --- | --- | --- |
+| `kv_cache_utilization` | [kv-cache-utilization-scorer](https://github.com/llm-d/llm-d-router/blob/d8d22ea8f7d412f2a7e61ec415d11b24322a7938/pkg/epp/framework/plugins/scheduling/scorer/kvcacheutilization/kvcache_utilization.go) | `kv_cache_usage` | `1 - usage` |
+
+给定相同的指标和候选集，返回数值与上游的单端点打分器一致。
+KV 指标直接参与公式，不裁剪、不设阈值、不再缩放；空候选集返回空分数列表。
+数值通过 `RouteScore.preference` 原样传给 Picker，其余位置和负载字段为零。
+原有位置策略继续使用字典序。
+
+Registry 负责指标历史：立即发布 gauge，某项缺失时保留之前的实测值，速率与直方图在
+计数器窗口足够前保持不可用。指标打分器将从未观测到的值映射为零，与 llm-d 的
+[端点指标初始值](https://github.com/llm-d/llm-d-router/blob/d8d22ea8f7d412f2a7e61ec415d11b24322a7938/pkg/epp/framework/interface/datalayer/metrics.go) 一致。
+
+Foretoken 继续负责遥测传输、健康检查、DP 展开及 E/P/D 阶段资格判断。
+Model Server 端点报告各引擎 scheduler 计数之和及 KV 使用率均值，因此同一端点的所有 rank
+得到相同分数。该 scorer 不使用 `RoutingProgress`，Router 仍传入该参数并负责后续阶段选择。
+复现范围是打分器本身，不包含 llm-d 的端点发现、指标抓取及完整调度器。
