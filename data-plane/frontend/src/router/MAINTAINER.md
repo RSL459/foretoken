@@ -37,7 +37,6 @@ Algorithms score the complete compatible and healthy candidate snapshot. Before 
 
 ## `token_load`
 
-The scoring formula and defaults follow [llm-d](https://github.com/llm-d/llm-d-router/blob/7de00e5452818546815417aee2d6c68d2c2ff323/pkg/epp/framework/plugins/scheduling/scorer/tokenload/token_load.go).
 Signed token addition precedes conversion to `f64`. Nonpositive load scores one; otherwise
 score is `1 - min(load, threshold) / threshold`. The request contribution is uncached indexed
 tokens plus the partial prompt tail. Estimated output tokens are disabled. Selection and

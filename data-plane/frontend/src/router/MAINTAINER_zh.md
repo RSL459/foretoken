@@ -37,7 +37,6 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 ## `token_load`
 
-评分公式和默认值对应 [llm-d](https://github.com/llm-d/llm-d-router/blob/7de00e5452818546815417aee2d6c68d2c2ff323/pkg/epp/framework/plugins/scheduling/scorer/tokenload/token_load.go)。
 先进行有符号 token 加法，再转换为 `f64`。总负载非正时得一分，否则为
 `1 - min(load, threshold) / threshold`。请求贡献包含索引内未命中 token 和不满完整块的尾部。
 输出 token 估算关闭。选择与预留共用锁；路由会话在首个响应、阶段结束或丢弃时释放贡献。
