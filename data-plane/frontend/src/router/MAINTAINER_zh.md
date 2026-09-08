@@ -57,5 +57,5 @@ Registry 负责指标历史：立即发布 gauge，并仅在原始观测快照�
 
 Foretoken 负责遥测传输、健康检查、DP 展开及 E/P/D 阶段资格判断。
 Model Server 端点报告各引擎 scheduler 计数之和及 KV 使用率均值。
-同一端点的所有 rank 得到相同分数。这两个 scorer 不使用 `RoutingProgress`，
+同一端点的所有 rank 得到相同分数。这些 scorer 不使用 `RoutingProgress`，
 Router 仍传入该参数并负责后续阶段选择。

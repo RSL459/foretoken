@@ -5,6 +5,7 @@
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
+use super::inverse_normalized_scores;
 use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, RoutingProgress};
 
 /// Scores each candidate by `(max_running - running) / (max_running - min_running)`.
@@ -24,31 +25,12 @@ impl RouteScorer for RunningRequestScorer {
         routing_progress: &RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Vec<RouteScore> {
-        let counts = candidates
-            .iter()
-            .map(|candidate| {
-                candidate
-                    .route_target_stats
-                    .as_deref()
-                    .and_then(|stats| stats.scheduler_running_requests)
-                    .unwrap_or(0)
-            })
-            .collect::<Vec<_>>();
-        let Some(minimum) = counts.iter().copied().min() else {
-            return Vec::new();
-        };
-        let maximum = counts.iter().copied().max().expect("nonempty counts");
-        // Subtract integer counts before conversion to preserve large adjacent differences.
-        counts
-            .into_iter()
-            .map(|count| RouteScore {
-                preference: if maximum == minimum {
-                    1.0
-                } else {
-                    (maximum - count) as f64 / (maximum - minimum) as f64
-                },
-                ..RouteScore::default()
-            })
-            .collect()
+        inverse_normalized_scores(candidates.iter().map(|candidate| {
+            candidate
+                .route_target_stats
+                .as_deref()
+                .and_then(|stats| stats.scheduler_running_requests)
+                .unwrap_or(0)
+        }))
     }
 }

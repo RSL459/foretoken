@@ -23,6 +23,27 @@ declare_router_algorithms! {
     uniform_scorer => UniformScorer = "uniform",
 }
 
+/// Converts request-count observations into inverse min-max preferences.
+pub(super) fn inverse_normalized_scores(counts: impl IntoIterator<Item = u64>) -> Vec<RouteScore> {
+    let counts = counts.into_iter().collect::<Vec<_>>();
+    let Some(minimum) = counts.iter().copied().min() else {
+        return Vec::new();
+    };
+    let maximum = counts.iter().copied().max().expect("nonempty counts");
+    counts
+        .into_iter()
+        .map(|count| RouteScore {
+            preference: if maximum == minimum {
+                1.0
+            } else {
+                // Subtract integer counts before conversion to preserve large adjacent differences.
+                (maximum - count) as f64 / (maximum - minimum) as f64
+            },
+            ..RouteScore::default()
+        })
+        .collect()
+}
+
 /// Scores the complete filtered compatible, healthy route target snapshot for one routing round.
 ///
 /// The returned score slice is parallel to `candidates`: position `n` scores candidate `n`. This
