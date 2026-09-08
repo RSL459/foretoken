@@ -35,12 +35,23 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 算法对完整的兼容、健康候选项快照进行评分。Picker 执行前，Router 会将候选项限制到当前执行阶段和已选择的控制器定义 pipeline scope。这样既保持聚合、P/D 和 E/P/D 的执行 ownership，也允许 Scorer 考虑关联阶段的负载。
 
-## `token_load`
+## 打分契约
 
-先进行有符号 token 加法，再转换为 `f64`。总负载非正时得一分，否则为
-`1 - min(load, threshold) / threshold`。请求贡献包含索引内未命中 token 和不满完整块的尾部。
-输出 token 估算关闭。选择与预留共用锁；路由会话在首个响应、阶段结束或丢弃时释放贡献。
-RuntimeBuilder 在运行时版本切换期间保留本地负载状态。
+`token_load` 打分器使用以下观测和公式：
+
+| Scorer | 输入 | 分数 |
+| --- | --- | --- |
+| `token_load` | 在途 token 与当前请求未缓存提示词 token 之和 `load` | `load <= 0` 时为 `1`；否则为 `1 - min(load, threshold) / threshold` |
+
+Token Load 先进行有符号整数加法，再转换为 `f64`。`threshold` 为 `queueThresholdTokens`
+（默认 `4194304`）；配置为非正值时使用默认值。请求贡献包含索引内未缓存 token 和提示词
+尾部不足一块的 token；缓存观测不可用时，整个提示词都按未缓存计算。不估算输出 token。
+计数由每个 Frontend 副本按目标和 DP rank 独立维护，不叠加引擎 scheduler gauge。
+Aggregate、Prefill 和 Decode 在派发前为选中目标预留未缓存提示词 token；首个响应释放 token，
+阶段结束或会话释放时清理剩余贡献，也覆盖派发失败的情况。
+
+选择与预留共用一把锁，使并发请求能看到已选请求的本地负载。路由会话负责清理预留，
+RuntimeBuilder 在服务快照更新之间保留这份负载状态。
 
 `RouteScore.preference` 直接保留浮点分数，不进行整数化。Foretoken 负责指标生产、
 端点可选性和同分选择。`scorerParameters` 经 CRD 和控制器环境变量传到 Frontend，
