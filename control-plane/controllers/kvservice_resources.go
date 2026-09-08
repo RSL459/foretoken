@@ -176,7 +176,8 @@ func mooncakeSnapshotIntervalSeconds(value inferencev1alpha1.Duration) (int64, e
 }
 
 func mooncakeMasterConfig(rpcPort, metadataPort, metricsPort int32, snapshotIntervalSeconds int64, snapshotRetentionCount int32) string {
-	// Snapshot retention is provider history, not a Foretoken cache TTL or eviction policy.
+	// Field names follow llm-d v0.8.0's Master ConfigMap. Snapshot retention is
+	// provider history, not a Foretoken cache TTL or eviction policy.
 	return fmt.Sprintf("rpc_port: %d\nrpc_address: \"0.0.0.0\"\nenable_metric_reporting: true\nmetrics_port: %d\nenable_http_metadata_server: true\nhttp_metadata_server_host: \"0.0.0.0\"\nhttp_metadata_server_port: %d\ncluster_id: \"mooncake_cluster\"\nroot_fs_dir: \"/data/mooncake-offload\"\nenable_snapshot: true\nenable_snapshot_restore: true\nsnapshot_interval_seconds: %d\nsnapshot_retention_count: %d\nsnapshot_object_store_type: \"local\"\n", rpcPort, metricsPort, metadataPort, snapshotIntervalSeconds, snapshotRetentionCount)
 }
 
