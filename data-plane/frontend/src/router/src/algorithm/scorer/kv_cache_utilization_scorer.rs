@@ -2,25 +2,27 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 // SPDX-FileCopyrightText: Copyright 2025 The Kubernetes Authors
 
-//! llm-d KV-cache utilization scoring over the measured utilization gauge.
+//! Scoring by measured KV-cache utilization.
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
 use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, RoutingProgress};
 
 /// Returns `1 - utilization` for each candidate without clamping or adding other signals.
-/// An unobserved gauge has llm-d's initial endpoint value of zero utilization.
+/// An unobserved gauge contributes zero utilization.
 #[derive(Default)]
 pub struct KvCacheUtilizationScorer;
 
 impl RouteScorer for KvCacheUtilizationScorer {
+    /// Returns utilization preferences in candidate order for Router selection.
+    #[allow(unused_variables)]
     fn score(
         &self,
-        _: &RouterRequest,
+        request: &RouterRequest,
         candidates: &[RouteCandidate],
-        _: &dyn KvPrefixIndexer,
-        _: &RoutingProgress<'_>,
-        _: &mut (),
+        kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &RoutingProgress<'_>,
+        customized_context: &mut (),
     ) -> Vec<RouteScore> {
         candidates
             .iter()

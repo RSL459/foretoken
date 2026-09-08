@@ -37,25 +37,24 @@ Algorithms score the complete compatible and healthy candidate snapshot. Before 
 
 ## Metric scorer contracts
 
-The `kv_cache_utilization` scorer ports llm-d-router at `d8d22ea8f7d412f2a7e61ec415d11b24322a7938`:
+The `kv_cache_utilization` scorer uses the latest KV-cache utilization gauge:
 
-| Foretoken scorer | llm-d source | Input | Score |
-| --- | --- | --- | --- |
-| `kv_cache_utilization` | [kv-cache-utilization-scorer](https://github.com/llm-d/llm-d-router/blob/d8d22ea8f7d412f2a7e61ec415d11b24322a7938/pkg/epp/framework/plugins/scheduling/scorer/kvcacheutilization/kvcache_utilization.go) | `kv_cache_usage` | `1 - usage` |
+| Scorer | Input | Score |
+| --- | --- | --- |
+| `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
 
-For identical input metrics and candidate sets, the numeric contributions match the stock
-per-endpoint scorer. KV usage is used directly without clamping, thresholds, or rescaling.
+KV usage is used directly without clamping, thresholds, or rescaling.
 An empty candidate slice produces an empty score vector.
-`RouteScore.preference` preserves the numeric output, with the locality/load fields left at
-zero. Existing locality policies retain their lexicographic ordering.
+`RouteScore.preference` preserves the numeric output, with the
+locality/load fields left at zero. Existing locality policies retain their lexicographic ordering.
 
-The registry owns gauge history: publish gauges immediately, retain the last measured value on
-omission, and leave rates and histograms unavailable until their counter window is covered.
-The metric-scorer input mapping uses zero for never-observed gauges, matching llm-d's
-[initial endpoint metrics](https://github.com/llm-d/llm-d-router/blob/d8d22ea8f7d412f2a7e61ec415d11b24322a7938/pkg/epp/framework/interface/datalayer/metrics.go).
+The registry owns gauge history: it publishes gauges immediately and retains the last measured
+value on omission only within valid history. A non-increasing timestamp or a cumulative counter
+or histogram reset clears history before missing gauges are filled. Omitted gauges in the new
+history remain unobserved until reported. Metric scorers use zero for unobserved gauges.
+Rates and windowed latencies remain unavailable until their counter window is covered.
 
-Foretoken keeps its own telemetry transport, health checks, DP expansion, and E/P/D eligibility.
-Its Model Server endpoint reports sums of scheduler counts and mean KV utilization across its
-engines. Every rank of that endpoint receives the same metric score. The scorer ignores
+Foretoken handles telemetry transport, health checks, DP expansion, and E/P/D eligibility.
+The Model Server endpoint reports mean KV utilization across its engines.
+Every rank of that endpoint receives the same metric score. The scorer ignores
 `RoutingProgress`; Router still supplies it and owns the subsequent stage selection.
-This ports scorer behavior, not llm-d's endpoint discovery, scraping, or complete scheduler.
