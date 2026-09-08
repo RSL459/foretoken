@@ -37,24 +37,25 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 ## 指标打分契约
 
-`running_request`、`queue_depth` 打分器使用最新的调度器等待请求数 gauge：
+各 scorer 使用以下观测和公式：
 
 | Scorer | 输入 | 分数 |
 | --- | --- | --- |
 | `queue_depth` | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
 | `running_request` | `scheduler_running_requests` | `(max - running) / (max - min)` |
+| `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
 
 使用传入 `score` 的全部候选项求最小值和最大值；计数全部相等时得 `1`，空候选集返回空分数列表。
 计数先相减再转为 `f64`，避免大整数提前转换丢失差值。
 数值通过 `RouteScore.preference` 原样传给 Picker，其余位置和负载字段为零。
 原有位置策略继续使用字典序。
 
-Registry 负责指标历史：立即发布 gauge，并仅在历史有效时为缺失项保留之前的实测值。
-时间戳未递增、累计计数器或直方图发生重置时，先清空历史，再补齐缺失 gauge。
-新历史中缺失的 gauge 保持未观测状态，直到生产者重新上报；指标打分器将未观测值映射为零。
+Registry 负责指标历史：立即发布 gauge，并仅在原始观测快照仍处于保留窗口内时为缺失项使用之前的实测值。
+时间戳未递增、累计计数器或直方图发生重置时清空历史。新历史中缺失的 gauge 保持未观测状态，
+直到生产者重新上报；指标打分器将未观测值映射为零。
 速率和窗口延迟统计在计数器窗口足够前保持不可用。
 
 Foretoken 负责遥测传输、健康检查、DP 展开及 E/P/D 阶段资格判断。
-Model Server 端点报告各引擎的 scheduler 请求计数之和。
-同一端点的所有 rank 得到相同分数。该 scorer 不使用 `RoutingProgress`，
+Model Server 端点报告各引擎 scheduler 计数之和及 KV 使用率均值。
+同一端点的所有 rank 得到相同分数。这两个 scorer 不使用 `RoutingProgress`，
 Router 仍传入该参数并负责后续阶段选择。

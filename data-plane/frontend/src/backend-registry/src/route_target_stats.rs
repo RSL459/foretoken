@@ -28,23 +28,12 @@ impl RouteTargetStatsHistory {
     /// Records one cumulative telemetry snapshot and evicts expired or reset history.
     ///
     /// Backend readiness refresh supplies the snapshot, which is stored in this bounded history.
-    pub(crate) fn push(&mut self, mut snapshot: TelemetryResponse) {
-        // Reset history before inheriting gauges so stale measurements cannot enter a new history.
+    pub(crate) fn push(&mut self, snapshot: TelemetryResponse) {
         if self.snapshots.back().is_some_and(|previous| {
             snapshot.collected_at_unix_ms <= previous.collected_at_unix_ms
                 || counters_reset(previous, &snapshot)
         }) {
             self.snapshots.clear();
-        }
-        // Omitted gauges inherit only from a valid previous snapshot; unobserved gauges stay absent.
-        if let Some(previous) = self.snapshots.back() {
-            snapshot.scheduler_running_requests = snapshot
-                .scheduler_running_requests
-                .or(previous.scheduler_running_requests);
-            snapshot.scheduler_waiting_requests = snapshot
-                .scheduler_waiting_requests
-                .or(previous.scheduler_waiting_requests);
-            snapshot.kv_cache_usage = snapshot.kv_cache_usage.or(previous.kv_cache_usage);
         }
         let newest = snapshot.collected_at_unix_ms;
         self.snapshots.push_back(snapshot);
@@ -86,9 +75,21 @@ impl RouteTargetStatsHistory {
             observed_window: Duration::from_millis(observed_ms.unwrap_or(0)),
             running_requests: current.running_requests,
             max_concurrent_requests: current.max_concurrent_requests,
-            scheduler_running_requests: current.scheduler_running_requests,
-            scheduler_waiting_requests: current.scheduler_waiting_requests,
-            kv_cache_usage: current.kv_cache_usage,
+            scheduler_running_requests: self
+                .snapshots
+                .iter()
+                .rev()
+                .find_map(|snapshot| snapshot.scheduler_running_requests),
+            scheduler_waiting_requests: self
+                .snapshots
+                .iter()
+                .rev()
+                .find_map(|snapshot| snapshot.scheduler_waiting_requests),
+            kv_cache_usage: self
+                .snapshots
+                .iter()
+                .rev()
+                .find_map(|snapshot| snapshot.kv_cache_usage),
             prompt_tokens_per_second: baseline.zip(observed_seconds).and_then(
                 |(baseline, seconds)| {
                     rate(

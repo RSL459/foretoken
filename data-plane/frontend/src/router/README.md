@@ -18,28 +18,22 @@ spec:
 | Stage | Current values | Default | Effect |
 | --- | --- | --- | --- |
 | Filter | `allow_all` | `allow_all` | Retains every compatible, healthy target |
-| Scorer | `kv_least_loaded`, `least_loaded`, `uniform`, `queue_depth`, `running_request` | `kv_least_loaded` | Ranks retained targets |
+| Scorer | `kv_least_loaded`, `least_loaded`, `uniform`, `queue_depth`, `kv_cache_utilization` , `running_request`| `kv_least_loaded` | Ranks retained targets |
 | Picker | `max`, `round_robin` | `round_robin` | Selects among the highest-scoring targets |
 
 Each pipeline stage selects an algorithm by name. Deployments with additional routing implementations can use their names in the same `routerPipeline` fields.
 
 `kv_least_loaded` prefers confirmed local KV-prefix locality, then lower load. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
 
-
-This policy uses current Model Server endpoint gauges. It does not add prefix locality,
-pending dispatches, or downstream-stage load. All DP ranks of one Model Server share its
-endpoint score; this policy does not distinguish load between ranks. Gauges are usable after
-the first telemetry response, without waiting for the rate observation window. An unobserved gauge is treated
-as zero. Later omissions preserve the previous value while telemetry history remains valid.
-After a timestamp or counter reset, omitted gauges remain unobserved until reported again.
-
-A request becomes a candidate only when its model, input limit, requested capabilities, and target health are compatible. The Router evaluates aggregate and disaggregated topologies published by the Controller. In Prefill/Decode and Encoder/Prefill/Decode topologies, it keeps stage selections within their controller-defined pipeline scope.
 Set `scorer` to `queue_depth` to prefer fewer requests waiting in the engine scheduler.
+
 Set `scorer` to `running_request` to prefer fewer requests running in the engine scheduler.
 
-These policy uses current Model Server endpoint gauges. They does not add prefix locality,
+Set `scorer` to `kv_cache_utilization` to prefer lower measured KV-cache utilization.
+
+These policies use current Model Server endpoint gauges. They do not add prefix locality,
 pending dispatches, or downstream-stage load. All DP ranks of one Model Server share its
-endpoint score; these policy does not distinguish load between ranks. Gauges are usable after
+endpoint score; these policies do not distinguish load between ranks. Gauges are usable after
 the first telemetry response, without waiting for the rate observation window. An unobserved gauge is treated
 as zero. Later omissions preserve the previous value while telemetry history remains valid.
 After a timestamp or counter reset, omitted gauges remain unobserved until reported again.

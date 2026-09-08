@@ -30,6 +30,6 @@ pub mod scorer;
 pub use filter::{AllowAllFilter, RouteFilter};
 pub use picker::{MaxPicker, RoundRobinPicker, RoutePicker};
 pub use scorer::{
-    KvLeastLoadedScorer, LeastLoadedScorer, QueueDepthScorer, RouteScorer, RunningRequestScorer,
-    UniformScorer,
+    KvCacheUtilizationScorer, KvLeastLoadedScorer, LeastLoadedScorer, QueueDepthScorer,
+    RouteScorer, RunningRequestScorer, UniformScorer,
 };
