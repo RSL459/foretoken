@@ -25,21 +25,8 @@ spec:
 
 `kv_least_loaded` 优先考虑已确认的本地 KV 前缀位置，再选择负载较低的目标。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
 
-`active_request` 优先选择本 Frontend 路由且仍在执行的请求较少的目标，并区分 DP rank。
-`idleThreshold` 默认是 `0`，`maxBusyScore` 默认是 `1`。空闲目标得满分，忙碌目标按候选集
-最大活动请求数归一化。各阶段的请求计数在完成或取消时释放。每个 Frontend 独立计数，
-不叠加引擎调度器指标，也不包含其他 Frontend 副本的请求。
-
-```yaml
-spec:
-  routerPipeline:
-    scorer: active_request
-    scorerParameters:
-      idleThreshold: 0
-      maxBusyScore: 1
-```
-
-参数由 Frontend 在启动时校验。
+将 `scorer` 设为 `active_request`，即可优先选择本 Frontend 副本活动请求较少的目标，计数区分目标和 DP rank。
+`scorerParameters` 支持 `idleThreshold`（默认 `0`）和 `maxBusyScore`（默认 `1`）。
 
 只有模型、输入限制、请求能力和目标健康状态都兼容时，请求才会成为候选项。Router 会根据控制器发布的聚合或分离式拓扑选择目标。在 Prefill/Decode 和 Encoder/Prefill/Decode 拓扑中，它会将各阶段选择限制在控制器定义的同一 pipeline scope 内。
 

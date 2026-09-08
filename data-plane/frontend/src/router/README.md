@@ -25,22 +25,8 @@ Each pipeline stage selects an algorithm by name. Deployments with additional ro
 
 `kv_least_loaded` prefers confirmed local KV-prefix locality, then lower load. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
 
-The `active_request` scorer prefers fewer requests routed by this frontend that remain active
-on each target and DP rank. `idleThreshold` defaults to `0`, and `maxBusyScore` defaults to `1`.
-Idle targets receive full preference; busy targets are ranked against the largest active count.
-Each selected stage remains counted through completion or cancellation. Counts are local to
-each frontend replica and do not include engine scheduler gauges or other frontend replicas.
-
-```yaml
-spec:
-  routerPipeline:
-    scorer: active_request
-    scorerParameters:
-      idleThreshold: 0
-      maxBusyScore: 1
-```
-
-Parameters are validated by the frontend at startup.
+Set `scorer` to `active_request` to prefer fewer active requests owned by this frontend replica, counted per target DP rank.
+Its `scorerParameters` are `idleThreshold` (default `0`) and `maxBusyScore` (default `1`).
 
 A request becomes a candidate only when its model, input limit, requested capabilities, and target health are compatible. The Router evaluates aggregate and disaggregated topologies published by the Controller. In Prefill/Decode and Encoder/Prefill/Decode topologies, it keeps stage selections within their controller-defined pipeline scope.
 
