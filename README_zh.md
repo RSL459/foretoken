@@ -143,6 +143,14 @@ foretoken uninstall
 
 卸载时会保留 Foretoken CRD 和复用的集群组件，并删除平台以及由命令行工具管理的监控或 Gateway 资源。
 
+## 相关项目
+
+- [vLLM](https://github.com/vllm-project/vllm)
+- [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo)
+- [llm-d](https://github.com/llm-d/llm-d)
+- [AIBrix](https://github.com/vllm-project/aibrix)
+- [vLLM Production Stack](https://github.com/vllm-project/production-stack)
+
 ## 贡献
 
 欢迎通过代码、文档、测试、设计讨论、问题反馈等方式参与 Foretoken。
