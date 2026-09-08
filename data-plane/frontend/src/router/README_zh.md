@@ -25,14 +25,6 @@ spec:
 
 `kv_least_loaded` 优先考虑已确认的本地 KV 前缀位置，再选择负载较低的目标。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
 
-只有模型、输入限制、请求能力和目标健康状态都兼容时，请求才会成为候选项。Router 会根据控制器发布的聚合或分离式拓扑选择目标。在 Prefill/Decode 和 Encoder/Prefill/Decode 拓扑中，它会将各阶段选择限制在控制器定义的同一 pipeline scope 内。
-
-KV 位置只是路由信号。`Unavailable` 表示索引当前无法可靠回答，不等于缓存未命中，也不会排除目标。即使某个目标被优先选择，推理后端在真正执行时仍可能没有对应缓存。当前 KV 位置与退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
-
-编译进二进制的路由算法，以及 Filter、Scorer 和 Picker 的精确维护契约见 [Router 维护指南](MAINTAINER_zh.md)。
-
-## 评分策略配置
-
 `prefix` 优先选择完整提示词块缓存命中比例较高的目标。`matchLengthWeight` 默认是 `0`，
 此时仅按命中比例评分。正权重还会奖励较长的命中前缀，归一化尺度
 `matchLengthScaleTokens` 默认是 `8192`。位置不可用或请求没有完整块时得零分。
@@ -48,3 +40,9 @@ spec:
 ```
 
 参数由 Frontend 在启动时校验。
+
+只有模型、输入限制、请求能力和目标健康状态都兼容时，请求才会成为候选项。Router 会根据控制器发布的聚合或分离式拓扑选择目标。在 Prefill/Decode 和 Encoder/Prefill/Decode 拓扑中，它会将各阶段选择限制在控制器定义的同一 pipeline scope 内。
+
+KV 位置只是路由信号。`Unavailable` 表示索引当前无法可靠回答，不等于缓存未命中，也不会排除目标。即使某个目标被优先选择，推理后端在真正执行时仍可能没有对应缓存。当前 KV 位置与退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+
+编译进二进制的路由算法，以及 Filter、Scorer 和 Picker 的精确维护契约见 [Router 维护指南](MAINTAINER_zh.md)。

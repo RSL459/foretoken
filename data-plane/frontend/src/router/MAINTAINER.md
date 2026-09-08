@@ -35,12 +35,21 @@ Request-local shared state belongs in `RouterPipeline::with_customized_context`.
 
 Algorithms score the complete compatible and healthy candidate snapshot. Before picking, the Router narrows it to the current execution stage and its selected controller-defined pipeline scope. This preserves aggregate, P/D, and E/P/D execution ownership while allowing a scorer to account for related stage load.
 
-## `prefix`
+## Scorer contracts
 
-Score is `weight * min(1, matched_blocks * block_size / scale)^2 + (1 - weight) * matched_blocks / total_blocks`.
-Missing observations and zero complete request blocks score zero. Block size comes from the
-exact source partition, including confirmed misses. Cache salts, LoRA, unsupported multimodal
-inputs, and explicit cache opt-out do not receive cache credit.
+The `prefix` scorer uses the following observations and formula:
+
+| Scorer | Input | Score |
+| --- | --- | --- |
+| `prefix` | Matched blocks `m`, complete prompt blocks `t`, block size `b` | `w * min(1, m * b / s)^2 + (1 - w) * m / t` |
+
+Here `w` is `matchLengthWeight` (default `0`) and `s` is `matchLengthScaleTokens`
+(default `8192`). With zero weight, only `m / t` is evaluated. Weight must be in `[0, 1]`;
+scale must be positive when weight is positive.
+Missing cache observations and zero complete prompt blocks score zero. The index publishes
+block size from the exact source partition even on a confirmed miss; unknown granularity
+remains absent. Cache salts, LoRA, unsupported multimodal inputs, and explicit cache opt-out
+do not receive cache credit.
 
 `RouteScore.preference` preserves floating-point scores without quantization. Foretoken owns
 input production, endpoint eligibility, and tie breaking. `scorerParameters` passes through

@@ -35,11 +35,19 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 算法对完整的兼容、健康候选项快照进行评分。Picker 执行前，Router 会将候选项限制到当前执行阶段和已选择的控制器定义 pipeline scope。这样既保持聚合、P/D 和 E/P/D 的执行 ownership，也允许 Scorer 考虑关联阶段的负载。
 
-## `prefix`
+## 打分契约
 
-公式为 `weight * min(1, matched_blocks * block_size / scale)^2 + (1 - weight) * matched_blocks / total_blocks`。
-缺失观测或请求没有完整块时得零分。块大小来自精确绑定的源分区，确认未命中时仍可提供。
-Cache salt、LoRA、不支持的多模态输入及显式禁用缓存读取的请求不获得缓存抵扣。
+`prefix` 打分器使用以下观测和公式：
+
+| Scorer | 输入 | 分数 |
+| --- | --- | --- |
+| `prefix` | 命中块数 `m`、提示词完整块数 `t`、块大小 `b` | `w * min(1, m * b / s)^2 + (1 - w) * m / t` |
+
+其中 `w` 为 `matchLengthWeight`（默认 `0`），`s` 为 `matchLengthScaleTokens`（默认 `8192`）。
+权重为零时只计算 `m / t`。权重必须在 `[0, 1]` 内；权重为正时，缩放长度必须为正。
+缺少缓存观测或提示词完整块数为零时得零分。块大小来自精确绑定的源分区，确认未命中时索引
+仍返回已观测块大小，未知块大小保持缺失。Cache salt、LoRA、不支持的多模态输入及显式
+禁用缓存读取的请求不获得缓存抵扣。
 
 `RouteScore.preference` 直接保留浮点分数，不进行整数化。Foretoken 负责指标生产、
 端点可选性和同分选择。`scorerParameters` 经 CRD 和控制器环境变量传到 Frontend，
