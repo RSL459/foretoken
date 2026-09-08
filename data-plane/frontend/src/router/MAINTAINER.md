@@ -43,10 +43,6 @@ Scorers use the following observations and formulas:
 | --- | --- | --- |
 | `active_request` | Local active requests `count` and candidate maximum `maxCount` | `1` if `count <= idleThreshold`; otherwise `(maxCount - count) / maxCount * maxBusyScore` |
 
-An empty candidate slice produces an empty score vector. `RouteScore.preference` preserves the
-numeric output, with the locality/load fields left at zero. Existing locality policies retain
-their lexicographic ordering.
-
 `active_request` takes `maxCount` over all candidates supplied to `score`. `idleThreshold` defaults to `0`;
 negative values become zero. `maxBusyScore` defaults to `1` with range `[0, 1]`; missing, null, or out-of-range values use `1`.
 Each selected stage remains counted until completion or session drop.
@@ -54,5 +50,9 @@ Each selected stage remains counted until completion or session drop.
 `active_request` uses frontend-local reservations per target and DP rank, without engine scheduler gauges
 or other frontend replicas' requests. Selection and reservation share one lock; routing sessions own
 cleanup, and RuntimeBuilder retains the state across serving-snapshot replacements.
+
+An empty candidate slice produces an empty score vector. `RouteScore.preference` preserves the
+numeric output, with the locality/load fields left at zero. Existing locality policies retain
+their lexicographic ordering.
 
 Set optional parameters in `FrontendService.spec.routerPipeline.scorerParameters`; the selected scorer reads them at frontend startup.
