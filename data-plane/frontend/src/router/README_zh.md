@@ -18,7 +18,7 @@ spec:
 | 阶段 | 当前可选值 | 默认值 | 作用 |
 | --- | --- | --- | --- |
 | Filter | `allow_all` | `allow_all` | 保留全部兼容且健康的目标 |
-| Scorer | `kv_least_loaded`、`least_loaded`、`uniform` | `kv_least_loaded` | 为保留目标评分 |
+| Scorer | `kv_least_loaded`、`least_loaded`、`uniform`、`token_load` | `kv_least_loaded` | 为保留目标评分 |
 | Picker | `max`、`round_robin` | `round_robin` | 从最高分目标中选择一个 |
 
 每个 pipeline 阶段都通过名称选择算法。如果部署提供了其他路由实现，也可以在相同的 `routerPipeline` 字段中填写对应名称。
@@ -30,3 +30,20 @@ spec:
 KV 位置只是路由信号。`Unavailable` 表示索引当前无法可靠回答，不等于缓存未命中，也不会排除目标。即使某个目标被优先选择，推理后端在真正执行时仍可能没有对应缓存。当前 KV 位置与退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
 编译进二进制的路由算法，以及 Filter、Scorer 和 Picker 的精确维护契约见 [Router 维护指南](MAINTAINER_zh.md)。
+
+## 评分策略配置
+
+`token_load` 按在途未缓存提示词 token 与当前请求新增的未缓存 token 总量评分，负载越低越优先。
+`queueThresholdTokens` 默认是 `4194304`，非正值恢复默认值。每个 Frontend 独立计数，并区分 DP rank。
+Aggregate、Prefill 和 Decode 在派发前预留未缓存提示词 token，收到首个响应、阶段结束或取消时释放。
+该策略不估算输出 token，也不包含其他 Frontend 的负载。
+
+```yaml
+spec:
+  routerPipeline:
+    scorer: token_load
+    scorerParameters:
+      queueThresholdTokens: 4194304
+```
+
+参数由 Frontend 在启动时校验。

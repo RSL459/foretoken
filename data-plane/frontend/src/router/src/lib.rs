@@ -4,6 +4,9 @@
 //! Composable selection of one routable ModelGroup per routing round.
 
 pub mod algorithm;
+mod inflight;
+pub use inflight::{InFlightLoad, RoutingLoadState};
+mod cache;
 mod inventory;
 mod request;
 mod route_target_stats;
