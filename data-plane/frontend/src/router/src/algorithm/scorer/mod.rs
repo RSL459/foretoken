@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-// SPDX-FileCopyrightText: Copyright 2025 The Kubernetes Authors
 
 //! Candidate scoring and Scorer implementations.
 
@@ -33,7 +32,7 @@ declare_router_algorithms! {
 ///   and the Router's immutable current-round aggregate target observation, when available.
 /// - `kv_prefix_indexer`: query local or offloaded matched prompt tokens for any candidate.
 /// - `routing_progress`: immutable E/P/D selection round and progress supplied by `RouteSession`.
-/// - `customized_context`: user-defined `C`, created per request and shared by Prefill and Decode.
+/// - `customized_context`: user-defined `C`, created per request and shared across E/P/D rounds.
 ///
 /// Returns one score for every input candidate. A length mismatch is reported as a routing error.
 pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
