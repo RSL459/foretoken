@@ -29,8 +29,14 @@ impl RouteTargetStatsHistory {
     ///
     /// Backend readiness refresh supplies the snapshot, which is stored in this bounded history.
     pub(crate) fn push(&mut self, mut snapshot: TelemetryResponse) {
-        // Like llm-d's endpoint metrics extractor, retain the last measured gauge when a later
-        // observation omits it. Unobserved gauges remain explicit until a scorer maps its inputs.
+        // Reset history before inheriting gauges so stale measurements cannot enter a new history.
+        if self.snapshots.back().is_some_and(|previous| {
+            snapshot.collected_at_unix_ms <= previous.collected_at_unix_ms
+                || counters_reset(previous, &snapshot)
+        }) {
+            self.snapshots.clear();
+        }
+        // Omitted gauges inherit only from a valid previous snapshot; unobserved gauges stay absent.
         if let Some(previous) = self.snapshots.back() {
             snapshot.scheduler_running_requests = snapshot
                 .scheduler_running_requests
@@ -39,12 +45,6 @@ impl RouteTargetStatsHistory {
                 .scheduler_waiting_requests
                 .or(previous.scheduler_waiting_requests);
             snapshot.kv_cache_usage = snapshot.kv_cache_usage.or(previous.kv_cache_usage);
-        }
-        if self.snapshots.back().is_some_and(|previous| {
-            snapshot.collected_at_unix_ms <= previous.collected_at_unix_ms
-                || counters_reset(previous, &snapshot)
-        }) {
-            self.snapshots.clear();
         }
         let newest = snapshot.collected_at_unix_ms;
         self.snapshots.push_back(snapshot);

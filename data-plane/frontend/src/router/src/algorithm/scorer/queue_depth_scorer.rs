@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 // SPDX-FileCopyrightText: Copyright 2025 The Kubernetes Authors
 
-//! llm-d queue-depth scoring over the scheduler waiting gauge.
+//! Scoring by the scheduler waiting-request gauge.
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
@@ -14,14 +14,42 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, RoutingProgr
 pub struct QueueDepthScorer;
 
 impl RouteScorer for QueueDepthScorer {
+    /// Returns queue-depth preferences in candidate order for Router selection.
+    /// Unobserved gauges count as zero; equal counts receive one.
+    #[allow(unused_variables)]
     fn score(
         &self,
-        _: &RouterRequest,
+        request: &RouterRequest,
         candidates: &[RouteCandidate],
-        _: &dyn KvPrefixIndexer,
-        _: &RoutingProgress<'_>,
-        _: &mut (),
+        kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &RoutingProgress<'_>,
+        customized_context: &mut (),
     ) -> Vec<RouteScore> {
-        super::relative_request_scores(candidates, |stats| stats.scheduler_waiting_requests)
+        let counts = candidates
+            .iter()
+            .map(|candidate| {
+                candidate
+                    .route_target_stats
+                    .as_deref()
+                    .and_then(|stats| stats.scheduler_waiting_requests)
+                    .unwrap_or(0)
+            })
+            .collect::<Vec<_>>();
+        let Some(minimum) = counts.iter().copied().min() else {
+            return Vec::new();
+        };
+        let maximum = counts.iter().copied().max().expect("nonempty counts");
+        // Subtract integer counts before conversion to preserve large adjacent differences.
+        counts
+            .into_iter()
+            .map(|count| RouteScore {
+                preference: if maximum == minimum {
+                    1.0
+                } else {
+                    (maximum - count) as f64 / (maximum - minimum) as f64
+                },
+                ..RouteScore::default()
+            })
+            .collect()
     }
 }

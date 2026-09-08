@@ -37,26 +37,25 @@ Algorithms score the complete compatible and healthy candidate snapshot. Before 
 
 ## Metric scorer contracts
 
-The `queue_depth` scorer ports llm-d-router at `d8d22ea8f7d412f2a7e61ec415d11b24322a7938`:
+The `queue_depth` scorer uses the latest scheduler waiting-request gauge:
 
-| Foretoken scorer | llm-d source | Input | Score |
-| --- | --- | --- | --- |
-| `queue_depth` | [queue-scorer](https://github.com/llm-d/llm-d-router/blob/d8d22ea8f7d412f2a7e61ec415d11b24322a7938/pkg/epp/framework/plugins/scheduling/scorer/queuedepth/queue.go) | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
+| Scorer | Input | Score |
+| --- | --- | --- |
+| `queue_depth` | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
 
-For identical input metrics and candidate sets, the numeric contributions match the stock
-per-endpoint scorer. Counts normalize over all candidates supplied to `score`; equal counts receive `1`,
+Counts normalize over all candidates supplied to `score`; equal counts receive `1`,
 and an empty candidate slice produces an empty score vector. Count subtraction precedes
-conversion to `f64`.
-`RouteScore.preference` preserves the numeric output, with the locality/load fields left at
-zero. Existing locality policies retain their lexicographic ordering.
+conversion to `f64`, preserving differences between large adjacent counts.
+`RouteScore.preference` preserves the numeric output, with the
+locality/load fields left at zero. Existing locality policies retain their lexicographic ordering.
 
-The registry owns gauge history: publish gauges immediately, retain the last measured value on
-omission, and leave rates and histograms unavailable until their counter window is covered.
-The metric-scorer input mapping uses zero for never-observed gauges, matching llm-d's
-[initial endpoint metrics](https://github.com/llm-d/llm-d-router/blob/d8d22ea8f7d412f2a7e61ec415d11b24322a7938/pkg/epp/framework/interface/datalayer/metrics.go).
+The registry owns gauge history: it publishes gauges immediately and retains the last measured
+value on omission only within valid history. A non-increasing timestamp or a cumulative counter
+or histogram reset clears history before missing gauges are filled. Omitted gauges in the new
+history remain unobserved until reported. Metric scorers use zero for unobserved gauges.
+Rates and windowed latencies remain unavailable until their counter window is covered.
 
-Foretoken keeps its own telemetry transport, health checks, DP expansion, and E/P/D eligibility.
-Its Model Server endpoint reports sums of scheduler counts and mean KV utilization across its
-engines. Every rank of that endpoint receives the same metric score. The scorer ignores
+Foretoken handles telemetry transport, health checks, DP expansion, and E/P/D eligibility.
+The Model Server endpoint reports scheduler request counts summed across its engines.
+Every rank of that endpoint receives the same metric score. The scorer ignores
 `RoutingProgress`; Router still supplies it and owns the subsequent stage selection.
-This ports scorer behavior, not llm-d's endpoint discovery, scraping, or complete scheduler.
