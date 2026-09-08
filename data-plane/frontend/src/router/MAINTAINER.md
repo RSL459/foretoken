@@ -29,7 +29,7 @@ The Router owns candidate identity and validates duplicate or out-of-range index
 
 Implement the appropriate interface under `src/algorithm/filter/`, `src/algorithm/scorer/`, or `src/algorithm/picker/`. Add one entry to the corresponding stage's `declare_router_algorithms!` list in `mod.rs`, providing the module name, type name, and user-facing configuration name. The macro generates the module declaration, public re-export, and compiled descriptor registration; no Controller enum or CRD change is required. Update maintained examples, the user-facing Router README, and contract tests only when observable behavior changes.
 
-Request-local shared state belongs in `RouterPipeline::with_customized_context`. The Router creates one context per request and drops it when that request finishes.
+Request-local shared state belongs in `RouterPipeline::with_customized_context`. The Router creates one context per request and drops it when that request finishes. A joint E/P/D implementation can evaluate the complete candidate snapshot during the initial round, retain its preferred stage identities in this context, and have its Picker return one planned candidate in each stage.
 
 ## Multi-stage routing
 
@@ -37,20 +37,19 @@ Algorithms score the complete compatible and healthy candidate snapshot. Before 
 
 ## Scorer contracts
 
-The `prefix` scorer uses the following observations and formula:
+Scorers use the following observations and formulas:
 
 | Scorer | Input | Score |
 | --- | --- | --- |
 | `prefix` | Matched blocks `m`, complete prompt blocks `t`, block size `b` | `w * min(1, m * b / s)^2 + (1 - w) * m / t` |
 
-Here `w` is `matchLengthWeight` (default `0`) and `s` is `matchLengthScaleTokens`
-(default `8192`). With zero weight, only `m / t` is evaluated. Weight must be in `[0, 1]`;
-scale must be positive when weight is positive.
-Missing cache observations and zero complete prompt blocks score zero. The index publishes
-block size from the exact source partition even on a confirmed miss; unknown granularity
-remains absent. Cache salts, LoRA, unsupported multimodal inputs, and explicit cache opt-out
-do not receive cache credit.
+An empty candidate slice produces an empty score vector. `RouteScore.preference` preserves the
+numeric output, with the locality/load fields left at zero. Existing locality policies retain
+their lexicographic ordering.
 
-`RouteScore.preference` preserves floating-point scores without quantization. Foretoken owns
-input production, endpoint eligibility, and tie breaking. `scorerParameters` passes through
-the CRD and controller environment to the selected scorer at frontend startup.
+`prefix` reads complete block counts and block size from the KV index for the exact target and DP rank.
+Here `w` is `matchLengthWeight` (default `0`, range `[0, 1]`) and `s` is `matchLengthScaleTokens`
+(default `8192`, positive when `w > 0`). With zero weight, only `m / t` is evaluated.
+Missing cache observations or zero complete prompt blocks score `0`; cache-ineligible requests receive no prefix credit.
+
+Set optional parameters in `FrontendService.spec.routerPipeline.scorerParameters`; the selected scorer reads them at frontend startup.
