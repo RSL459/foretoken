@@ -29,7 +29,7 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 在 `src/algorithm/filter/`、`src/algorithm/scorer/` 或 `src/algorithm/picker/` 下实现对应接口，然后在对应 stage 的 `mod.rs` 中为 `declare_router_algorithms!` 列表增加一项，填写模块名、类型名和用户配置名称。该宏会生成模块声明、公开导出和编译期 descriptor 注册；不需要修改 Controller enum 或 CRD。只有可观察行为发生变化时，才同步维护中的示例、面向用户的 Router README 和 contract tests。
 
-请求级共享状态放在 `RouterPipeline::with_customized_context` 中。Router 为每个请求创建一个 context，并在请求结束后释放。
+请求级共享状态放在 `RouterPipeline::with_customized_context` 中。Router 为每个请求创建一个 context，并在请求结束后释放。联合 E/P/D 实现可以在初始轮读取完整候选快照，把计划中的各阶段目标保存在 context 中，再由 Picker 在每个阶段返回对应候选项。
 
 ## 多阶段路由
 
@@ -37,20 +37,20 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 ## 打分契约
 
-`active_request` 打分器使用以下观测和公式：
+各 scorer 使用以下观测和公式：
 
 | Scorer | 输入 | 分数 |
 | --- | --- | --- |
-| `active_request` | 本地活动请求数 `count` 和候选集最大值 `maxCount` | `count <= idleThreshold` 时为 `1`；否则为 `(maxCount - count) / maxCount * maxBusyScore` |
+| `active_request` | 本地活跃请求数 `count`、候选项最大值 `maxCount` | `count <= idleThreshold` 时为 `1`，否则为 `(maxCount - count) / maxCount * maxBusyScore` |
 
-最大值在传给 `score` 的完整候选集上计算。`idleThreshold` 默认为 `0`，负值恢复为零。
-`maxBusyScore` 默认为 `1`，缺失、null 或超出 `[0, 1]` 时使用一。计数由每个 Frontend
-副本按目标和 DP rank 独立维护，不包含引擎 scheduler gauge 或其他 Frontend 副本的请求。
-每个已选阶段的请求计数持续到阶段完成或会话释放。
+空候选集返回空分数列表。数值通过 `RouteScore.preference` 原样传给 Picker，
+其余位置和负载字段为零。原有位置策略继续使用字典序。
 
-选择与预留共用一把锁，使并发请求能看到已选请求的本地负载。路由会话负责清理预留，
-RuntimeBuilder 在服务快照更新之间保留这份负载状态。
+`active_request` 使用传入 `score` 的全部候选项求 `maxCount`。`idleThreshold` 默认 `0`，
+负值归零。`maxBusyScore` 默认 `1`，范围 `[0, 1]`；缺失、null 或超出范围时使用 `1`。
+每个已选择阶段持续计数，直到阶段完成或 session 释放。
 
-`RouteScore.preference` 直接保留浮点分数，不进行整数化。Foretoken 负责指标生产、
-端点可选性和同分选择。`scorerParameters` 经 CRD 和控制器环境变量传到 Frontend，
-由所选 scorer 在启动时读取和校验。
+`active_request` 使用 frontend 按目标和 DP rank 维护的本地预留量，不叠加引擎调度指标或其他 frontend 的请求。
+选择目标和预留共用一把锁；路由 session 负责清理，RuntimeBuilder 在 serving snapshot 替换时保留此状态。
+
+可选参数配置在 `FrontendService.spec.routerPipeline.scorerParameters` 中，由所选 scorer 在 frontend 启动时读取。

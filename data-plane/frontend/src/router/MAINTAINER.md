@@ -29,7 +29,7 @@ The Router owns candidate identity and validates duplicate or out-of-range index
 
 Implement the appropriate interface under `src/algorithm/filter/`, `src/algorithm/scorer/`, or `src/algorithm/picker/`. Add one entry to the corresponding stage's `declare_router_algorithms!` list in `mod.rs`, providing the module name, type name, and user-facing configuration name. The macro generates the module declaration, public re-export, and compiled descriptor registration; no Controller enum or CRD change is required. Update maintained examples, the user-facing Router README, and contract tests only when observable behavior changes.
 
-Request-local shared state belongs in `RouterPipeline::with_customized_context`. The Router creates one context per request and drops it when that request finishes.
+Request-local shared state belongs in `RouterPipeline::with_customized_context`. The Router creates one context per request and drops it when that request finishes. A joint E/P/D implementation can evaluate the complete candidate snapshot during the initial round, retain its preferred stage identities in this context, and have its Picker return one planned candidate in each stage.
 
 ## Multi-stage routing
 
@@ -37,22 +37,22 @@ Algorithms score the complete compatible and healthy candidate snapshot. Before 
 
 ## Scorer contracts
 
-The `active_request` scorer uses the following observations and formula:
+Scorers use the following observations and formulas:
 
 | Scorer | Input | Score |
 | --- | --- | --- |
 | `active_request` | Local active requests `count` and candidate maximum `maxCount` | `1` if `count <= idleThreshold`; otherwise `(maxCount - count) / maxCount * maxBusyScore` |
 
-The maximum is taken over the complete candidate set supplied to `score`.
-`idleThreshold` defaults to `0`; negative values become zero. `maxBusyScore` defaults to `1`;
-missing, null, or out-of-range values use one. Counts are local to each frontend replica and
-target DP rank, without engine scheduler gauges or other frontend replicas' requests.
+An empty candidate slice produces an empty score vector. `RouteScore.preference` preserves the
+numeric output, with the locality/load fields left at zero. Existing locality policies retain
+their lexicographic ordering.
+
+`active_request` takes `maxCount` over all candidates supplied to `score`. `idleThreshold` defaults to `0`;
+negative values become zero. `maxBusyScore` defaults to `1` with range `[0, 1]`; missing, null, or out-of-range values use `1`.
 Each selected stage remains counted until completion or session drop.
 
-Selection and reservation share one lock, so concurrent requests see already selected local
-work. The routing session owns cleanup, and RuntimeBuilder retains this load state across
-serving-snapshot replacements.
+`active_request` uses frontend-local reservations per target and DP rank, without engine scheduler gauges
+or other frontend replicas' requests. Selection and reservation share one lock; routing sessions own
+cleanup, and RuntimeBuilder retains the state across serving-snapshot replacements.
 
-`RouteScore.preference` preserves floating-point scores without quantization. Foretoken owns
-input production, endpoint eligibility, and tie breaking. `scorerParameters` passes through
-the CRD and controller environment to the selected scorer at frontend startup.
+Set optional parameters in `FrontendService.spec.routerPipeline.scorerParameters`; the selected scorer reads them at frontend startup.
