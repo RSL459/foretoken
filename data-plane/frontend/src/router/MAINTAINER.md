@@ -43,13 +43,13 @@ Scorers use the following observations and formulas:
 | --- | --- | --- |
 | `prefix` | Matched blocks `m`, complete prompt blocks `t`, block size `b` | `w * min(1, m * b / s)^2 + (1 - w) * m / t` |
 
-An empty candidate slice produces an empty score vector. `RouteScore.preference` preserves the
-numeric output, with the locality/load fields left at zero. Existing locality policies retain
-their lexicographic ordering.
-
 `prefix` reads complete block counts and block size from the KV index for the exact target and DP rank.
 Here `w` is `matchLengthWeight` (default `0`, range `[0, 1]`) and `s` is `matchLengthScaleTokens`
 (default `8192`, positive when `w > 0`). With zero weight, only `m / t` is evaluated.
 Missing cache observations or zero complete prompt blocks score `0`; cache-ineligible requests receive no prefix credit.
+
+An empty candidate slice produces an empty score vector. `RouteScore.preference` preserves the
+numeric output, with the locality/load fields left at zero. Existing locality policies retain
+their lexicographic ordering.
 
 Set optional parameters in `FrontendService.spec.routerPipeline.scorerParameters`; the selected scorer reads them at frontend startup.

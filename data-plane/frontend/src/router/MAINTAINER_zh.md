@@ -43,12 +43,12 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 | --- | --- | --- |
 | `prefix` | 命中块数 `m`、prompt 完整块数 `t`、块大小 `b` | `w * min(1, m * b / s)^2 + (1 - w) * m / t` |
 
-空候选集返回空分数列表。数值通过 `RouteScore.preference` 原样传给 Picker，
-其余位置和负载字段为零。原有位置策略继续使用字典序。
-
 `prefix` 从 KV 索引读取精确目标和 DP rank 的完整块数及块大小。
 其中 `w` 为 `matchLengthWeight`（默认 `0`，范围 `[0, 1]`），`s` 为 `matchLengthScaleTokens`
 （默认 `8192`，`w > 0` 时必须为正）。权重为零时只计算 `m / t`。
 缓存观测缺失或完整 prompt 块数为零时得 `0`；不满足缓存复用条件的请求不获得前缀加分。
+
+空候选集返回空分数列表。数值通过 `RouteScore.preference` 原样传给 Picker，
+其余位置和负载字段为零。原有位置策略继续使用字典序。
 
 可选参数配置在 `FrontendService.spec.routerPipeline.scorerParameters` 中，由所选 scorer 在 frontend 启动时读取。
