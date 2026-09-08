@@ -37,7 +37,6 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 ## `prefix`
 
-评分公式和默认值对应 [llm-d](https://github.com/llm-d/llm-d-router/blob/7de00e5452818546815417aee2d6c68d2c2ff323/pkg/epp/framework/plugins/scheduling/scorer/prefix/plugin.go)。
 公式为 `weight * min(1, matched_blocks * block_size / scale)^2 + (1 - weight) * matched_blocks / total_blocks`。
 缺失观测或请求没有完整块时得零分。块大小来自精确绑定的源分区，确认未命中时仍可提供。
 Cache salt、LoRA、不支持的多模态输入及显式禁用缓存读取的请求不获得缓存抵扣。

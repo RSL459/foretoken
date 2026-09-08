@@ -37,7 +37,6 @@ Algorithms score the complete compatible and healthy candidate snapshot. Before 
 
 ## `prefix`
 
-The scoring formula and defaults follow [llm-d](https://github.com/llm-d/llm-d-router/blob/7de00e5452818546815417aee2d6c68d2c2ff323/pkg/epp/framework/plugins/scheduling/scorer/prefix/plugin.go).
 Score is `weight * min(1, matched_blocks * block_size / scale)^2 + (1 - weight) * matched_blocks / total_blocks`.
 Missing observations and zero complete request blocks score zero. Block size comes from the
 exact source partition, including confirmed misses. Cache salts, LoRA, unsupported multimodal
