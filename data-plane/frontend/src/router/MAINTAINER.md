@@ -29,22 +29,24 @@ The Router owns candidate identity and validates duplicate or out-of-range index
 
 Implement the appropriate interface under `src/algorithm/filter/`, `src/algorithm/scorer/`, or `src/algorithm/picker/`. Add one entry to the corresponding stage's `declare_router_algorithms!` list in `mod.rs`, providing the module name, type name, and user-facing configuration name. The macro generates the module declaration, public re-export, and compiled descriptor registration; no Controller enum or CRD change is required. Update maintained examples, the user-facing Router README, and contract tests only when observable behavior changes.
 
-Request-local shared state belongs in `RouterPipeline::with_customized_context`. The Router creates one context per request and drops it when that request finishes.
+Request-local shared state belongs in `RouterPipeline::with_customized_context`. The Router creates one context per request and drops it when that request finishes. A joint E/P/D implementation can evaluate the complete candidate snapshot during the initial round, retain its preferred stage identities in this context, and have its Picker return one planned candidate in each stage.
 
 ## Multi-stage routing
 
 Algorithms score the complete compatible and healthy candidate snapshot. Before picking, the Router narrows it to the current execution stage and its selected controller-defined pipeline scope. This preserves aggregate, P/D, and E/P/D execution ownership while allowing a scorer to account for related stage load.
 
-## Metric scorer contracts
+## Scorer contracts
 
-The `kv_cache_utilization` scorer uses the latest KV-cache utilization gauge:
+Scorers use the following observations and formulas:
 
 | Scorer | Input | Score |
 | --- | --- | --- |
+| `queue_depth` | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
 | `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
 
-KV usage is used directly without clamping, thresholds, or rescaling.
-An empty candidate slice produces an empty score vector.
+Counts normalize over all candidates supplied to `score`; equal counts receive `1`,
+and an empty candidate slice produces an empty score vector. Count subtraction precedes
+conversion to `f64`, preserving differences between large adjacent counts.
 `RouteScore.preference` preserves the numeric output, with the
 locality/load fields left at zero. Existing locality policies retain their lexicographic ordering.
 
@@ -55,6 +57,7 @@ history remain unobserved until reported. Metric scorers use zero for unobserved
 Rates and windowed latencies remain unavailable until their counter window is covered.
 
 Foretoken handles telemetry transport, health checks, DP expansion, and E/P/D eligibility.
-The Model Server endpoint reports mean KV utilization across its engines.
+Its Model Server endpoint reports sums of scheduler counts and mean KV utilization across its
+engines.
 Every rank of that endpoint receives the same metric score. The scorer ignores
 `RoutingProgress`; Router still supplies it and owns the subsequent stage selection.
