@@ -33,8 +33,8 @@ These policies use current Model Server endpoint gauges. They do not add prefix 
 pending dispatches, or downstream-stage load. All DP ranks of one Model Server share its
 endpoint score; these policies do not distinguish load between ranks. Gauges are usable after
 the first telemetry response, without waiting for the rate observation window. An unobserved gauge is treated
-as zero. Later omissions preserve the previous value while telemetry history remains valid.
-After a timestamp or counter reset, omitted gauges remain unobserved until reported again.
+as zero. Later omissions preserve the previous value while its measured snapshot remains in retained
+history. After a timestamp or counter reset, omitted gauges remain unobserved until reported again.
 
 A target is eligible only when it is healthy and supports the requested model, input length, and capabilities. For services with separate prefill/decode or encoder/prefill/decode stages, routing keeps the selected stages compatible with one another.
 
