@@ -43,9 +43,6 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 | --- | --- | --- |
 | `token_load` | 在途 token 加本次请求未缓存的 prompt token，记为 `load` | `load <= 0` 时为 `1`，否则为 `1 - min(load, threshold) / threshold` |
 
-空候选集返回空分数列表。数值通过 `RouteScore.preference` 原样传给 Picker，
-其余位置和负载字段为零。原有位置策略继续使用字典序。
-
 `token_load` 先对有符号 token 计数求和，再转为 `f64`。`threshold` 为 `queueThresholdTokens`
 （默认 `4194304`），非正值使用默认值。未缓存 token 包含不足一块的 prompt 尾部；
 缓存观测不可用时计入整个 prompt，不估算输出 token。
@@ -54,5 +51,8 @@ Aggregate、Prefill 和 Decode 在派发前预留未缓存的 prompt token，在
 
 `token_load` 使用 frontend 按目标和 DP rank 维护的本地预留量，不叠加引擎调度指标或其他 frontend 的请求。
 选择目标和预留共用一把锁；路由 session 负责清理，RuntimeBuilder 在 serving snapshot 替换时保留此状态。
+
+空候选集返回空分数列表。数值通过 `RouteScore.preference` 原样传给 Picker，
+其余位置和负载字段为零。原有位置策略继续使用字典序。
 
 可选参数配置在 `FrontendService.spec.routerPipeline.scorerParameters` 中，由所选 scorer 在 frontend 启动时读取。

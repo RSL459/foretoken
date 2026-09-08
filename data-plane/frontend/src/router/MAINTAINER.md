@@ -43,10 +43,6 @@ Scorers use the following observations and formulas:
 | --- | --- | --- |
 | `token_load` | In-flight tokens plus incoming uncached prompt tokens, `load` | `1` if `load <= 0`; otherwise `1 - min(load, threshold) / threshold` |
 
-An empty candidate slice produces an empty score vector. `RouteScore.preference` preserves the
-numeric output, with the locality/load fields left at zero. Existing locality policies retain
-their lexicographic ordering.
-
 `token_load` adds signed token counts before conversion to `f64`. `threshold` is `queueThresholdTokens`
 (default `4194304`); nonpositive values use the default. Uncached tokens include the partial prompt tail;
 without usable cache observations, the whole prompt counts. Output tokens are not estimated.
@@ -56,5 +52,9 @@ first response, stage completion, or session drop, including failed dispatches.
 `token_load` uses frontend-local reservations per target and DP rank, without engine scheduler gauges
 or other frontend replicas' requests. Selection and reservation share one lock; routing sessions own
 cleanup, and RuntimeBuilder retains the state across serving-snapshot replacements.
+
+An empty candidate slice produces an empty score vector. `RouteScore.preference` preserves the
+numeric output, with the locality/load fields left at zero. Existing locality policies retain
+their lexicographic ordering.
 
 Set optional parameters in `FrontendService.spec.routerPipeline.scorerParameters`; the selected scorer reads them at frontend startup.
