@@ -143,14 +143,6 @@ foretoken uninstall
 
 The uninstall command preserves Foretoken CRDs and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the command-line tool.
 
-## Related Projects
-
-- [vLLM](https://github.com/vllm-project/vllm)
-- [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo)
-- [llm-d](https://github.com/llm-d/llm-d)
-- [AIBrix](https://github.com/vllm-project/aibrix)
-- [vLLM Production Stack](https://github.com/vllm-project/production-stack)
-
 ## Contributing
 
 Contributions of all kinds are welcome, including code, documentation, tests, design discussions, issue reports, and improvements to deployment, hardware, benchmarking, routing, and autoscaling.

@@ -37,7 +37,6 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 ## `active_request`
 
-评分公式和默认值对应 [llm-d](https://github.com/llm-d/llm-d-router/blob/7de00e5452818546815417aee2d6c68d2c2ff323/pkg/epp/framework/plugins/scheduling/scorer/activerequest/active_request.go)。
 请求数不超过 `idleThreshold` 时得一分，否则为
 `(maxCount - count) / maxCount * maxBusyScore`，最大值在传给 scorer 的完整候选集上计算。
 负空闲阈值恢复为零；缺失、null 或越界的忙碌分数恢复为一。选择与预留共用锁。

@@ -37,7 +37,6 @@ Algorithms score the complete compatible and healthy candidate snapshot. Before 
 
 ## `active_request`
 
-The scoring formula and defaults follow [llm-d](https://github.com/llm-d/llm-d-router/blob/7de00e5452818546815417aee2d6c68d2c2ff323/pkg/epp/framework/plugins/scheduling/scorer/activerequest/active_request.go).
 Count at or below `idleThreshold` scores one; otherwise score is
 `(maxCount - count) / maxCount * maxBusyScore`, over the complete scorer candidate set.
 Negative idle thresholds become zero; missing, null, or out-of-range busy scores become one.
