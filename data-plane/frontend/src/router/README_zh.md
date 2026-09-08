@@ -25,20 +25,8 @@ spec:
 
 `kv_least_loaded` 优先考虑已确认的本地 KV 前缀位置，再选择负载较低的目标。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
 
-`token_load` 按在途未缓存提示词 token 与当前请求新增的未缓存 token 总量评分，负载越低越优先。
-`queueThresholdTokens` 默认是 `4194304`，非正值恢复默认值。每个 Frontend 独立计数，并区分 DP rank。
-Aggregate、Prefill 和 Decode 在派发前预留未缓存提示词 token，收到首个响应、阶段结束或取消时释放。
-该策略不估算输出 token，也不包含其他 Frontend 的负载。
-
-```yaml
-spec:
-  routerPipeline:
-    scorer: token_load
-    scorerParameters:
-      queueThresholdTokens: 4194304
-```
-
-参数由 Frontend 在启动时校验。
+将 `scorer` 设为 `token_load`，即可优先选择在途与新增未缓存提示词 token 较少的目标。
+每个 Frontend 副本按目标和 DP rank 独立计数；`scorerParameters.queueThresholdTokens` 默认为 `4194304`。
 
 只有模型、输入限制、请求能力和目标健康状态都兼容时，请求才会成为候选项。Router 会根据控制器发布的聚合或分离式拓扑选择目标。在 Prefill/Decode 和 Encoder/Prefill/Decode 拓扑中，它会将各阶段选择限制在控制器定义的同一 pipeline scope 内。
 

@@ -25,21 +25,8 @@ Each pipeline stage selects an algorithm by name. Deployments with additional ro
 
 `kv_least_loaded` prefers confirmed local KV-prefix locality, then lower load. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
 
-The `token_load` scorer prefers fewer uncached prompt tokens already in flight plus those
-added by the incoming request. `queueThresholdTokens` defaults to `4194304`; nonpositive
-values use this default. Counts are local to each frontend replica and distinguish DP ranks.
-Aggregate, Prefill, and Decode reserve uncached prompt tokens before dispatch and release
-them on the first response, stage completion, or cancellation. Output tokens are not estimated.
-
-```yaml
-spec:
-  routerPipeline:
-    scorer: token_load
-    scorerParameters:
-      queueThresholdTokens: 4194304
-```
-
-Parameters are validated by the frontend at startup.
+Set `scorer` to `token_load` to prefer fewer in-flight and incoming uncached prompt tokens.
+Counts are local to each frontend replica and target DP rank. `scorerParameters.queueThresholdTokens` defaults to `4194304`.
 
 A request becomes a candidate only when its model, input limit, requested capabilities, and target health are compatible. The Router evaluates aggregate and disaggregated topologies published by the Controller. In Prefill/Decode and Encoder/Prefill/Decode topologies, it keeps stage selections within their controller-defined pipeline scope.
 
