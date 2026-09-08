@@ -342,19 +342,17 @@ impl KvIndexer {
             spec_kind: &source.spec_kind,
             sliding_window: source.sliding_window,
         };
-        let mut matches =
-            state
-                .index
-                .lock()
-                .unwrap()
-                .query(&identity, &q, &state.key, Instant::now());
+        let mut index = state.index.lock().unwrap();
+        let mut matches = index.query(&identity, &q, &state.key, Instant::now());
+        let block_size = index.block_size(&identity, &q);
+        drop(index);
         matches.retain(|m| {
             m.placement.locality != foretoken_model_protocol::KvCacheLocality::Unspecified
                 && binding.readable_placements.contains(&m.placement)
                 && (m.placement.tier == foretoken_model_protocol::KvStorageTier::Device
                     || binding.can_restore_or_transfer)
         });
-        KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches))
+        KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches).with_block_size(block_size))
     }
     /// Refreshes every configured source and updates index-owned locality facts and health.
     ///

@@ -18,7 +18,7 @@ spec:
 | 阶段 | 当前可选值 | 默认值 | 作用 |
 | --- | --- | --- | --- |
 | Filter | `allow_all` | `allow_all` | 保留全部兼容且健康的目标 |
-| Scorer | `kv_least_loaded`、`least_loaded`、`uniform` | `kv_least_loaded` | 为保留目标评分 |
+| Scorer | `kv_least_loaded`、`least_loaded`、`uniform`、`prefix` | `kv_least_loaded` | 为保留目标评分 |
 | Picker | `max`、`round_robin` | `round_robin` | 从最高分目标中选择一个 |
 
 每个 pipeline 阶段都通过名称选择算法。如果部署提供了其他路由实现，也可以在相同的 `routerPipeline` 字段中填写对应名称。
@@ -30,3 +30,21 @@ spec:
 KV 位置只是路由信号。`Unavailable` 表示索引当前无法可靠回答，不等于缓存未命中，也不会排除目标。即使某个目标被优先选择，推理后端在真正执行时仍可能没有对应缓存。当前 KV 位置与退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
 编译进二进制的路由算法，以及 Filter、Scorer 和 Picker 的精确维护契约见 [Router 维护指南](MAINTAINER_zh.md)。
+
+## 评分策略配置
+
+`prefix` 优先选择完整提示词块缓存命中比例较高的目标。`matchLengthWeight` 默认是 `0`，
+此时仅按命中比例评分。正权重还会奖励较长的命中前缀，归一化尺度
+`matchLengthScaleTokens` 默认是 `8192`。位置不可用或请求没有完整块时得零分。
+缓存位置只是路由提示，不保证执行时仍然命中。
+
+```yaml
+spec:
+  routerPipeline:
+    scorer: prefix
+    scorerParameters:
+      matchLengthWeight: 0.25
+      matchLengthScaleTokens: 8192
+```
+
+参数由 Frontend 在启动时校验。

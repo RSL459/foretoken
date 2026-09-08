@@ -150,6 +150,13 @@ pub struct RouterPipelineConfig {
     /// Scorer used to rank filtered candidates.
     #[serde(default)]
     pub scorer: ScorerAlgorithm,
+    /// Parameters consumed by the selected scorer at pipeline construction.
+    #[serde(
+        default,
+        rename = "scorerParameters",
+        skip_serializing_if = "serde_json::Map::is_empty"
+    )]
+    pub scorer_parameters: serde_json::Map<String, serde_json::Value>,
     /// Picker used to select one scored candidate.
     #[serde(default)]
     pub picker: PickerAlgorithm,
@@ -159,9 +166,17 @@ impl RouterPipelineConfig {
     /// Builds the selected Filter, Scorer, and Picker implementations compiled into this binary.
     pub fn build(&self) -> Result<RouterPipeline, RouterPipelineConfigError> {
         validate_descriptors()?;
+        let mut scorer = scorer_factory(self.scorer.as_str())?();
+        Arc::get_mut(&mut scorer)
+            .expect("scorer factory returns a new instance")
+            .configure(serde_json::Value::Object(self.scorer_parameters.clone()))
+            .map_err(|message| RouterPipelineConfigError::InvalidParameters {
+                name: self.scorer.to_string(),
+                message,
+            })?;
         Ok(RouterPipeline::new(
             filter_factory(self.filter.as_str())?(),
-            scorer_factory(self.scorer.as_str())?(),
+            scorer,
             picker_factory(self.picker.as_str())?(),
         ))
     }
@@ -250,6 +265,9 @@ fn validate_descriptor_names<'a>(
 /// A pipeline configuration or compiled registry is invalid.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RouterPipelineConfigError {
+    /// The selected scorer rejected its parameters.
+    #[error("invalid parameters for scorer {name:?}: {message}")]
+    InvalidParameters { name: String, message: String },
     /// A configured name was empty.
     #[error("router algorithm name must not be empty")]
     EmptyName,

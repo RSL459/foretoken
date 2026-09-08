@@ -18,7 +18,7 @@ spec:
 | Stage | Current values | Default | Effect |
 | --- | --- | --- | --- |
 | Filter | `allow_all` | `allow_all` | Retains every compatible, healthy target |
-| Scorer | `kv_least_loaded`, `least_loaded`, `uniform` | `kv_least_loaded` | Ranks retained targets |
+| Scorer | `kv_least_loaded`, `least_loaded`, `uniform`, `prefix` | `kv_least_loaded` | Ranks retained targets |
 | Picker | `max`, `round_robin` | `round_robin` | Selects among the highest-scoring targets |
 
 Each pipeline stage selects an algorithm by name. Deployments with additional routing implementations can use their names in the same `routerPipeline` fields.
@@ -30,3 +30,21 @@ A request becomes a candidate only when its model, input limit, requested capabi
 KV locality is an advisory routing signal. `Unavailable` means the index cannot answer reliably; it is not a cache miss and does not exclude a target. A preferred route is not a guarantee that the inference backend still has the cache when execution begins. See the [KV prefix index](../kv-indexer/README.md) for current KV locality and degradation behavior.
 
 For compiled-in routing algorithms and exact Filter, Scorer, and Picker contracts, see [Router maintenance](MAINTAINER.md).
+
+## Scorer configuration
+
+The `prefix` scorer prefers a larger fraction of complete prompt blocks in the KV index.
+`matchLengthWeight` defaults to `0`, so only the match ratio contributes. A positive weight
+also rewards longer matches, scaled by `matchLengthScaleTokens` (default `8192`).
+Missing locality and prompts without complete blocks score zero. Cache locality remains advisory.
+
+```yaml
+spec:
+  routerPipeline:
+    scorer: prefix
+    scorerParameters:
+      matchLengthWeight: 0.25
+      matchLengthScaleTokens: 8192
+```
+
+Parameters are validated by the frontend at startup.
