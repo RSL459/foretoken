@@ -35,13 +35,23 @@ Request-local shared state belongs in `RouterPipeline::with_customized_context`.
 
 Algorithms score the complete compatible and healthy candidate snapshot. Before picking, the Router narrows it to the current execution stage and its selected controller-defined pipeline scope. This preserves aggregate, P/D, and E/P/D execution ownership while allowing a scorer to account for related stage load.
 
-## `active_request`
+## Scorer contracts
 
-Count at or below `idleThreshold` scores one; otherwise score is
-`(maxCount - count) / maxCount * maxBusyScore`, over the complete scorer candidate set.
-Negative idle thresholds become zero; missing, null, or out-of-range busy scores become one.
-Selection and reservation share a lock. The routing session owns counts until stage completion
-or drop, and RuntimeBuilder retains the local state across generations.
+The `active_request` scorer uses the following observations and formula:
+
+| Scorer | Input | Score |
+| --- | --- | --- |
+| `active_request` | Local active requests `count` and candidate maximum `maxCount` | `1` if `count <= idleThreshold`; otherwise `(maxCount - count) / maxCount * maxBusyScore` |
+
+The maximum is taken over the complete candidate set supplied to `score`.
+`idleThreshold` defaults to `0`; negative values become zero. `maxBusyScore` defaults to `1`;
+missing, null, or out-of-range values use one. Counts are local to each frontend replica and
+target DP rank, without engine scheduler gauges or other frontend replicas' requests.
+Each selected stage remains counted until completion or session drop.
+
+Selection and reservation share one lock, so concurrent requests see already selected local
+work. The routing session owns cleanup, and RuntimeBuilder retains this load state across
+serving-snapshot replacements.
 
 `RouteScore.preference` preserves floating-point scores without quantization. Foretoken owns
 input production, endpoint eligibility, and tie breaking. `scorerParameters` passes through

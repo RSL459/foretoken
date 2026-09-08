@@ -35,12 +35,21 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 算法对完整的兼容、健康候选项快照进行评分。Picker 执行前，Router 会将候选项限制到当前执行阶段和已选择的控制器定义 pipeline scope。这样既保持聚合、P/D 和 E/P/D 的执行 ownership，也允许 Scorer 考虑关联阶段的负载。
 
-## `active_request`
+## 打分契约
 
-请求数不超过 `idleThreshold` 时得一分，否则为
-`(maxCount - count) / maxCount * maxBusyScore`，最大值在传给 scorer 的完整候选集上计算。
-负空闲阈值恢复为零；缺失、null 或越界的忙碌分数恢复为一。选择与预留共用锁。
-路由会话持有计数直到阶段完成或会话丢弃；RuntimeBuilder 在运行时切换期间保留本地状态。
+`active_request` 打分器使用以下观测和公式：
+
+| Scorer | 输入 | 分数 |
+| --- | --- | --- |
+| `active_request` | 本地活动请求数 `count` 和候选集最大值 `maxCount` | `count <= idleThreshold` 时为 `1`；否则为 `(maxCount - count) / maxCount * maxBusyScore` |
+
+最大值在传给 `score` 的完整候选集上计算。`idleThreshold` 默认为 `0`，负值恢复为零。
+`maxBusyScore` 默认为 `1`，缺失、null 或超出 `[0, 1]` 时使用一。计数由每个 Frontend
+副本按目标和 DP rank 独立维护，不包含引擎 scheduler gauge 或其他 Frontend 副本的请求。
+每个已选阶段的请求计数持续到阶段完成或会话释放。
+
+选择与预留共用一把锁，使并发请求能看到已选请求的本地负载。路由会话负责清理预留，
+RuntimeBuilder 在服务快照更新之间保留这份负载状态。
 
 `RouteScore.preference` 直接保留浮点分数，不进行整数化。Foretoken 负责指标生产、
 端点可选性和同分选择。`scorerParameters` 经 CRD 和控制器环境变量传到 Frontend，
