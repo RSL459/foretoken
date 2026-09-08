@@ -18,7 +18,7 @@ spec:
 | 阶段 | 当前可选值 | 默认值 | 作用 |
 | --- | --- | --- | --- |
 | Filter | `allow_all` | `allow_all` | 保留全部兼容且健康的目标 |
-| Scorer | `kv_least_loaded`、`least_loaded`、`uniform` | `kv_least_loaded` | 为保留目标评分 |
+| Scorer | `kv_least_loaded`、`least_loaded`、`uniform`、`active_request` | `kv_least_loaded` | 为保留目标评分 |
 | Picker | `max`、`round_robin` | `round_robin` | 从最高分目标中选择一个 |
 
 每个 pipeline 阶段都通过名称选择算法。如果部署提供了其他路由实现，也可以在相同的 `routerPipeline` 字段中填写对应名称。
@@ -30,3 +30,21 @@ spec:
 KV 位置只是路由信号。`Unavailable` 表示索引当前无法可靠回答，不等于缓存未命中，也不会排除目标。即使某个目标被优先选择，推理后端在真正执行时仍可能没有对应缓存。当前 KV 位置与退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
 编译进二进制的路由算法，以及 Filter、Scorer 和 Picker 的精确维护契约见 [Router 维护指南](MAINTAINER_zh.md)。
+
+## 评分策略配置
+
+`active_request` 优先选择本 Frontend 路由且仍在执行的请求较少的目标，并区分 DP rank。
+`idleThreshold` 默认是 `0`，`maxBusyScore` 默认是 `1`。空闲目标得满分，忙碌目标按候选集
+最大活动请求数归一化。各阶段的请求计数在完成或取消时释放。每个 Frontend 独立计数，
+不叠加引擎调度器指标，也不包含其他 Frontend 副本的请求。
+
+```yaml
+spec:
+  routerPipeline:
+    scorer: active_request
+    scorerParameters:
+      idleThreshold: 0
+      maxBusyScore: 1
+```
+
+参数由 Frontend 在启动时校验。

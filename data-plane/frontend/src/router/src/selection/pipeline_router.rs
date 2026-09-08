@@ -3,8 +3,9 @@
 
 //! Fixed physical route selection for Aggregate, P/D, and E/P/D route sets.
 
+use crate::inflight::{InFlightRequests, RequestKey};
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use foretoken_kv_indexer::{KvPrefixIndexer, NoopKvPrefixIndexer};
@@ -27,6 +28,7 @@ pub struct PipelineRouter<C: Send + 'static = ()> {
     kv_prefix_indexer: Arc<dyn KvPrefixIndexer>,
     route_target_stats_reader: Arc<dyn RouteTargetStatsReader>,
     pipeline: Arc<RouterPipeline<C>>,
+    inflight: Arc<Mutex<InFlightRequests>>,
 }
 impl<C: Send + 'static> PipelineRouter<C> {
     /// Creates a Router with no-op KV-prefix and route-target statistics readers.
@@ -36,7 +38,14 @@ impl<C: Send + 'static> PipelineRouter<C> {
             kv_prefix_indexer: Arc::new(NoopKvPrefixIndexer),
             route_target_stats_reader: Arc::new(NoopRouteTargetStatsReader),
             pipeline: Arc::new(pipeline),
+            inflight: Arc::new(Mutex::new(InFlightRequests::default())),
         }
+    }
+
+    /// Shares frontend-owned request load across runtime generations built by RuntimeBuilder.
+    pub fn with_load_state(mut self, state: crate::RoutingLoadState) -> Self {
+        self.inflight = state.0;
+        self
     }
 
     /// Replaces the KV-prefix reader used by Filter and Scorer.
@@ -56,7 +65,11 @@ impl<C: Send + 'static> PipelineRouter<C> {
 
     // Builds the immutable, rank-expanded candidate snapshot for one selection round. Dynamic
     // health, capabilities, and aggregate telemetry are captured before algorithms observe it.
-    fn candidates(&self, request: &RouterRequest) -> Vec<RouteCandidate> {
+    fn candidates(
+        &self,
+        request: &RouterRequest,
+        inflight: &InFlightRequests,
+    ) -> Vec<RouteCandidate> {
         self.inventory
             .model_routes()
             .candidates(request)
@@ -90,6 +103,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     pipeline_scope_id: route.pipeline_scope_id.clone(),
                     data_parallel_rank,
                     route_target_stats: stats.clone(),
+                    inflight: inflight
+                        .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),
                 })
             })
             .collect()
@@ -108,7 +123,9 @@ impl<C: Send + 'static> PipelineRouter<C> {
         // Filter and Scorer receive the complete compatible, healthy snapshot so decisions such as
         // downstream Decode cost can compare every viable route target. Stage/pipeline-scope narrowing follows
         // scoring and immediately precedes Picker, without hiding information from extensions.
-        let candidates = self.candidates(request);
+        // Snapshot, scoring, and reservation are one transaction so concurrent selections see load.
+        let mut inflight = self.inflight.lock().expect("routing load lock poisoned");
+        let candidates = self.candidates(request, &inflight);
         let filtered_indexes = self.pipeline.filter.filter(
             request,
             &candidates,
@@ -160,10 +177,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .picker
             .pick(request, &selectable, routing_progress, customized_context)
             .ok_or(RouteError::EmptyPickerResult)?;
-        selectable
+        let candidate = selectable
             .get(picked.0)
             .map(|candidate| candidate.candidate.clone())
-            .ok_or(RouteError::InvalidPickerIndex { index: picked.0 })
+            .ok_or(RouteError::InvalidPickerIndex { index: picked.0 })?;
+        inflight.insert(request, &candidate);
+        Ok(candidate)
     }
 
     fn future_stages_available(candidate: &RouteCandidate, scored: &[ScoredCandidate]) -> bool {
@@ -296,8 +315,28 @@ struct Session<C: Send + 'static> {
     request: RouterRequest,
     customized_context: C,
     stage: SessionStage,
+    selected: Vec<RequestKey>,
+}
+impl<C: Send + 'static> Drop for Session<C> {
+    fn drop(&mut self) {
+        self.stage_complete();
+    }
 }
 impl<C: Send + 'static> RouteSession for Session<C> {
+    fn stage_complete(&mut self) {
+        if self.selected.is_empty() {
+            return;
+        }
+        let mut inflight = self
+            .router
+            .inflight
+            .lock()
+            .expect("routing load lock poisoned");
+        for key in self.selected.drain(..) {
+            inflight.remove(&key, &self.request.generate_request.request_id);
+        }
+    }
+
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError> {
         let routing_progress = RoutingProgress {
             current_stage: RoutingStage::Initial,
@@ -326,6 +365,10 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             ModelServerRole::Aggregate => SessionStage::Complete,
             ModelServerRole::Decode => unreachable!("initial eligibility rejects Decode"),
         };
+        self.selected.push((
+            candidate.route_target_id.clone(),
+            candidate.data_parallel_rank,
+        ));
         Ok(candidate.decision())
     }
 
@@ -350,6 +393,8 @@ impl<C: Send + 'static> RouteSession for Session<C> {
                 .expect("eligible prefill has a pipeline scope"),
             encoder_completed: true,
         };
+        self.selected
+            .push((prefill.route_target_id.clone(), prefill.data_parallel_rank));
         Ok(prefill.decision())
     }
 
@@ -379,6 +424,8 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             &mut self.customized_context,
         )?;
         self.stage = SessionStage::Complete;
+        self.selected
+            .push((decode.route_target_id.clone(), decode.data_parallel_rank));
         Ok(decode.decision())
     }
 }
@@ -390,10 +437,12 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                 kv_prefix_indexer: self.kv_prefix_indexer.clone(),
                 route_target_stats_reader: self.route_target_stats_reader.clone(),
                 pipeline: self.pipeline.clone(),
+                inflight: self.inflight.clone(),
             },
             customized_context: (self.pipeline.customized_context_factory)(&request),
             request,
             stage: SessionStage::Initial,
+            selected: Vec::new(),
         })
     }
 }

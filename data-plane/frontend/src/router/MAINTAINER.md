@@ -34,3 +34,16 @@ Request-local shared state belongs in `RouterPipeline::with_customized_context`.
 ## Multi-stage routing
 
 Algorithms score the complete compatible and healthy candidate snapshot. Before picking, the Router narrows it to the current execution stage and its selected controller-defined pipeline scope. This preserves aggregate, P/D, and E/P/D execution ownership while allowing a scorer to account for related stage load.
+
+## `active_request`
+
+The scoring formula and defaults follow [llm-d](https://github.com/llm-d/llm-d-router/blob/7de00e5452818546815417aee2d6c68d2c2ff323/pkg/epp/framework/plugins/scheduling/scorer/activerequest/active_request.go).
+Count at or below `idleThreshold` scores one; otherwise score is
+`(maxCount - count) / maxCount * maxBusyScore`, over the complete scorer candidate set.
+Negative idle thresholds become zero; missing, null, or out-of-range busy scores become one.
+Selection and reservation share a lock. The routing session owns counts until stage completion
+or drop, and RuntimeBuilder retains the local state across generations.
+
+`RouteScore.preference` preserves floating-point scores without quantization. Foretoken owns
+input production, endpoint eligibility, and tie breaking. `scorerParameters` passes through
+the CRD and controller environment to the selected scorer at frontend startup.

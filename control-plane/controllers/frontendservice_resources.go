@@ -77,6 +77,13 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_ROUTER_SCORER", Value: string(routerScorer)},
 		{Name: "FORETOKEN_ROUTER_PICKER", Value: string(routerPicker)},
 	}
+	if parameters := frontend.Spec.RouterPipeline.ScorerParameters; parameters != nil {
+		encoded, err := parameters.MarshalJSON()
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("encode scorer parameters: %w", err)
+		}
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "FORETOKEN_ROUTER_SCORER_PARAMETERS", Value: string(encoded)})
+	}
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
 		tokenizerCachePath = profile.RuntimeCache.MountPath + "/models"
