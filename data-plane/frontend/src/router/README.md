@@ -25,21 +25,8 @@ Each pipeline stage selects an algorithm by name. Deployments with additional ro
 
 `kv_least_loaded` prefers confirmed local KV-prefix locality, then lower load. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
 
-The `prefix` scorer prefers a larger fraction of complete prompt blocks in the KV index.
-`matchLengthWeight` defaults to `0`, so only the match ratio contributes. A positive weight
-also rewards longer matches, scaled by `matchLengthScaleTokens` (default `8192`).
-Missing locality and prompts without complete blocks score zero. Cache locality remains advisory.
-
-```yaml
-spec:
-  routerPipeline:
-    scorer: prefix
-    scorerParameters:
-      matchLengthWeight: 0.25
-      matchLengthScaleTokens: 8192
-```
-
-Parameters are validated by the frontend at startup.
+Set `scorer` to `prefix` to prefer a larger cached fraction of complete prompt blocks.
+Its `scorerParameters` are `matchLengthWeight` (default `0`) and `matchLengthScaleTokens` (default `8192`).
 
 A request becomes a candidate only when its model, input limit, requested capabilities, and target health are compatible. The Router evaluates aggregate and disaggregated topologies published by the Controller. In Prefill/Decode and Encoder/Prefill/Decode topologies, it keeps stage selections within their controller-defined pipeline scope.
 

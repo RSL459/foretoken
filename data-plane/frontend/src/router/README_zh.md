@@ -25,21 +25,8 @@ spec:
 
 `kv_least_loaded` 优先考虑已确认的本地 KV 前缀位置，再选择负载较低的目标。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
 
-`prefix` 优先选择完整提示词块缓存命中比例较高的目标。`matchLengthWeight` 默认是 `0`，
-此时仅按命中比例评分。正权重还会奖励较长的命中前缀，归一化尺度
-`matchLengthScaleTokens` 默认是 `8192`。位置不可用或请求没有完整块时得零分。
-缓存位置只是路由提示，不保证执行时仍然命中。
-
-```yaml
-spec:
-  routerPipeline:
-    scorer: prefix
-    scorerParameters:
-      matchLengthWeight: 0.25
-      matchLengthScaleTokens: 8192
-```
-
-参数由 Frontend 在启动时校验。
+将 `scorer` 设为 `prefix`，即可优先选择完整提示词块缓存命中比例较高的目标。
+`scorerParameters` 支持 `matchLengthWeight`（默认 `0`）和 `matchLengthScaleTokens`（默认 `8192`）。
 
 只有模型、输入限制、请求能力和目标健康状态都兼容时，请求才会成为候选项。Router 会根据控制器发布的聚合或分离式拓扑选择目标。在 Prefill/Decode 和 Encoder/Prefill/Decode 拓扑中，它会将各阶段选择限制在控制器定义的同一 pipeline scope 内。
 
