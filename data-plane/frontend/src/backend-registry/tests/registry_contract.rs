@@ -95,42 +95,16 @@ fn pd_snapshot() -> ServingSnapshot {
 }
 
 fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
-    let pd = role != ModelServerRole::Encoder;
-    let ec = role != ModelServerRole::Decode;
     SnapshotEpdComponent {
         service_uid: "service".into(),
         pool_uid: "pool".into(),
         pool_name: "pool".into(),
         route_target_id: RouteTargetId::new(id),
         role,
-        pipeline_scope_id: "epd-a".into(),
         model: "model".into(),
         revision: "r1".into(),
         tokenizer: "tokenizer".into(),
         tokenizer_revision: "r1".into(),
-        profile_name: if pd {
-            "pd-profile".into()
-        } else {
-            String::new()
-        },
-        profile_revision: if pd { "r1".into() } else { String::new() },
-        connector: if pd {
-            "MooncakeConnector".into()
-        } else {
-            String::new()
-        },
-        protocol: if pd { "rdma".into() } else { String::new() },
-        ec_profile_name: if ec {
-            "ec-profile".into()
-        } else {
-            String::new()
-        },
-        ec_profile_revision: if ec { "r1".into() } else { String::new() },
-        ec_connector: if ec {
-            "ECExampleConnector".into()
-        } else {
-            String::new()
-        },
         capabilities: ["chat".into()].into_iter().collect(),
         max_input_tokens: None,
         endpoint: "http://127.0.0.1:1".into(),
@@ -215,7 +189,7 @@ fn telemetry(at_ms: u64, tokens: u64, histogram: CumulativeHistogram) -> Telemet
         collected_at_unix_ms: at_ms,
         accepting: true,
         running_requests: 0,
-        max_concurrent_requests: 1,
+        max_concurrent_requests: Some(1),
         scheduler_running_requests: Some(0),
         scheduler_waiting_requests: Some(0),
         kv_cache_usage: Some(0.0),
@@ -331,7 +305,7 @@ async fn aggregate_readiness_preserves_frontend_owned_capabilities() {
     );
     assert_eq!(registry.effective_max_model_len("model"), Some(32_768));
     assert_eq!(
-        registry.effective_model_dtype("model"),
+        registry.effective_model_dtype("model").unwrap(),
         Some(ModelDtype::BFloat16)
     );
 }

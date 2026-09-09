@@ -42,6 +42,7 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 | Scorer | 输入 | 分数 |
 | --- | --- | --- |
 | `queue_depth` | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
+| `running_request` | `scheduler_running_requests` | `(max - running) / (max - min)` |
 | `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
 
 使用传入 `score` 的全部候选项求最小值和最大值；计数全部相等时得 `1`，空候选集返回空分数列表。
@@ -56,5 +57,5 @@ Registry 负责指标历史：立即发布 gauge，并仅在原始观测快照�
 
 Foretoken 负责遥测传输、健康检查、DP 展开及 E/P/D 阶段资格判断。
 Model Server 端点报告各引擎 scheduler 计数之和及 KV 使用率均值。
-同一端点的所有 rank 得到相同分数。这两个 scorer 不使用 `RoutingProgress`，
+同一端点的所有 rank 得到相同分数。这些 scorer 不使用 `RoutingProgress`，
 Router 仍传入该参数并负责后续阶段选择。

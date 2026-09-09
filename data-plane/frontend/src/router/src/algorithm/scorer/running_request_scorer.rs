@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Scoring by the scheduler waiting-request gauge.
+//! Scoring by the scheduler running-request gauge.
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
 use super::inverse_normalized_scores;
 use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, RoutingProgress};
 
-/// Scores each candidate by `(max_waiting - waiting) / (max_waiting - min_waiting)`.
-/// Equal counts receive one; Router retains ownership of stage eligibility and picking.
+/// Scores each candidate by `(max_running - running) / (max_running - min_running)`.
+/// Equal counts receive one; only scheduler running requests contribute to the score.
 #[derive(Default)]
-pub struct QueueDepthScorer;
+pub struct RunningRequestScorer;
 
-impl RouteScorer for QueueDepthScorer {
-    /// Returns queue-depth preferences in candidate order for Router selection.
+impl RouteScorer for RunningRequestScorer {
+    /// Returns running-request preferences in candidate order for Router selection.
     /// Unobserved gauges count as zero; equal counts receive one.
     #[allow(unused_variables)]
     fn score(
@@ -29,7 +29,7 @@ impl RouteScorer for QueueDepthScorer {
             candidate
                 .route_target_stats
                 .as_deref()
-                .and_then(|stats| stats.scheduler_waiting_requests)
+                .and_then(|stats| stats.scheduler_running_requests)
                 .unwrap_or(0)
         }))
     }

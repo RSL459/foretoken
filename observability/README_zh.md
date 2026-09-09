@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 会为服务和加速器指标安装 Prometheus 采集与记录规则，但不会安装 Foretoken 告警规则。告警阈值、Alertmanager 路由和通知继续由平台团队负责。
+Foretoken 会为服务和加速器指标安装 Prometheus 采集、记录规则以及可选告警规则。Alertmanager 路由和通知继续由平台团队负责。
 
 ## 安装采集
 
@@ -41,6 +41,8 @@ foretoken install --prometheus monitoring/prometheus
 
 ## 验证采集
 
+查看 Foretoken 的 ServiceMonitor 和 PrometheusRule：
+
 ```bash
 # 查看 Foretoken 的 ServiceMonitor 和记录规则
 kubectl get servicemonitor,prometheusrule -A \
@@ -53,7 +55,7 @@ kubectl port-forward \
   9090:9090
 ```
 
-打开 <http://127.0.0.1:9090/targets>，确认 Foretoken target 为 `UP`；再打开 <http://127.0.0.1:9090/rules>，确认 `foretoken.recording` 已加载。复用已有 Prometheus 时，通过其平台提供的访问方式执行相同检查。
+打开 <http://127.0.0.1:9090/targets>，确认 Foretoken target 为 `UP`；再打开 <http://127.0.0.1:9090/rules>，确认 `foretoken.recording` 和 `foretoken.alerting` 均已加载。复用已有 Prometheus 时，通过平台原有的访问方式执行相同检查。
 
 以下查询可以查看 Frontend 请求量：
 
@@ -138,9 +140,30 @@ kubectl get configmap \
 
 流式响应可能先以 `2xx` 开始、后续再失败，因此 `foretoken:frontend_http_response_start_5xx_ratio:rate5m` 不能作为推理成功率 SLO。
 
-## 告警与性能剖析
+## 告警、Lark 与性能剖析
 
-Foretoken 当前提供指标和记录规则，不提供告警规则。请在平台团队负责的 Prometheus 与 Alertmanager 配置中定义告警阈值和通知策略。
+启用可观测性后，Chart 会和记录规则一起渲染告警规则。查看实现的最短路径如下：
+
+1. 在 `deploy/charts/foretoken/values.yaml` 中将 `observability.mode` 设为 `enabled`（或使用 `auto`）。
+2. 在同一个文件中查看阈值和语言选项。
+3. 在 `deploy/charts/foretoken/files/alerting-rules.yaml` 查看规则定义，在 `deploy/charts/foretoken/templates/alertingrule.yaml` 查看 Chart 如何渲染它。
+4. 用[告警排障手册](runbooks/alerts_zh.md)执行排查，用 [Lark 通知集成](integrations/lark/README_zh.md)查看路由和消息格式。
+
+Lark 集成支持 `zh`、`en` 和 `bilingual` 三种消息语言。一次部署的共享告警只选择一种语言；同一条分组消息不能针对不同接收人分别翻译。
+
+例如，保留默认阈值并选择英文消息：
+
+```yaml
+observability:
+  mode: enabled
+  alerts:
+    language: en
+    thresholds:
+      acceleratorMemoryUsageRatio: 0.90
+      nvidiaTemperatureCelsius: 80
+```
+
+Alertmanager 负责通知接收方、分组和路由。Foretoken 提供告警表达式和默认阈值；如果设备或 workload 需要不同限制，可以通过 Chart values 覆盖。
 
 Foretoken 不管理性能剖析流程。调查可复现实验时，使用受控负载，并通过模型运行环境和硬件平台使用 PyTorch Profiler、Nsight Systems 或 Nsight Compute。性能剖析会影响服务性能，应记录模型、负载、硬件和运行参数。
 

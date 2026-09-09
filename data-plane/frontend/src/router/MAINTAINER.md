@@ -42,6 +42,7 @@ Scorers use the following observations and formulas:
 | Scorer | Input | Score |
 | --- | --- | --- |
 | `queue_depth` | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
+| `running_request` | `scheduler_running_requests` | `(max - running) / (max - min)` |
 | `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
 
 Counts normalize over all candidates supplied to `score`; equal counts receive `1`,

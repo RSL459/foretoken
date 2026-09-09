@@ -18,17 +18,16 @@ spec:
 | 阶段 | 当前可选值 | 默认值 | 作用 |
 | --- | --- | --- | --- |
 | Filter | `allow_all` | `allow_all` | 保留全部兼容且健康的目标 |
-| Scorer | `kv_least_loaded`、`least_loaded`、`uniform`、`queue_depth`、`kv_cache_utilization` | `kv_least_loaded` | 为保留目标评分 |
+| Scorer | `kv_least_loaded`、`least_loaded`、`uniform`、`queue_depth`、`running_request`、`kv_cache_utilization` | `kv_least_loaded` | 为保留目标评分 |
 | Picker | `max`、`round_robin` | `round_robin` | 从最高分目标中选择一个 |
 
 每个 pipeline 阶段都通过名称选择算法。如果部署提供了其他路由实现，也可以在相同的 `routerPipeline` 字段中填写对应名称。
 
 `kv_least_loaded` 优先考虑已确认的本地 KV 前缀位置，再选择负载较低的目标。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
 
-将 `scorer` 设为 `queue_depth`，即可优先选择引擎调度器中等待的请求较少的目标。
-将 `scorer` 设为 `kv_cache_utilization`，即可优先选择实测 KV cache 使用率较低的目标。
+将 `scorer` 设为 `queue_depth`，可优先选择调度器中等待请求较少的目标；设为 `running_request`，可优先选择运行请求较少的目标；设为 `kv_cache_utilization`，可优先选择实测 KV cache 使用率较低的目标。
 
-这两个策略只使用 Model Server 端点的当前指标，不叠加前缀位置、待派发请求或下游阶段负载。
+这三个策略只使用 Model Server 端点的当前指标，不叠加前缀位置、待派发请求或下游阶段负载。
 同一 Model Server 的所有 DP rank 共享端点评分，无法通过这些策略区分各 rank 的负载。
 收到首个遥测响应后即可使用 gauge，无需等满速率统计窗口。未观测到的指标按零处理；
 后续响应缺失某项指标时，仅在其原始观测快照仍处于保留窗口内时使用之前的值。
