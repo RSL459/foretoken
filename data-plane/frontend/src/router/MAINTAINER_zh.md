@@ -23,7 +23,7 @@ Router 算法编译在 Frontend 二进制中，不是运行时插件，也不是
 - `RouteScorer` 按相同顺序为每个保留候选项返回一个 `RouteScore`。
 - `RoutePicker` 返回 scored candidates 中的一个下标。
 
-Router 负责候选项身份，并校验重复或越界的下标以及分数数量不一致。算法不能维护第二份路由目录，也不能在请求路径查询 model-server；算法接收的是当前选择轮次中不可变的观测快照。
+Router 负责候选项身份，并校验重复或越界的下标以及分数数量不一致。算法不能维护第二份路由目录，也不能在请求路径查询 model-server；算法接收的是当前选择轮次中不可变的观测快照。需要共享 KV 命中的 Filter 或 Scorer 应让 `needs_kv_prefix` 返回 `true`，由 `Router::start` 先通过 KV indexer 异步准备观测，再执行同步 pipeline。
 
 ## 添加算法
 
@@ -33,7 +33,7 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 ## 多阶段路由
 
-算法对完整的兼容、健康候选项快照进行评分。Picker 执行前，Router 会将候选项限制到当前执行阶段和已选择的控制器定义 pipeline scope。这样既保持聚合、P/D 和 E/P/D 的执行 ownership，也允许 Scorer 考虑关联阶段的负载。
+算法对完整的兼容、健康候选项快照进行评分。Picker 执行前，Router 会将候选项限制到当前执行阶段和已选择的控制器定义 connector compatibility scope。scope 可以包含多个 Encoder、Prefill 和 Decode ModelGroup；它保护真实传输契约，但不按 ordinal 固定配对。Picker 仍然每阶段选择一个候选项，请求内 context 可跨轮保存联合计划。
 
 ## 打分契约
 
@@ -41,7 +41,25 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 | Scorer | 输入 | 分数 |
 | --- | --- | --- |
+| `queue_depth` | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
+| `running_request` | `scheduler_running_requests` | `(max - running) / (max - min)` |
+| `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
 | `token_load` | 在途 token 加本次请求未缓存的 prompt token，记为 `load` | `load <= 0` 时为 `1`，否则为 `1 - min(load, threshold) / threshold` |
+
+`queue_depth` 和 `running_request` 使用传入 `score` 的全部候选项求最小值和最大值；计数全部相等时得 `1`，空候选集返回空分数列表。
+计数先相减再转为 `f64`，避免大整数提前转换丢失差值。
+数值通过 `RouteScore.preference` 原样传给 Picker，其余位置和负载字段为零。
+原有位置策略继续使用字典序。
+
+Registry 负责指标历史：立即发布 gauge，并仅在原始观测快照仍处于保留窗口内时为缺失项使用之前的实测值。
+时间戳未递增、累计计数器或直方图发生重置时清空历史。新历史中缺失的 gauge 保持未观测状态，
+直到生产者重新上报；指标打分器将未观测值映射为零。
+速率和窗口延迟统计在计数器窗口足够前保持不可用。
+
+Foretoken 负责遥测传输、健康检查、DP 展开及 E/P/D 阶段资格判断。
+Model Server 端点报告各引擎 scheduler 计数之和及 KV 使用率均值。
+同一端点的所有 rank 得到相同分数。这三个指标 scorer 不使用 `RoutingProgress`，
+Router 仍传入该参数并负责后续阶段选择。
 
 `token_load` 先对有符号 token 计数求和，再转为 `f64`。`threshold` 为 `queueThresholdTokens`
 （默认 `4194304`），非正值使用默认值。未缓存 token 包含不足一块的 prompt 尾部；
@@ -51,8 +69,5 @@ Aggregate、Prefill 和 Decode 在派发前预留未缓存的 prompt token，在
 
 `token_load` 使用 frontend 按目标和 DP rank 维护的本地预留量，不叠加引擎调度指标或其他 frontend 的请求。
 选择目标和预留共用一把锁；路由 session 负责清理，RuntimeBuilder 在 serving snapshot 替换时保留此状态。
-
-空候选集返回空分数列表。数值通过 `RouteScore.preference` 原样传给 Picker，
-其余位置和负载字段为零。原有位置策略继续使用字典序。
 
 可选参数配置在 `FrontendService.spec.routerPipeline.scorerParameters` 中，由所选 scorer 在 frontend 启动时读取。

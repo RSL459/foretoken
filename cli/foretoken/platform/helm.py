@@ -6,10 +6,19 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Any
+
+import yaml
 
 from foretoken.manifest import DeploymentError
+from foretoken.platform.config import load_balancer_config_from_values
 from foretoken.platform.helm_client import HelmClient
-from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef
+from foretoken.platform.types import (
+    LoadBalancerConfig,
+    PlatformGatewayConfig,
+    ReleaseRef,
+)
 from foretoken.source import SourceImages
 
 
@@ -36,10 +45,22 @@ class Helm(HelmClient):
             self._config.envoy_gateway.release_name, self._config.namespace
         )
 
+    def metallb_release(self) -> ReleaseRef:
+        """Return the MetalLB release managed with the platform."""
+        return ReleaseRef(
+            self._config.metallb.release_name,
+            self._config.load_balancer_namespace,
+        )
+
     @property
     def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
         """Return labels shared by resources in the platform release."""
         return self._config.platform_selector_labels
+
+    @property
+    def management_label(self) -> tuple[str, str]:
+        """Return the label used on CLI-owned Kubernetes resources."""
+        return self._config.management_label
 
     @property
     def envoy_gateway_default_controller(self) -> str:
@@ -50,6 +71,13 @@ class Helm(HelmClient):
     def envoy_gateway_controller(self) -> str:
         """Return the controller identity reserved for managed Envoy Gateway."""
         return self._config.envoy_gateway_controller
+
+    def stored_load_balancer_config(self, release: ReleaseRef) -> LoadBalancerConfig:
+        """Return the address pool stored with the managed MetalLB release."""
+        return (
+            load_balancer_config_from_values(self._release_values(release))
+            or LoadBalancerConfig()
+        )
 
     def platform_gateway_config(self, release: ReleaseRef) -> PlatformGatewayConfig:
         """Return the effective frontend Gateway configuration for a platform."""
@@ -67,6 +95,44 @@ class Helm(HelmClient):
             namespace=str(gateway.get("namespace") or ""),
             section_name=str(gateway.get("sectionName") or ""),
         )
+
+    def platform_runtime_image(
+        self, source_root: Path, gpu_resource_name: str
+    ) -> str:
+        """Render the source chart's official runtime image for one GPU resource."""
+        chart = str(source_root / "deploy" / "charts" / "foretoken")
+        rendered = self.run(
+            [
+                "template",
+                "foretoken-runtime-image",
+                chart,
+                "--set",
+                "observability.mode=disabled",
+                "--set-string",
+                f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
+            ]
+        ).stdout
+        try:
+            documents: Any = yaml.safe_load_all(rendered)
+            for document in documents:
+                if not isinstance(document, dict) or document.get("kind") != "Deployment":
+                    continue
+                pod_spec = ((document.get("spec") or {}).get("template") or {}).get(
+                    "spec"
+                ) or {}
+                for container in pod_spec.get("containers") or []:
+                    if not isinstance(container, dict) or container.get("name") != "manager":
+                        continue
+                    for argument in container.get("args") or []:
+                        if isinstance(argument, str) and argument.startswith(
+                            "--inference-engine-image="
+                        ):
+                            return argument.removeprefix("--inference-engine-image=")
+        except yaml.YAMLError as exc:
+            raise DeploymentError(
+                "platform chart rendered invalid runtime configuration"
+            ) from exc
+        raise DeploymentError("platform chart rendered no vLLM runtime image")
 
     def platform_image_references(
         self, release: ReleaseRef
@@ -209,6 +275,7 @@ class Helm(HelmClient):
         gateway_section_name: str,
         gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
+        gpu_resource_name: str | None,
         reuse_values: bool,
         timeout: str,
     ) -> None:
@@ -232,7 +299,7 @@ class Helm(HelmClient):
             ),
         )
         if reuse_values:
-            args.append("--reuse-values")
+            args.append("--reset-then-reuse-values")
         self._add_platform_values(
             args,
             values,
@@ -242,6 +309,20 @@ class Helm(HelmClient):
             gateway_section_name,
             gateway_controller_name,
             observability_labels,
+        )
+        if gpu_resource_name is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
+                ]
+            )
+        image_registry = self._config.image_registry if source_images is None else None
+        args.extend(
+            [
+                "--set-string",
+                f"global.imageRegistry={image_registry or ''}",
+            ]
         )
         if source_images is not None:
             control_plane_image = source_images.control_plane
@@ -286,6 +367,44 @@ class Helm(HelmClient):
         self._finish_upgrade(args, timeout)
         self.run(args)
 
+    def install_metallb(
+        self,
+        release: ReleaseRef,
+        config: LoadBalancerConfig,
+        timeout: str,
+    ) -> None:
+        """Install MetalLB and store the pool needed to resume its configuration."""
+        args = self._upgrade_install_args(
+            release,
+            self._config.metallb.source,
+            self._config.metallb.version,
+        )
+        # Layer 2 announcement needs no BGP backend, which the chart otherwise
+        # bundles as frr-k8s. The pool is stored under the key users set in
+        # their values so a later install without values recovers it.
+        args.extend(
+            [
+                "--set",
+                "frrk8s.enabled=false",
+                "--set-json",
+                "loadBalancer.managedAddresses="
+                + json.dumps(config.managed_addresses, separators=(",", ":")),
+            ]
+        )
+        if self._config.image_registry is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    "controller.image.repository="
+                    f"{self._config.image_registry}/metallb/controller",
+                    "--set-string",
+                    "speaker.image.repository="
+                    f"{self._config.image_registry}/metallb/speaker",
+                ]
+            )
+        self._finish_upgrade(args, timeout)
+        self.run(args)
+
     def install_envoy_gateway(
         self,
         release: ReleaseRef,
@@ -305,6 +424,13 @@ class Helm(HelmClient):
                 + self._config.envoy_gateway_controller,
             ]
         )
+        if self._config.image_registry is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    f"global.imageRegistry={self._config.image_registry}",
+                ]
+            )
         self.run(args)
 
     def install_prometheus(
@@ -345,6 +471,13 @@ class Helm(HelmClient):
             self._config.prometheus.version,
             timeout,
         )
+        if self._config.image_registry is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    f"global.imageRegistry={self._config.image_registry}",
+                ]
+            )
         args.extend(
             [
                 "--set",
@@ -378,7 +511,7 @@ class Helm(HelmClient):
         args = self._managed_chart_args(
             release,
             self._config.dcgm_exporter.source,
-            None,
+            self._config.dcgm_exporter.version,
             timeout,
         )
         if reuse_values:
@@ -387,12 +520,24 @@ class Helm(HelmClient):
             [
                 "--set",
                 "serviceMonitor.enabled=true",
+                "--set",
+                "kubernetes.enablePodLabels=true",
+                "--set-json",
+                "kubernetes.podLabelAllowlistRegex=[\"^inference\\\\.foretoken\\\\.io/.*$\"]",
                 "--set-string",
                 "customMetrics=" + self._config.dcgm_metrics.replace(",", "\\,"),
                 "--set-json",
                 "securityContext.capabilities.add=[]",
             ]
         )
+        if self._config.image_registry is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    "image.repository="
+                    f"{self._config.image_registry}/nvidia/k8s/dcgm-exporter",
+                ]
+            )
         if observability_labels:
             args.extend(
                 [
@@ -415,7 +560,9 @@ class Helm(HelmClient):
 
 
 def _image_repository_tag(reference: str) -> tuple[str, str]:
-    """Split one tagged image reference produced by the source workflow."""
+    """Split a source image reference, using Docker's implicit latest tag when omitted."""
+    if ":" not in reference.rsplit("/", 1)[-1]:
+        return reference, "latest"
     repository, separator, tag = reference.rpartition(":")
     if not separator or not repository or not tag:
         raise DeploymentError(f"source image must include a tag: {reference}")

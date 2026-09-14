@@ -118,6 +118,7 @@ pub enum GenerationError {
 impl From<LlmFacadeError> for GenerationError {
     fn from(error: LlmFacadeError) -> Self {
         match error {
+            LlmFacadeError::InvalidRequest => Self::InvalidRequest,
             LlmFacadeError::Unavailable => Self::Unavailable,
             LlmFacadeError::Rejected => Self::BackendRejected,
             LlmFacadeError::Protocol => Self::BackendProtocol,
@@ -506,7 +507,7 @@ impl RuntimeGeneration {
             })?;
         let generate_request = prepared.generate_request;
         let context = RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()));
-        let mut session = slot.state.router.start(context);
+        let mut session = slot.state.router.start(context).await;
         let initial = session
             .select_initial()
             .map_err(|_| GenerationError::Unavailable)?;
@@ -583,7 +584,7 @@ impl Generation for RuntimeGeneration {
     ) -> Result<GeneratedChat, GenerationError> {
         let slot = self.generation_slot(&request.model).await?;
         let runtime = slot.state.model(&request.model)?;
-        let (text_request, output_processor) = runtime
+        let (mut text_request, output_processor) = runtime
             .bundle
             .chat_processor
             .prepare_with_options(
@@ -601,6 +602,9 @@ impl Generation for RuntimeGeneration {
                     GenerationError::Internal
                 }
             })?;
+        // The chat renderer stamps its own entry time after runtime admission. Preserve the
+        // HTTP handler's earlier origin so chat and text requests include the same wait.
+        text_request.arrival_time = request.arrival_time.or(text_request.arrival_time);
         let generated = self
             .dispatch(slot.clone(), runtime, request, text_request)
             .await?;

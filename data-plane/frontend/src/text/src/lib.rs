@@ -3,10 +3,13 @@
 
 //! vLLM text lowering reused by the Foretoken routing data path.
 
+mod modelscope;
+
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
+use foretoken_artifacts::ModelSource;
 use foretoken_chat::{
     ChatBackend, ChatRequestProcessor, DynChatBackend, HfChatBackend, LoadModelBackendsOptions,
 };
@@ -19,16 +22,14 @@ use vllm_text::backend::hf::HfTextBackend;
 
 pub use vllm_text::*;
 
-/// vLLM request processors constructed from one resolved snapshot.
-pub struct HfSnapshotRuntime {
+/// vLLM request processors constructed from one resolved model-source snapshot.
+pub struct SnapshotRuntime {
     pub text_processor: Arc<TextRequestProcessor>,
     pub tokenizer: DynTokenizer,
     pub chat_processor: Arc<ChatRequestProcessor>,
     pub supports_multimodal: bool,
 }
 
-const HF_TOKEN_ENV: &str = "HF_TOKEN";
-const HF_HUB_OFFLINE_ENV: &str = "HF_HUB_OFFLINE";
 const MODEL_FILES: &[&str] = &[
     "added_tokens.json",
     "chat_template.json",
@@ -50,21 +51,35 @@ const MODEL_FILES: &[&str] = &[
     "vocab.txt",
 ];
 
-/// Loads a local tokenizer directory or downloads a pinned Hub revision into the HF cache.
-///
-/// Remote files are placed in the standard `HF_HOME` cache and then loaded through vLLM's
-/// local resolver so tokenizer selection remains upstream-owned.
-pub async fn load_hf_text_backend(
+/// Loads a local tokenizer directory or resolves it through the selected remote provider.
+pub async fn load_text_backend(
+    source: ModelSource,
     model_id: &str,
     revision: &str,
 ) -> std::result::Result<HfTextBackend, TextBackendLoadError> {
     if model_id.is_empty() || revision.is_empty() {
         return Err(TextBackendLoadError::MissingModelOrRevision);
     }
-    if Path::new(model_id).is_dir() {
-        return HfTextBackend::from_model(model_id)
+    if source == ModelSource::Local {
+        let model_root = foretoken_artifacts::model_root();
+        let local = foretoken_artifacts::resolve_directory(model_root.as_deref(), model_id)
+            .map_err(TextBackendLoadError::LocalModelPath)?
+            .ok_or(TextBackendLoadError::LocalModelNotFound)?;
+        let local = local
+            .to_str()
+            .ok_or(TextBackendLoadError::NonUtf8CachePath)?;
+        return HfTextBackend::from_model(local)
             .await
             .map_err(|_| TextBackendLoadError::LocalModel);
+    }
+    if source == ModelSource::ModelScope {
+        let snapshot = modelscope::resolve_snapshot(model_id, revision, MODEL_FILES).await?;
+        let snapshot = snapshot
+            .to_str()
+            .ok_or(TextBackendLoadError::NonUtf8CachePath)?;
+        return HfTextBackend::from_model(snapshot)
+            .await
+            .map_err(|_| TextBackendLoadError::CachedModel);
     }
     if let Some(snapshot) = cached_model_snapshot(model_id, revision) {
         let snapshot = snapshot
@@ -74,12 +89,15 @@ pub async fn load_hf_text_backend(
             .await
             .map_err(|_| TextBackendLoadError::CachedModel);
     }
-    if std::env::var(HF_HUB_OFFLINE_ENV).is_ok_and(|value| value == "1") {
+    if std::env::var(foretoken_artifacts::HF_HUB_OFFLINE_ENV).is_ok_and(|value| value == "1") {
         return Err(TextBackendLoadError::OfflineCacheMiss);
     }
 
     let mut builder = ApiBuilder::from_env().with_progress(false);
-    if let Ok(token) = std::env::var(HF_TOKEN_ENV)
+    if let Some(root) = foretoken_artifacts::temporary_model_root() {
+        builder = builder.with_cache_dir(root.join("hub"));
+    }
+    if let Ok(token) = std::env::var(foretoken_artifacts::HF_TOKEN_ENV)
         && !token.is_empty()
     {
         builder = builder.with_token(Some(token));
@@ -116,14 +134,15 @@ pub async fn load_hf_text_backend(
         .map_err(|_| TextBackendLoadError::CachedModel)
 }
 
-/// Builds text lowering and HF chat rendering from the same pinned local snapshot.
-pub async fn load_hf_snapshot_runtime(
+/// Builds text lowering and chat rendering from the same pinned local snapshot.
+pub async fn load_snapshot_runtime(
+    source: ModelSource,
     model_id: &str,
     revision: &str,
     max_model_len: u32,
-    model_dtype: ModelDtype,
-) -> std::result::Result<HfSnapshotRuntime, TextBackendLoadError> {
-    let text_backend = load_hf_text_backend(model_id, revision).await?;
+    model_dtype: Option<ModelDtype>,
+) -> std::result::Result<SnapshotRuntime, TextBackendLoadError> {
+    let text_backend = load_text_backend(source, model_id, revision).await?;
     let tokenizer = text_backend.tokenizer();
     let chat_backend = HfChatBackend::from_resolved_model_files(
         text_backend.resolved_model_files().clone(),
@@ -135,16 +154,18 @@ pub async fn load_hf_snapshot_runtime(
         tokenizer.clone(),
     )
     .map_err(|_| TextBackendLoadError::CachedModel)?;
-    let supports_multimodal = chat_backend.multimodal_model_info().is_some();
+    let supports_multimodal =
+        chat_backend.multimodal_model_info().is_some() && model_dtype.is_some();
     let text_backend: DynTextBackend = Arc::new(text_backend);
     let chat_backend: DynChatBackend = Arc::new(chat_backend);
-    Ok(HfSnapshotRuntime {
+    let chat_processor = match model_dtype {
+        Some(model_dtype) => ChatRequestProcessor::with_model_dtype(chat_backend, model_dtype),
+        None => ChatRequestProcessor::render_only(chat_backend),
+    };
+    Ok(SnapshotRuntime {
         text_processor: Arc::new(TextRequestProcessor::new(text_backend, max_model_len)),
         tokenizer,
-        chat_processor: Arc::new(ChatRequestProcessor::with_model_dtype(
-            chat_backend,
-            model_dtype,
-        )),
+        chat_processor: Arc::new(chat_processor),
         supports_multimodal,
     })
 }
@@ -191,6 +212,12 @@ pub enum TextBackendLoadError {
     MissingModelOrRevision,
     #[error("could not load tokenizer files from the local model directory")]
     LocalModel,
+    #[error("local model or tokenizer directory was not found")]
+    LocalModelNotFound,
+    #[error("invalid local model path: {0}")]
+    LocalModelPath(#[source] std::io::Error),
+    #[error(transparent)]
+    ModelScope(#[from] modelscope::ModelScopeError),
     #[error("could not initialize the Hugging Face client")]
     HubClient,
     #[error("Hugging Face snapshot is not available in the offline cache")]

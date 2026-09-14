@@ -21,50 +21,50 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 | Feature | Description | Status |
 |---|---|---|
-| Benchmarking | Performance benchmarks and parameter sweeps, correctness evaluation, and SLO simulation | In development |
-| Profiling | Use PyTorch Profiler and Nsight to identify compute, communication, and CPU/GPU bottlenecks | Planned |
-| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics | In development |
+| [Benchmarking](benchmarks/README.md) | Measure model-service performance | In development |
+| [Profiling](observability/profiling.md) | Capture PyTorch CPU/GPU timelines for an existing model service | In development |
+| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
-| Control plane | Model services, instance groups, autoscaling, updates, and failure recovery | In development |
-| [Observability](observability/README.md) | Collect runtime metrics, evaluate alerts, and profile CPU/GPU bottlenecks | In development |
+| Control plane | Model services, replica management, autoscaling, updates, and failure recovery | In development |
+| [Observability](observability/README.md) | Collect service and accelerator metrics, evaluate alerts, and inspect the system Dashboard | In development |
 
 ## Quick Start
 
-This Quick Start requires Python 3.10 or later, a Kubernetes cluster, `kubectl`, Helm, and at least one available GPU. See the [k3d guide](docs/k3d-deployment.md) to prepare a single-machine test cluster.
+Start with a GPU-enabled Kubernetes cluster and Python 3.11+, `kubectl`, and Helm installed locally.
 
-### 1. Install the command-line tool
-
-Install the published command-line tool package:
+### 1. Get the examples and install the command-line tool
 
 ```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 pip install foretoken
 
-# For source installation from the repository:
+# From a source checkout:
 # pip install -e .
 ```
 
 ### 2. Install the Kubernetes platform
 
-By default, installation uses the Foretoken images published on GHCR:
-
 ```bash
-# Release images:
+# Use release images from GHCR:
 foretoken install
 
-# Source installation from the repository:
+# Build and install from a source checkout:
 # foretoken install -e .
 ```
 
-This installs the Foretoken CRDs and controller in the `foretoken-platform` namespace and waits for the controller to become ready. The default mode exposes the frontend through a `LoadBalancer` Service. Source installation rebuilds the images and updates the cluster; to deploy the current source to a remote cluster, see the [source deployment guide](docs/custom-deployment.md).
+For deployment on MetaX GPUs, follow the [MetaX deployment guide](docs/metax-deployment.md).
+
+See the [source deployment guide](docs/custom-deployment.md) for build tools and remote clusters.
 
 ### 3. Deploy the Quick Start
 
 ```bash
-foretoken deploy examples/quickstart
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
-This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica, requesting one GPU, 8 CPU, and 52 GiB memory. More deployments are available in [`examples/`](examples/).
 
 ### 4. Send a test request
 
@@ -77,24 +77,24 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-### 5. Run a benchmark
+### 5. Measure the model service
 
 ```bash
 pip install 'foretoken[bench]'
 
-# For source installation from the repository:
-# pip install -e .
+# From a source checkout:
 # pip install -e '.[bench]'
-foretoken bench examples/quickstart
+
+foretoken bench examples/quickstart --output local,wandb
 ```
 
-See [Benchmarking](benchmarks/README.md) for datasets, remote endpoints, result storage, and parameter sweeps.
+Run `wandb login` before first using W&B. See [Model Service Benchmarks](benchmarks/README.md) for more examples.
 
 ## Gateway Mode
 
 Gateway mode provides a shared entry point through Kubernetes Gateway and a hostname. It suits clusters that already use Gateway or manage external traffic centrally.
 
-Foretoken creates its default Gateway for Envoy Gateway. Install Envoy Gateway, then add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
+Add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
 
 ```yaml
 spec:
@@ -104,18 +104,13 @@ spec:
 Then run:
 
 ```bash
-# Install Envoy Gateway
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
-
 # Install the platform in Gateway mode
 foretoken install --frontend-mode gateway
+# For a source-installed platform:
+# foretoken install -e . --frontend-mode gateway
 
 # Deploy the Quick Start
-foretoken deploy examples/quickstart
+foretoken deploy examples/quickstart --timeout 20m
 
 # Resolve the Gateway address and request hostname
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
@@ -129,12 +124,12 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-See the [command-line tool guide](cli/README.md) to reuse a Gateway from another controller, select a listener, or configure TLS.
+The command installs Envoy Gateway when needed. See the [command-line tool guide](cli/README.md) to reuse an existing Gateway or select a listener.
 
 ## Stop and Uninstall
 
 ```bash
-# Delete the frontend and model service deployed by the Quick Start
+# Delete the Quick Start resources, including its namespace and runtime cache PVC
 foretoken delete examples/quickstart
 
 # Uninstall the Foretoken platform
@@ -142,6 +137,12 @@ foretoken uninstall
 ```
 
 The uninstall command preserves Foretoken CRDs and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the command-line tool.
+
+## Deployment Guides
+
+- [Source builds and private registries](docs/custom-deployment.md)
+- [Single-machine GPU clusters with k3d](docs/k3d-deployment.md)
+- [MetaX GPUs](docs/metax-deployment.md)
 
 ## Related Projects
 
@@ -160,7 +161,7 @@ See [Contributing to Foretoken](CONTRIBUTING.md) for development principles, col
 Thank you to everyone who has contributed to Foretoken.
 
 <a href="https://github.com/shiweijiezero/foretoken/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=shiweijiezero/foretoken" alt="Foretoken contributors" />
+  <img src="https://contrib.rocks/image?repo=shiweijiezero/foretoken" width="256" alt="Foretoken contributors" />
 </a>
 
 ## License

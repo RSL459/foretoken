@@ -3,51 +3,36 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-<!-- Keep the sections that apply to this change and remove the others.
-Chinese template: .github/PULL_REQUEST_TEMPLATE_zh.md -->
+<!-- For routine fixes, keep Summary and Validation. For design-oriented features,
+rename Summary to Goal and keep Design and Interface. Remove other sections that do not apply.
+Chinese template: PULL_REQUEST_TEMPLATE_zh.md -->
 
 ## Summary
 
-<!--
-State the problem, the scope and non-goals, and the important design choice.
-Keep this section short enough that a reviewer can understand why the PR exists.
--->
+<!-- Describe the problem and change. For a new feature, start with the user goal and expected outcome. -->
 
-## Changes
+## Design
 
-<!--
-List the concrete changes and where a reviewer should start.
-Mention replaced or removed paths when relevant.
--->
+<!-- For design-oriented features: explain the core flow, responsibilities and key trade-offs.
+Link detailed proposals rather than reproducing them. -->
 
--
+## Interface
+
+<!-- For design-oriented features: show a typical command, configuration or API call and its result. -->
 
 ## Validation
 
-<!-- Optional. Keep this section when the change was validated by commands or real execution.
-List what actually ran and its result. State important skipped checks when their absence
-affects review. For CLI changes, include installation, the affected help surface, and the
-real command path exercised. Do not write only "CI" or claim hardware, Kubernetes, or
-performance validation that did not occur. -->
-
-- `command` — result
-
-## Performance
-
-<!-- Optional. Keep this section when the change can affect latency, throughput,
-resource usage, model quality, or scaling behavior. Describe the environment and
-workload, then provide comparable before-and-after results or explain the expected
-behavior when measurement is not yet available. -->
+<!-- Summarize the actual environment, behavior and results, including relevant performance measurements.
+Mention unresolved issues once when they affect review; do not copy execution logs. -->
 
 ## Impact
 
-<!-- Optional. Keep this section when the change affects user-visible interfaces,
-CLI, YAML/CRD/API fields, deployment behavior, documentation, compatibility,
-migration, or rollback. For each new public configuration field, identify its current
-consumer and why the value cannot be derived from an existing authoritative input.
-Keep English and Chinese user documentation aligned. -->
+<!-- Include material changes to existing usage, deployment or compatibility, and required migration. -->
+
+## Follow-ups
+
+<!-- For incremental delivery, briefly describe the next features and dependencies. -->
 
 ## Related
 
-<!-- Optional. Link the related issue or approved proposal.
-For a stacked PR, name the predecessor and confirm the base branch. -->
+<!-- Link issues, proposals or guides. For stacked PRs, identify the predecessor and base. -->

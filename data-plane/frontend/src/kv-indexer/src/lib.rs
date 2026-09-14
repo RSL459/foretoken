@@ -19,11 +19,7 @@ impl KvPrefixMatches {
     /// Sorts facts into a stable order before exposing them to a scorer.
     pub fn new(mut matches: Vec<KvPrefixMatch>) -> Self {
         matches.sort();
-        let block_size = matches.iter().find_map(|matched| {
-            (matched.matched_complete_blocks > 0)
-                .then(|| (matched.matched_tokens as u64 / matched.matched_complete_blocks) as u32)
-        });
-        Self(matches, block_size.filter(|size| *size > 0))
+        Self(matches, None)
     }
 
     /// Attaches the source partition's block size, including on a confirmed cache miss.
@@ -86,7 +82,17 @@ pub enum KvPrefixUnavailableReason {
     UnsupportedRequest,
     RankMismatch,
 }
+#[async_trait::async_trait]
 pub trait KvPrefixIndexer: Send + Sync {
+    /// Prepares request-local observations when lookup requires an external backend.
+    /// Event-only implementations need no preparation and retain their existing reader.
+    async fn prepare(
+        &self,
+        _lookups: &[KvPrefixLookup<'_>],
+    ) -> Option<std::sync::Arc<dyn KvPrefixIndexer>> {
+        None
+    }
+
     /// Looks up confirmed prefix-locality facts for one route target and data-parallel rank.
     ///
     /// Router filters and scorers consume the derived result; implementations retain ownership of their index state.

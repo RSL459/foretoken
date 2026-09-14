@@ -35,8 +35,10 @@ rules:
       - kvpools.inference.foretoken.io
       - kvgroups.inference.foretoken.io
       - modelservices.inference.foretoken.io
+      - runtimecaches.inference.foretoken.io
       - modelpools.inference.foretoken.io
       - modelgroups.inference.foretoken.io
+      - profileruns.inference.foretoken.io
     verbs:
       - get
       - patch
@@ -48,6 +50,24 @@ rules:
       - get
       - list
       - watch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - profileruns
+      - profileruns/status
+      - profileruns/finalizers
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch
+  - apiGroups:
+      - apps
+    resources:
+      - replicasets
+    verbs:
+      - get
   {{- if .Values.frontend.enabled }}
   - apiGroups:
       - inference.foretoken.io
@@ -160,6 +180,22 @@ rules:
       - inference.foretoken.io
     resources:
       - kvgroups/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - runtimecaches
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - runtimecaches/status
     verbs:
       - get
       - patch

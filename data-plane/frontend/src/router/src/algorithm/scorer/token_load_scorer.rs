@@ -23,6 +23,11 @@ impl Default for TokenLoadScorer {
     }
 }
 impl RouteScorer for TokenLoadScorer {
+    /// Requests live prefix observations before cache-aware scoring.
+    fn needs_kv_prefix(&self) -> bool {
+        true
+    }
+
     fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
         *self = serde_json::from_value(parameters).map_err(|error| error.to_string())?;
         if self.queue_threshold_tokens <= 0 {
