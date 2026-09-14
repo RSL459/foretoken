@@ -24,6 +24,7 @@ impl Default for ActiveRequestScorer {
     }
 }
 impl RouteScorer for ActiveRequestScorer {
+    /// Applies idle and busy scoring parameters at pipeline startup with their default semantics.
     fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
         *self = serde_json::from_value(parameters).map_err(|error| error.to_string())?;
         self.idle_threshold = self.idle_threshold.max(0);

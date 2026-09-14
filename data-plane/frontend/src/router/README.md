@@ -25,6 +25,8 @@ Each pipeline stage selects an algorithm by name. Deployments with additional ro
 
 `kv_least_loaded` prefers longer reusable KV prefixes, choosing local accelerator cache over shared Store cache for equal lengths, then lower load. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
 
+`least_loaded` and `kv_least_loaded` use the maximum of Model Server active requests, scheduler running plus waiting requests, and requests tracked by this frontend. This includes local dispatches before telemetry observes them without counting the same requests twice.
+
 Set `scorer` to `queue_depth` to prefer fewer requests waiting in the engine scheduler, `running_request` to prefer fewer running requests, or `kv_cache_utilization` to prefer lower measured KV-cache utilization.
 
 Set `scorer` to `active_request` to prefer fewer active requests tracked by this frontend.
