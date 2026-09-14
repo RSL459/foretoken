@@ -57,8 +57,8 @@ type NormalizedKVCache struct {
 	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
 }
 
-// RuntimeCache identifies the persistent runtime cache shared by serving workloads.
-type RuntimeCache struct {
+// RuntimeCacheBinding identifies the persistent runtime cache shared by serving workloads.
+type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	ClaimName string `json:"claimName"`
@@ -69,9 +69,9 @@ type RuntimeCache struct {
 	MountPath string `json:"mountPath"`
 }
 
-// RuntimeSourceAccess contains optional source settings consumed by the runtime adapter.
-type RuntimeSourceAccess struct {
-	// Endpoint is interpreted by the selected runtime adapter.
+// HuggingFaceAccess contains platform-provided access settings for Hugging Face repositories.
+type HuggingFaceAccess struct {
+	// Endpoint is an optional Hugging Face-compatible Hub endpoint.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
@@ -91,6 +91,8 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
 
+	Source ModelSource `json:"source"`
+
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
@@ -108,11 +110,11 @@ type NormalizedPoolTemplate struct {
 
 	// RuntimeCache is set by the ModelService controller when persistent runtime caching is enabled.
 	// +optional
-	RuntimeCache *RuntimeCache `json:"runtimeCache,omitempty"`
+	RuntimeCache *RuntimeCacheBinding `json:"runtimeCache,omitempty"`
 
-	// SourceAccess is set by the ModelService controller from the selected runtime profile.
+	// HuggingFaceAccess is set by the ModelService controller for Hugging Face models.
 	// +optional
-	SourceAccess *RuntimeSourceAccess `json:"sourceAccess,omitempty"`
+	HuggingFaceAccess *HuggingFaceAccess `json:"huggingFaceAccess,omitempty"`
 
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`

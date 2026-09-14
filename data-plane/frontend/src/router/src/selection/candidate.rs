@@ -35,8 +35,8 @@ pub struct RouteCandidate {
     pub pipeline_scope_id: Option<String>,
     /// Exact data-parallel replica selected within the route target.
     pub data_parallel_rank: u32,
-    /// Latest route-target observation for this routing round, when telemetry covers the Router
-    /// observation window. It is aggregate telemetry shared by every DP rank of this target.
+    /// Latest route-target gauges and available windowed statistics for this routing round.
+    /// It is aggregate telemetry shared by every DP rank of this target.
     pub route_target_stats: Option<Arc<RouteTargetStats>>,
     /// Current frontend-owned load for the exact target and DP rank.
     pub inflight: crate::InFlightLoad,

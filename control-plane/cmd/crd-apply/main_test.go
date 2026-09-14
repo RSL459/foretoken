@@ -34,6 +34,8 @@ func TestLoadGeneratedCRDs(t *testing.T) {
 		"modelgroups.inference.foretoken.io",
 		"modelpools.inference.foretoken.io",
 		"modelservices.inference.foretoken.io",
+		"profileruns.inference.foretoken.io",
+		"runtimecaches.inference.foretoken.io",
 	}
 	if len(crds) != len(want) {
 		t.Fatalf("loaded %d CRDs, want %d", len(crds), len(want))

@@ -20,12 +20,12 @@ import (
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -47,9 +47,9 @@ type ScalingMetricsProvider interface {
 // ModelServiceReconciler compiles ModelService intent and owns ModelPool specs.
 type ModelServiceReconciler struct {
 	client.Client
-	MetricsProvider ScalingMetricsProvider
-	CacheProfile    RuntimeCacheProfile
-	SourceProfile   RuntimeSourceProfile
+	MetricsProvider          ScalingMetricsProvider
+	CacheProfile             RuntimeCacheProfile
+	HuggingFaceAccessProfile HuggingFaceAccessProfile
 
 	recommendationHistoryOnce sync.Once
 	recommendationHistory     *core.RecommendationHistory
@@ -64,11 +64,15 @@ func (reconciler *ModelServiceReconciler) autoscalingRecommendationHistory() *co
 
 // SetupWithManager registers the ModelService controller and its owned resources.
 func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).
+	if err := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelService{}).
 		Owns(&inferencev1alpha1.ModelPool{}).
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
-		Complete(reconciler)
+		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
+		Complete(reconciler); err != nil {
+		return err
+	}
+	return crmetrics.Registry.Register(newAutoscalingCollector(manager.GetCache()))
 }
 
 // Reconcile materializes stable ModelPools and aggregates their serving readiness.
@@ -113,11 +117,33 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 			ready:    conditionState{metav1.ConditionFalse, "ScalingFailed", "ModelService capacity is invalid"},
 		})
 	}
-	runtimeCache := reconciler.CacheProfile.RuntimeCache()
-	runtimeSource := reconciler.SourceProfile.RuntimeSource()
+	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, service.Namespace)
+	if err != nil {
+		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
+			compiled: conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
+			pools:    conditionState{metav1.ConditionFalse, "CacheResolutionFailed", "Runtime cache could not be resolved"},
+			ready:    conditionState{metav1.ConditionFalse, "CacheResolutionFailed", err.Error()},
+		})
+		return ctrl.Result{}, errors.Join(err, statusErr)
+	}
+	if !cacheReady {
+		ready, reason, message, readinessErr := reconciler.serviceReadiness(ctx, service, compiledPools)
+		if ready {
+			reason, message = "ServingPreviousGeneration", "The previous complete ModelService generation remains ready while runtime cache storage is preparing"
+		}
+		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
+			compiled: conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
+			pools:    conditionState{metav1.ConditionFalse, "CacheNotReady", "No new ModelPools were materialized"},
+			ready:    conditionState{conditionStatus(ready), reason, message},
+		})
+		return ctrl.Result{}, errors.Join(readinessErr, statusErr)
+	}
+	huggingFaceAccess := reconciler.HuggingFaceAccessProfile.Access()
 	for index := range compiledPools {
 		compiledPools[index].Template.RuntimeCache = runtimeCache.DeepCopy()
-		compiledPools[index].Template.SourceAccess = runtimeSource.DeepCopy()
+		if compiledPools[index].Template.Source == inferencev1alpha1.ModelSourceHF {
+			compiledPools[index].Template.HuggingFaceAccess = huggingFaceAccess.DeepCopy()
+		}
 	}
 
 	if err := reconciler.reconcilePools(ctx, service, compiledPools); err != nil {
@@ -498,7 +524,7 @@ func (reconciler *ModelServiceReconciler) resolveManagedKVBindings(ctx context.C
 		if !kv.DeletionTimestamp.IsZero() || kv.Status.ObservedGeneration != kv.Generation || ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != kv.Generation || kv.Status.Binding == nil || kv.Status.Binding.Revision == "" || kv.Status.Binding.ConfigMapName == "" || kv.Status.Binding.ConfigMapKey == "" || kv.Status.Binding.PythonHashSeed != "0" {
 			return fmt.Errorf("KVService %q does not have a current Ready binding", kv.Name)
 		}
-		bufferBytes, err := requesterBufferBytes(kv)
+		bufferBytes, err := resourcevalidation.ParsePositiveBytes("requester.localBufferSize", string(kv.Spec.Requester.LocalBufferSize))
 		if err != nil {
 			return fmt.Errorf("KVService %q requester buffer: %w", kv.Name, err)
 		}
@@ -522,6 +548,19 @@ func modelServicePoolStore(service *inferencev1alpha1.ModelService, name string)
 	return nil
 }
 
+// modelServicesInNamespace maps shared platform resource changes to every ModelService in the namespace.
+func (reconciler *ModelServiceReconciler) modelServicesInNamespace(ctx context.Context, object client.Object) []reconcile.Request {
+	var services inferencev1alpha1.ModelServiceList
+	if err := reconciler.List(ctx, &services, client.InNamespace(object.GetNamespace())); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(services.Items))
+	for index := range services.Items {
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&services.Items[index])})
+	}
+	return requests
+}
+
 // modelServicesForKVService maps a KVService update to ModelServices that reference it.
 func (reconciler *ModelServiceReconciler) modelServicesForKVService(ctx context.Context, object client.Object) []reconcile.Request {
 	var services inferencev1alpha1.ModelServiceList
@@ -535,16 +574,4 @@ func (reconciler *ModelServiceReconciler) modelServicesForKVService(ctx context.
 		}
 	}
 	return requests
-}
-
-func requesterBufferBytes(service *inferencev1alpha1.KVService) (int64, error) {
-	quantity, err := resource.ParseQuantity(string(service.Spec.Requester.LocalBufferSize))
-	if err != nil {
-		return 0, err
-	}
-	bytes, exact := quantity.AsInt64()
-	if !exact || bytes < 1 {
-		return 0, fmt.Errorf("must be a positive exact integer byte quantity")
-	}
-	return bytes, nil
 }

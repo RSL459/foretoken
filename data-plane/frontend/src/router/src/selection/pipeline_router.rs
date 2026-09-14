@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Fixed physical route selection for Aggregate, P/D, and E/P/D route sets.
+//! Connector-compatible stage selection for Aggregate, P/D, and E/P/D routes.
 
 use crate::inflight::{InFlightRequests, RequestKey};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use foretoken_kv_indexer::{KvPrefixIndexer, NoopKvPrefixIndexer};
 use foretoken_model_protocol::ModelServerRole;
@@ -120,69 +120,89 @@ impl<C: Send + 'static> PipelineRouter<C> {
         eligible: impl Fn(&RouteCandidate, &[ScoredCandidate]) -> bool,
         error: RouteError,
     ) -> Result<RouteCandidate, RouteError> {
-        // Filter and Scorer receive the complete compatible, healthy snapshot so decisions such as
-        // downstream Decode cost can compare every viable route target. Stage/pipeline-scope narrowing follows
-        // scoring and immediately precedes Picker, without hiding information from extensions.
-        // Snapshot, scoring, and reservation are one transaction so concurrent selections see load.
-        let mut inflight = self.inflight.lock().expect("routing load lock poisoned");
-        let candidates = self.candidates(request, &inflight);
-        let filtered_indexes = self.pipeline.filter.filter(
-            request,
-            &candidates,
-            self.kv_prefix_indexer.as_ref(),
-            routing_progress,
-            customized_context,
-        );
-        let mut seen_indexes = BTreeSet::new();
-        let filtered = filtered_indexes
-            .into_iter()
-            .map(|index| {
-                if !seen_indexes.insert(index) {
-                    return Err(RouteError::DuplicateFilterIndex { index: index.0 });
-                }
-                candidates
-                    .get(index.0)
-                    .cloned()
-                    .ok_or(RouteError::InvalidFilterIndex { index: index.0 })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let scores = self.pipeline.scorer.score(
-            request,
-            &filtered,
-            self.kv_prefix_indexer.as_ref(),
-            routing_progress,
-            customized_context,
-        );
-        if scores.len() != filtered.len() {
-            return Err(RouteError::InvalidScorerResult {
-                expected: filtered.len(),
-                actual: scores.len(),
-            });
-        }
-        let scored = filtered
-            .into_iter()
-            .zip(scores)
-            .map(|(candidate, score)| ScoredCandidate { candidate, score })
-            .collect::<Vec<_>>();
-        let selectable = scored
-            .iter()
-            .filter(|candidate| eligible(&candidate.candidate, &scored))
-            .cloned()
-            .collect::<Vec<_>>();
-        if selectable.is_empty() {
-            return Err(error);
-        }
-        let picked = self
-            .pipeline
-            .picker
-            .pick(request, &selectable, routing_progress, customized_context)
-            .ok_or(RouteError::EmptyPickerResult)?;
-        let candidate = selectable
-            .get(picked.0)
-            .map(|candidate| candidate.candidate.clone())
-            .ok_or(RouteError::InvalidPickerIndex { index: picked.0 })?;
-        inflight.insert(request, &candidate);
-        Ok(candidate)
+        let started = Instant::now();
+        let metrics = &crate::metrics::METRICS;
+        let round = routing_progress.current_stage;
+        let [filter_name, scorer_name, picker_name] = self.pipeline.algorithm_names;
+        // Keep every early return inside the round so failed candidate discovery or invalid
+        // algorithm output is counted as well as successful selections.
+        let result = (|| {
+            // Filter and Scorer see the complete compatible, healthy snapshot. Stage and connector
+            // eligibility are applied after scoring and before Picker.
+            // Snapshot, scoring, and reservation share one lock so concurrent selections see load.
+            let mut inflight = self.inflight.lock().expect("routing load lock poisoned");
+            let candidates = self.candidates(request, &inflight);
+            metrics.candidates(round, "available", candidates.len());
+            let stage_started = Instant::now();
+            let filtered_indexes = self.pipeline.filter.filter(
+                request,
+                &candidates,
+                self.kv_prefix_indexer.as_ref(),
+                routing_progress,
+                customized_context,
+            );
+            metrics.stage(round, "filter", filter_name, stage_started.elapsed());
+            let mut seen_indexes = BTreeSet::new();
+            let filtered = filtered_indexes
+                .into_iter()
+                .map(|index| {
+                    if !seen_indexes.insert(index) {
+                        return Err(RouteError::DuplicateFilterIndex { index: index.0 });
+                    }
+                    candidates
+                        .get(index.0)
+                        .cloned()
+                        .ok_or(RouteError::InvalidFilterIndex { index: index.0 })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            metrics.candidates(round, "filtered", filtered.len());
+            let stage_started = Instant::now();
+            let scores = self.pipeline.scorer.score(
+                request,
+                &filtered,
+                self.kv_prefix_indexer.as_ref(),
+                routing_progress,
+                customized_context,
+            );
+            metrics.stage(round, "scorer", scorer_name, stage_started.elapsed());
+            if scores.len() != filtered.len() {
+                return Err(RouteError::InvalidScorerResult {
+                    expected: filtered.len(),
+                    actual: scores.len(),
+                });
+            }
+            let scored = filtered
+                .into_iter()
+                .zip(scores)
+                .map(|(candidate, score)| ScoredCandidate { candidate, score })
+                .collect::<Vec<_>>();
+            let selectable = scored
+                .iter()
+                .filter(|candidate| eligible(&candidate.candidate, &scored))
+                .cloned()
+                .collect::<Vec<_>>();
+            metrics.candidates(round, "selectable", selectable.len());
+            if selectable.is_empty() {
+                return Err(error);
+            }
+            let stage_started = Instant::now();
+            let picked = self.pipeline.picker.pick(
+                request,
+                &selectable,
+                routing_progress,
+                customized_context,
+            );
+            metrics.stage(round, "picker", picker_name, stage_started.elapsed());
+            let picked = picked.ok_or(RouteError::EmptyPickerResult)?;
+            let candidate = selectable
+                .get(picked.0)
+                .map(|candidate| candidate.candidate.clone())
+                .ok_or(RouteError::InvalidPickerIndex { index: picked.0 })?;
+            inflight.insert(request, &candidate);
+            Ok(candidate)
+        })();
+        metrics.selection(round, started.elapsed(), result.as_ref().err());
+        result
     }
 
     fn future_stages_available(candidate: &RouteCandidate, scored: &[ScoredCandidate]) -> bool {
@@ -429,12 +449,43 @@ impl<C: Send + 'static> RouteSession for Session<C> {
         Ok(decode.decision())
     }
 }
+#[async_trait::async_trait]
 impl<C: Send + 'static> Router for PipelineRouter<C> {
-    fn start(&self, request: RouterRequest) -> Box<dyn RouteSession> {
+    async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession> {
+        let kv_prefix_indexer =
+            if self.pipeline.filter.needs_kv_prefix() || self.pipeline.scorer.needs_kv_prefix() {
+                let candidates = {
+                    let inflight = self.inflight.lock().expect("routing load lock poisoned");
+                    self.candidates(&request, &inflight)
+                };
+                let lookups = candidates
+                    .iter()
+                    .filter(|candidate| {
+                        matches!(
+                            candidate.role,
+                            ModelServerRole::Aggregate | ModelServerRole::Prefill
+                        )
+                    })
+                    .filter_map(|candidate| {
+                        request
+                            .kv_prefix_lookup(
+                                candidate.route_target_id.as_str(),
+                                candidate.data_parallel_rank,
+                            )
+                            .ok()
+                    })
+                    .collect::<Vec<_>>();
+                self.kv_prefix_indexer
+                    .prepare(&lookups)
+                    .await
+                    .unwrap_or_else(|| self.kv_prefix_indexer.clone())
+            } else {
+                self.kv_prefix_indexer.clone()
+            };
         Box::new(Session {
             router: Self {
                 inventory: self.inventory.clone(),
-                kv_prefix_indexer: self.kv_prefix_indexer.clone(),
+                kv_prefix_indexer,
                 route_target_stats_reader: self.route_target_stats_reader.clone(),
                 pipeline: self.pipeline.clone(),
                 inflight: self.inflight.clone(),

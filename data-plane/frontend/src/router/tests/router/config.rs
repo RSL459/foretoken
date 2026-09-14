@@ -16,6 +16,9 @@ fn every_compiled_builtin_name_parses_and_builds() {
         ("allow_all", "active_request", "round_robin"),
         ("allow_all", "least_loaded", "round_robin"),
         ("allow_all", "kv_least_loaded", "round_robin"),
+        ("allow_all", "running_request", "round_robin"),
+        ("allow_all", "kv_cache_utilization", "round_robin"),
+        ("allow_all", "queue_depth", "round_robin"),
     ] {
         let config = RouterPipelineConfig {
             scorer_parameters: Default::default(),

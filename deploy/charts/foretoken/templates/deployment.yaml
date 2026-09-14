@@ -59,7 +59,11 @@ spec:
             - {{ printf "--autoscaling-telemetry-collection-timeout=%s" .Values.controller.autoscalingTelemetry.collectionTimeout | quote }}
             - {{ printf "--autoscaling-telemetry-request-timeout=%s" .Values.controller.autoscalingTelemetry.requestTimeout | quote }}
             - {{ printf "--autoscaling-telemetry-concurrency=%d" (int .Values.controller.autoscalingTelemetry.concurrency) | quote }}
+            {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+            - --metrics-bind-address=:8080
+            {{- else }}
             - --metrics-bind-address=0
+            {{- end }}
             - --health-probe-bind-address=:8081
             {{- range .Values.workload.imagePullSecrets }}
             - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
@@ -78,7 +82,7 @@ spec:
             {{- if .Values.frontend.enabled }}
             - --frontend-enabled=true
             - {{ printf "--frontend-mode=%s" .Values.frontend.mode | quote }}
-            - {{ printf "--frontend-image=%s" .Values.frontend.image | quote }}
+            - {{ printf "--frontend-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.frontend.image)) | quote }}
             - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
             {{- if eq .Values.frontend.mode "gateway" }}
             - {{ printf "--frontend-gateway-name=%s" (include "foretoken.frontendGatewayName" .) | quote }}
@@ -86,9 +90,9 @@ spec:
             - {{ printf "--frontend-gateway-section-name=%s" (include "foretoken.frontendGatewaySectionName" .) | quote }}
             {{- end }}
             {{- end }}
-            {{- with .Values.runtime.vllm.image }}
+            {{- with (include "foretoken.runtimeVllmImage" .) }}
             - {{ printf "--inference-engine-profile-revision=%s" $.Values.runtime.vllm.profileRevision | quote }}
-            - {{ printf "--inference-engine-image=%s" . | quote }}
+            - {{ printf "--inference-engine-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" $.Values.global.imageRegistry "image" .)) | quote }}
             - {{ printf "--model-server-port=%d" (int $.Values.runtime.vllm.modelServerPort) | quote }}
             - {{ printf "--gpu-resource-name=%s" $.Values.runtime.vllm.gpu.resourceName | quote }}
             {{- with $.Values.runtime.vllm.gpu.runtimeClassName }}
@@ -129,6 +133,11 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
           ports:
+            {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            {{- end }}
             - name: healthz
               containerPort: 8081
               protocol: TCP

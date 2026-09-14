@@ -17,10 +17,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use futures::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
+use crate::runtime_cache;
 use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
 };
@@ -125,6 +126,9 @@ pub struct AppState {
     health: Arc<RuntimeHealth>,
     metadata: RuntimeMetadataResponse,
     kv_events: Option<Arc<KvEventAdapter>>,
+    runtime_cache: Option<runtime_cache::Config>,
+    profiling: Option<crate::profiling::Handle>,
+    shared_kv: Option<crate::shared_kv::SharedKvLookup>,
 }
 impl AppState {
     /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
@@ -138,6 +142,9 @@ impl AppState {
             health,
             metadata,
             kv_events: None,
+            runtime_cache: None,
+            profiling: None,
+            shared_kv: None,
         }
     }
     /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
@@ -145,6 +152,24 @@ impl AppState {
     /// The router owns this state while its handlers retain cloned adapter references.
     pub fn with_kv_events(mut self, adapter: Arc<KvEventAdapter>) -> Self {
         self.kv_events = Some(adapter);
+        self
+    }
+
+    /// Enables read-only shared-prefix observations through the running connector.
+    pub fn with_shared_kv(mut self, lookup: crate::shared_kv::SharedKvLookup) -> Self {
+        self.shared_kv = Some(lookup);
+        self
+    }
+
+    /// Attaches RuntimeCache filesystem telemetry rendered with backend metrics.
+    pub fn with_runtime_cache(mut self, config: runtime_cache::Config) -> Self {
+        self.runtime_cache = Some(config);
+        self
+    }
+
+    /// Attaches diagnostic control on the existing internal listener without transferring supervision.
+    pub fn with_profiling(mut self, handle: crate::profiling::Handle) -> Self {
+        self.profiling = Some(handle);
         self
     }
 }
@@ -160,14 +185,76 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route("/v1/internal/metadata", get(metadata))
         .route("/v1/internal/telemetry", get(telemetry))
         .route("/v1/internal/admission/close", post(close_admission))
+        .route(
+            "/v1/internal/profiling",
+            get(profile_observation).post(profile_control),
+        )
         .route("/v1/internal/generate", post(generate))
         .route("/v1/internal/abort", post(abort))
         .route(KV_INDEX_DELTA_PATH, get(kv_index_delta))
+        .route(
+            foretoken_model_protocol::KV_SHARED_PREFIX_PATH,
+            post(shared_kv_prefix),
+        )
         .layer(DefaultBodyLimit::max(
             internal_generate_request_body_limit_bytes,
         ))
         .with_state(state)
 }
+
+#[derive(Deserialize)]
+struct ProfileQuery {
+    run_uid: Option<String>,
+}
+
+// Return runtime identity even before a run exists, so the reconciler can persist a fixed plan.
+async fn profile_observation(
+    State(state): State<AppState>,
+    Query(query): Query<ProfileQuery>,
+) -> Response {
+    match state.profiling {
+        Some(handle) => Json(handle.observe(query.run_uid.as_deref())).into_response(),
+        None => StatusCode::NOT_IMPLEMENTED.into_response(),
+    }
+}
+
+// The handler acknowledges acceptance only; polling exposes the independently supervised result.
+async fn profile_control(
+    State(state): State<AppState>,
+    Json(request): Json<crate::profiling::Request>,
+) -> Response {
+    let Some(handle) = state.profiling else {
+        return StatusCode::NOT_IMPLEMENTED.into_response();
+    };
+    let uid = request.run_uid.clone();
+    match handle.control(request) {
+        Ok(()) => (StatusCode::ACCEPTED, Json(handle.observe(Some(&uid)))).into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
+// Shared lookups are observations only: admission and engine health must still permit reads.
+async fn shared_kv_prefix(
+    State(state): State<AppState>,
+    Json(request): Json<foretoken_model_protocol::KvSharedPrefixRequest>,
+) -> Response {
+    if !state.health.ready() || !state.health.accepting() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let Some(lookup) = state.shared_kv else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match tokio::time::timeout(
+        foretoken_model_protocol::KV_OBSERVATION_TIMEOUT,
+        lookup.lookup(&request),
+    )
+    .await
+    {
+        Ok(Some(response)) => Json(response).into_response(),
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 async fn healthz(State(state): State<AppState>) -> StatusCode {
     status(state.health.healthy())
 }
@@ -177,14 +264,23 @@ async fn readyz(State(state): State<AppState>) -> StatusCode {
 
 async fn metrics(State(state): State<AppState>) -> Response {
     match state.backend.render_openmetrics() {
-        Ok(body) => (
-            [(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static(OPENMETRICS_CONTENT_TYPE),
-            )],
-            body,
-        )
-            .into_response(),
+        Ok(mut body) => {
+            if let Some(cache) = &state.runtime_cache {
+                if let Some(without_eof) = body.strip_suffix("# EOF\n") {
+                    body = without_eof.to_owned();
+                }
+                body.push_str(&cache.render_openmetrics());
+                body.push_str("# EOF\n");
+            }
+            (
+                [(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static(OPENMETRICS_CONTENT_TYPE),
+                )],
+                body,
+            )
+                .into_response()
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

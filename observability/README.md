@@ -7,25 +7,58 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Foretoken installs Prometheus collection and recording rules for service and accelerator metrics. It does not install Foretoken alert rules. Alert thresholds, Alertmanager routing, and notifications remain owned by the platform team.
+Foretoken collects service and accelerator metrics with Prometheus, shows them in the **Foretoken System Overview** Grafana dashboard, and installs alert rules for the most common problems.
 
-## Install collection
+## Get started
 
 ```bash
 foretoken install
+foretoken deploy examples/quickstart
 ```
 
-The CLI discovers the collection path and prints its plan before changing the cluster.
+`foretoken install` reuses a Prometheus that already exists in the cluster or installs a CLI-managed kube-prometheus-stack. The CLI-managed Grafana loads the dashboard automatically. Retrieve its generated administrator credentials, then open Grafana at the address your cluster provides:
 
-| Component | No suitable existing instance | Qualified existing instance | Conflict or incomplete path | `foretoken uninstall` |
+```bash
+GRAFANA_USER="$(kubectl get secret \
+  --namespace foretoken-platform \
+  foretoken-prometheus-grafana \
+  --output jsonpath='{.data.admin-user}' | base64 --decode)"
+GRAFANA_PASSWORD="$(kubectl get secret \
+  --namespace foretoken-platform \
+  foretoken-prometheus-grafana \
+  --output jsonpath='{.data.admin-password}' | base64 --decode)"
+printf 'Grafana user: %s\nGrafana password: %s\n' \
+  "$GRAFANA_USER" "$GRAFANA_PASSWORD"
+```
+
+In Grafana, select **Dashboards** and open **Foretoken System Overview**. It follows a request through the Frontend, model serving, caches, and accelerators, and ends with autoscaling decisions; routing and control-plane details are in collapsed sections. Filters narrow the view to a namespace, Frontend service, model group, model role, model, or model service.
+
+## Check that collection works
+
+```bash
+kubectl get servicemonitor,prometheusrule -A \
+  -l app.kubernetes.io/name=foretoken-control-plane
+```
+
+In Prometheus, confirm on **Targets** that the Foretoken targets are `UP` and on **Rules** that `foretoken.recording` and `foretoken.alerting` are loaded. This query returns the Frontend request rate:
+
+```promql
+sum(foretoken:frontend_http_response_starts:rate5m)
+```
+
+## Use an existing monitoring stack
+
+The CLI reuses what the cluster already provides and installs only what is missing:
+
+| Component | Not present | Present | Present but not usable | `foretoken uninstall` |
 | --- | --- | --- | --- | --- |
-| Prometheus | Install a CLI-managed kube-prometheus-stack | Reuse it | Stop and request an explicit selection or repair | Remove only a CLI-managed release |
-| NVIDIA DCGM Exporter | Install a CLI-managed exporter when NVIDIA GPUs exist | Reuse it | Stop | Remove only a CLI-managed release |
-| MetaX mxExporter | Stop; the cluster must provide it | Reuse it | Stop | Preserve it |
+| Prometheus | Install a CLI-managed kube-prometheus-stack | Reuse it | Stop and ask for an explicit choice | Remove only the CLI-managed release |
+| NVIDIA DCGM Exporter | Install a CLI-managed exporter on clusters with NVIDIA GPUs | Reuse it | Stop | Remove only the CLI-managed release |
+| MetaX mxExporter | Stop; the cluster must provide it | Reuse it | Stop | Keep it |
 
-A qualified exporter is ready, covers every selected GPU node, and has exactly one ServiceMonitor that its Prometheus selects. The CLI does not install GPU drivers, device plugins, or vendor operators.
+An exporter is usable when it covers every GPU node and the selected Prometheus scrapes it. The CLI does not install GPU drivers, device plugins, or vendor operators.
 
-If automatic discovery finds multiple compatible Prometheus instances, select one explicitly:
+If several compatible Prometheus instances exist, choose one:
 
 ```bash
 # Allow the Prometheus namespace to scrape Foretoken metrics
@@ -37,63 +70,82 @@ kubectl label namespace monitoring \
 foretoken install --prometheus monitoring/prometheus
 ```
 
-The Prometheus platform owns this namespace label and removes it when collection is no longer needed.
+GPU panels and alerts identify devices by the Foretoken model-group and model-role Pod labels. The CLI-managed DCGM Exporter publishes them; a reused exporter needs the same labels, otherwise those panels stay empty.
 
-## Verify collection
+With a reused Prometheus, Grafana stays under that platform's control. A Grafana sidecar that watches ConfigMaps labeled `grafana_dashboard=1` picks up the dashboard from the `foretoken-platform` namespace. Otherwise, export the JSON and import it through Grafana:
 
 ```bash
-# List the Foretoken monitors and recording rules
-kubectl get servicemonitor,prometheusrule -A \
-  -l app.kubernetes.io/name=foretoken-control-plane
-
-# For CLI-managed Prometheus, open the Prometheus UI locally
-kubectl port-forward \
+kubectl get configmap \
   --namespace foretoken-platform \
-  service/foretoken-prometheus-kube-prometheus \
-  9090:9090
+  foretoken-control-plane-system-dashboard \
+  --output jsonpath='{.data.foretoken-system-overview\.json}' \
+  > /tmp/foretoken-system-overview.json
 ```
 
-Open <http://127.0.0.1:9090/targets> and confirm Foretoken targets are `UP`. Open <http://127.0.0.1:9090/rules> and confirm `foretoken.recording` is loaded. Reused Prometheus instances use their platform-provided access path.
+## Alerts
 
-A minimal query for frontend request volume is:
+Alert rules are installed together with collection. Each alert links to its entry in the [runbooks](runbooks/alerts.md), which explain the signal and how to investigate it. The dashboard draws each alert threshold as a dashed line on the matching panel.
 
-```promql
-sum(foretoken:frontend_http_response_starts:rate5m)
+To change thresholds or the notification language, edit `observability.yaml` in the [observability example](../examples/observability/README.md) and pass it to the installation:
+
+```bash
+foretoken install --values examples/observability/observability.yaml
 ```
 
-## Metrics and recording rules
+`language` accepts `zh`, `en`, or `bilingual` and applies to all alerts of the installation. Notifications are delivered by the cluster's Alertmanager; the optional [Lark integration](integrations/lark/README.md) adds a receiver for Lark group bots.
+
+## Metrics reference
 
 | Source | Contents |
 | --- | --- |
 | Frontend `/metrics` | HTTP requests, admission queues, routing, and runtime state |
-| model-server `/metrics` | Native metrics from the active inference backend |
+| model-server `/metrics` | Inference-engine metrics and RuntimeCache filesystem state |
+| Controller `/metrics` | Reconciliation, workqueues, and published autoscaling decisions |
 | DCGM Exporter | NVIDIA utilization, memory, power, temperature, and XID errors |
-| mxExporter | MetaX utilization and memory metrics |
-| kubelet/cAdvisor | Container CPU, memory, filesystem, and network |
-| kube-state-metrics | Kubernetes object state |
+| mxExporter | MetaX utilization and memory |
+| kubelet/cAdvisor | Container CPU and memory |
 
-The following stable recording rules are currently derived from Frontend metrics and vLLM model-server metric families. They are not a normalized metrics contract for other inference backends.
+The dashboard and alerts query these recording rules. Model-serving rules are derived from vLLM metrics.
 
-| Recording rule | Meaning |
-| --- | --- |
-| `foretoken:frontend_http_response_starts:rate5m` | Frontend HTTP response starts per second |
-| `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | Response-start 5xx ratio, not inference failure ratio |
-| `foretoken:model_server_prompt_tokens:rate5m` | vLLM prompt tokens per second |
-| `foretoken:model_server_generation_tokens:rate5m` | vLLM generated tokens per second |
-| `foretoken:model_server_requests_running:sum` | vLLM requests currently running |
-| `foretoken:model_server_requests_waiting:sum` | vLLM requests waiting in the scheduler |
-| `foretoken:model_server_kv_cache_usage_ratio:max` | Highest vLLM KV-cache usage ratio |
+| Area | Recording rule | Meaning |
+| --- | --- | --- |
+| Frontend | `foretoken:frontend_up:sum` | Reporting Frontend targets |
+| Frontend | `foretoken:frontend_http_response_starts:rate5m` | HTTP response starts per second |
+| Frontend | `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | Share of response starts with a 5xx status |
+| Frontend | `foretoken:frontend_http_response_start_latency_seconds:quantile5m` | Time until response headers are sent, as `p50`, `p90`, and `p99` |
+| Frontend | `foretoken:frontend_upstream_queued_requests:sum` | Requests waiting for admission, by scaling target |
+| Frontend | `foretoken:frontend_kv_index_source_health_ratio:min` | Lowest KV event-source health ratio across Frontend replicas |
+| Model serving | `foretoken:model_server_up:sum` | Reporting model-server targets |
+| Model serving | `foretoken:model_server_completed_requests:rate5m` | Completed requests per second, by finish reason |
+| Model serving | `foretoken:model_server_prompt_tokens:rate5m` | Prompt tokens per second |
+| Model serving | `foretoken:model_server_generation_tokens:rate5m` | Generated tokens per second |
+| Model serving | `foretoken:model_server_requests_running:sum` | Requests currently running |
+| Model serving | `foretoken:model_server_requests_waiting:sum` | Requests waiting in the scheduler |
+| Model serving | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | Time from Frontend handler entry to generation completion, as `p50`, `p90`, and `p99` |
+| Model serving | `foretoken:model_server_time_to_first_token_seconds:quantile5m` | Time to first token, as `p50`, `p90`, and `p99` |
+| Model serving | `foretoken:model_server_time_per_output_token_seconds:quantile5m` | Time per output token, as `p50`, `p90`, and `p99` |
+| Model serving | `foretoken:model_server_inter_token_latency_seconds:quantile5m` | Gap between consecutive output tokens, as `p50`, `p90`, and `p99` |
+| Model serving | `foretoken:model_server_request_stage_time_seconds:quantile5m` | Time spent in the `queue`, `prefill`, and `decode` stages, as `p50`, `p90`, and `p99` |
+| Model serving | `foretoken:model_server_preemptions:rate5m` | Requests preempted per second |
+| Model serving | `foretoken:model_server_request_prompt_tokens_bucket:rate5m` | Prompt length histogram buckets |
+| Model serving | `foretoken:model_server_request_generation_tokens_bucket:rate5m` | Output length histogram buckets |
+| Cache | `foretoken:model_server_kv_cache_usage_ratio:max` | Highest KV cache usage ratio in an engine |
+| Cache | `foretoken:model_server_prefix_cache_hit_ratio:rate5m` | Local or external prefix cache hit ratio |
+| Cache | `foretoken:model_server_runtime_cache_available_bytes:min` | Lowest RuntimeCache free space |
+| Cache | `foretoken:model_server_runtime_cache_usage_ratio:max` | Highest RuntimeCache usage ratio |
+| Cache | `foretoken:model_server_runtime_cache_observation_success:min` | Whether every RuntimeCache mount can be inspected |
+| Cache | `foretoken:model_server_runtime_cache_temporary:max` | Whether any model server uses temporary Pod-local cache storage |
+| Accelerator | `foretoken:accelerator_gpu_utilization_ratio` | Per-device NVIDIA or MetaX utilization |
+| Accelerator | `foretoken:accelerator_gpu_memory_usage_ratio` | Per-device NVIDIA or MetaX memory usage |
+| Accelerator | `foretoken:accelerator_gpu_power_watts` | Per-device NVIDIA power draw |
+| Accelerator | `foretoken:accelerator_gpu_temperature_celsius` | Per-device NVIDIA temperature |
 
-Rules preserve namespace, Frontend service, model group, model role, model name, and optional Prefill/Decode pipeline scope. Counter rules calculate reset-aware five-minute rates before aggregation. For raw backend metric names, units, and labels, inspect the backend `/metrics` `HELP` and `TYPE` metadata.
+Rules keep the namespace, Frontend service, model group, model role, model name, and Prefill/Decode pipeline scope labels. Frontend latency ends when response headers are sent, so for streaming responses it does not include token delivery; generation completion latency and TTFT start when the Frontend handler begins after JSON decoding. These cross-process measurements require synchronized node clocks. A streaming response can start with `2xx` and fail later, so the 5xx ratio is not an inference success rate. Accelerator rules cover only devices used by Foretoken workloads.
 
-A response may begin with `2xx` and fail later while streaming. Do not use `foretoken:frontend_http_response_start_5xx_ratio:rate5m` as an inference-success SLO.
+## Profiling
 
-## Alerts and profiling
-
-Foretoken currently provides metrics and recording rules, not alert rules. Define alert thresholds and notification policy in the Prometheus and Alertmanager configuration owned by the platform team.
-
-Foretoken does not manage a profiling workflow. For a reproducible investigation, run a controlled workload and use PyTorch Profiler, Nsight Systems, or Nsight Compute through the model runtime and hardware platform. Profiling changes serving performance; record the model, load, hardware, and runtime settings with the result.
+For a short CPU/GPU capture on an existing diagnostic service, see [Profiling](profiling.md). It is separate from metrics collection.
 
 ## Remove collection
 
-After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus and DCGM Exporter releases. Reused Prometheus, DCGM Exporter, and mxExporter installations remain unchanged.
+After all Foretoken services are deleted, `foretoken uninstall` removes the CLI-managed Prometheus and DCGM Exporter releases. Reused Prometheus, DCGM Exporter, and mxExporter installations are left unchanged.

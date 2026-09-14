@@ -166,19 +166,21 @@ impl RouterPipelineConfig {
     /// Builds the selected Filter, Scorer, and Picker implementations compiled into this binary.
     pub fn build(&self) -> Result<RouterPipeline, RouterPipelineConfigError> {
         validate_descriptors()?;
-        let mut scorer = scorer_factory(self.scorer.as_str())?();
-        Arc::get_mut(&mut scorer)
+        let filter = filter_descriptor(self.filter.as_str())?;
+        let scorer = scorer_descriptor(self.scorer.as_str())?;
+        let picker = picker_descriptor(self.picker.as_str())?;
+        let mut configured_scorer = (scorer.factory)();
+        Arc::get_mut(&mut configured_scorer)
             .expect("scorer factory returns a new instance")
             .configure(serde_json::Value::Object(self.scorer_parameters.clone()))
             .map_err(|message| RouterPipelineConfigError::InvalidParameters {
                 name: self.scorer.to_string(),
                 message,
             })?;
-        Ok(RouterPipeline::new(
-            filter_factory(self.filter.as_str())?(),
-            scorer,
-            picker_factory(self.picker.as_str())?(),
-        ))
+        let mut pipeline =
+            RouterPipeline::new((filter.factory)(), configured_scorer, (picker.factory)());
+        pipeline.algorithm_names = [filter.name, scorer.name, picker.name];
+        Ok(pipeline)
     }
 
     /// Validates all compiled descriptors and configured names before serving begins.
@@ -187,33 +189,30 @@ impl RouterPipelineConfig {
     }
 }
 
-fn filter_factory(name: &str) -> Result<fn() -> Arc<dyn RouteFilter>, RouterPipelineConfigError> {
+fn filter_descriptor(name: &str) -> Result<&'static FilterDescriptor, RouterPipelineConfigError> {
     inventory::iter::<FilterDescriptor>
         .into_iter()
         .find(|descriptor| descriptor.name == name)
-        .map(|descriptor| descriptor.factory)
         .ok_or_else(|| RouterPipelineConfigError::UnknownAlgorithm {
             category: "filter",
             name: name.to_owned(),
         })
 }
 
-fn scorer_factory(name: &str) -> Result<fn() -> Arc<dyn RouteScorer>, RouterPipelineConfigError> {
+fn scorer_descriptor(name: &str) -> Result<&'static ScorerDescriptor, RouterPipelineConfigError> {
     inventory::iter::<ScorerDescriptor>
         .into_iter()
         .find(|descriptor| descriptor.name == name)
-        .map(|descriptor| descriptor.factory)
         .ok_or_else(|| RouterPipelineConfigError::UnknownAlgorithm {
             category: "scorer",
             name: name.to_owned(),
         })
 }
 
-fn picker_factory(name: &str) -> Result<fn() -> Arc<dyn RoutePicker>, RouterPipelineConfigError> {
+fn picker_descriptor(name: &str) -> Result<&'static PickerDescriptor, RouterPipelineConfigError> {
     inventory::iter::<PickerDescriptor>
         .into_iter()
         .find(|descriptor| descriptor.name == name)
-        .map(|descriptor| descriptor.factory)
         .ok_or_else(|| RouterPipelineConfigError::UnknownAlgorithm {
             category: "picker",
             name: name.to_owned(),

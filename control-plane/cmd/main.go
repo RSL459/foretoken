@@ -8,6 +8,7 @@ package main
 import (
 	"errors"
 	"flag"
+	"net/http"
 	"os"
 	"time"
 
@@ -103,8 +104,8 @@ func main() {
 	})
 	flag.StringVar(&cacheClaimName, "cache-claim", "", "Existing namespace-local PVC shared by runtime workloads.")
 	flag.StringVar(&cacheMountPath, "cache-mount-path", "/var/cache/foretoken", "Absolute runtime cache root mounted into workload Pods.")
-	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional model source endpoint interpreted by the runtime adapter.")
-	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the model source credential.")
+	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional Hugging Face-compatible Hub endpoint.")
+	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the Hugging Face credential.")
 	flag.StringVar(&modelSourceTokenSecretKey, "model-source-token-secret-key", "", "Key in the model source credential Secret.")
 	flag.StringVar(&inferenceEngineProfileRevision, "inference-engine-profile-revision", "default", "Opaque revision of the configured inference engine profile.")
 	flag.StringVar(&inferenceEngineImage, "inference-engine-image", "", "Inference engine image containing the Foretoken model-server adapter.")
@@ -140,7 +141,7 @@ func main() {
 		workloadImagePullSecrets[index] = corev1.LocalObjectReference{Name: name}
 	}
 	cacheProfile := controllers.RuntimeCacheProfile{ClaimName: cacheClaimName, MountPath: cacheMountPath}
-	sourceProfile := controllers.RuntimeSourceProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
+	huggingFaceAccessProfile := controllers.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
 	if inferenceEngineImage == "" {
 		ctrl.Log.Error(errors.New("inference-engine-image must be nonempty"), "invalid inference engine profile")
@@ -150,8 +151,8 @@ func main() {
 		ctrl.Log.Error(err, "invalid runtime cache profile")
 		os.Exit(1)
 	}
-	if err := sourceProfile.Validate(); err != nil {
-		ctrl.Log.Error(err, "invalid runtime source profile")
+	if err := huggingFaceAccessProfile.Validate(); err != nil {
+		ctrl.Log.Error(err, "invalid Hugging Face access profile")
 		os.Exit(1)
 	}
 	if modelServerPort < 1 || modelServerPort > 65535 {
@@ -267,8 +268,21 @@ func main() {
 		ctrl.Log.Error(err, "unable to create manager")
 		os.Exit(1)
 	}
+	controlPlaneNamespace := os.Getenv("POD_NAMESPACE")
+	if controlPlaneNamespace == "" {
+		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure control-plane networking")
+		os.Exit(1)
+	}
 
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
+	if err := (&controllers.ProfileRunReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+		ctrl.Log.Error(err, "unable to register ProfileRun controller")
+		os.Exit(1)
+	}
+	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+		ctrl.Log.Error(err, "unable to register RuntimeCache controller")
+		os.Exit(1)
+	}
 	if frontendEnabled {
 		var gateway *controllers.GatewayParent
 		if frontendMode == frontendModeGateway {
@@ -279,14 +293,15 @@ func main() {
 			}
 		}
 		frontendReconciler := &controllers.FrontendServiceReconciler{
-			Client:    manager.GetClient(),
-			APIReader: manager.GetAPIReader(),
+			Client:       manager.GetClient(),
+			APIReader:    manager.GetAPIReader(),
+			CacheProfile: cacheProfile,
 			RuntimeProfile: controllers.FrontendRuntimeProfile{
-				Image:            frontendImage,
-				Port:             int32(frontendPort),
-				ImagePullSecrets: workloadImagePullSecrets,
-				RuntimeCache:     cacheProfile.RuntimeCache(),
-				Gateway:          gateway,
+				Image:             frontendImage,
+				Port:              int32(frontendPort),
+				ImagePullSecrets:  workloadImagePullSecrets,
+				HuggingFaceAccess: huggingFaceAccessProfile.Access(),
+				Gateway:           gateway,
 			},
 		}
 		if err := frontendReconciler.SetupWithManager(manager); err != nil {
@@ -295,9 +310,9 @@ func main() {
 		}
 	}
 	if err := (&controllers.ModelServiceReconciler{
-		Client:        manager.GetClient(),
-		CacheProfile:  cacheProfile,
-		SourceProfile: sourceProfile,
+		Client:                   manager.GetClient(),
+		CacheProfile:             cacheProfile,
+		HuggingFaceAccessProfile: huggingFaceAccessProfile,
 		MetricsProvider: controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), controllers.AutoscalingTelemetryOptions{
 			CollectionTimeout: autoscalingTelemetryCollectionTimeout,
 			RequestTimeout:    autoscalingTelemetryRequestTimeout,
@@ -315,7 +330,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register KVPool controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.KVGroupReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.KVGroupReconciler{Client: manager.GetClient(), HTTPClient: &http.Client{Timeout: 2 * time.Second}, ControlPlaneNamespace: controlPlaneNamespace}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register KVGroup controller")
 		os.Exit(1)
 	}
@@ -335,11 +350,6 @@ func main() {
 		}},
 	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelPool controller")
-		os.Exit(1)
-	}
-	controlPlaneNamespace := os.Getenv("POD_NAMESPACE")
-	if controlPlaneNamespace == "" {
-		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure ModelGroup drain networking")
 		os.Exit(1)
 	}
 	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
