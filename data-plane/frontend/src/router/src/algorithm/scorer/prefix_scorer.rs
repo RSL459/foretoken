@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-// SPDX-FileCopyrightText: Copyright 2025 The Kubernetes Authors
 
 //! Scoring by complete cached prompt blocks and matched prefix length.
 
@@ -31,6 +30,7 @@ impl RouteScorer for PrefixScorer {
         true
     }
 
+    /// Validates prefix weights at pipeline startup and stores the scorer's parameters.
     fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
         let config: Self = serde_json::from_value(parameters).map_err(|error| error.to_string())?;
         if !(0.0..=1.0).contains(&config.match_length_weight) {
