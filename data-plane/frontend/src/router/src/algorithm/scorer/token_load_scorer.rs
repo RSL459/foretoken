@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-// SPDX-FileCopyrightText: Copyright 2025 The Kubernetes Authors
 
 //! Scoring by in-flight and incoming uncached prompt tokens.
 
@@ -28,6 +27,7 @@ impl RouteScorer for TokenLoadScorer {
         true
     }
 
+    /// Applies token-load parameters at pipeline startup, defaulting nonpositive thresholds.
     fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
         *self = serde_json::from_value(parameters).map_err(|error| error.to_string())?;
         if self.queue_threshold_tokens <= 0 {

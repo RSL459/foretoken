@@ -19,6 +19,8 @@ pub(crate) type RequestKey = (RouteTargetId, u32);
 /// Snapshot of locally routed requests; engine telemetry is deliberately not added to these counts.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct InFlightLoad {
+    /// Selected requests still owned by a stage or response stream.
+    pub requests: i64,
     /// Uncached prompt tokens awaiting the first response, including Decode dispatches.
     pub tokens: i64,
 }
@@ -35,6 +37,7 @@ impl InFlightRequests {
             return InFlightLoad::default();
         };
         InFlightLoad {
+            requests: requests.len() as i64,
             tokens: requests.values().fold(0_i64, |tokens, request| {
                 tokens.wrapping_add(*request as i64)
             }),
