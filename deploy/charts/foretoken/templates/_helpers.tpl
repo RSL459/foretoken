@@ -58,6 +58,21 @@ false
 {{- end -}}
 {{- end }}
 
+{{/*
+Replaces `foretoken_alert_threshold_<snake_case name>` placeholders in alert rules and the
+dashboard with the values under observability.alerts.thresholds. A quoted placeholder becomes a
+bare number so JSON and Go template pipelines receive a numeric value.
+*/}}
+{{- define "foretoken.substituteAlertThresholds" -}}
+{{- $text := .text -}}
+{{- range $name, $value := .thresholds -}}
+{{- $token := printf "foretoken_alert_threshold_%s" (snakecase $name) -}}
+{{- $text = replace (printf "%q" $token) (toString $value) $text -}}
+{{- $text = replace $token (toString $value) $text -}}
+{{- end -}}
+{{- $text -}}
+{{- end }}
+
 {{- define "foretoken.observabilityLabels" -}}
 {{ include "foretoken.labels" . }}
 {{- with .Values.observability.additionalLabels }}
@@ -77,11 +92,42 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 
-{{- define "foretoken.image" -}}
-{{- if .Values.image.digest -}}
-{{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{/* Replaces only an image registry host, preserving the repository, tag, and digest. */}}
+{{- define "foretoken.imageWithRegistry" -}}
+{{- $registry := trim .registry -}}
+{{- $image := trim .image -}}
+{{- if eq $registry "" -}}
+{{- $image -}}
 {{- else -}}
-{{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) -}}
+{{- $parts := splitList "/" $image -}}
+{{- $first := first $parts -}}
+{{- if or (contains "." $first) (contains ":" $first) (eq $first "localhost") -}}
+{{- printf "%s/%s" $registry (join "/" (rest $parts)) -}}
+{{- else -}}
+{{- printf "%s/%s" $registry $image -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{- define "foretoken.image" -}}
+{{- $repository := include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.image.repository) -}}
+{{- if .Values.image.digest -}}
+{{- printf "%s@%s" $repository .Values.image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" $repository (default .Chart.AppVersion .Values.image.tag) -}}
+{{- end -}}
+{{- end }}
+
+{{- define "foretoken.runtimeVllmImage" -}}
+{{- $image := trim .Values.runtime.vllm.image -}}
+{{- if eq $image "auto" -}}
+{{- $tag := .Chart.AppVersion -}}
+{{- if or (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/gpu") (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/sgpu") -}}
+{{- $tag = printf "%s-metax" $tag -}}
+{{- end -}}
+{{- printf "ghcr.io/shiweijiezero/foretoken/model-server:%s" $tag -}}
+{{- else -}}
+{{- $image -}}
 {{- end -}}
 {{- end }}
 
@@ -114,10 +160,10 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- if and (ne (trim .Values.runtime.vllm.modelSource.tokenSecret.name) "") (eq (trim .Values.runtime.vllm.modelSource.tokenSecret.key) "") -}}
 {{- fail "runtime.vllm.modelSource.tokenSecret.key is required when name is set" -}}
 {{- end -}}
-{{- if and (eq (trim .Values.workload.cache.claimName) "") (or (ne (trim .Values.runtime.vllm.modelSource.endpoint) "") (ne (trim .Values.runtime.vllm.modelSource.tokenSecret.name) "")) -}}
-{{- fail "workload.cache.claimName is required when runtime.vllm.modelSource is configured" -}}
+{{- if and (eq (trim .Values.runtime.vllm.image) "auto") (not (or (eq .Values.runtime.vllm.gpu.resourceName "nvidia.com/gpu") (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/gpu") (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/sgpu"))) -}}
+{{- fail "runtime.vllm.image must be set for an unsupported GPU resource" -}}
 {{- end -}}
-{{- if ne (trim .Values.runtime.vllm.image) "" -}}
+{{- if ne (trim (include "foretoken.runtimeVllmImage" .)) "" -}}
 {{- if eq (trim .Values.runtime.vllm.gpu.resourceName) "" -}}
 {{- fail "runtime.vllm.gpu.resourceName is required when runtime.vllm.image is set" -}}
 {{- end -}}

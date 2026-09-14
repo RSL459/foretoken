@@ -26,6 +26,11 @@ impl Default for PrefixScorer {
 }
 
 impl RouteScorer for PrefixScorer {
+    /// Requests live prefix observations before cache-aware scoring.
+    fn needs_kv_prefix(&self) -> bool {
+        true
+    }
+
     fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
         let config: Self = serde_json::from_value(parameters).map_err(|error| error.to_string())?;
         if !(0.0..=1.0).contains(&config.match_length_weight) {

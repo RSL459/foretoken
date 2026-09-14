@@ -27,7 +27,7 @@ pub type TokenStream = Pin<Box<dyn Stream<Item = Result<TokenEvent, BackendError
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BackendTelemetry {
     pub running_requests: u64,
-    pub max_concurrent_requests: u64,
+    pub max_concurrent_requests: Option<u64>,
     pub scheduler_running_requests: Option<u64>,
     pub scheduler_waiting_requests: Option<u64>,
     pub kv_cache_usage: Option<f64>,
@@ -101,8 +101,8 @@ impl BackendError {
             | Error::UnsupportedAuxFrames { .. }
             | Error::UnsupportedCoordinatorEngineId { .. }
             | Error::UnsupportedExternalCoordinator
-            | Error::UnsupportedField { .. }
             | Error::ValueDecode(_) => Self::Protocol,
+            Error::UnsupportedField { .. } => Self::InvalidRequest,
             Error::DuplicateRequestId { .. }
             | Error::InvalidDataParallelRank { .. }
             | Error::InvalidStructuredOutputsParams { .. } => Self::Rejected,
@@ -135,14 +135,14 @@ pub trait Backend: Send + Sync {
 pub struct VllmBackend {
     llm: RwLock<Option<Llm>>,
     running_requests: Arc<AtomicU64>,
-    max_concurrent_requests: u64,
+    max_concurrent_requests: Option<u64>,
     engine_labels: Vec<EngineLabels>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
 }
 
 impl VllmBackend {
     /// Creates the model-server adapter and retains the provided vLLM `Llm` facade until shutdown.
-    pub fn new(llm: Llm, max_concurrent_requests: u64) -> Self {
+    pub fn new(llm: Llm, max_concurrent_requests: Option<u64>) -> Self {
         let client = llm.engine_core_client();
         let model_name = client.model_name().to_string();
         let engine_labels = client
@@ -168,6 +168,21 @@ impl VllmBackend {
             return Ok(());
         };
         llm.shutdown().await.map_err(BackendError::from_llm)
+    }
+
+    /// Runs one native utility for the capture supervisor; callers own deadlines and escalation.
+    pub async fn set_profiling(&self, start: bool) -> Result<(), String> {
+        let guard = self.llm.read().await;
+        let client = guard
+            .as_ref()
+            .ok_or("engine is unavailable")?
+            .engine_core_client();
+        let result = if start {
+            client.start_profile(None).await
+        } else {
+            client.stop_profile(None).await
+        };
+        result.map_err(|error| error.to_string())
     }
 }
 

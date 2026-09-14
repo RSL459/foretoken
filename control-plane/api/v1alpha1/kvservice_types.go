@@ -10,10 +10,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// ByteQuantity is a positive, exact integer number of bytes. It deliberately
-// does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
+// ByteQuantity is a resolved positive int64 byte count used by client workloads and status.
 // +kubebuilder:validation:Pattern="^[1-9][0-9]*$"
 // +kubebuilder:validation:MaxLength=19
+// +kubebuilder:validation:XValidation:rule="int(self) > 0",message="must be a positive int64 byte count"
 type ByteQuantity string
 
 // KVResources defines CPU and memory for a Mooncake component.
@@ -41,8 +41,10 @@ const (
 // snapshot retention is not a Foretoken cache TTL or eviction policy.
 type SnapshotStorage struct {
 	// +optional
-	StorageClassName string       `json:"storageClassName,omitempty"`
-	Size             ByteQuantity `json:"size"`
+	StorageClassName string `json:"storageClassName,omitempty"`
+	// Size is a positive whole-byte quantity, such as 1Gi or 1G.
+	// +kubebuilder:validation:XValidation:rule="quantity(self).compareTo(quantity('0')) > 0",message="size must be positive"
+	Size ResourceQuantity `json:"size"`
 	// +optional
 	// +kubebuilder:default=Delete
 	RetentionPolicy RetentionPolicy `json:"retentionPolicy,omitempty"`
@@ -52,6 +54,10 @@ type SnapshotStorage struct {
 type KVMasterSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
+	// FSGroup sets the group used to access the mounted Master volumes; omitted values preserve image and driver behavior.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	FSGroup *int64 `json:"fsGroup,omitempty"`
 	// +optional
 	// +kubebuilder:default=50051
 	// +kubebuilder:validation:Minimum=1
@@ -86,24 +92,48 @@ type KVMasterSpec struct {
 // PVC request, not a claim about usable filesystem capacity.
 type KVDisk struct {
 	// +optional
-	StorageClassName string       `json:"storageClassName,omitempty"`
-	Size             ByteQuantity `json:"size"`
+	StorageClassName string `json:"storageClassName,omitempty"`
+	// Size is a positive whole-byte quantity, such as 1Gi or 1G.
+	// +kubebuilder:validation:XValidation:rule="quantity(self).compareTo(quantity('0')) > 0",message="size must be positive"
+	Size ResourceQuantity `json:"size"`
 	// +optional
 	// +kubebuilder:default=Delete
 	RetentionPolicy RetentionPolicy `json:"retentionPolicy,omitempty"`
 }
 
-// KVClientTemplate is immutable normalized intent for homogeneous future clients.
+// DefaultStorageRegistrationPort is the client management port used when omitted.
+const DefaultStorageRegistrationPort int32 = 9300
+
+// StorageRegistration enables provider registration checks for a Store client.
+type StorageRegistration struct {
+	// Enabled requests provider registration checks instead of infrastructure-only readiness.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// Port is the client HTTP management port used for registration checks.
+	// +optional
+	// +kubebuilder:default=9300
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port,omitempty"`
+}
+
+// KVClientTemplate configures homogeneous Store clients.
 // This standalone Store profile enables SSD offload, so disk is required. The
 // user-provided gap between capacity and memory resources reserves runtime overhead;
 // Foretoken deliberately does not guess a fixed overhead amount.
 // +kubebuilder:validation:XValidation:rule="has(self.disk)",message="client.disk is required when standalone Store offload is enabled"
+// +kubebuilder:validation:XValidation:rule="self.protocol == 'rdma' ? has(self.rdmaResourceName) : !has(self.rdmaResourceName) && !has(self.rdmaResourceCount)",message="RDMA requires rdmaResourceName; TCP must omit RDMA resources"
 // +kubebuilder:validation:XValidation:rule="quantity(self.memoryCapacity).compareTo(quantity(self.resources.requests.memory)) < 0",message="client.memoryCapacity must be less than client.resources.requests.memory to reserve runtime overhead"
 // +kubebuilder:validation:XValidation:rule="!has(self.resources.limits) || !has(self.resources.limits.memory) || quantity(self.memoryCapacity).compareTo(quantity(self.resources.limits.memory)) < 0",message="client.memoryCapacity must be less than client.resources.limits.memory to reserve runtime overhead"
 type KVClientTemplate struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
-	// +kubebuilder:validation:Enum=rdma
+	// FSGroup sets the group used to access client volumes without changing the image user.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	FSGroup *int64 `json:"fsGroup,omitempty"`
+	// Protocol is shared by storage clients and model requesters bound to this KVService.
+	// +kubebuilder:validation:Enum=tcp;rdma
 	Protocol string `json:"protocol"`
 	// +optional
 	// +kubebuilder:default=50052
@@ -111,15 +141,20 @@ type KVClientTemplate struct {
 	// +kubebuilder:validation:Maximum=65535
 	Port      int32       `json:"port,omitempty"`
 	Resources KVResources `json:"resources"`
-	// +kubebuilder:validation:MinLength=1
-	RDMAResourceName string `json:"rdmaResourceName"`
 	// +optional
-	// +kubebuilder:default=1
+	// +kubebuilder:validation:MinLength=1
+	RDMAResourceName string `json:"rdmaResourceName,omitempty"`
+	// RDMAResourceCount defaults to one during RDMA client normalization and is unused for TCP.
+	// +optional
 	// +kubebuilder:validation:Minimum=1
-	RDMAResourceCount int32        `json:"rdmaResourceCount,omitempty"`
-	MemoryCapacity    ByteQuantity `json:"memoryCapacity"`
+	RDMAResourceCount int32 `json:"rdmaResourceCount,omitempty"`
+	// MemoryCapacity is a positive whole-byte quantity contributed to the shared Store.
+	// +kubebuilder:validation:XValidation:rule="quantity(self).compareTo(quantity('0')) > 0",message="memoryCapacity must be positive"
+	MemoryCapacity ResourceQuantity `json:"memoryCapacity"`
 	// +optional
 	Disk *KVDisk `json:"disk,omitempty"`
+	// +optional
+	StorageRegistration *StorageRegistration `json:"storageRegistration,omitempty"`
 }
 
 // KVStoragePoolTemplate names one homogeneous future client capacity Pool.
@@ -137,16 +172,18 @@ type KVStoragePoolTemplate struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
-// KVTimeouts defines lifecycle budgets for future Store clients.
+// KVTimeouts defines lifecycle budgets for Store clients.
 type KVTimeouts struct {
 	Startup Duration `json:"startup"`
-	Drain   Duration `json:"drain"`
+	// Drain is the Kubernetes termination grace period for a leaving Store client.
+	Drain Duration `json:"drain"`
 }
 
 // KVRequesterSpec configures ModelGroup Store requester configuration.
 type KVRequesterSpec struct {
-	// LocalBufferSize is an exact positive integer number of bytes.
-	LocalBufferSize ByteQuantity `json:"localBufferSize"`
+	// LocalBufferSize is a positive whole-byte quantity reserved by each model requester.
+	// +kubebuilder:validation:XValidation:rule="quantity(self).compareTo(quantity('0')) > 0",message="localBufferSize must be positive"
+	LocalBufferSize ResourceQuantity `json:"localBufferSize"`
 }
 
 // KVServiceBinding is the immutable current requester configuration consumed by ModelPools.
@@ -159,6 +196,8 @@ type KVServiceBinding struct {
 }
 
 // KVServiceSpec declares a Foretoken-owned Mooncake standalone Store.
+// All storage pools use one protocol so requesters and storage clients share the same transport.
+// +kubebuilder:validation:XValidation:rule="self.storagePools.all(pool, pool.client.protocol == self.storagePools[0].client.protocol)",message="storagePools must use the same client protocol"
 // +kubebuilder:validation:XValidation:rule="self.storagePools.all(pool, self.storagePools.exists(other, other.name == pool.name) ? self.storagePools.filter(other, other.name == pool.name).size() == 1 : true)",message="storagePools names must be unique"
 type KVServiceSpec struct {
 	// +kubebuilder:validation:Enum=mooncakeStandaloneStore
@@ -173,8 +212,8 @@ type KVServiceSpec struct {
 	Requester    KVRequesterSpec         `json:"requester"`
 }
 
-// KVServiceStatus reports infrastructure and Pool materialization only; it does
-// not claim provider registration, usable Store state, or available capacity.
+// KVServiceStatus reports infrastructure and Pool materialization. Provider
+// registration is reflected by the dependent KVGroups when explicitly enabled.
 type KVServiceStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -201,7 +240,9 @@ const (
 )
 
 // NormalizedKVPoolTemplate is the immutable client configuration compiled from
-// a KVService storagePools entry. Pool identity and desiredGroups stay outside it.
+// a KVService storagePools entry. Capacities are decimal byte strings; Pool identity
+// and desiredGroups stay outside it.
+// +kubebuilder:validation:XValidation:rule="self.client.protocol != 'rdma' || has(self.client.rdmaResourceCount)",message="normalized RDMA clients require rdmaResourceCount"
 type NormalizedKVPoolTemplate struct {
 	Client KVClientTemplate `json:"client"`
 	// +optional
@@ -210,13 +251,18 @@ type NormalizedKVPoolTemplate struct {
 
 // KVPoolSpec is controller-owned normalized client Pool intent. desiredGroups is
 // deliberately mutable for in-place scale; all revision-defining fields are immutable.
-// +kubebuilder:validation:XValidation:rule="self.kvServiceRef == oldSelf.kvServiceRef && self.poolName == oldSelf.poolName && self.revision == oldSelf.revision && self.template == oldSelf.template",message="only KVPool desiredGroups is mutable"
+// +kubebuilder:validation:XValidation:rule="self.kvServiceRef == oldSelf.kvServiceRef && self.poolName == oldSelf.poolName && self.revision == oldSelf.revision && self.template == oldSelf.template",message="only KVPool desiredGroups and masterAdminPort are mutable"
 type KVPoolSpec struct {
 	KVServiceRef LocalObjectReference `json:"kvServiceRef"`
 	PoolName     string               `json:"poolName"`
 	// Revision identifies the immutable Group template generated by this Pool.
 	// +kubebuilder:validation:MinLength=1
 	Revision string `json:"revision"`
+	// MasterAdminPort is the resolved Master HTTP admin port used by enabled Groups.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	MasterAdminPort int32 `json:"masterAdminPort,omitempty"`
 	// +kubebuilder:validation:Minimum=0
 	DesiredGroups int32                    `json:"desiredGroups"`
 	Template      NormalizedKVPoolTemplate `json:"template"`

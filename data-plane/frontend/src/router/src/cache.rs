@@ -38,20 +38,10 @@ pub(crate) fn cache_match(
         block_size,
     };
     for matched in matches {
-        if matched.placement.locality == KvCacheLocality::Unspecified
-            || matched.matched_complete_blocks == 0
-        {
+        if matched.placement.locality == KvCacheLocality::Unspecified {
             continue;
         }
-        let block_size = matched.matched_tokens / matched.matched_complete_blocks as usize;
-        if block_size == 0 {
-            continue;
-        }
-        // One model's event binding has one block granularity. Ignore incompatible partitions.
-        if block_size != info.block_size {
-            return None;
-        }
-        let count = (matched.matched_complete_blocks as usize).min(info.total_blocks);
+        let count = (matched.matched_tokens / block_size).min(info.total_blocks);
         info.matched_blocks = info.matched_blocks.max(count);
     }
     Some(info)

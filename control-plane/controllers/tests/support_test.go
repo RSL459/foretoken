@@ -10,6 +10,7 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -49,8 +50,8 @@ func controllerClient(t *testing.T, objects ...client.Object) client.Client {
 		&inferencev1alpha1.ModelService{}, &inferencev1alpha1.ModelPool{},
 		&inferencev1alpha1.ModelGroup{}, &inferencev1alpha1.KVService{},
 		&inferencev1alpha1.KVPool{}, &inferencev1alpha1.KVGroup{},
-		&inferencev1alpha1.FrontendService{}, &appsv1.Deployment{},
-		&batchv1.Job{}, &gatewayv1.HTTPRoute{},
+		&inferencev1alpha1.FrontendService{}, &inferencev1alpha1.RuntimeCache{}, &appsv1.Deployment{},
+		&batchv1.Job{}, &corev1.PersistentVolumeClaim{}, &gatewayv1.HTTPRoute{},
 	).WithObjects(objects...).Build()
 }
 
@@ -81,7 +82,7 @@ func modelPool(service *inferencev1alpha1.ModelService, name string, desired int
 			ModelServiceRef: inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)},
 			PoolName:        "default", DesiredGroups: desired,
 			Template: inferencev1alpha1.NormalizedPoolTemplate{
-				Model: service.Spec.Model, ModelRevision: "main", Tokenizer: service.Spec.Model, TokenizerRevision: "main", Backend: "vllm",
+				Model: service.Spec.Model, Source: inferencev1alpha1.ModelSourceHF, ModelRevision: "main", Tokenizer: service.Spec.Model, TokenizerRevision: "main", Backend: "vllm",
 				Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1,
 				Resources:                             *service.Spec.Resources,
 				Parallelism:                           inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
@@ -101,7 +102,7 @@ func modelGroup(pool *inferencev1alpha1.ModelPool, name string, ordinal int32) *
 		Spec: inferencev1alpha1.ModelGroupSpec{
 			ModelPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
 			Revision:     "r1", Ordinal: ordinal, Role: pool.Spec.Template.Role,
-			Artifacts: inferencev1alpha1.ModelGroupArtifacts{Model: pool.Spec.Template.Model, ModelRevision: pool.Spec.Template.ModelRevision, Tokenizer: pool.Spec.Template.Tokenizer, TokenizerRevision: pool.Spec.Template.TokenizerRevision, Cache: pool.Spec.Template.RuntimeCache.DeepCopy(), SourceAccess: pool.Spec.Template.SourceAccess.DeepCopy()},
+			Artifacts: inferencev1alpha1.ModelGroupArtifacts{Model: pool.Spec.Template.Model, Source: pool.Spec.Template.Source, ModelRevision: pool.Spec.Template.ModelRevision, Tokenizer: pool.Spec.Template.Tokenizer, TokenizerRevision: pool.Spec.Template.TokenizerRevision, Cache: pool.Spec.Template.RuntimeCache.DeepCopy(), HuggingFaceAccess: pool.Spec.Template.HuggingFaceAccess.DeepCopy()},
 			Runtime: inferencev1alpha1.ModelGroupRuntime{
 				Backend:                               "vllm",
 				Image:                                 "vllm:test",

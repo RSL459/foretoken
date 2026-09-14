@@ -5,9 +5,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
 from foretoken.accelerators.discovery import ExporterDiscovery
-from foretoken.accelerators.metax import MetaXMetricsDiscovery
-from foretoken.accelerators.nvidia import NvidiaMetricsDiscovery
+from foretoken.accelerators.metax import METAX_GPU_RESOURCES, MetaXMetricsDiscovery
+from foretoken.accelerators.nvidia import NVIDIA_GPU_RESOURCE, NvidiaMetricsDiscovery
 from foretoken.arguments import InstallCommand, UninstallCommand
 from foretoken.kubernetes import (
     Kubectl,
@@ -21,10 +25,14 @@ from foretoken.manifest import DeploymentError
 from foretoken.observability import PrometheusRef, select_prometheus
 from foretoken.platform.config import (
     default_platform_config,
-    validate_platform_values,
+    load_platform_values,
+    resolve_load_balancer_config,
+    runtime_overrides_from_values,
 )
 from foretoken.platform.gateway import GatewayControllerLifecycle
 from foretoken.platform.helm import Helm
+from foretoken.platform.load_balancer import LoadBalancerLifecycle
+from foretoken.platform.types import RuntimeOverrides
 from foretoken.source import (
     prepare_source_images,
     restart_changed_source_deployments,
@@ -33,22 +41,91 @@ from foretoken.source import (
 
 def _print_plan(responsibility: str, action: str, detail: str) -> None:
     """Print one stable installation lifecycle decision."""
-    print(f"{responsibility:<28} {action:<8} {detail}")
+    print(f"{responsibility:<28} {action:<20} {detail}")
+
+
+@dataclass(frozen=True)
+class _RuntimeSelection:
+    """One accelerator backend and Kubernetes resource selected for the platform."""
+
+    backend: str
+    resource_name: str
+
+
+def _resource_capacity(node: dict[str, Any], resource_name: str) -> int:
+    """Return one node's allocatable extended-resource capacity."""
+    value = ((node.get("status") or {}).get("allocatable") or {}).get(
+        resource_name
+    )
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _select_runtime(
+    nodes: tuple[dict[str, Any], ...], overrides: RuntimeOverrides
+) -> _RuntimeSelection | None:
+    """Select the single supported accelerator resource within the configured scope."""
+    selected_nodes = nodes
+    if overrides.gpu_node_selector is not None:
+        key, value = overrides.gpu_node_selector
+        if key:
+            selected_nodes = tuple(
+                node
+                for node in nodes
+                if ((node.get("metadata") or {}).get("labels") or {}).get(key)
+                == value
+            )
+
+    resource_backends = {
+        NVIDIA_GPU_RESOURCE: "nvidia",
+        **{resource: "metax" for resource in METAX_GPU_RESOURCES},
+    }
+    if overrides.gpu_resource_name is not None:
+        resource_name = overrides.gpu_resource_name
+        if not resource_name:
+            return None
+        return _RuntimeSelection(
+            resource_backends.get(resource_name, "custom"), resource_name
+        )
+
+    resources = tuple(
+        resource
+        for resource in resource_backends
+        if any(_resource_capacity(node, resource) > 0 for node in selected_nodes)
+    )
+    if not resources:
+        return None
+    if len(resources) > 1:
+        raise DeploymentError(
+            "multiple accelerator resources are allocatable in the selected "
+            "cluster scope: "
+            + ", ".join(resources)
+            + "; set runtime.vllm.gpu.resourceName or runtime.vllm.gpu.nodeSelector "
+            "in --values"
+        )
+    resource_name = resources[0]
+    return _RuntimeSelection(resource_backends[resource_name], resource_name)
 
 
 class PlatformLifecycle:
     """Own platform installation and managed dependency lifecycles."""
 
-    def __init__(self) -> None:
-        self._helm = Helm(default_platform_config())
+    def __init__(self, oci_registry: str | None = None) -> None:
+        config = default_platform_config(oci_registry)
+        self._helm = Helm(config)
+        self._oci_registry = config.image_registry
         self._kubectl = Kubectl()
         self._gateway = GatewayControllerLifecycle(self._helm, self._kubectl)
+        self._load_balancer = LoadBalancerLifecycle(self._helm, self._kubectl)
 
     def install(self, command: InstallCommand) -> None:
         """Install managed dependencies and update the Foretoken platform release."""
         helm = self._helm
         kubectl = self._kubectl
         gateway = self._gateway
+        load_balancer = self._load_balancer
         timeout_seconds(command.timeout)
 
         platform = helm.platform_release()
@@ -71,7 +148,30 @@ class PlatformLifecycle:
                     f"Helm release {platform.display_name} uses {install_source} images; "
                     f"run {command_hint}"
                 )
-        validate_platform_values(command.values)
+        values = load_platform_values(command.values)
+        current_runtime = runtime_overrides_from_values(values)
+        stored_runtime = (
+            runtime_overrides_from_values((helm.release_user_values(platform),))
+            if platform_exists
+            else RuntimeOverrides()
+        )
+        runtime_scope = RuntimeOverrides(
+            gpu_resource_name=(
+                current_runtime.gpu_resource_name
+                if current_runtime.gpu_resource_name is not None
+                else (
+                    None
+                    if current_runtime.gpu_node_selector is not None
+                    else stored_runtime.gpu_resource_name
+                )
+            ),
+            gpu_node_selector=(
+                current_runtime.gpu_node_selector
+                if current_runtime.gpu_node_selector is not None
+                else stored_runtime.gpu_node_selector
+            ),
+        )
+        load_balancer_config = resolve_load_balancer_config(values)
 
         deployments = control_plane_deployments(kubectl)
         expected_deployment = f"{platform.name}-control-plane"
@@ -94,6 +194,15 @@ class PlatformLifecycle:
                 f"lifecycle: {existing}"
             )
 
+        load_balancer_plan = load_balancer.resolve_install(load_balancer_config)
+        if load_balancer_plan.blocking:
+            _print_plan(
+                "LoadBalancer",
+                load_balancer_plan.action,
+                load_balancer_plan.detail,
+            )
+            raise DeploymentError(load_balancer_plan.detail)
+
         gateway_config, gateway_plan = gateway.resolve_install(
             command, platform, platform_exists
         )
@@ -106,6 +215,51 @@ class PlatformLifecycle:
                 "use its existing Helm lifecycle"
             )
         exporter_discovery = ExporterDiscovery(kubectl)
+        runtime_selection = _select_runtime(exporter_discovery.nodes, runtime_scope)
+
+        source_runtime_image: str | None = None
+        configured_runtime_image = (
+            current_runtime.image
+            if current_runtime.image is not None
+            else stored_runtime.image
+        )
+        if command.editable is not None:
+            if current_runtime.image not in {None, "auto"}:
+                source_runtime_image = current_runtime.image or None
+            elif runtime_selection is not None and runtime_selection.backend == "metax":
+                source_runtime_image = helm.platform_runtime_image(
+                    Path(command.editable).expanduser().resolve(),
+                    runtime_selection.resource_name,
+                )
+            elif (
+                runtime_selection is not None
+                and runtime_selection.backend == "custom"
+            ):
+                raise DeploymentError(
+                    "runtime.vllm.image must be set in --values for source builds on "
+                    f"GPU resource {runtime_selection.resource_name}"
+                )
+        elif (
+            runtime_selection is not None
+            and runtime_selection.backend == "custom"
+            and configured_runtime_image in {None, "auto"}
+        ):
+            raise DeploymentError(
+                "runtime.vllm.image must be set in --values for GPU resource "
+                f"{runtime_selection.resource_name}"
+            )
+
+        gpu_resource_name = (
+            runtime_selection.resource_name
+            if runtime_selection is not None
+            and current_runtime.gpu_resource_name is None
+            and (
+                stored_runtime.gpu_resource_name is None
+                or current_runtime.gpu_node_selector is not None
+            )
+            else None
+        )
+
         nvidia_metrics = NvidiaMetricsDiscovery(exporter_discovery).resolve(
             managed_dcgm if managed_dcgm_exists else None
         )
@@ -199,23 +353,45 @@ class PlatformLifecycle:
         if command.editable is not None:
             _print_plan("Source images", "Build", command.editable)
         _print_plan(
+            "LoadBalancer", load_balancer_plan.action, load_balancer_plan.detail
+        )
+        _print_plan(
             "Gateway Controller", gateway_plan.action, gateway_plan.detail
         )
         _print_plan("Prometheus", prometheus_action, prometheus_detail)
         _print_plan("NVIDIA DCGM Exporter", nvidia_action, nvidia_detail)
         _print_plan("MetaX mxExporter", metax_action, metax_detail)
+        if runtime_selection is None:
+            runtime_action = "Default"
+            runtime_detail = "chart runtime (no allocatable supported GPU detected)"
+        else:
+            runtime_action = (
+                "Configured"
+                if current_runtime.gpu_resource_name is not None
+                or current_runtime.gpu_node_selector is not None
+                or stored_runtime.gpu_resource_name is not None
+                or stored_runtime.gpu_node_selector is not None
+                else "Auto-select"
+            )
+            runtime_detail = (
+                f"{runtime_selection.backend} via {runtime_selection.resource_name}"
+            )
+        _print_plan("Inference runtime", runtime_action, runtime_detail)
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
         source_images = (
             prepare_source_images(
                 command.editable,
                 command.registry,
+                self._oci_registry,
                 platform.namespace,
                 command.timeout,
+                source_runtime_image,
             )
             if command.editable is not None
             else None
         )
+        load_balancer.apply(load_balancer_plan, command.timeout)
         gateway.apply_before_platform(gateway_plan, command.timeout)
         if install_managed_prometheus:
             helm.install_prometheus(
@@ -241,6 +417,7 @@ class PlatformLifecycle:
             gateway_section_name=command.gateway_section_name,
             gateway_controller_name=gateway_plan.controller_name,
             observability_labels=observability_labels,
+            gpu_resource_name=gpu_resource_name,
             reuse_values=platform_exists,
             timeout=command.timeout,
         )
@@ -255,6 +432,12 @@ class PlatformLifecycle:
             gateway_plan, gateway_config, command.timeout
         ):
             _print_plan(responsibility, action, detail)
+        if load_balancer_plan.install:
+            _print_plan(
+                "LoadBalancer",
+                "Configured",
+                f"{load_balancer_plan.release.display_name} (Layer 2; address allocation is confirmed per Service)",
+            )
         if install_managed_prometheus:
             mark_managed_metrics_scraper_namespace(
                 kubectl, managed_prometheus.namespace
@@ -263,12 +446,21 @@ class PlatformLifecycle:
         if install_managed_dcgm:
             _print_plan("NVIDIA DCGM Exporter", "Ready", managed_dcgm.display_name)
         _print_plan("Foretoken platform", "Ready", platform.display_name)
+        if not load_balancer_plan.install and load_balancer_plan.action != "Reuse":
+            _print_plan(
+                "LoadBalancer support",
+                load_balancer_plan.action,
+                "model services cannot receive external addresses until the "
+                "cluster assigns LoadBalancer addresses; set "
+                "loadBalancer.managedAddresses in --values to install managed MetalLB",
+            )
 
     def uninstall(self, command: UninstallCommand) -> None:
         """Remove CLI-owned releases after user services are gone."""
         helm = self._helm
         kubectl = self._kubectl
         gateway = self._gateway
+        load_balancer = self._load_balancer
         timeout_seconds(command.timeout)
         platform = helm.platform_release()
         managed_dcgm = helm.dcgm_release()
@@ -343,3 +535,6 @@ class PlatformLifecycle:
         )
         if gateway_result is not None:
             _print_plan("Gateway Controller", *gateway_result)
+        load_balancer_result = load_balancer.finish_uninstall(command.timeout)
+        if load_balancer_result is not None:
+            _print_plan("LoadBalancer", *load_balancer_result)

@@ -19,6 +19,7 @@ class InstallCommand:
     values: tuple[str, ...]
     editable: str | None
     registry: str | None
+    oci_registry: str | None
     prometheus: str | None
     frontend_mode: str | None
     gateway_name: str
@@ -75,6 +76,17 @@ class BenchCommand:
     arguments: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ProfileCommand:
+    """Request one runtime-owned Torch window on an existing diagnostic service."""
+
+    kustomize_path: str
+    model: str | None
+    profile_duration: str
+    profile_engine: str
+    timeout: str
+
+
 ParsedCommand = (
     InstallCommand
     | UninstallCommand
@@ -83,6 +95,7 @@ ParsedCommand = (
     | StatusCommand
     | EndpointCommand
     | BenchCommand
+    | ProfileCommand
 )
 
 
@@ -103,7 +116,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="foretoken",
         description=(
             "Install the Kubernetes control plane, deploy model services, "
-            "and run benchmarks"
+            "capture profiles, and run benchmarks"
         ),
     )
     parser.add_argument(
@@ -117,8 +130,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "install",
         help="Install or update the Foretoken Kubernetes control plane",
         description=(
-            "Install or update Foretoken CRDs and the controller, configure shared "
-            "monitoring, and create Gateway resources when Gateway mode is selected. "
+            "Install or update Foretoken CRDs and the controller, discover the cluster "
+            "LoadBalancer, configure shared monitoring, and create Gateway resources "
+            "when Gateway mode is selected. "
             "Model services are deployed separately with 'foretoken deploy'."
         ),
     )
@@ -134,11 +148,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="registry used to distribute source images to remote clusters",
     )
     install.add_argument(
+        "--oci-registry",
+        metavar="REGISTRY",
+        help=(
+            "explicit registry prefix for release images and Helm charts; defaults "
+            "to FORETOKEN_OCI_REGISTRY (editable builds otherwise select faster "
+            "supported anonymous sources)"
+        ),
+    )
+    install.add_argument(
         "-f",
         "--values",
         action="append",
         metavar="PATH",
-        help="Helm values for images, runtime, or hardware; may be repeated",
+        help=(
+            "Helm values for images, runtime, hardware, or a managed LoadBalancer "
+            "address pool; may be repeated"
+        ),
     )
     install.add_argument(
         "--prometheus",
@@ -236,10 +262,37 @@ def _build_parser() -> argparse.ArgumentParser:
         help="print the HTTP Host value instead of the URL",
     )
 
+    profile = subparsers.add_parser(
+        "profile",
+        help="Capture a PyTorch profile from an existing ModelService",
+        description=(
+            "Capture a PyTorch profile from a service using persistent RuntimeCache "
+            "storage. Results remain under the cache's profiles directory."
+        ),
+    )
+    profile.add_argument(
+        "kustomize_path",
+        metavar="PATH",
+        help="Kustomize root of an existing deployment; not applied",
+    )
+    profile.add_argument("--model", help="model identifier when PATH contains several models")
+    profile.add_argument(
+        "--profile-duration",
+        required=True,
+        help="recording duration, such as 15s; excludes profiler startup and export",
+    )
+    profile.add_argument(
+        "--profile-engine",
+        choices=("pytorch",),
+        required=True,
+        help="engine profiler to use; currently only pytorch is supported",
+    )
+    _add_wait_timeout_argument(profile, "capture completion")
+
     subparsers.add_parser(
         "bench",
         add_help=False,
-        help="Benchmark a Foretoken or OpenAI-compatible service",
+        help="Benchmark Foretoken or other OpenAI-compatible model services",
     )
     return parser
 
@@ -248,7 +301,7 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
     """Parse CLI arguments into the command consumed by the execution layer."""
     arguments = tuple(argv)
     if arguments and arguments[0] == "bench":
-        return BenchCommand(arguments)
+        return BenchCommand(arguments[1:])
 
     parser = _build_parser()
     parsed_args = parser.parse_args(arguments)
@@ -277,6 +330,7 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             tuple(parsed_args.values or ()),
             parsed_args.editable,
             parsed_args.registry,
+            parsed_args.oci_registry,
             parsed_args.prometheus,
             parsed_args.frontend_mode,
             parsed_args.gateway_name,
@@ -290,8 +344,24 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
         return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "delete":
         return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
+    if parsed_args.command == "profile":
+        return ProfileCommand(
+            parsed_args.kustomize_path,
+            parsed_args.model,
+            parsed_args.profile_duration,
+            parsed_args.profile_engine,
+            parsed_args.timeout,
+        )
     if parsed_args.command == "status":
         if bool(parsed_args.kustomize_path) == bool(parsed_args.namespace):
             parser.error("status requires either PATH or --namespace")
-        return StatusCommand(parsed_args.kustomize_path, parsed_args.namespace, parsed_args.watch)
-    return EndpointCommand(parsed_args.kustomize_path, parsed_args.timeout, parsed_args.host)
+        return StatusCommand(
+            parsed_args.kustomize_path,
+            parsed_args.namespace,
+            parsed_args.watch,
+        )
+    return EndpointCommand(
+        parsed_args.kustomize_path,
+        parsed_args.timeout,
+        parsed_args.host,
+    )

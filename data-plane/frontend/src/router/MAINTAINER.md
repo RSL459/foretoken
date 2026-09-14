@@ -23,7 +23,7 @@ compatible and healthy candidates
 - `RouteScorer` returns one `RouteScore` for every retained candidate in the same order.
 - `RoutePicker` returns an index into the scored candidates.
 
-The Router owns candidate identity and validates duplicate or out-of-range indexes and score-count mismatches. Algorithms must not maintain a second route catalog or query model servers on the request path; they receive an immutable round-local observation snapshot.
+The Router owns candidate identity and validates duplicate or out-of-range indexes and score-count mismatches. Algorithms must not maintain a second route catalog or query model servers on the request path; they receive an immutable round-local observation snapshot. Filters and scorers that consume shared KV matches return `true` from `needs_kv_prefix`; `Router::start` then prepares those observations asynchronously through the KV indexer before running the synchronous pipeline.
 
 ## Adding an algorithm
 
@@ -33,7 +33,7 @@ Request-local shared state belongs in `RouterPipeline::with_customized_context`.
 
 ## Multi-stage routing
 
-Algorithms score the complete compatible and healthy candidate snapshot. Before picking, the Router narrows it to the current execution stage and its selected controller-defined pipeline scope. This preserves aggregate, P/D, and E/P/D execution ownership while allowing a scorer to account for related stage load.
+Algorithms score the complete compatible and healthy candidate snapshot. Before picking, the Router narrows it to the current execution stage and its selected controller-defined connector compatibility scope. The scope may contain multiple Encoder, Prefill, and Decode ModelGroups; it protects the runtime transfer contract without imposing ordinal pairing. Picker still selects one candidate per stage, while request-local context can carry a joint plan across rounds.
 
 ## Scorer contracts
 
@@ -41,15 +41,32 @@ Scorers use the following observations and formulas:
 
 | Scorer | Input | Score |
 | --- | --- | --- |
+| `queue_depth` | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
+| `running_request` | `scheduler_running_requests` | `(max - running) / (max - min)` |
+| `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
 | `prefix` | Matched blocks `m`, complete prompt blocks `t`, block size `b` | `w * min(1, m * b / s)^2 + (1 - w) * m / t` |
+
+`queue_depth` and `running_request` counts normalize over all candidates supplied to `score`; equal counts receive `1`,
+and an empty candidate slice produces an empty score vector. Count subtraction precedes
+conversion to `f64`, preserving differences between large adjacent counts.
+`RouteScore.preference` preserves the numeric output, with the
+locality/load fields left at zero. Existing locality policies retain their lexicographic ordering.
+
+The registry owns gauge history: it publishes gauges immediately and uses the last measured value
+on omission only while that raw snapshot remains retained. A non-increasing timestamp or a
+cumulative counter or histogram reset clears history. Omitted gauges in the new history remain
+unobserved until reported. Metric scorers use zero for unobserved gauges.
+Rates and windowed latencies remain unavailable until their counter window is covered.
+
+Foretoken handles telemetry transport, health checks, DP expansion, and E/P/D eligibility.
+Its Model Server endpoint reports sums of scheduler counts and mean KV utilization across its
+engines.
+Every rank of that endpoint receives the same metric score. These three metric scorers ignore
+`RoutingProgress`; Router still supplies it and owns the subsequent stage selection.
 
 `prefix` reads complete block counts and block size from the KV index for the exact target and DP rank.
 Here `w` is `matchLengthWeight` (default `0`, range `[0, 1]`) and `s` is `matchLengthScaleTokens`
 (default `8192`, positive when `w > 0`). With zero weight, only `m / t` is evaluated.
 Missing cache observations or zero complete prompt blocks score `0`; cache-ineligible requests receive no prefix credit.
-
-An empty candidate slice produces an empty score vector. `RouteScore.preference` preserves the
-numeric output, with the locality/load fields left at zero. Existing locality policies retain
-their lexicographic ordering.
 
 Set optional parameters in `FrontendService.spec.routerPipeline.scorerParameters`; the selected scorer reads them at frontend startup.
