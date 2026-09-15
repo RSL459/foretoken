@@ -74,9 +74,9 @@ foretoken bench examples/quickstart \
 
 ```bash
 foretoken bench examples/quickstart \
-  --trace KrisQ/StudyChat --dataset KrisQ/StudyChat \
-  --trace-start 600 --trace-duration 30 \
-  --trace-max-concurrency 16 \
+  --trace benchmarks/examples/trace.jsonl \
+  --dataset benchmarks/examples/trace.jsonl \
+  --trace-max-concurrency 4 --max-tokens 128 \
   --output local,wandb
 ```
 

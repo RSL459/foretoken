@@ -42,6 +42,6 @@ Ctrl-C 会请求取消并保留已有结果。终端断线或等待超时后，�
 profiles/runs/<run-uid>/<runtime-id>/
 ```
 
-默认的目录型快速开始示例中，`./data` 相对于 Kustomize 目录解析；当该目录可访问时，可在 checkout 的 `examples/quickstart/data/profiles/runs/` 下找到结果。其他部署使用命令输出的 PVC 和相对路径定位结果；数据目录可能位于集群中，而不在工作站上。
+Quick Start 示例的结果位于项目根目录的 `data/profiles/runs/`。其他部署按命令输出的 PVC 和相对路径查找。
 
 Profiling 会增加 CPU/GPU 开销，短窗口在高负载下仍可能产生很大文件。应使用规模较小的诊断部署和短窗口。原生 profiler 失败可能终止对应 runtime，因此服务需要允许这类中断。

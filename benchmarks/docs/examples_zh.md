@@ -28,7 +28,7 @@ export MODEL_ID=Qwen/Qwen3-0.6B
 - [多数据集](coomon_commands/multi-dataset_zh.md)
 - [请求速率与并发](coomon_commands/arrival-rate_zh.md)
 - [StudyChat 轨迹回放](coomon_commands/studychat_zh.md)
-- [Mooncake 前缀复用](coomon_commands/mooncake_zh.md)
+- [Mooncake trace 回放](coomon_commands/mooncake-trace_zh.md)
 - [参数扫描](coomon_commands/sweep_zh.md)
 - [W&B 输出](coomon_commands/wandb_zh.md)
 

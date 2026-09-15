@@ -7,7 +7,7 @@
 
 For two models with autoscaling, see [Multi-Model Quick Start](../multi-model-quickstart/README.md).
 
-This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. Models and runtime caches are kept in `./data`, as configured in `cache.yaml`.
+This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. Models and runtime caches share the repository-root `data/` directory with the multi-model example, as configured in `cache.yaml`.
 
 Configure the model, replica count, resources, and parallelism in [`model.yaml`](model.yaml) (`ModelService`), the runtime cache in [`cache.yaml`](cache.yaml) (`RuntimeCache`), and the frontend in [`frontend.yaml`](frontend.yaml) (`FrontendService`). Foretoken creates the required Kubernetes workloads automatically.
 

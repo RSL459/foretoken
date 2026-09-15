@@ -8,11 +8,9 @@ from __future__ import annotations
 from typing import Any
 
 from foretoken.accelerators._exporter import object_name
+from foretoken.accelerators.config import METAX_GPU_RESOURCES
 from foretoken.accelerators.discovery import AcceleratorMetricsDiscovery, ExporterMonitor
 from foretoken.manifest import DeploymentError
-
-
-METAX_GPU_RESOURCES = ("metax-tech.com/gpu", "metax-tech.com/sgpu")
 
 
 class MetaXMetricsDiscovery(AcceleratorMetricsDiscovery):

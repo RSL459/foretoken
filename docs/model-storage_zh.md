@@ -5,11 +5,11 @@
 
 [English](model-storage.md)
 
-模型下载文件和运行时缓存默认放在示例的数据目录中：
+两个 Quick Start 示例共用项目根目录的 `data/` 存放模型和运行时缓存。各自的 `cache.yaml` 使用：
 
 ```yaml
 spec:
-  directory: ./data
+  directory: ../../data
   accessMode: ReadWriteMany
 ```
 
@@ -23,7 +23,9 @@ Foretoken 会为该配置创建目录型存储。删除服务时目录会保留�
 
 ## 选择目录位置
 
-使用本机 k3d 时，在创建集群前把示例的 `data` 目录 bind mount 到节点。请参阅 [k3d 指南](k3d-deployment_zh.md)。
+本机 k3d 的相对路径以 Kustomize 根目录为基准。两个 Quick Start 示例用 `../../data` 指向项目根目录，创建集群时将该目录 bind mount 到节点。请参阅 [k3d 指南](k3d-deployment_zh.md)。
+
+已有部署可以继续使用原路径。已绑定缓存更换目录时需要使用新的 RuntimeCache 名称；已有文件按需另行移动或复制。
 
 使用远程集群时，填写目标节点已经准备好的绝对路径，或填写所有目标节点都能访问的同一共享文件系统路径。客户端本地的 `./data` 不会自动上传。
 
@@ -32,7 +34,7 @@ Foretoken 会为该配置创建目录型存储。删除服务时目录会保留�
 将完整模型目录放在数据根目录下：
 
 ```text
-examples/quickstart/data/models/checkpointA/A3/
+data/models/checkpointA/A3/
 ├── config.json
 ├── tokenizer.json
 ├── tokenizer_config.json

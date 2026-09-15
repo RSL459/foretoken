@@ -1,2 +1,1 @@
-{"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
-{"_benchmark_name": "n20", "parallel": [1, 2], "number": 20, "max_tokens": 128}
+{"_benchmark_name": "output256", "parallel": [1, 2, 4], "number": 384, "min_output_length": 256, "max_output_length": 256}
