@@ -21,3 +21,5 @@ foretoken bench examples/quickstart \
 ```
 
 直接指定文件时会将文件下载到 Hugging Face 缓存。数据行使用与[本地对话数据](conversations_zh.md)相同的格式。添加 `--max-turns 1` 可只评测首轮，`--dataset-offset` 可跳过开头的数据行。
+
+![按发送顺序展示的 20 个 StudyChat 请求](../imgs/huggingface-wandb.png)

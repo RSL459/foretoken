@@ -31,7 +31,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 foretoken install
 ```
 
-CLI 根据沐曦 GPU 资源自动选择对应版本的镜像，复用或安装 Prometheus，并处理平台依赖。需要 Gateway 时添加 `--frontend-mode gateway`。混合 GPU 集群通过 `--values` 中的 `runtime.vllm.gpu.resourceName` 或 `runtime.vllm.gpu.nodeSelector` 明确范围；自定义 `runtime.vllm.image` 优先于自动镜像选择。
+自动选择沐曦镜像；Gateway 和自定义配置见 [CLI 安装指南](../../cli/README_zh.md#安装-kubernetes-平台)。
 
 ## 构建镜像
 

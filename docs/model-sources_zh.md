@@ -20,7 +20,7 @@ spec:
 将完整模型放到统一模型根目录：
 
 ```text
-examples/quickstart/data/models/checkpointA/A3/
+data/models/checkpointA/A3/
 ```
 
 选择本地来源，并继续用相对路径作为公开模型标识：

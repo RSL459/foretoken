@@ -9,9 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from foretoken.accelerators.config import (
+    GPU_RESOURCE_BACKENDS,
+    METAX_GPU_RESOURCES,
+    NVIDIA_GPU_RESOURCE,
+)
 from foretoken.accelerators.discovery import ExporterDiscovery
-from foretoken.accelerators.metax import METAX_GPU_RESOURCES, MetaXMetricsDiscovery
-from foretoken.accelerators.nvidia import NVIDIA_GPU_RESOURCE, NvidiaMetricsDiscovery
+from foretoken.accelerators.metax import MetaXMetricsDiscovery
+from foretoken.accelerators.nvidia import NvidiaMetricsDiscovery
 from foretoken.arguments import InstallCommand, UninstallCommand
 from foretoken.kubernetes import (
     Kubectl,
@@ -78,21 +83,17 @@ def _select_runtime(
                 == value
             )
 
-    resource_backends = {
-        NVIDIA_GPU_RESOURCE: "nvidia",
-        **{resource: "metax" for resource in METAX_GPU_RESOURCES},
-    }
     if overrides.gpu_resource_name is not None:
         resource_name = overrides.gpu_resource_name
         if not resource_name:
             return None
         return _RuntimeSelection(
-            resource_backends.get(resource_name, "custom"), resource_name
+            GPU_RESOURCE_BACKENDS.get(resource_name, "custom"), resource_name
         )
 
     resources = tuple(
         resource
-        for resource in resource_backends
+        for resource in GPU_RESOURCE_BACKENDS
         if any(_resource_capacity(node, resource) > 0 for node in selected_nodes)
     )
     if not resources:
@@ -106,7 +107,7 @@ def _select_runtime(
             "in --values"
         )
     resource_name = resources[0]
-    return _RuntimeSelection(resource_backends[resource_name], resource_name)
+    return _RuntimeSelection(GPU_RESOURCE_BACKENDS[resource_name], resource_name)
 
 
 class PlatformLifecycle:
@@ -312,7 +313,7 @@ class PlatformLifecycle:
             nvidia_detail = (
                 managed_dcgm.display_name
                 if managed_dcgm_exists
-                else "no allocatable nvidia.com/gpu resource"
+                else f"no allocatable {NVIDIA_GPU_RESOURCE} resource"
             )
             install_managed_dcgm = False
         elif managed_dcgm_exists:
@@ -333,7 +334,7 @@ class PlatformLifecycle:
 
         if metax_metrics is None:
             metax_action = "Skip"
-            metax_detail = "no allocatable metax-tech.com/gpu resource"
+            metax_detail = f"no allocatable {' or '.join(METAX_GPU_RESOURCES)} resource"
         else:
             metax_action = "Reuse"
             metax_detail = (

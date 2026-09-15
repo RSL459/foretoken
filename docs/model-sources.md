@@ -20,7 +20,7 @@ Use `source: modelscope` with the same model identifier to load it from ModelSco
 Place a complete model below the configured model root:
 
 ```text
-examples/quickstart/data/models/checkpointA/A3/
+data/models/checkpointA/A3/
 ```
 
 Select the local source and keep the relative identifier as the public model name:

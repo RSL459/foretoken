@@ -42,6 +42,6 @@ Each runtime stores one manifest and its native `.pt.trace.json` files below:
 profiles/runs/<run-uid>/<runtime-id>/
 ```
 
-For the default directory-backed Quick Start, `./data` is relative to the Kustomize directory, so an accessible checkout contains the results under `examples/quickstart/data/profiles/runs/`. For other deployments, use the PVC and relative path printed by the command; the data directory may be on the cluster rather than on the workstation.
+The Quick Start examples store results under the repository-root `data/profiles/runs/`. For other deployments, use the PVC and relative path printed by the command.
 
 Profiling adds CPU/GPU overhead and can produce large files even in a short window. Use a small diagnostic deployment and a short duration. A native profiler failure may terminate that runtime, so use a service where interruption is acceptable.

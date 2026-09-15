@@ -92,9 +92,9 @@ for LDCONFIG_PATH in \
   add_k3d_mount "$LDCONFIG_PATH"
 done
 
-# Keep model downloads and runtime caches in the example directory.
-mkdir -p examples/quickstart/data
-add_k3d_mount "$(realpath examples/quickstart/data)"
+# Share model downloads and runtime caches across examples.
+mkdir -p data
+add_k3d_mount "$(realpath data)"
 ```
 
 The data directory must be writable by the workloads. See [Model storage](model-storage.md) for storage choices.
@@ -208,4 +208,4 @@ Delete the cluster:
 k3d cluster delete "$CLUSTER"
 ```
 
-Deleting the cluster stops its Pods and releases the GPUs. Keep `examples/quickstart/data`; restore its bind mount when creating another cluster to reuse the downloaded models.
+Deleting the cluster stops its Pods and releases the GPUs. Keep `data`; restore its bind mount when creating another cluster to reuse the downloaded models.
