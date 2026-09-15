@@ -31,4 +31,4 @@ spec:
     pcp: 1
     dcp: 1
   extraArgs:
-    - --max-model-len=8192
+    - --max-model-len=32768

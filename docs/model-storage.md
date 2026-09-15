@@ -5,11 +5,11 @@
 
 [中文](model-storage_zh.md)
 
-Keep downloaded models and runtime caches in the example data directory:
+The Quick Start examples share downloaded models and runtime caches in the repository-root `data/` directory. Their `cache.yaml` files use:
 
 ```yaml
 spec:
-  directory: ./data
+  directory: ../../data
   accessMode: ReadWriteMany
 ```
 
@@ -23,7 +23,9 @@ Foretoken creates the directory-backed volume for this configuration. The direct
 
 ## Choose where the directory lives
 
-For local k3d, bind the example's `data` directory into the nodes before creating the cluster. See the [k3d guide](k3d-deployment.md).
+For local k3d, relative paths resolve from the Kustomize root. Both Quick Start examples use `../../data` to reach the repository-root directory; bind that directory into the nodes when creating the cluster. See the [k3d guide](k3d-deployment.md).
+
+Existing deployments can keep their current path. Changing the directory of an already bound cache requires a new RuntimeCache name; move or copy existing files separately if needed.
 
 For a remote cluster, use an absolute path already available on the target node or on the same shared filesystem at every target node. A client-local `./data` directory is not uploaded automatically.
 
@@ -32,7 +34,7 @@ For a remote cluster, use an absolute path already available on the target node 
 Place a complete model directory below the data root:
 
 ```text
-examples/quickstart/data/models/checkpointA/A3/
+data/models/checkpointA/A3/
 ├── config.json
 ├── tokenizer.json
 ├── tokenizer_config.json

@@ -28,7 +28,7 @@ Use the actual Chat Completions URL and model ID for other services. In Gateway 
 - [Multiple datasets](coomon_commands/multi-dataset.md)
 - [Arrival rate and concurrency](coomon_commands/arrival-rate.md)
 - [StudyChat replay](coomon_commands/studychat.md)
-- [Mooncake prefix reuse](coomon_commands/mooncake.md)
+- [Mooncake trace replay](coomon_commands/mooncake-trace.md)
 - [Parameter sweeps](coomon_commands/sweep.md)
 - [W&B output](coomon_commands/wandb.md)
 

@@ -9,15 +9,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from foretoken.accelerators._exporter import object_name
+from foretoken.accelerators.config import NVIDIA_GPU_RESOURCE
 from foretoken.accelerators.discovery import (
     AcceleratorMetricsDiscovery,
     ExporterMonitor,
 )
 from foretoken.kubernetes import resource_ref
 from foretoken.manifest import DeploymentError, ResourceRef
-
-
-NVIDIA_GPU_RESOURCE = "nvidia.com/gpu"
 
 
 @dataclass(frozen=True)

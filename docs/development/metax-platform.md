@@ -28,7 +28,7 @@ After preparing the cluster drivers, device plugin, and mxExporter, use the norm
 foretoken install
 ```
 
-The CLI detects MetaX GPU resources and selects the matching release image. It reuses or installs Prometheus and handles platform dependencies. Add `--frontend-mode gateway` for Gateway access. For a mixed-GPU cluster, specify `runtime.vllm.gpu.resourceName` or `runtime.vllm.gpu.nodeSelector` through `--values`; a custom `runtime.vllm.image` overrides automatic image selection.
+The MetaX image is selected automatically. See [CLI installation](../../cli/README.md#install-the-kubernetes-platform) for Gateway and custom configuration.
 
 ## Build the images
 

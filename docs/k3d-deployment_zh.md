@@ -92,12 +92,12 @@ for LDCONFIG_PATH in \
   add_k3d_mount "$LDCONFIG_PATH"
 done
 
-# 模型下载和运行时缓存保存在示例目录中。
-mkdir -p examples/quickstart/data
-add_k3d_mount "$(realpath examples/quickstart/data)"
+# 多个示例共用模型文件和运行时缓存。
+mkdir -p data
+add_k3d_mount "$(realpath data)"
 ```
 
-为 frontend 和 model-server 的运行用户配置 `examples/quickstart/data` 写权限；数据目录需要允许工作负载写入。其他存储方式见[模型存储](model-storage_zh.md)。
+为 frontend 和 model-server 的运行用户配置 `data` 写权限；数据目录需要允许工作负载写入。其他存储方式见[模型存储](model-storage_zh.md)。
 
 创建包含单个 server 节点的集群：
 
@@ -208,4 +208,4 @@ printf '\n'
 k3d cluster delete "$CLUSTER"
 ```
 
-删除集群会停止其中的 Pod 并释放 GPU。保留 `examples/quickstart/data`，创建新集群时恢复相同 bind mount，即可复用已下载的模型。
+删除集群会停止其中的 Pod 并释放 GPU。保留 `data`，创建新集群时恢复相同 bind mount，即可复用已下载的模型。

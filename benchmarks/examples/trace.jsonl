@@ -1,0 +1,4 @@
+{"timestamp":0,"chatId":"tokens","messages":[{"role":"user","content":"Explain what a token is in one sentence."}]}
+{"timestamp":1000,"chatId":"batching","messages":[{"role":"user","content":"Explain request batching in one sentence."}]}
+{"timestamp":2000,"chatId":"routing","messages":[{"role":"user","content":"Explain request routing in one sentence."}]}
+{"timestamp":3000,"chatId":"cache","messages":[{"role":"user","content":"Explain a model cache in one sentence."}]}

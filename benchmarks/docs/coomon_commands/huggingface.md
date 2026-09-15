@@ -21,3 +21,5 @@ foretoken bench examples/quickstart \
 ```
 
 File selection downloads the file into the Hugging Face cache. Rows use the same [conversation formats](conversations.md) as local data. Add `--max-turns 1` for first-turn-only evaluation, or `--dataset-offset` to skip initial rows.
+
+![Twenty StudyChat requests in send order](../imgs/huggingface-wandb.png)
