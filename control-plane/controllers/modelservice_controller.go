@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
@@ -50,6 +51,7 @@ type ModelServiceReconciler struct {
 	MetricsProvider          ScalingMetricsProvider
 	CacheProfile             RuntimeCacheProfile
 	HuggingFaceAccessProfile HuggingFaceAccessProfile
+	Alerts                   *ServiceAlerts
 
 	recommendationHistoryOnce sync.Once
 	recommendationHistory     *core.RecommendationHistory
@@ -64,12 +66,16 @@ func (reconciler *ModelServiceReconciler) autoscalingRecommendationHistory() *co
 
 // SetupWithManager registers the ModelService controller and its owned resources.
 func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
-	if err := ctrl.NewControllerManagedBy(manager).
+	builder := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelService{}).
 		Owns(&inferencev1alpha1.ModelPool{}).
+		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForGroup)).
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
-		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
-		Complete(reconciler); err != nil {
+		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace))
+	if reconciler.Alerts != nil && reconciler.Alerts.watchRules {
+		builder = builder.Owns(&monitoringv1.PrometheusRule{})
+	}
+	if err := builder.Complete(reconciler); err != nil {
 		return err
 	}
 	return crmetrics.Registry.Register(newAutoscalingCollector(manager.GetCache()))
@@ -82,6 +88,12 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	result, err := reconciler.reconcileService(ctx, service)
+	return result, errors.Join(err, reconciler.reconcileAlerts(ctx, service))
+}
+
+// reconcileService keeps model lifecycle and serving readiness independent of optional alert delivery.
+func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, service *inferencev1alpha1.ModelService) (ctrl.Result, error) {
 	if !service.DeletionTimestamp.IsZero() {
 		return reconciler.reconcileDelete(ctx, service)
 	}
@@ -546,6 +558,16 @@ func modelServicePoolStore(service *inferencev1alpha1.ModelService, name string)
 		}
 	}
 	return nil
+}
+
+// modelServicesForGroup refreshes alert scope when an execution group is created or removed.
+func (reconciler *ModelServiceReconciler) modelServicesForGroup(ctx context.Context, object client.Object) []reconcile.Request {
+	group := object.(*inferencev1alpha1.ModelGroup)
+	pool := new(inferencev1alpha1.ModelPool)
+	if err := reconciler.Get(ctx, client.ObjectKey{Namespace: group.Namespace, Name: group.Spec.ModelPoolRef.Name}, pool); err != nil {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: pool.Namespace, Name: pool.Spec.ModelServiceRef.Name}}}
 }
 
 // modelServicesInNamespace maps shared platform resource changes to every ModelService in the namespace.

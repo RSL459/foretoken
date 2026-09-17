@@ -3,15 +3,24 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Observability example
+# Service observability
 
 English | [简体中文](README_zh.md)
 
-Runs the [Quick Start](../quickstart/README.md) model service with metrics, the Grafana dashboard, and alerts. `observability.yaml` holds the alert thresholds and notification language; metric collection and the dashboard need no configuration. From the repository root:
+Deploy the [Quick Start](../quickstart/README.md) with alert settings kept in `observability.yaml`. It patches the FrontendService and ModelService independently; both rule lists are empty by default.
+
+After installing the platform with `foretoken install`, add only the wanted rule names to the corresponding list and run:
 
 ```bash
-foretoken install --values examples/observability/observability.yaml
-foretoken deploy examples/quickstart
+foretoken deploy examples/observability --timeout 20m
 ```
 
-Send a few requests, then open Grafana and select **Foretoken System Overview**. Alert thresholds appear as dashed lines on the matching panels. The [observability guide](../../observability/README.md) explains how to find Grafana, reuse an existing monitoring stack, and read the alerts.
+The deployment uses the Quick Start's model, resources, namespace, and data directory. Follow its request example, then open **Foretoken System Overview** in Grafana. Alert names and trigger conditions are listed in the [alert reference](../../observability/runbooks/alerts.md).
+
+To disable a rule, remove its name and deploy the directory again. To remove the deployment:
+
+```bash
+foretoken delete examples/observability
+```
+
+Shared monitoring remains installed. See [Observability](../../observability/README.md) for monitoring access and notification setup.

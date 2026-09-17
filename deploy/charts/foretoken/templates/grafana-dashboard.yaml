@@ -1,7 +1,7 @@
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
-{{/* Makes the single Foretoken system dashboard discoverable by Grafana sidecars. */}}
+{{/* Makes the English and Chinese Foretoken system dashboards discoverable by Grafana sidecars. */}}
 
 {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
 apiVersion: v1
@@ -14,5 +14,7 @@ metadata:
     grafana_dashboard: "1"
 data:
   foretoken-system-overview.json: |-
-{{ include "foretoken.substituteAlertThresholds" (dict "text" (.Files.Get "files/grafana/foretoken-system-overview.json") "thresholds" .Values.observability.alerts.thresholds) | nindent 4 }}
+{{ .Files.Get "files/grafana/foretoken-system-overview.json" | nindent 4 }}
+  foretoken-system-overview-zh.json: |-
+{{ .Files.Get "files/grafana/foretoken-system-overview-zh.json" | nindent 4 }}
 {{- end }}

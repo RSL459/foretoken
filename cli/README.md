@@ -112,7 +112,7 @@ See the [multi-model example](../examples/multi-model-quickstart/README.md) for 
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-The command applies the configuration, reports service state changes, and exits when every service is Ready. Without `--timeout`, it waits up to ten minutes.
+The command applies the configuration, reports service state changes, and exits when every service is Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
 
 Inspect the same deployment without applying it:
 

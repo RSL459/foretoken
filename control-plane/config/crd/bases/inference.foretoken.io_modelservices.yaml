@@ -640,6 +640,46 @@ spec:
                 maximum: 1
                 minimum: 1
                 type: integer
+              observability:
+                description: Observability selects model-scoped alerts independently
+                  of serving and autoscaling.
+                properties:
+                  alerts:
+                    description: ModelAlerts selects rules for a model's owned execution
+                      groups.
+                    properties:
+                      rules:
+                        items:
+                          enum:
+                          - ForetokenMetricsTargetDown
+                          - ForetokenNVIDIAGPUTemperatureHigh
+                          - ForetokenNVIDIAGPUPowerUsageHigh
+                          type: string
+                        maxItems: 3
+                        type: array
+                        x-kubernetes-list-type: set
+                      thresholds:
+                        default: {}
+                        description: ModelAlertThresholds configures the selected
+                          model rules, not their activation.
+                        properties:
+                          nvidiaPowerWatts:
+                            exclusiveMinimum: true
+                            minimum: 0
+                            type: number
+                          nvidiaTemperatureCelsius:
+                            default: 85
+                            minimum: 0
+                            type: number
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: the power alert requires an explicit positive nvidiaPowerWatts
+                        threshold
+                      rule: '!has(self.rules) || !self.rules.exists(rule, rule ==
+                        ''ForetokenNVIDIAGPUPowerUsageHigh'') || (has(self.thresholds)
+                        && has(self.thresholds.nvidiaPowerWatts))'
+                type: object
               parallelism:
                 description: Parallelism defines the execution topology of one ModelGroup.
                 properties:

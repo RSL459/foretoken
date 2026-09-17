@@ -29,7 +29,7 @@
       },
       "id": 0,
       "panels": [],
-      "title": "Overview",
+      "title": "概览",
       "type": "row"
     },
     {
@@ -37,7 +37,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prometheus targets currently reporting for the selected Frontend services.",
+      "description": "当前正在上报所选 Frontend 服务指标的 Prometheus target 数量。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -91,12 +91,12 @@
           },
           "expr": "sum(foretoken:frontend_up:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
           "instant": false,
-          "legendFormat": "Frontend targets",
+          "legendFormat": "Frontend 采集目标",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Frontend targets",
+      "title": "Frontend 采集目标",
       "transparent": false,
       "type": "stat"
     },
@@ -105,7 +105,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prometheus targets currently reporting for the selected model groups and roles.",
+      "description": "当前正在上报所选模型组和角色指标的 Prometheus target 数量。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -159,12 +159,12 @@
           },
           "expr": "sum(foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"})",
           "instant": false,
-          "legendFormat": "Model servers",
+          "legendFormat": "模型服务器",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Model servers",
+      "title": "模型服务器",
       "transparent": false,
       "type": "stat"
     },
@@ -173,7 +173,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Frontend responses started per second over the selected rate window.",
+      "description": "选定速率窗口内每秒开始的 Frontend 响应数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -225,12 +225,12 @@
           "expr": "sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "Requests / s",
+          "legendFormat": "请求 / s",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Requests / s",
+      "title": "请求 / s",
       "transparent": false,
       "type": "stat"
     },
@@ -239,7 +239,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "HTTP responses that started with 5xx divided by all started responses. Streaming failures after headers are not included.",
+      "description": "开始时状态为 5xx 的 HTTP 响应占全部已开始响应的比例，不包含响应头发出后的流式失败。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -298,12 +298,12 @@
           "expr": "(sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",status=\"5xx\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) or 0 * sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) / clamp_min(sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")), 1e-9)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "5xx ratio",
+          "legendFormat": "5xx 比例",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "5xx ratio",
+      "title": "5xx 比例",
       "transparent": false,
       "type": "stat"
     },
@@ -312,7 +312,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prompt tokens processed per second by the selected model servers.",
+      "description": "所选模型服务器每秒处理的 Prompt token 数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -364,12 +364,12 @@
           "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "Prompt tokens / s",
+          "legendFormat": "Prompt token / s",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Prompt tokens / s",
+      "title": "Prompt token / s",
       "transparent": false,
       "type": "stat"
     },
@@ -378,7 +378,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Generated tokens produced per second by the selected model servers.",
+      "description": "所选模型服务器每秒生成的输出 token 数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -430,12 +430,12 @@
           "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "Output tokens / s",
+          "legendFormat": "输出 token / s",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Output tokens / s",
+      "title": "输出 token / s",
       "transparent": false,
       "type": "stat"
     },
@@ -444,7 +444,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Requests waiting for frontend admission to a scaling target.",
+      "description": "正在等待 Frontend 准入到扩缩容目标的请求数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -498,12 +498,12 @@
           },
           "expr": "sum(foretoken:frontend_upstream_queued_requests:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
           "instant": false,
-          "legendFormat": "Queued requests",
+          "legendFormat": "排队请求",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Queued requests",
+      "title": "排队请求",
       "transparent": false,
       "type": "stat"
     },
@@ -512,13 +512,13 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "One when any selected model-server has fallen back to Pod-scoped temporary cache storage. No value means the selected groups do not use RuntimeCache.",
+      "description": "任一所选模型服务器回退到 Pod 范围的临时缓存时为 1；无值表示所选模型组未使用 RuntimeCache。",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "Not configured",
+          "noValue": "未配置",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -566,12 +566,12 @@
           },
           "expr": "max(foretoken:model_server_runtime_cache_temporary:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"})",
           "instant": false,
-          "legendFormat": "Temporary RuntimeCache",
+          "legendFormat": "临时 RuntimeCache",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Temporary RuntimeCache",
+      "title": "临时 RuntimeCache",
       "transparent": false,
       "type": "stat"
     },
@@ -593,7 +593,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Frontend response starts grouped by HTTP status class.",
+      "description": "按 HTTP 状态类别分组的 Frontend 响应开始速率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -694,7 +694,7 @@
           "refId": "A"
         }
       ],
-      "title": "Request rate by status",
+      "title": "按状态统计的请求速率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -703,7 +703,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Frontend response starts grouped by HTTP endpoint.",
+      "description": "按 HTTP 端点分组的 Frontend 响应开始速率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -758,7 +758,7 @@
           "refId": "A"
         }
       ],
-      "title": "Request rate by endpoint",
+      "title": "按端点统计的请求速率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -767,7 +767,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Time, in seconds, until the Frontend handler produces HTTP response headers. This excludes SSE body delivery; it is neither TTFT nor full-stream duration.",
+      "description": "Frontend handler 生成 HTTP 响应头所需的秒数，不包含 SSE 正文传输，也不等同于 TTFT 或完整流持续时间。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -889,7 +889,7 @@
           "refId": "C"
         }
       ],
-      "title": "Response-start latency",
+      "title": "响应开始延迟",
       "transparent": false,
       "type": "timeseries"
     },
@@ -898,7 +898,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Requests waiting for runtime preparation or backend dispatch, grouped by scaling-target kind.",
+      "description": "按扩缩容目标类型分组，等待运行时准备或后端派发的请求数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -979,7 +979,7 @@
           "refId": "A"
         }
       ],
-      "title": "Admission queue",
+      "title": "准入队列",
       "transparent": false,
       "type": "timeseries"
     },
@@ -993,7 +993,7 @@
       },
       "id": 0,
       "panels": [],
-      "title": "Model Serving",
+      "title": "模型服务",
       "type": "row"
     },
     {
@@ -1001,7 +1001,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Successfully completed model-server requests grouped by finish reason.",
+      "description": "按结束原因分组的模型服务器成功完成请求速率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1056,7 +1056,7 @@
           "refId": "A"
         }
       ],
-      "title": "Completed request rate",
+      "title": "完成请求速率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1065,7 +1065,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prompt and generated token throughput for the selected model servers.",
+      "description": "所选模型服务器的 Prompt 与输出 token 吞吐量。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1098,7 +1098,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Output"
+              "options": "输出"
             },
             "properties": [
               {
@@ -1154,12 +1154,12 @@
           "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "Output",
+          "legendFormat": "输出",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Token throughput",
+      "title": "Token 吞吐量",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1168,7 +1168,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Requests running in vLLM execution batches or waiting in its scheduler.",
+      "description": "正在 vLLM 执行批次中运行或在调度器中等待的请求数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1186,7 +1186,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Running"
+              "options": "运行中"
             },
             "properties": [
               {
@@ -1201,7 +1201,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Waiting"
+              "options": "等待中"
             },
             "properties": [
               {
@@ -1245,7 +1245,7 @@
           "expr": "sum(label_replace(label_replace(label_replace(vllm:num_requests_running{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "Running",
+          "legendFormat": "运行中",
           "range": true,
           "refId": "A"
         },
@@ -1257,12 +1257,12 @@
           "expr": "sum(label_replace(label_replace(label_replace(vllm:num_requests_waiting{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "Waiting",
+          "legendFormat": "等待中",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Scheduler state",
+      "title": "调度器状态",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1271,7 +1271,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Maximum per-model-group quantile, in seconds, from Frontend handler entry after JSON decoding to the model-server terminal output. Excludes downstream client body consumption. Frontend and model-server clocks must be synchronized.",
+      "description": "从 JSON 解码后的 Frontend handler 入口到模型服务器终止输出的每模型组最大分位数，单位为秒；不包含下游客户端正文消费时间。Frontend 与模型服务器时钟必须同步。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1393,7 +1393,7 @@
           "refId": "C"
         }
       ],
-      "title": "End-to-end latency (E2EL)",
+      "title": "端到端延迟 (E2EL)",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1402,7 +1402,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Maximum per-model-group TTFT quantile, in seconds, from Frontend handler entry after JSON decoding to the first token received by model-server. Chat and completion requests share this origin.",
+      "description": "从 JSON 解码后的 Frontend handler 入口到模型服务器收到首个 token 的每模型组最大 TTFT 分位数，单位为秒；Chat 与 Completion 请求使用相同起点。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1524,7 +1524,7 @@
           "refId": "C"
         }
       ],
-      "title": "Time to first token (TTFT)",
+      "title": "首 token 延迟 (TTFT)",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1533,7 +1533,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Maximum per-model-group request-level TPOT quantiles and mean over the selected rate window, in milliseconds. Each request contributes its average time between output tokens.",
+      "description": "选定速率窗口内每模型组最大的请求级 TPOT 分位数和平均值，单位为毫秒；每个请求贡献一次输出 token 间平均耗时。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1597,7 +1597,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "mean"
+              "options": "平均值"
             },
             "properties": [
               {
@@ -1677,12 +1677,12 @@
           "expr": "1000 * max(sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / clamp_min(sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), 1e-9))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "mean",
+          "legendFormat": "平均值",
           "range": true,
           "refId": "D"
         }
       ],
-      "title": "Time per output token (TPOT)",
+      "title": "每输出 token 耗时 (TPOT)",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1691,7 +1691,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Maximum per-model-group gap between consecutive output-token events, in milliseconds. Unlike TPOT, each token interval is observed separately.",
+      "description": "每模型组相邻输出 token 事件间隔的最大分位数，单位为毫秒；与 TPOT 不同，每个 token 间隔都会单独观测。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1813,7 +1813,7 @@
           "refId": "C"
         }
       ],
-      "title": "Inter-token latency (ITL)",
+      "title": "Token 间延迟 (ITL)",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1822,7 +1822,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "P90 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.",
+      "description": "请求在等待调度器、Prefill 和 Decode 阶段的 P90 耗时，单位为秒。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1943,7 +1943,7 @@
           "refId": "C"
         }
       ],
-      "title": "Request time by stage",
+      "title": "各阶段请求耗时",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1952,7 +1952,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Requests preempted per second because KV-cache blocks ran out. Sustained preemption precedes the KV-cache pressure alert.",
+      "description": "因 KV Cache block 耗尽而每秒被抢占的请求数；持续抢占通常先于 KV Cache 压力告警。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1970,7 +1970,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Preemptions"
+              "options": "抢占"
             },
             "properties": [
               {
@@ -2014,12 +2014,12 @@
           "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:num_preemptions_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "Preemptions",
+          "legendFormat": "抢占",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Preemptions",
+      "title": "抢占",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2028,7 +2028,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Distribution of prompt tokens per request over time.",
+      "description": "随时间变化的单请求 Prompt token 数分布。",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -2080,7 +2080,7 @@
           "refId": "A"
         }
       ],
-      "title": "Prompt length",
+      "title": "Prompt 长度",
       "transparent": false,
       "type": "heatmap"
     },
@@ -2089,7 +2089,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Distribution of generated tokens per request over time.",
+      "description": "随时间变化的单请求输出 token 数分布。",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -2141,7 +2141,7 @@
           "refId": "A"
         }
       ],
-      "title": "Output length",
+      "title": "输出长度",
       "transparent": false,
       "type": "heatmap"
     },
@@ -2155,7 +2155,7 @@
       },
       "id": 0,
       "panels": [],
-      "title": "Cache",
+      "title": "缓存",
       "type": "row"
     },
     {
@@ -2163,7 +2163,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Highest in-engine KV-cache utilization grouped by model role.",
+      "description": "按模型角色分组的引擎内最高 KV Cache 使用率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2215,7 +2215,7 @@
           "refId": "A"
         }
       ],
-      "title": "KV Cache utilization",
+      "title": "KV Cache 使用率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2224,7 +2224,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Average local and external Prefix Cache token hit ratios across selected model groups.",
+      "description": "所选模型组的本地与外部 Prefix Cache token 平均命中率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2320,7 +2320,7 @@
           "refId": "B"
         }
       ],
-      "title": "Prefix Cache hit ratio",
+      "title": "Prefix Cache 命中率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2329,7 +2329,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Healthy KV event sources divided by configured sources. Disabled or unavailable indexing reports zero.",
+      "description": "健康 KV 事件源数除以已配置源数；索引禁用或不可用时为 0。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2381,7 +2381,7 @@
           "refId": "A"
         }
       ],
-      "title": "KV index source health",
+      "title": "KV 索引数据源健康度",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2390,7 +2390,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Mounted RuntimeCache filesystem utilization. Series are absent for model groups without a RuntimeCache.",
+      "description": "已挂载 RuntimeCache 文件系统的使用率；未配置 RuntimeCache 的模型组不会产生序列。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2442,7 +2442,7 @@
           "refId": "A"
         }
       ],
-      "title": "RuntimeCache utilization",
+      "title": "RuntimeCache 使用率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2451,7 +2451,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Filesystem space available to model-server processes using a RuntimeCache.",
+      "description": "使用 RuntimeCache 的模型服务器进程可用文件系统空间。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2501,7 +2501,7 @@
           "refId": "A"
         }
       ],
-      "title": "RuntimeCache available space",
+      "title": "RuntimeCache 可用空间",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2515,7 +2515,7 @@
       },
       "id": 0,
       "panels": [],
-      "title": "Accelerators and Resources",
+      "title": "加速器与资源",
       "type": "row"
     },
     {
@@ -2523,7 +2523,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Mean utilization of Foretoken-attributed GPUs by vendor and node across workload namespaces. Shared devices are counted once; devices without Foretoken Pod attribution are excluded.",
+      "description": "跨工作负载命名空间按厂商和节点统计的 Foretoken GPU 平均使用率；共享设备只计一次，不包含无法关联到 Foretoken Pod 的设备。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2575,7 +2575,7 @@
           "refId": "A"
         }
       ],
-      "title": "Node mean GPU utilization",
+      "title": "节点平均 GPU 使用率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2584,7 +2584,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Mean memory utilization of Foretoken-attributed GPUs by vendor and node across workload namespaces. Shared devices are counted once; devices without Foretoken Pod attribution are excluded.",
+      "description": "跨工作负载命名空间按厂商和节点统计的 Foretoken GPU 平均显存使用率；共享设备只计一次，不包含无法关联到 Foretoken Pod 的设备。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2636,7 +2636,7 @@
           "refId": "A"
         }
       ],
-      "title": "Node mean GPU memory utilization",
+      "title": "节点平均 GPU 显存使用率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2645,7 +2645,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Utilization of each Foretoken-attributed GPU.",
+      "description": "每块可关联到 Foretoken 的 GPU 使用率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2697,7 +2697,7 @@
           "refId": "A"
         }
       ],
-      "title": "GPU utilization by device",
+      "title": "各设备 GPU 使用率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2706,7 +2706,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Memory utilization of each Foretoken-attributed GPU.",
+      "description": "每块可关联到 Foretoken 的 GPU 显存使用率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2758,7 +2758,7 @@
           "refId": "A"
         }
       ],
-      "title": "GPU memory by device",
+      "title": "各设备 GPU 显存使用率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2767,7 +2767,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Power draw of each Foretoken-attributed NVIDIA GPU.",
+      "description": "每块可关联到 Foretoken 的 NVIDIA GPU 功耗。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2817,7 +2817,7 @@
           "refId": "A"
         }
       ],
-      "title": "GPU power by device",
+      "title": "各设备 GPU 功耗",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2826,7 +2826,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Temperature of each Foretoken-attributed NVIDIA GPU.",
+      "description": "每块可关联到 Foretoken 的 NVIDIA GPU 温度。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2876,7 +2876,7 @@
           "refId": "A"
         }
       ],
-      "title": "GPU temperature by device",
+      "title": "各设备 GPU 温度",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2885,7 +2885,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "CPU cores consumed by Frontend and model-server containers in the selected namespaces.",
+      "description": "所选命名空间中 Frontend 与模型服务器容器使用的 CPU 核数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2967,7 +2967,7 @@
           "refId": "A"
         }
       ],
-      "title": "Serving CPU usage",
+      "title": "服务 CPU 使用量",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2976,7 +2976,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Working-set memory used by Frontend and model-server containers in the selected namespaces.",
+      "description": "所选命名空间中 Frontend 与模型服务器容器使用的工作集内存。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3058,7 +3058,7 @@
           "refId": "A"
         }
       ],
-      "title": "Serving memory usage",
+      "title": "服务内存使用量",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3077,7 +3077,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Selection results by workflow round. A selection failure is not an HTTP status; a request can involve several rounds.",
+          "description": "按工作流轮次统计的选择结果；选择失败不是 HTTP 状态，一个请求可能包含多轮选择。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3128,7 +3128,7 @@
               "refId": "A"
             }
           ],
-          "title": "Routing outcomes",
+          "title": "路由结果",
           "transparent": false,
           "type": "timeseries"
         },
@@ -3137,7 +3137,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "P99 filter, scorer and picker execution time, aggregated from histogram buckets across selected Frontend replicas.",
+          "description": "从所选 Frontend 副本直方图桶聚合得到的 Filter、Scorer 与 Picker P99 执行时间。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3188,7 +3188,7 @@
               "refId": "A"
             }
           ],
-          "title": "Routing stage latency",
+          "title": "路由阶段延迟",
           "transparent": false,
           "type": "timeseries"
         },
@@ -3197,7 +3197,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Mean available, filtered and selectable candidate counts. Selectable counts include data-parallel ranks.",
+          "description": "可用、过滤后和可选择候选项的平均数量；可选择数量包含数据并行 rank。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3248,12 +3248,12 @@
               "refId": "A"
             }
           ],
-          "title": "Routing candidates",
+          "title": "路由候选数",
           "transparent": false,
           "type": "timeseries"
         }
       ],
-      "title": "Routing decisions",
+      "title": "路由决策",
       "type": "row"
     },
     {
@@ -3271,7 +3271,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Controller-runtime errors per second. This section observes the platform controller independently of workload namespace filters.",
+          "description": "每秒 controller-runtime 错误数；本分区独立于工作负载命名空间筛选器观察平台控制器。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3322,7 +3322,7 @@
               "refId": "A"
             }
           ],
-          "title": "Reconcile errors",
+          "title": "Reconcile 错误",
           "transparent": false,
           "type": "timeseries"
         },
@@ -3331,7 +3331,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "P99 reconciliation time by controller; this is control-plane work, not inference request latency.",
+          "description": "按控制器统计的 P99 Reconcile 耗时，属于控制面工作而非推理请求延迟。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3382,7 +3382,7 @@
               "refId": "A"
             }
           ],
-          "title": "Reconcile latency",
+          "title": "Reconcile 延迟",
           "transparent": false,
           "type": "timeseries"
         },
@@ -3391,7 +3391,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Queued reconciliations. Current replica counts are deduplicated rather than added across controller replicas.",
+          "description": "排队中的 Reconcile 数；当前副本数会跨控制器副本去重，而不是相加。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3442,12 +3442,12 @@
               "refId": "A"
             }
           ],
-          "title": "Controller workqueues",
+          "title": "控制器工作队列",
           "transparent": false,
           "type": "timeseries"
         }
       ],
-      "title": "Control plane",
+      "title": "控制面",
       "type": "row"
     },
     {
@@ -3460,7 +3460,7 @@
       },
       "id": 0,
       "panels": [],
-      "title": "Autoscaling decisions",
+      "title": "扩缩容决策",
       "type": "row"
     },
     {
@@ -3468,7 +3468,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Latest published recommendation, adjusted target and applied desired capacity. A missing recommendation means the decision algorithm did not provide one.",
+      "description": "最新发布的建议值、调整后目标和已应用期望容量；建议值缺失表示决策算法未提供建议。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3513,7 +3513,7 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_recommendation_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "recommendation / {{modelservice}} / {{target_name}} / {{role}}",
+          "legendFormat": "建议 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "A"
         },
@@ -3524,7 +3524,7 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_adjusted_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "adjusted / {{modelservice}} / {{target_name}} / {{role}}",
+          "legendFormat": "调整后 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "B"
         },
@@ -3535,12 +3535,12 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "applied / {{modelservice}} / {{target_name}} / {{role}}",
+          "legendFormat": "已应用 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "C"
         }
       ],
-      "title": "Replica decisions",
+      "title": "副本决策",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3549,7 +3549,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Ready and routable capacity published by the autoscaler, compared with applied desired replicas.",
+      "description": "扩缩容器发布的 Ready 与可路由容量，并与已应用的期望副本数比较。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3594,7 +3594,7 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "applied / {{modelservice}} / {{target_name}} / {{role}}",
+          "legendFormat": "已应用 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "A"
         },
@@ -3605,7 +3605,7 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_ready_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "ready / {{modelservice}} / {{target_name}} / {{role}}",
+          "legendFormat": "就绪 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "B"
         },
@@ -3616,12 +3616,12 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_routable_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "routable / {{modelservice}} / {{target_name}} / {{role}}",
+          "legendFormat": "可路由 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "C"
         }
       ],
-      "title": "Serving capacity",
+      "title": "服务容量",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3630,7 +3630,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Elapsed time since the last observation and evaluation; age keeps increasing if reconciliation stops. Missing observation series means no usable observation was published.",
+      "description": "距最近一次观测和评估的时间；Reconcile 停止后该时长会继续增加。观测序列缺失表示尚未发布可用观测。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3675,7 +3675,7 @@
           },
           "expr": "time() - max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_observation_timestamp_seconds{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "observation / {{modelservice}} / {{target_name}} / {{role}}",
+          "legendFormat": "观测 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "A"
         },
@@ -3686,12 +3686,12 @@
           },
           "expr": "time() - max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_evaluation_timestamp_seconds{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "evaluation / {{modelservice}} / {{target_name}} / {{role}}",
+          "legendFormat": "评估 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Observation and evaluation age",
+      "title": "观测与评估数据时效",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3700,7 +3700,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Current trigger, decision and adjustment outcomes from ModelService status. Reasons are bounded status codes, not log messages.",
+      "description": "ModelService status 中当前的触发、决策与调整结果；原因是有限状态码，而不是日志文本。",
       "gridPos": {
         "h": 9,
         "w": 24,
@@ -3733,7 +3733,7 @@
           "refId": "A"
         }
       ],
-      "title": "Latest autoscaling stage",
+      "title": "最新扩缩容阶段",
       "transformations": [
         {
           "id": "organize",
@@ -3752,6 +3752,17 @@
               "stage": 5,
               "target_kind": 2,
               "target_name": 3
+            },
+            "renameByName": {
+              "algorithm": "算法",
+              "disposition": "结果",
+              "modelservice": "模型服务",
+              "namespace": "命名空间",
+              "reason": "原因",
+              "role": "角色",
+              "stage": "阶段",
+              "target_kind": "目标类型",
+              "target_name": "目标名称"
             }
           }
         }
@@ -3775,7 +3786,7 @@
         "auto_count": 30,
         "auto_min": "10s",
         "includeAll": false,
-        "label": "Data source",
+        "label": "数据源",
         "multi": false,
         "name": "DS_PROMETHEUS",
         "query": "prometheus",
@@ -3793,7 +3804,7 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "Namespace",
+        "label": "命名空间",
         "multi": true,
         "name": "namespace",
         "query": "label_values(foretoken:frontend_up:sum, namespace)",
@@ -3813,7 +3824,7 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "Frontend service",
+        "label": "Frontend 服务",
         "multi": true,
         "name": "frontend_service",
         "query": "label_values(foretoken:frontend_up:sum{namespace=~\"$namespace\"}, frontend_service)",
@@ -3833,7 +3844,7 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "Model group",
+        "label": "模型组",
         "multi": true,
         "name": "model_group",
         "query": "label_values(foretoken:model_server_up:sum{namespace=~\"$namespace\"}, model_group)",
@@ -3853,7 +3864,7 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "Model role",
+        "label": "模型角色",
         "multi": true,
         "name": "model_role",
         "query": "label_values(foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\"}, model_role)",
@@ -3873,7 +3884,7 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "Model",
+        "label": "模型",
         "multi": true,
         "name": "model_name",
         "query": "label_values(foretoken:model_server_kv_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}, model_name)",
@@ -3893,7 +3904,7 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "Model service",
+        "label": "模型服务",
         "multi": true,
         "name": "model_service",
         "query": "label_values(foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\"}, modelservice)",
@@ -3909,6 +3920,6 @@
     "to": "now"
   },
   "timezone": "browser",
-  "title": "Foretoken System Overview",
-  "uid": "foretoken-system-overview"
+  "title": "Foretoken 系统概览",
+  "uid": "foretoken-system-overview-zh"
 }

@@ -199,7 +199,7 @@ class TraceReplayBenchmark:
         *,
         max_concurrency: int | None,
         trace_window_start: float,
-    ) -> tuple[list[dict[str, Any]], float]:
+    ) -> tuple[list[dict[str, Any]], float, float]:
         """Schedule requests by absolute recorded offset and include concurrency waits in replay delay."""
         completed_tasks: asyncio.Queue[
             asyncio.Task[tuple[int, dict[str, Any]]]
@@ -265,7 +265,7 @@ class TraceReplayBenchmark:
                 await asyncio.gather(*pending_tasks, return_exceptions=True)
 
         records = [records_by_index[index] for index in range(request_count)]
-        return records, time.perf_counter() - started_at
+        return records, time.perf_counter() - started_at, started_at
 
     async def _replay(self) -> BenchmarkRun:
         """Read the trace window, bind requests, replay them, and publish the result."""
@@ -326,7 +326,7 @@ class TraceReplayBenchmark:
                 self.service,
                 max_connections=active_connection_limit,
             ) as client:
-                records, total_time = await self._replay_events(
+                records, total_time, time_origin = await self._replay_events(
                     client,
                     events,
                     max_concurrency=max_concurrency,
@@ -353,6 +353,7 @@ class TraceReplayBenchmark:
                 metrics=metrics,
                 measurements=measurements,
                 artifacts={"raw_output": raw_output},
+                time_origin=time_origin,
             )
             outputs.publish(run)
         return run

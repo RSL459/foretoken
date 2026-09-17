@@ -19,7 +19,9 @@ from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_benchmark_summary
 from benchmarks.results.metrics import RequestMeasurement
+from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.wandb import WandbBenchmarkRun
+from foretoken.manifest import DeploymentError
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +31,15 @@ class BenchmarkRun:
     """Result of one benchmark: its run record, aggregated metrics, per-request measurements, and artifacts.
 
     ``measurements`` is ``None`` when a composition publishes only aggregated
-    points. ``artifacts`` maps a name to a file produced by the run, such as the
-    raw trace replay records or a sweep's Pareto plot.
+    points. ``artifacts`` maps a name to a file produced by the run. ``time_origin``
+    is the monotonic clock value corresponding to elapsed time zero for observers.
     """
 
     record: dict[str, Any]
     metrics: dict[str, Any]
     measurements: list[RequestMeasurement] | None
     artifacts: dict[str, Path]
+    time_origin: float | None = None
 
 
 class ResultSink(Protocol):
@@ -137,11 +140,18 @@ class WandbSink:
         )
 
     def publish(self, run: BenchmarkRun) -> None:
+        replica_observations = None
+        replica_path = run.artifacts.get("replica_observations")
+        if replica_path is not None:
+            replica_observations = json.loads(
+                replica_path.read_text(encoding="utf-8")
+            )
         if run.measurements is not None:
             self.wandb_run.log_request_history(
                 run.measurements,
                 duration=float(run.metrics["benchmark_time"]),
                 stream=bool(run.metrics["stream"]),
+                replica_observations=replica_observations,
             )
         raw_output = run.artifacts.get("raw_output")
         if raw_output is not None:
@@ -247,6 +257,7 @@ class ResultOutputs:
         self._sinks: list[ResultSink] = []
         self._resources = ExitStack()
         self._execution_dir: str | None = None
+        self._replica_observer: KubernetesReplicaObserver | None = None
 
     @property
     def execution_dir(self) -> str:
@@ -288,12 +299,36 @@ class ResultOutputs:
             for sink in sinks:
                 self._resources.callback(sink.close)
                 sink.open(self.record)
+            if self.service.model_service_refs and (
+                outputs.includes("local") or outputs.includes("wandb")
+            ):
+                try:
+                    observer = KubernetesReplicaObserver(
+                        self.service.model_service_refs,
+                        self.service.model,
+                    )
+                    observer.start()
+                except (DeploymentError, RuntimeError) as exc:
+                    logger.warning(
+                        "Replica observation unavailable; continuing with benchmark: %s",
+                        exc,
+                    )
+                else:
+                    self._replica_observer = observer
+                    self._resources.callback(self._close_replica_observer)
         except BaseException:
             self._resources.close()
             self._execution_dir = None
             raise
         self._sinks = sinks
         return self
+
+    def _close_replica_observer(self) -> None:
+        """Stop the observer once when publication or context cleanup takes ownership."""
+        observer = self._replica_observer
+        self._replica_observer = None
+        if observer is not None:
+            observer.close()
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool:
         """Close every sink once and remove temporary execution files after success or failure."""
@@ -302,8 +337,22 @@ class ResultOutputs:
         finally:
             self._sinks = []
             self._execution_dir = None
+            self._replica_observer = None
 
     def publish(self, run: BenchmarkRun) -> None:
-        """Publish the finished run to every open sink before the owner closes resources."""
+        """Stop run observations, then publish the finished run to every open sink."""
+        observer = self._replica_observer
+        self._replica_observer = None
+        if observer is not None:
+            if run.time_origin is None:
+                observer.close()
+            else:
+                observations = observer.finish(run.time_origin)
+                if observations:
+                    run.artifacts["replica_observations"] = write_json(
+                        self.execution_dir,
+                        "replica_observations.json",
+                        observations,
+                    )
         for sink in self._sinks:
             sink.publish(run)

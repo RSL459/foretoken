@@ -354,6 +354,10 @@ type ModelServiceSpec struct {
 
 	Timeouts ModelTimeouts `json:"timeouts"`
 
+	// Observability selects model-scoped alerts independently of serving and autoscaling.
+	// +optional
+	Observability *ModelObservability `json:"observability,omitempty"`
+
 	// Autoscaling is evaluated by the ModelService controller. Algorithms remain
 	// side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
 	// +optional

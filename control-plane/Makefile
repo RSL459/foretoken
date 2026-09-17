@@ -16,7 +16,7 @@ all: build
 
 .PHONY: manifests
 manifests: $(CONTROLLER_GEN)
-	$(CONTROLLER_GEN) crd:headerFile="hack/boilerplate.yaml.txt" paths="./..." output:crd:artifacts:config=$(CRD_BASE_DIR)
+	$(CONTROLLER_GEN) crd:allowDangerousTypes=true,headerFile="hack/boilerplate.yaml.txt" paths="./..." output:crd:artifacts:config=$(CRD_BASE_DIR)
 
 .PHONY: generate
 generate: $(CONTROLLER_GEN)
