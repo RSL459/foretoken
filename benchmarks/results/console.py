@@ -133,13 +133,23 @@ def _format_metric(value: Any, digits: int = 4) -> str:
         return str(value)
 
 
-def _percentile_row(name: str, stats: dict[str, Any], unit: str = "s") -> str:
-    """Build an output row with the mean, p50, p95, and p99 for one metric."""
+def _percentile_row(
+    name: str,
+    stats: dict[str, Any],
+    unit: str = "s",
+    *,
+    scale: float = 1.0,
+) -> str:
+    """Build a two-decimal mean, p50, p95, and p99 row in the display unit."""
+    values = {
+        key: None if stats[key] is None else float(stats[key]) * scale
+        for key in ("mean", "p50", "p95", "p99")
+    }
     return (
-        f"  {name:<12} mean={_format_metric(stats['mean'])}{unit}  "
-        f"p50={_format_metric(stats['p50'])}{unit}  "
-        f"p95={_format_metric(stats['p95'])}{unit}  "
-        f"p99={_format_metric(stats['p99'])}{unit}"
+        f"  {name:<12} mean={_format_metric(values['mean'], 2)}{unit}  "
+        f"p50={_format_metric(values['p50'], 2)}{unit}  "
+        f"p95={_format_metric(values['p95'], 2)}{unit}  "
+        f"p99={_format_metric(values['p99'], 2)}{unit}"
     )
 
 
@@ -211,7 +221,12 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
                 "E2EL including replay delay", metrics["trace_e2e_latency"]
             ),
         ]
-    metric_lines.append(_percentile_row("TPOT", metrics["tpot"]))
+    metric_lines.extend(
+        [
+            _percentile_row("TPOT", metrics["tpot"], "ms", scale=1000.0),
+            _percentile_row("ITL", metrics["itl"], "ms", scale=1000.0),
+        ]
+    )
 
     success_label = "Successful turns" if multi_turn else "Success"
     lines.extend(

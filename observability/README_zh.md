@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 使用 Prometheus 采集服务和加速器指标，通过 Grafana 看板 **Foretoken System Overview** 展示，并为常见问题安装告警规则。
+Foretoken 使用 Prometheus 采集服务和加速器指标，通过 Grafana 看板 Foretoken System Overview 展示。告警规则按需启用，默认关闭。
 
 ## 快速开始
 
@@ -31,7 +31,7 @@ printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
 ```
 
-在 Grafana 中进入 **Dashboards**，选择 **Foretoken System Overview**。它沿着请求链路依次展示 Frontend、模型服务、缓存和加速器，最后是扩缩容决策；路由和控制面的细节放在折叠分区里。可以按命名空间、Frontend 服务、模型组、模型角色、模型或模型服务筛选。
+在 Grafana 中选择中文看板 Foretoken 系统概览，或英文看板 Foretoken System Overview。它沿着请求链路依次展示 Frontend、模型服务、缓存和加速器，最后是扩缩容决策；路由和控制面的细节放在折叠分区里。可以按命名空间、Frontend 服务、模型组、模型角色、模型或模型服务筛选。
 
 ## 确认采集正常
 
@@ -40,7 +40,7 @@ kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-在 Prometheus 的 **Targets** 页面确认 Foretoken target 为 `UP`，在 **Rules** 页面确认 `foretoken.recording` 和 `foretoken.alerting` 已加载。下面的查询返回 Frontend 请求速率：
+在 Prometheus 的 Targets 页面确认 Foretoken target 为 `UP`，在 Rules 页面确认 `foretoken.recording` 已加载。下面的查询返回 Frontend 请求速率：
 
 ```promql
 sum(foretoken:frontend_http_response_starts:rate5m)
@@ -72,6 +72,8 @@ foretoken install --prometheus monitoring/prometheus
 
 GPU 面板和告警依靠 Foretoken 模型组和模型角色的 Pod 标签识别设备。CLI 管理的 DCGM Exporter 会输出这些标签；复用已有 exporter 时需要同样的标签，否则这些面板没有数据。
 
+使用服务告警时，复用的 Prometheus 需要通过 `ruleNamespaceSelector` 选择工作负载命名空间中的规则；CLI 管理的监控已配置这一范围。
+
 复用 Prometheus 时，Grafana 仍由原平台管理。能够发现 `grafana_dashboard=1` ConfigMap 的 Grafana sidecar 会从 `foretoken-platform` 命名空间自动加载看板；否则导出 JSON 后在 Grafana 中导入：
 
 ```bash
@@ -84,15 +86,27 @@ kubectl get configmap \
 
 ## 告警
 
-告警规则随采集一起安装。每条告警都链接到[排障手册](runbooks/alerts_zh.md)中的对应条目，说明信号含义和排查方法。看板会把每个告警阈值画成对应面板上的虚线。
+告警随服务部署配置。在 `ModelService` 中，只选择这个模型需要的规则：
 
-要调整阈值或通知语言，修改[可观测性示例](../examples/observability/README_zh.md)中的 `observability.yaml`，随安装一起传入：
-
-```bash
-foretoken install --values examples/observability/observability.yaml
+```yaml
+spec:
+  observability:
+    alerts:
+      rules:
+        - ForetokenMetricsTargetDown
 ```
 
-`language` 可选 `zh`、`en` 或 `bilingual`，对本次安装的全部告警生效。通知由集群的 Alertmanager 发送；可选的 [Lark 集成](integrations/lark/README_zh.md)为 Lark 群机器人提供接收器。
+[可观测性示例](../examples/observability/README_zh.md)把这些配置放在快速开始的 Kustomize 补丁中。修改其中的 `observability.yaml` 后部署：
+
+```bash
+foretoken deploy examples/observability --timeout 20m
+```
+
+`FrontendService` 使用相同的配置位置选择前端抓取失败和 HTTP 错误告警。模型规则只覆盖该 ModelService 的执行实例；共享前端的错误仍归前端，不记到某个模型上。可选名称和触发条件见[告警参考](runbooks/alerts_zh.md)。
+
+移除名称或设为 `rules: []`，再次部署即可关闭对应告警，指标和看板仍保留。CLI 会报告告警配置失败，服务自身的就绪状态单独维护；`deploy` 不负责安装监控平台。
+
+选择功耗告警时，还需按显卡型号填写正数 `spec.observability.alerts.thresholds.nvidiaPowerWatts`，单位为瓦。只填写阈值不会启用规则。通知语言、接收目标和时区在接收器上配置，见可选的 [Lark 集成](integrations/lark/README_zh.md)。
 
 ## 指标参考
 
@@ -105,7 +119,9 @@ foretoken install --values examples/observability/observability.yaml
 | mxExporter | 沐曦利用率和显存 |
 | kubelet/cAdvisor | 容器 CPU 和内存 |
 
-看板和告警查询下列记录规则。模型服务相关规则来自 vLLM 指标。
+看板中的 TTFT 和 E2EL 使用秒，TPOT 和 ITL 使用毫秒。TPOT 同时提供百分位和平均值。
+
+下列记录规则供告警和固定窗口查询使用。模型服务相关规则来自 vLLM 指标。
 
 | 类别 | 记录规则 | 含义 |
 | --- | --- | --- |

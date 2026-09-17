@@ -17,7 +17,14 @@ import wandb
 from benchmarks.config.benchmark import BenchmarkConfig, WandbRunConfig
 from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import RequestMeasurement, percentile_summary
-from benchmarks.results.timeseries import ELAPSED_TIME, REQUEST_INDEX, request_series, time_series
+from benchmarks.results.replicas import replica_history_rows
+from benchmarks.results.timeseries import (
+    ELAPSED_TIME,
+    REQUEST_INDEX,
+    cumulative_series,
+    request_series,
+    time_series,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +41,7 @@ _AVERAGE_INPUT_TOKENS = "Mean input tokens"
 _INPUT_TOKENS_PER_SECOND = "Input token throughput (tokens/s)"
 _GENERATION_TOKENS_PER_SECOND = "Output token throughput (tokens/s)"
 _TOTAL_TOKENS_PER_SECOND = "Total tokens per second (tokens/s)"
-_AVERAGE_TTFT = "Mean TTFT (ms)"
+_AVERAGE_TTFT = "Mean TTFT (s)"
 _AVERAGE_TPOT = "Mean TPOT (ms)"
 _AVERAGE_ITL = "Mean ITL (ms)"
 _AVERAGE_OUTPUT_TOKENS = "Mean output tokens"
@@ -47,12 +54,12 @@ _FINAL_ANSWER_TTFT = "Time to final-answer token (TTFAT) (s)"
 
 _TRACE_MAX_BUCKETS = 10_000
 _TRACE_TIME = "Scheduled trace time (s)"
-_TRACE_PERCENTILE_METRICS = (
+_DISTRIBUTION_METRICS = (
     ("latency", "End-to-end latency (E2EL) (s)", 1.0),
-    ("ttft", "TTFT (ms)", 1000.0),
+    ("ttft", "TTFT (s)", 1.0),
     ("tpot", "TPOT (ms)", 1000.0),
     ("replay_delay", "Replay delay (s)", 1.0),
-    ("trace_e2e_ttft", "TTFT including replay delay (ms)", 1000.0),
+    ("trace_e2e_ttft", "TTFT including replay delay (s)", 1.0),
     ("trace_e2e_latency", "E2EL including replay delay (s)", 1.0),
 )
 _TRACE_HISTORY_KEYS = {
@@ -60,7 +67,7 @@ _TRACE_HISTORY_KEYS = {
     "successful_requests_per_second": "Trace/Successful scheduled requests/s",
     **{
         key: f"Trace/{name} p95"
-        for key, name, _ in _TRACE_PERCENTILE_METRICS
+        for key, name, _ in _DISTRIBUTION_METRICS
     },
 }
 
@@ -103,7 +110,7 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         ("avg_input_tokens", _AVERAGE_INPUT_TOKENS, 1.0, 4),
         ("avg_output_tokens", _AVERAGE_OUTPUT_TOKENS, 1.0, 4),
         ("latency", _AVERAGE_LATENCY, 1.0, 4),
-        ("ttft", _AVERAGE_TTFT, 1000.0, 2),
+        ("ttft", _AVERAGE_TTFT, 1.0, 4),
         ("tpot", _AVERAGE_TPOT, 1000.0, 2),
         ("itl", _AVERAGE_ITL, 1000.0, 2),
     )
@@ -113,7 +120,7 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
             value = value["mean"]
         if value is not None:
             message[destination] = round(float(value) * scale, digits)
-    for key, name, scale in _TRACE_PERCENTILE_METRICS:
+    for key, name, scale in _DISTRIBUTION_METRICS:
         stats = metrics.get(key)
         if not isinstance(stats, dict):
             continue
@@ -170,7 +177,7 @@ def _trace_bucket_rows(
             "requests_per_second": len(bucket_results) / bucket_seconds,
             "successful_requests_per_second": len(successful) / bucket_seconds,
         }
-        for key, _, scale in _TRACE_PERCENTILE_METRICS:
+        for key, _, scale in _DISTRIBUTION_METRICS:
             values = [
                 float(result[key])
                 for result in successful
@@ -241,21 +248,33 @@ class WandbBenchmarkRun:
         )
 
     def log_metrics(self, metrics: dict[str, Any]) -> None:
-        """Publish the final aggregated HTTP benchmark metrics."""
+        """Publish final aggregates as one chartable W&B history point."""
         if self._run is None:
             return
-        self._run.summary.update(wandb_metric_fields(metrics))
+        self._run.log(wandb_metric_fields(metrics))
 
     def log_request_history(
-        self, measurements: list[RequestMeasurement], *, duration: float, stream: bool
+        self,
+        measurements: list[RequestMeasurement],
+        *,
+        duration: float,
+        stream: bool,
+        replica_observations: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Publish completed-run observations on explicit time and send-order axes."""
+        """Publish request and replica observations on monotonic explicit axes."""
         if self._run is None:
             return
         self._run.define_metric(ELAPSED_TIME)
         self._run.define_metric(REQUEST_INDEX)
+        elapsed_rows = [
+            *time_series(measurements, duration=duration, stream=stream),
+            *cumulative_series(measurements, stream=stream),
+        ]
+        if replica_observations:
+            elapsed_rows.extend(replica_history_rows(replica_observations))
+        elapsed_rows.sort(key=lambda row: float(row[ELAPSED_TIME]))
         series = (
-            (ELAPSED_TIME, time_series(measurements, duration=duration, stream=stream)),
+            (ELAPSED_TIME, elapsed_rows),
             (REQUEST_INDEX, request_series(measurements, stream=stream)),
         )
         for axis, rows in series:

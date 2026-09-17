@@ -50,7 +50,7 @@ class GeneratedLoadBenchmark:
             output_dir=self.output_dir,
             wandb_group=self.wandb_group,
         ) as outputs:
-            metrics, measurements = run_evalscope_standard_load(
+            metrics, measurements, time_origin = run_evalscope_standard_load(
                 self.benchmark,
                 self.service,
                 outputs.execution_dir,
@@ -60,6 +60,7 @@ class GeneratedLoadBenchmark:
                 metrics=metrics,
                 measurements=measurements,
                 artifacts={},
+                time_origin=time_origin,
             )
             outputs.publish(run)
         return run

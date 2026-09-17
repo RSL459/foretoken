@@ -3,15 +3,24 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# 可观测性示例
+# 服务可观测性
 
 [English](README.md) | 简体中文
 
-在[快速开始](../quickstart/README_zh.md)的模型服务之上启用指标、Grafana 看板和告警。`observability.yaml` 保存告警阈值和通知语言；指标采集和看板不需要配置。在仓库根目录运行：
+部署[快速开始](../quickstart/README_zh.md)的服务，并在 `observability.yaml` 中配置告警。该文件分别补充 FrontendService 和 ModelService 的配置，两份规则列表默认都为空。
+
+通过 `foretoken install` 安装平台后，只在对应列表中添加需要的告警名称，然后部署：
 
 ```bash
-foretoken install --values examples/observability/observability.yaml
-foretoken deploy examples/quickstart
+foretoken deploy examples/observability --timeout 20m
 ```
 
-发送几个请求后打开 Grafana，选择 **Foretoken System Overview**，告警阈值会以虚线显示在对应面板上。如何找到 Grafana、接入已有监控和理解各条告警，见[可观测性指南](../../observability/README_zh.md)。
+该部署沿用快速开始的模型、资源、命名空间和数据目录。按其示例发送请求，再到 Grafana 打开 **Foretoken System Overview**。告警名称及触发条件见[告警参考](../../observability/runbooks/alerts_zh.md)。
+
+关闭某条告警时，移除其名称并再次部署该目录。删除整个部署：
+
+```bash
+foretoken delete examples/observability
+```
+
+共享监控仍保留。监控访问和通知接入见[可观测性指南](../../observability/README_zh.md)。

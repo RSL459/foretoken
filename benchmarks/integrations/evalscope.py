@@ -309,7 +309,7 @@ def _evalscope_arguments(
         "stream": generation.stream,
         "top_p": generation.top_p,
         "top_k": generation.top_k,
-        # EvalScope 1.11.1 requires a float here. The Foretoken plugin removes
+        # EvalScope requires a float here. The Foretoken plugin removes
         # this placeholder from the final request when no temperature was set.
         "temperature": (
             0.0 if generation.temperature is None else generation.temperature
@@ -549,8 +549,10 @@ def _map_evalscope_metrics(
     return metrics
 
 
-def _read_evalscope_request_measurements(output_dir: str) -> list[RequestMeasurement]:
-    """Read EvalScope 1.11.1 SQLite records as per-request measurements.
+def _read_evalscope_request_measurements(
+    output_dir: str,
+) -> tuple[list[RequestMeasurement], float | None]:
+    """Read EvalScope SQLite records and their monotonic time origin.
 
     ``run_one_benchmark`` returns aggregate types only; the ``result`` table holds
     the per-request rows that multi-dataset runs merge. EvalScope persists HTTP
@@ -575,9 +577,9 @@ def _read_evalscope_request_measurements(output_dir: str) -> list[RequestMeasure
             """
         ).fetchall()
     if not rows:
-        return []
+        return [], None
     first_start = min(float(row[1]) for row in rows)
-    return [
+    measurements = [
         RequestMeasurement(
             started_at=float(row[1]) - first_start,
             ttft=(
@@ -612,14 +614,15 @@ def _read_evalscope_request_measurements(output_dir: str) -> list[RequestMeasure
         )
         for row in rows
     ]
+    return measurements, first_start
 
 
 def run_evalscope_standard_load(
     benchmark: BenchmarkConfig,
     service: ModelService,
     output_dir: str,
-) -> tuple[dict[str, Any], list[RequestMeasurement]]:
-    """Run a generated workload through EvalScope and return its metrics and per-request measurements."""
+) -> tuple[dict[str, Any], list[RequestMeasurement], float | None]:
+    """Run through EvalScope and return metrics, measurements, and their monotonic origin."""
     try:
         from evalscope.perf.main import run_one_benchmark
         from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
@@ -660,7 +663,7 @@ def run_evalscope_standard_load(
         benchmark, summary, percentiles, trace_summary,
         single_turn=not arguments.multi_turn,
     )
-    measurements = _read_evalscope_request_measurements(output_dir)
+    measurements, time_origin = _read_evalscope_request_measurements(output_dir)
     if benchmark.generation.stream and any(
         item.succeeded and item.ttft is None for item in measurements
     ):
@@ -676,4 +679,4 @@ def run_evalscope_standard_load(
         if not arguments.multi_turn:
             conversation["first_turn_ttft"] = dict(metrics["ttft"])
             conversation["time_to_final_answer_token"] = dict(metrics["ttft"])
-    return metrics, measurements
+    return metrics, measurements, time_origin

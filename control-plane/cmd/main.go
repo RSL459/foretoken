@@ -6,12 +6,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"net/http"
 	"os"
 	"time"
 
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -80,11 +82,15 @@ func main() {
 	var modelSourceEndpoint string
 	var modelSourceTokenSecretName string
 	var modelSourceTokenSecretKey string
+	var observabilityPrometheus string
+	var observabilityLabelsJSON string
 
 	// Metrics stay disabled until the chart exposes a secured endpoint.
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "Health probe bind address.")
 	flag.BoolVar(&leaderElection, "leader-elect", false, "Enable leader election.")
+	flag.StringVar(&observabilityPrometheus, "observability-prometheus", "", "Prometheus NAMESPACE/NAME selected for service alert rules.")
+	flag.StringVar(&observabilityLabelsJSON, "observability-labels", "{}", "JSON labels used to select controller-owned alert rules.")
 	flag.DurationVar(&autoscalingTelemetryCollectionTimeout, "autoscaling-telemetry-collection-timeout", 3*time.Second, "Total budget for one autoscaling telemetry observation.")
 	flag.DurationVar(&autoscalingTelemetryRequestTimeout, "autoscaling-telemetry-request-timeout", time.Second, "Timeout for one autoscaling telemetry HTTP request.")
 	flag.IntVar(&autoscalingTelemetryConcurrency, "autoscaling-telemetry-concurrency", 8, "Maximum concurrent autoscaling telemetry HTTP requests per source type.")
@@ -226,6 +232,7 @@ func main() {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(inferencev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(monitoringv1.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1.Install(scheme))
 
 	restConfig := ctrl.GetConfigOrDie()
@@ -274,6 +281,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	var observabilityLabels map[string]string
+	if err := json.Unmarshal([]byte(observabilityLabelsJSON), &observabilityLabels); err != nil {
+		ctrl.Log.Error(err, "invalid observability labels")
+		os.Exit(1)
+	}
+	serviceAlerts, err := controllers.NewServiceAlerts(manager, observabilityPrometheus, observabilityLabels)
+	if err != nil {
+		ctrl.Log.Error(err, "invalid observability configuration")
+		os.Exit(1)
+	}
+
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
 	if err := (&controllers.ProfileRunReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ProfileRun controller")
@@ -296,6 +314,7 @@ func main() {
 			Client:       manager.GetClient(),
 			APIReader:    manager.GetAPIReader(),
 			CacheProfile: cacheProfile,
+			Alerts:       serviceAlerts,
 			RuntimeProfile: controllers.FrontendRuntimeProfile{
 				Image:             frontendImage,
 				Port:              int32(frontendPort),
@@ -313,6 +332,7 @@ func main() {
 		Client:                   manager.GetClient(),
 		CacheProfile:             cacheProfile,
 		HuggingFaceAccessProfile: huggingFaceAccessProfile,
+		Alerts:                   serviceAlerts,
 		MetricsProvider: controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), controllers.AutoscalingTelemetryOptions{
 			CollectionTimeout: autoscalingTelemetryCollectionTimeout,
 			RequestTimeout:    autoscalingTelemetryRequestTimeout,

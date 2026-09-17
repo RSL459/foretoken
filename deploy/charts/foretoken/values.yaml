@@ -54,18 +54,10 @@ observability:
   # auto discovers the required APIs during installation; enabled supports offline rendering and GitOps.
   mode: auto
   additionalLabels: {}
-  interval: ""
-  scrapeTimeout: ""
-  alerts:
-    # The language is attached to alert labels so a shared Lark receiver can render one language consistently.
-    language: zh
-    # Alert rules fire at these values, and the dashboard draws them as reference lines.
-    thresholds:
-      kvCacheUsageRatio: 0.95
-      acceleratorUtilizationRatio: 0.95
-      acceleratorMemoryUsageRatio: 0.95
-      nvidiaTemperatureCelsius: 85
-      nvidiaPowerWatts: 300
+  interval: 5s
+  scrapeTimeout: 4s
+  # Prometheus NAMESPACE/NAME; foretoken install resolves the selected instance.
+  prometheus: ""
 
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:
