@@ -23,7 +23,7 @@ from foretoken.kubernetes import (
     timeout_seconds,
     wait_for_resources,
 )
-from foretoken.manifest import DeploymentError, ForetokenDeployment
+from foretoken.manifest import DeploymentError, ForetokenDeployment, ResourceRef
 from foretoken.storage import DirectoryVolumes
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,9 @@ class ModelService:
     ``chat_completions_url`` preserves the public endpoint selected by the user or
     deployment. ``routing_host`` is the HTTP ``Host`` header a Gateway HTTP listener
     needs to route by hostname; it is empty for LoadBalancer, HTTPS, and user-supplied
-    URLs. Every client derives its ``Authorization`` header from ``api_key``.
+    URLs. ``model_service_refs`` contains the Kubernetes status sources that serve
+    the selected model and is empty for a user-supplied URL. Every client derives
+    its ``Authorization`` header from ``api_key``.
     """
 
     chat_completions_url: str
@@ -46,6 +48,7 @@ class ModelService:
     hostname: str
     gpu_count: int
     routing_host: str
+    model_service_refs: tuple[ResourceRef, ...]
 
     @property
     def api_root(self) -> str:
@@ -75,6 +78,17 @@ def _select_model(models: Iterable[str], requested: str) -> str:
             + ", ".join(available)
         )
     return available[0]
+
+
+def _model_service_refs(
+    deployment: ForetokenDeployment, model: str
+) -> tuple[ResourceRef, ...]:
+    """Return every ModelService identity that declares the selected model."""
+    return tuple(
+        ResourceRef("ModelService", name, deployment.namespace)
+        for name, value in sorted(deployment.models.items())
+        if value == model
+    )
 
 
 def _model_gpu_count(deployment: ForetokenDeployment, model: str) -> int:
@@ -165,6 +179,7 @@ def _discover_model_service(
         hostname=deployment.hostname,
         gpu_count=gpu_count,
         routing_host=endpoint.routing_host,
+        model_service_refs=_model_service_refs(deployment, model),
     )
 
 
@@ -243,6 +258,7 @@ def resolve_model_service(source: ModelServiceSource) -> Iterator[ModelService]:
             hostname="",
             gpu_count=1,
             routing_host="",
+            model_service_refs=(),
         )
         return
 

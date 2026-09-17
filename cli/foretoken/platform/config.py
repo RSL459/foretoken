@@ -166,6 +166,11 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
             raise DeploymentError(
                 f"Helm values file {path} sets global.imageRegistry; use --oci-registry"
             )
+        observability = values.get("observability")
+        if isinstance(observability, dict) and "prometheus" in observability:
+            raise DeploymentError(
+                f"Helm values file {path} sets observability.prometheus; use --prometheus"
+            )
         frontend = values.get("frontend")
         if isinstance(frontend, dict):
             reserved = tuple(key for key in ("mode", "gateway") if key in frontend)

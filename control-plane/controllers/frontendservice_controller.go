@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"reflect"
 
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -76,6 +77,7 @@ type FrontendServiceReconciler struct {
 	APIReader      client.Reader
 	RuntimeProfile FrontendRuntimeProfile
 	CacheProfile   RuntimeCacheProfile
+	Alerts         *ServiceAlerts
 }
 
 // SetupWithManager watches each resource whose state contributes to frontend readiness.
@@ -87,6 +89,9 @@ func (reconciler *FrontendServiceReconciler) SetupWithManager(manager ctrl.Manag
 		Owns(&corev1.ConfigMap{})
 	if reconciler.RuntimeProfile.Gateway != nil {
 		builder = builder.Owns(&gatewayv1.HTTPRoute{})
+	}
+	if reconciler.Alerts != nil && reconciler.Alerts.watchRules {
+		builder = builder.Owns(&monitoringv1.PrometheusRule{})
 	}
 	return builder.
 		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
@@ -164,6 +169,12 @@ func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, requ
 	if err := reconciler.Get(ctx, request.NamespacedName, frontend); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	result, err := reconciler.reconcileFrontend(ctx, frontend)
+	return result, errors.Join(err, reconciler.reconcileAlerts(ctx, frontend))
+}
+
+// reconcileFrontend keeps serving state independent of optional alert configuration failures.
+func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Context, frontend *inferencev1alpha1.FrontendService) (ctrl.Result, error) {
 	if !frontend.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}

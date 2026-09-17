@@ -61,6 +61,8 @@ spec:
             - {{ printf "--autoscaling-telemetry-concurrency=%d" (int .Values.controller.autoscalingTelemetry.concurrency) | quote }}
             {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
             - --metrics-bind-address=:8080
+            - {{ printf "--observability-prometheus=%s" .Values.observability.prometheus | quote }}
+            - {{ printf "--observability-labels=%s" (include "foretoken.observabilityLabels" . | fromYaml | toJson) | quote }}
             {{- else }}
             - --metrics-bind-address=0
             {{- end }}

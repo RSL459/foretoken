@@ -43,6 +43,29 @@ rules:
       - get
       - patch
   - apiGroups:
+      - monitoring.coreos.com
+    resources:
+      - prometheusrules
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - delete
+  - apiGroups:
+      - monitoring.coreos.com
+    resources:
+      - prometheuses
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - get
+  - apiGroups:
       - inference.foretoken.io
     resources:
       - frontendservices

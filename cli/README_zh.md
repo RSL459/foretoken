@@ -112,7 +112,7 @@ foretoken install --values platform-values.yaml
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-该命令会应用配置、输出服务状态变化，并在所有服务就绪后退出。未指定 `--timeout` 时最多等待十分钟。
+该命令会应用配置、输出服务状态变化，并在所有服务就绪且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置放在服务的 Kustomize 部署中，见[服务可观测性示例](../examples/observability/README_zh.md)。
 
 不应用配置，直接查看同一部署的状态：
 

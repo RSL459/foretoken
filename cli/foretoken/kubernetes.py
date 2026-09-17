@@ -65,21 +65,37 @@ class Kubectl:
             )
 
     def run(
-        self, args: Iterable[str], *, input_text: str | None = None
+        self,
+        args: Iterable[str],
+        *,
+        input_text: str | None = None,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        """Execute kubectl and preserve its diagnostic output on failure."""
+        """Execute kubectl within an optional caller-owned timeout and preserve diagnostics."""
         command = ["kubectl", *args]
-        completed = subprocess.run(
-            command,
-            input=input_text,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                input=input_text,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise DeploymentError(
+                f"{' '.join(command)} timed out after {timeout:g}s"
+            ) from exc
         if completed.returncode:
             detail = completed.stderr.strip() or completed.stdout.strip()
             raise DeploymentError(f"{' '.join(command)} failed: {detail}")
         return completed
+
+    def get_raw(self, path: str, request_timeout: str) -> str:
+        """Return a bounded Kubernetes API or resource-proxy response as text."""
+        return self.run(
+            ["get", f"--request-timeout={request_timeout}", "--raw", path]
+        ).stdout
 
     def kustomize(self, path: Path) -> str:
         """Render a Kustomize root through the installed kubectl."""
@@ -179,12 +195,21 @@ class Kubectl:
             args.extend(["--namespace", namespace])
         return bool(self.run(args).stdout.strip())
 
-    def get(self, kind: str, name: str, namespace: str = "") -> dict[str, Any]:
-        """Return one Kubernetes object as decoded JSON."""
+    def get(
+        self,
+        kind: str,
+        name: str,
+        namespace: str = "",
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Return one Kubernetes object as decoded JSON within an optional timeout."""
         args = ["get", kind, name]
         if namespace:
             args.extend(["--namespace", namespace])
-        return _decode_object(self.run([*args, "-o", "json"]).stdout)
+        return _decode_object(
+            self.run([*args, "-o", "json"], timeout=timeout).stdout
+        )
 
     def get_if_exists(
         self, kind: str, name: str, namespace: str = ""
@@ -197,12 +222,25 @@ class Kubectl:
         return _decode_object(output) if output else None
 
     def get_resources(
-        self, resources: tuple[ResourceRef, ...]
+        self,
+        resources: tuple[ResourceRef, ...],
+        *,
+        timeout: float | None = None,
     ) -> tuple[dict[str, Any], ...]:
-        """Return named resources from one namespace with a single kubectl call."""
+        """Return named resources from one namespace within an optional timeout."""
         namespaces = {resource.namespace for resource in resources}
         if len(namespaces) != 1:
             raise DeploymentError("selected resources must share one namespace")
+        if len(resources) == 1:
+            resource = resources[0]
+            return (
+                self.get(
+                    resource.kind,
+                    resource.name,
+                    resource.namespace,
+                    timeout=timeout,
+                ),
+            )
         args = [
             "get",
             *(f"{resource.kind.lower()}/{resource.name}" for resource in resources),
@@ -210,7 +248,9 @@ class Kubectl:
         namespace = next(iter(namespaces))
         if namespace:
             args.extend(["--namespace", namespace])
-        return _decode_resource_list(self.run([*args, "-o", "json"]).stdout)
+        return _decode_resource_list(
+            self.run([*args, "-o", "json"], timeout=timeout).stdout
+        )
 
     def list_resources(
         self, kinds: Iterable[str], namespace: str
@@ -382,7 +422,7 @@ def timeout_seconds(value: str) -> float:
 def resource_progress(
     resource: ResourceRef, value: dict[str, Any]
 ) -> ResourceProgress:
-    """Interpret one service's Ready condition without accepting stale generations."""
+    """Interpret current serving and explicitly selected alert readiness without accepting stale generations."""
     metadata = value.get("metadata") or {}
     status = value.get("status") or {}
     if metadata.get("deletionTimestamp"):
@@ -393,6 +433,20 @@ def resource_progress(
     generation = int(metadata.get("generation") or 0)
     observed_generation = int(status.get("observedGeneration") or 0)
     conditions = status.get("conditions") or []
+    alerts = ((value.get("spec") or {}).get("observability") or {}).get("alerts") or {}
+    alerts_selected = bool(alerts.get("rules"))
+    alerts_condition = next(
+        (item for item in conditions if item.get("type") == "AlertsReady"), None
+    )
+    alerts_current = (
+        alerts_condition is not None
+        and int(alerts_condition.get("observedGeneration") or 0) == generation
+    )
+    if alerts_current and alerts_condition.get("status") == "False":
+        return ResourceProgress(
+            resource, "Failed", str(alerts_condition.get("reason") or "AlertsFailed"),
+            str(alerts_condition.get("message") or "Service alerts are not configured"), False,
+        )
     ready_condition = next(
         (
             condition
@@ -424,6 +478,18 @@ def resource_progress(
 
     condition_status = str(ready_condition.get("status") or "Unknown")
     if condition_status == "True":
+        if not alerts_selected and alerts_condition is not None:
+            return ResourceProgress(
+                resource, "Progressing", "AlertsRemoving",
+                "Waiting for service alert removal", False,
+            )
+        if alerts_selected and (
+            not alerts_current or alerts_condition.get("status") != "True"
+        ):
+            return ResourceProgress(
+                resource, "Progressing", "AlertsReconciling",
+                "Waiting for the selected service alerts", False,
+            )
         return ResourceProgress(resource, "Ready", reason, message, True)
     if condition_status == "False" and reason == "InvalidIntent":
         return ResourceProgress(resource, "Failed", reason, message, False)

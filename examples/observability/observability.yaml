@@ -1,16 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Observability settings for `foretoken install --values examples/observability/observability.yaml`.
-# The values below are the chart defaults; edit the ones to change and keep the rest.
-observability:
-  alerts:
-    # Notification language: zh, en, or bilingual.
-    language: zh
-    # Alert rules fire at these values; the dashboard draws them as dashed lines.
-    thresholds:
-      kvCacheUsageRatio: 0.95
-      acceleratorUtilizationRatio: 0.95
-      acceleratorMemoryUsageRatio: 0.95
-      nvidiaTemperatureCelsius: 85
-      nvidiaPowerWatts: 300
+# Select frontend and model alerts independently. Empty lists keep alerts disabled.
+apiVersion: inference.foretoken.io/v1alpha1
+kind: FrontendService
+metadata:
+  name: quickstart-frontend
+spec:
+  observability:
+    alerts:
+      rules: [] # Example: [ForetokenMetricsTargetDown]
+---
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: quickstart-qwen3-0.6b
+spec:
+  observability:
+    alerts:
+      rules: [] # Example: [ForetokenMetricsTargetDown]

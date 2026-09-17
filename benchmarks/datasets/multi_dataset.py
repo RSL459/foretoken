@@ -200,7 +200,7 @@ class MultiDatasetBenchmark:
                     if successful_turns
                     else None
                 ),
-                # EvalScope 1.11.1 persists HTTP turns without trace IDs. Keep
+                # EvalScope persists HTTP turns without trace IDs. Keep
                 # exact conversation distributions in each child result instead
                 # of averaging dataset percentiles into a false global value.
                 "latency": dict(empty_distribution),

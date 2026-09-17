@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Defines conservative, actionable Foretoken alerts over scrape and recording-rule signals.
+
+groups:
+  - name: foretoken.alerting
+    rules:
+      - alert: ForetokenMetricsTargetDown
+        expr: |
+          (
+            up{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service!="", inference_foretoken_io_frontend_service="foretoken_alert_frontend"} == 0
+          )
+          or
+          (
+            up{endpoint="model-server", namespace="foretoken_alert_namespace", inference_foretoken_io_model_group!="", inference_foretoken_io_model_group=~"foretoken_alert_model_groups"} == 0
+          )
+        for: 1m
+        labels:
+          service: foretoken
+          severity: warning
+        annotations:
+          alertname_zh: 'Foretoken 指标目标不可用'
+          summary: 'Foretoken metrics target {{ $labels.endpoint }} is unavailable'
+          summary_zh: 'Foretoken 指标目标 {{ $labels.endpoint }} 不可用'
+          description: 'Prometheus has been unable to scrape {{ $labels.endpoint }} at {{ $labels.instance }} in namespace {{ $labels.namespace }} for 1 minute.'
+          description_zh: 'Prometheus 已连续 1 分钟无法抓取命名空间 {{ $labels.namespace }} 中 {{ $labels.instance }} 的 {{ $labels.endpoint }} 指标。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenmetricstargetdown'
+
+      - alert: ForetokenFrontendHTTPResponseStart5xxRatioHigh
+        expr: |
+          (
+            foretoken:frontend_http_response_start_5xx_ratio:rate5m{namespace="foretoken_alert_namespace", frontend_service="foretoken_alert_frontend"} > 0.05
+          )
+          and on (namespace, frontend_service)
+          (
+            sum by (namespace, frontend_service) (
+              foretoken:frontend_http_response_starts:rate5m{namespace="foretoken_alert_namespace", frontend_service="foretoken_alert_frontend"}
+            ) >= 0.1
+          )
+        for: 2m
+        labels:
+          service: foretoken
+          severity: warning
+        annotations:
+          alertname_zh: 'Foretoken 前端响应开始阶段 5xx 比例过高'
+          summary: 'Frontend {{ $labels.frontend_service }} response-start 5xx ratio is high'
+          summary_zh: '前端 {{ $labels.frontend_service }} 响应开始 5xx 比例过高'
+          description: 'More than 5% of HTTP response starts for Frontend {{ $labels.frontend_service }} have been 5xx for 2 minutes with at least 0.1 response starts per second.'
+          description_zh: '前端 {{ $labels.frontend_service }} 的 HTTP 响应开始事件中，5xx 比例在每秒至少 0.1 个响应开始事件的流量下连续 2 分钟超过 5%。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenfrontendhttpresponsestart5xxratiohigh'
+
+      - alert: ForetokenNVIDIAGPUTemperatureHigh
+        expr: foretoken:accelerator_gpu_temperature_celsius{namespace="foretoken_alert_namespace", model_group=~"foretoken_alert_model_groups"} >= foretoken_alert_threshold_nvidia_temperature_celsius
+        for: 2m
+        labels:
+          service: foretoken
+          severity: warning
+        annotations:
+          alertname_zh: 'Foretoken NVIDIA GPU 温度过高'
+          summary: 'NVIDIA GPU {{ $labels.device_id }} temperature is high'
+          summary_zh: 'NVIDIA GPU {{ $labels.device_id }} 温度过高'
+          description: 'NVIDIA GPU {{ $labels.device_id }} temperature is {{ $value | printf "%.1f" }}°C, at or above threshold foretoken_alert_threshold_nvidia_temperature_celsius°C for 2 minutes.'
+          description_zh: 'NVIDIA GPU {{ $labels.device_id }} 温度为 {{ $value | printf "%.1f" }}°C，已达到或超过阈值 foretoken_alert_threshold_nvidia_temperature_celsius°C，持续 2 分钟。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokennvidiagputemperaturehigh'
+
+      - alert: ForetokenNVIDIAGPUPowerUsageHigh
+        expr: foretoken:accelerator_gpu_power_watts{namespace="foretoken_alert_namespace", model_group=~"foretoken_alert_model_groups"} >= foretoken_alert_threshold_nvidia_power_watts
+        for: 5m
+        labels:
+          service: foretoken
+          severity: warning
+        annotations:
+          alertname_zh: 'Foretoken NVIDIA GPU 功耗过高'
+          summary: 'NVIDIA GPU {{ $labels.device_id }} power usage is high'
+          summary_zh: 'NVIDIA GPU {{ $labels.device_id }} 功耗过高'
+          description: 'NVIDIA GPU {{ $labels.device_id }} power usage is {{ $value | printf "%.1f" }} W, at or above threshold foretoken_alert_threshold_nvidia_power_watts W for 5 minutes.'
+          description_zh: 'NVIDIA GPU {{ $labels.device_id }} 功耗为 {{ $value | printf "%.1f" }} W，已达到或超过阈值 foretoken_alert_threshold_nvidia_power_watts W，持续 5 分钟。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokennvidiagpupowerusagehigh'
