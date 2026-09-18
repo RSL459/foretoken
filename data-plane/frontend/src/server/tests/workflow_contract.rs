@@ -34,10 +34,6 @@ struct WorkflowSession {
 }
 
 impl RouteSession for WorkflowSession {
-    fn response_started(&mut self) {}
-
-    fn stage_complete(&mut self) {}
-
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError> {
         self.stage = 1;
         Ok(self.encoder.clone())

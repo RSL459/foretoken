@@ -59,7 +59,10 @@ impl RouteScorer for TokenLoadScorer {
                     1.0 - tokens.min(self.queue_threshold_tokens as f64)
                         / self.queue_threshold_tokens as f64
                 };
-                RouteScore::new(score)
+                RouteScore {
+                    preference: score,
+                    ..RouteScore::default()
+                }
             })
             .collect()
     }

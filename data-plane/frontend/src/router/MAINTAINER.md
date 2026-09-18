@@ -37,12 +37,6 @@ Algorithms score the complete compatible and healthy candidate snapshot. Before 
 
 ## Scorer contracts
 
-`least_loaded` and `kv_least_loaded` share the maximum of Model Server active requests, scheduler
-running plus waiting requests, and frontend-local active requests for the candidate's exact DP rank.
-These counts overlap and must not be summed. Missing telemetry leaves the local count usable;
-endpoint telemetry is shared across ranks and does not provide per-rank engine load.
-Prefill's downstream Decode comparison uses the same calculation within its pipeline scope.
-
 Scorers use the following observations and formulas:
 
 | Scorer | Input | Score |
