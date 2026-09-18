@@ -37,11 +37,6 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 ## 打分契约
 
-`least_loaded` 和 `kv_least_loaded` 共用负载计算，取 Model Server 活跃请求数、调度器运行与等待
-请求数之和、frontend 在候选项精确 DP rank 上跟踪的活跃请求数三者的最大值。
-这些计数有重叠，不能相加；缺失遥测时仍可使用本地计数。端点遥测由各 rank 共享，不能提供
-引擎的逐 rank 负载。Prefill 对同一 pipeline scope 内下游 Decode 的比较也使用此计算。
-
 各 scorer 使用以下观测和公式：
 
 | Scorer | 输入 | 分数 |

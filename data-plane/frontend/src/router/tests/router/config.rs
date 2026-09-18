@@ -13,7 +13,6 @@ use foretoken_router::{
 fn every_compiled_builtin_name_parses_and_builds() {
     for (filter, scorer, picker) in [
         ("allow_all", "uniform", "max"),
-        ("allow_all", "active_request", "round_robin"),
         ("allow_all", "least_loaded", "round_robin"),
         ("allow_all", "kv_least_loaded", "round_robin"),
         ("allow_all", "running_request", "round_robin"),

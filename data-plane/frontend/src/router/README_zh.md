@@ -25,8 +25,6 @@ spec:
 
 `kv_least_loaded` 优先选择可复用前缀更长的目标；长度相同时，本地加速器缓存优于共享 Store 缓存，再比较负载。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
 
-`least_loaded` 和 `kv_least_loaded` 取 Model Server 活跃请求数、调度器运行与等待请求数之和、当前 frontend 跟踪的请求数三者的最大值。遥测尚未观测到的本地派发请求也能参与负载比较，同时避免对同一请求重复计数。
-
 将 `scorer` 设为 `queue_depth`，可优先选择调度器中等待请求较少的目标；设为 `running_request`，可优先选择运行请求较少的目标；设为 `kv_cache_utilization`，可优先选择实测 KV cache 使用率较低的目标。
 
 将 `scorer` 设为 `active_request`，即可优先选择当前 frontend 跟踪的活跃请求较少的目标。

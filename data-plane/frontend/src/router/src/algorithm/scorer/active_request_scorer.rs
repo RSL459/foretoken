@@ -57,11 +57,15 @@ impl RouteScorer for ActiveRequestScorer {
             .iter()
             .map(|candidate| {
                 let count = candidate.local_load.requests;
-                RouteScore::new(if count <= self.idle_threshold {
-                    1.0
-                } else {
-                    (maximum - count) as f64 / maximum as f64 * self.max_busy_score.unwrap_or(1.0)
-                })
+                RouteScore {
+                    preference: if count <= self.idle_threshold {
+                        1.0
+                    } else {
+                        (maximum - count) as f64 / maximum as f64
+                            * self.max_busy_score.unwrap_or(1.0)
+                    },
+                    ..RouteScore::default()
+                }
             })
             .collect()
     }
