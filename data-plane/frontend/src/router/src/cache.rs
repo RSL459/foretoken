@@ -19,7 +19,10 @@ pub(crate) fn cache_match(
     candidate: &RouteCandidate,
     kv: &dyn KvPrefixIndexer,
 ) -> Option<CacheMatch> {
-    if candidate.role == ModelServerRole::Encoder {
+    if !matches!(
+        candidate.role,
+        ModelServerRole::Aggregate | ModelServerRole::Prefill
+    ) {
         return None;
     }
     let lookup = request

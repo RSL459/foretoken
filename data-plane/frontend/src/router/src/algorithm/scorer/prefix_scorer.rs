@@ -60,10 +60,10 @@ impl RouteScorer for PrefixScorer {
             .map(|candidate| {
                 let Some(info) = crate::cache::cache_match(request, candidate, kv_prefix_indexer)
                 else {
-                    return RouteScore::new(0.0);
+                    return RouteScore::default();
                 };
                 if info.total_blocks == 0 {
-                    return RouteScore::new(0.0);
+                    return RouteScore::default();
                 }
                 let ratio = info.matched_blocks as f64 / info.total_blocks as f64;
                 let mut length = 0.0;
@@ -73,9 +73,11 @@ impl RouteScorer for PrefixScorer {
                         .min(1.0);
                     length = normalized * normalized;
                 }
-                RouteScore::new(
-                    self.match_length_weight * length + (1.0 - self.match_length_weight) * ratio,
-                )
+                RouteScore {
+                    preference: self.match_length_weight * length
+                        + (1.0 - self.match_length_weight) * ratio,
+                    ..RouteScore::default()
+                }
             })
             .collect()
     }
