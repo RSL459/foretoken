@@ -1,45 +1,46 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Frontend-owned request lifecycle and request-specific load projections.
+//! Frontend-owned routing reservations and request-specific load projections.
 
 use crate::{RouteCandidate, RouteTargetId, RouterRequest};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-/// Shared local request accounting retained by RuntimeBuilder across serving-snapshot updates.
-/// Sessions from retiring generations continue releasing their own contributions into this state.
+/// Shared routing reservations retained by RuntimeBuilder across serving-snapshot updates.
+/// Sessions from retiring generations continue releasing their own reservations into this state.
 #[derive(Clone, Default)]
-pub struct RoutingLoadState(pub(crate) Arc<Mutex<InFlightRequests>>);
+pub struct RoutingLoadState(pub(crate) Arc<Mutex<RoutingReservations>>);
 
-pub(crate) type RequestKey = (RouteTargetId, u32);
+pub(crate) type ReservationKey = (RouteTargetId, u32);
 
-/// Snapshot of locally routed requests; engine telemetry is deliberately not added to these counts.
+/// Snapshot of this frontend's reservations for one route target and data-parallel rank.
+/// Engine telemetry is deliberately not added to this count.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct InFlightLoad {
-    /// Selected requests still owned by a stage or response stream.
+pub struct RoutingLoadSnapshot {
+    /// Requests reserved by a selected stage or response stream.
     pub requests: i64,
 }
 
 #[derive(Default)]
-pub(crate) struct InFlightRequests {
-    requests: BTreeMap<RequestKey, BTreeSet<String>>,
+pub(crate) struct RoutingReservations {
+    requests: BTreeMap<ReservationKey, BTreeSet<String>>,
 }
 
-impl InFlightRequests {
+impl RoutingReservations {
     /// Takes a coherent candidate snapshot under the routing transaction's lock.
-    pub(crate) fn snapshot(&self, key: &RequestKey) -> InFlightLoad {
+    pub(crate) fn snapshot(&self, key: &ReservationKey) -> RoutingLoadSnapshot {
         let Some(requests) = self.requests.get(key) else {
-            return InFlightLoad::default();
+            return RoutingLoadSnapshot::default();
         };
-        InFlightLoad {
+        RoutingLoadSnapshot {
             requests: requests.len() as i64,
         }
     }
 
     /// Reserves a selected stage before dispatch; the owning session or stream must release it.
-    pub(crate) fn insert(&mut self, request: &RouterRequest, candidate: &RouteCandidate) {
+    pub(crate) fn reserve(&mut self, request: &RouterRequest, candidate: &RouteCandidate) {
         let key = (
             candidate.route_target_id.clone(),
             candidate.data_parallel_rank,
@@ -51,7 +52,7 @@ impl InFlightRequests {
     }
 
     /// Removes exactly one request-stage contribution on completion, rejection, or cancellation.
-    pub(crate) fn remove(&mut self, key: &RequestKey, id: &str) {
+    pub(crate) fn release(&mut self, key: &ReservationKey, id: &str) {
         if let Some(requests) = self.requests.get_mut(key) {
             requests.remove(id);
             if requests.is_empty() {

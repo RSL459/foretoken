@@ -49,14 +49,14 @@ impl RouteScorer for ActiveRequestScorer {
     ) -> Vec<RouteScore> {
         let maximum = candidates
             .iter()
-            .map(|candidate| candidate.inflight.requests)
+            .map(|candidate| candidate.local_load.requests)
             .max()
             .unwrap_or(0)
             .max(0);
         candidates
             .iter()
             .map(|candidate| {
-                let count = candidate.inflight.requests;
+                let count = candidate.local_load.requests;
                 RouteScore::new(if count <= self.idle_threshold {
                     1.0
                 } else {

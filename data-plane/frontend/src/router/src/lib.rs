@@ -4,12 +4,12 @@
 //! Composable selection of one routable ModelGroup per routing round.
 
 pub mod algorithm;
-mod inflight;
-pub use inflight::{InFlightLoad, RoutingLoadState};
 mod inventory;
 mod metrics;
 mod request;
 mod route_target_stats;
+mod routing_load;
+pub use routing_load::{RoutingLoadSnapshot, RoutingLoadState};
 mod selection;
 
 pub use algorithm::{KvLeastLoadedScorer, RouteFilter, RoutePicker, RouteScorer};

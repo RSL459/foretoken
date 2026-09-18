@@ -3,7 +3,7 @@
 
 //! Connector-compatible stage selection for Aggregate, P/D, and E/P/D routes.
 
-use crate::inflight::{InFlightRequests, RequestKey};
+use crate::routing_load::{ReservationKey, RoutingReservations};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -28,7 +28,7 @@ pub struct PipelineRouter<C: Send + 'static = ()> {
     kv_prefix_indexer: Arc<dyn KvPrefixIndexer>,
     route_target_stats_reader: Arc<dyn RouteTargetStatsReader>,
     pipeline: Arc<RouterPipeline<C>>,
-    inflight: Arc<Mutex<InFlightRequests>>,
+    routing_load: Arc<Mutex<RoutingReservations>>,
 }
 impl<C: Send + 'static> PipelineRouter<C> {
     /// Creates a Router with no-op KV-prefix and route-target statistics readers.
@@ -38,13 +38,13 @@ impl<C: Send + 'static> PipelineRouter<C> {
             kv_prefix_indexer: Arc::new(NoopKvPrefixIndexer),
             route_target_stats_reader: Arc::new(NoopRouteTargetStatsReader),
             pipeline: Arc::new(pipeline),
-            inflight: Arc::new(Mutex::new(InFlightRequests::default())),
+            routing_load: Arc::new(Mutex::new(RoutingReservations::default())),
         }
     }
 
     /// Shares frontend-owned request load across runtime generations built by RuntimeBuilder.
     pub fn with_load_state(mut self, state: crate::RoutingLoadState) -> Self {
-        self.inflight = state.0;
+        self.routing_load = state.0;
         self
     }
 
@@ -68,7 +68,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
     fn candidates(
         &self,
         request: &RouterRequest,
-        inflight: &InFlightRequests,
+        reservations: &RoutingReservations,
     ) -> Vec<RouteCandidate> {
         self.inventory
             .model_routes()
@@ -103,7 +103,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     pipeline_scope_id: route.pipeline_scope_id.clone(),
                     data_parallel_rank,
                     route_target_stats: stats.clone(),
-                    inflight: inflight
+                    local_load: reservations
                         .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),
                 })
             })
@@ -130,8 +130,11 @@ impl<C: Send + 'static> PipelineRouter<C> {
             // Filter and Scorer see the complete compatible, healthy snapshot. Stage and connector
             // eligibility are applied after scoring and before Picker.
             // Snapshot, scoring, and reservation share one lock so concurrent selections see load.
-            let mut inflight = self.inflight.lock().expect("routing load lock poisoned");
-            let candidates = self.candidates(request, &inflight);
+            let mut reservations = self
+                .routing_load
+                .lock()
+                .expect("routing load lock poisoned");
+            let candidates = self.candidates(request, &reservations);
             metrics.candidates(round, "available", candidates.len());
             let stage_started = Instant::now();
             let filtered_indexes = self.pipeline.filter.filter(
@@ -198,7 +201,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .get(picked.0)
                 .map(|candidate| candidate.candidate.clone())
                 .ok_or(RouteError::InvalidPickerIndex { index: picked.0 })?;
-            inflight.insert(request, &candidate);
+            reservations.reserve(request, &candidate);
             Ok(candidate)
         })();
         metrics.selection(round, started.elapsed(), result.as_ref().err());
@@ -335,7 +338,7 @@ struct Session<C: Send + 'static> {
     request: RouterRequest,
     customized_context: C,
     stage: SessionStage,
-    selected: Vec<RequestKey>,
+    selected: Vec<ReservationKey>,
 }
 impl<C: Send + 'static> Drop for Session<C> {
     fn drop(&mut self) {
@@ -347,13 +350,13 @@ impl<C: Send + 'static> RouteSession for Session<C> {
         if self.selected.is_empty() {
             return;
         }
-        let mut inflight = self
+        let mut reservations = self
             .router
-            .inflight
+            .routing_load
             .lock()
             .expect("routing load lock poisoned");
         for key in self.selected.drain(..) {
-            inflight.remove(&key, &self.request.generate_request.request_id);
+            reservations.release(&key, &self.request.generate_request.request_id);
         }
     }
 
@@ -455,8 +458,11 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
         let kv_prefix_indexer =
             if self.pipeline.filter.needs_kv_prefix() || self.pipeline.scorer.needs_kv_prefix() {
                 let candidates = {
-                    let inflight = self.inflight.lock().expect("routing load lock poisoned");
-                    self.candidates(&request, &inflight)
+                    let reservations = self
+                        .routing_load
+                        .lock()
+                        .expect("routing load lock poisoned");
+                    self.candidates(&request, &reservations)
                 };
                 let lookups = candidates
                     .iter()
@@ -488,7 +494,7 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                 kv_prefix_indexer,
                 route_target_stats_reader: self.route_target_stats_reader.clone(),
                 pipeline: self.pipeline.clone(),
-                inflight: self.inflight.clone(),
+                routing_load: self.routing_load.clone(),
             },
             customized_context: (self.pipeline.customized_context_factory)(&request),
             request,
