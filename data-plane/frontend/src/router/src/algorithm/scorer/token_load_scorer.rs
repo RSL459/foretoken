@@ -50,9 +50,9 @@ impl RouteScorer for TokenLoadScorer {
             .iter()
             .map(|candidate| {
                 let uncached =
-                    crate::inflight::uncached_tokens(request, candidate, kv_prefix_indexer) as i64;
+                    crate::routing_load::uncached_tokens(request, candidate, kv_prefix_indexer) as i64;
                 // Add signed token counts before converting to floating point.
-                let tokens = candidate.inflight.tokens.wrapping_add(uncached) as f64;
+                let tokens = candidate.local_load.tokens.wrapping_add(uncached) as f64;
                 let score = if tokens <= 0.0 {
                     1.0
                 } else {

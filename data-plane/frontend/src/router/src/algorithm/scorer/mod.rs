@@ -101,7 +101,7 @@ pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
         let requests = stats.running_requests.max(scheduler_requests);
         i64::try_from(requests).unwrap_or(i64::MAX)
     });
-    observed.max(candidate.inflight.requests)
+    observed.max(candidate.local_load.requests)
 }
 
 /// Returns the least model-server route load among Decode eligible route options in each E/P/D route set.
