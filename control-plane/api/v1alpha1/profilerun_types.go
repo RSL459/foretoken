@@ -22,7 +22,7 @@ type ProfileServiceReference struct {
 type ProfileRunSpec struct {
 	ModelServiceRef ProfileServiceReference `json:"modelServiceRef"`
 	// Engine selects the native profiler prepared by the diagnostic runtime.
-	// +kubebuilder:validation:Enum=pytorch
+	// +kubebuilder:validation:Enum=pytorch;nsight
 	Engine   string   `json:"engine"`
 	Duration Duration `json:"duration"`
 	// +kubebuilder:default=Capture
@@ -49,6 +49,9 @@ type ProfileParticipant struct {
 
 // ProfileExecutionPlan is controller-owned recovery state, persisted before any start.
 type ProfileExecutionPlan struct {
+	// Model preserves the captured model identity after the service is removed.
+	// +optional
+	Model             string                `json:"model,omitempty"`
 	ServiceUID        string                `json:"serviceUID"`
 	ServingGeneration int64                 `json:"servingGeneration"`
 	Revisions         []ServingPoolRevision `json:"revisions"`

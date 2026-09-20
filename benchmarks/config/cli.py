@@ -11,10 +11,13 @@ from collections.abc import Sequence
 from dataclasses import MISSING, fields
 from typing import Any
 
+from foretoken.arguments import add_profile_arguments, validate_profile_arguments
+
 from benchmarks.config.benchmark import (
     ArrivalTraceSchedule,
     BenchmarkConfig,
     BenchmarkOutputConfig,
+    BenchmarkProfileConfig,
     ChatCompletionsGeneration,
     ChatRequestDataset,
     HttpLoadSchedule,
@@ -87,10 +90,18 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--wait-timeout",
         default=_default(ModelServiceSource, "wait_timeout"),
-        help="Timeout for each deployment readiness stage",
+        help="Timeout for each deployment readiness or profile startup/completion stage",
     )
 
+    add_profile_arguments(parser)
+
     # HTTP workload
+    parser.add_argument(
+        "--warmup-requests",
+        type=int,
+        default=_default(HttpLoadSchedule, "warmup_requests"),
+        help="Conversations to finish before each generated run; excluded from measured results",
+    )
     parser.add_argument(
         "--parallel",
         type=int,
@@ -378,6 +389,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             max_concurrency=namespace.parallel,
             request_count=namespace.number,
             arrival_rate=namespace.rate,
+            warmup_requests=namespace.warmup_requests,
         ),
         generation=ChatCompletionsGeneration(
             max_tokens=namespace.max_tokens,
@@ -427,6 +439,10 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             num_runs=namespace.num_runs,
             experiment_name=namespace.experiment_name,
         ),
+        profile=(
+            BenchmarkProfileConfig(namespace.profile_engine, namespace.profile_duration)
+            if namespace.profile else None
+        ),
     )
 
 
@@ -445,4 +461,5 @@ def parse_benchmark_arguments(
     _add_benchmark_arguments(parser)
 
     parsed_args = parser.parse_args(argv)
+    validate_profile_arguments(parser, parsed_args)
     return _benchmark_config(parsed_args)

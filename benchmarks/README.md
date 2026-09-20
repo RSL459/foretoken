@@ -38,6 +38,8 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
+Add `--warmup-requests 16` to complete 16 warmup conversations before each measured run, excluding them from its metrics.
+
 `--parallel` controls concurrency and `--rate` controls arrivals per second. Each accepts `-1` for no limit. The defaults are no rate limit and one concurrent request. To send at an average of five requests per second without a concurrency cap:
 
 ```bash
@@ -70,6 +72,16 @@ foretoken bench examples/quickstart \
 
 `--dataset` also accepts a local JSONL file. Each row is a conversation, and all turns run by default using the model's actual answers. Use `--max-turns 1` for the first turn only. Multi-turn conversations currently require `--rate -1`.
 
+### Capture while benchmarking
+
+```bash
+foretoken bench examples/quickstart \
+  --profile --profile-engine pytorch --profile-duration 15s \
+  --number 2 --max-tokens 128 --output local
+```
+
+See [Profiling](../observability/profiling.md) for setup and trace viewing.
+
 ### Trace replay
 
 ```bash
@@ -86,11 +98,14 @@ The trace determines request count and arrival times. Each record is replayed in
 
 ```bash
 foretoken bench examples/quickstart \
+  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 256 --random-seed 0 \
   --sweep benchmarks/examples/sweep.jsonl \
+  --warmup-requests 16 --num-runs 3 \
   --output local,wandb
 ```
 
-Sweeps use a Kustomize deployment to compare configurations against the same model service.
+For parameter sweeps, pass a deployment configuration directory such as `examples/quickstart`; `--url` is currently unsupported. See [Parameter sweeps](docs/coomon_commands/sweep.md) to customize points and compare configurations.
 
 ### An existing service URL
 
@@ -104,7 +119,7 @@ foretoken bench \
   --output local,wandb
 ```
 
-For another service, use its actual Chat Completions URL and model name. In Gateway mode, use the Kustomize form above so the CLI supplies routing headers.
+For another service, use its actual Chat Completions URL and model name. In Gateway mode, pass the deployment configuration directory shown above so the CLI supplies routing headers.
 
 ## Read results
 

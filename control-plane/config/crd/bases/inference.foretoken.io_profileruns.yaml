@@ -75,6 +75,7 @@ spec:
                   runtime.
                 enum:
                 - pytorch
+                - nsight
                 type: string
               modelServiceRef:
                 description: ProfileServiceReference selects one existing ModelService
@@ -145,6 +146,10 @@ spec:
                 description: Plan is fixed once selected; reconciliation never retargets
                   replacement runtimes.
                 properties:
+                  model:
+                    description: Model preserves the captured model identity after
+                      the service is removed.
+                    type: string
                   participants:
                     items:
                       description: |-

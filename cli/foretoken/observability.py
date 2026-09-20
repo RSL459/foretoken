@@ -117,28 +117,6 @@ def select_prometheus(
     return compatible[0]
 
 
-def managed_prometheus_ref(
-    kubectl: Kubectl, namespace: str, release_name: str
-) -> PrometheusRef:
-    """Return the Prometheus custom resource owned by one managed Helm release."""
-    candidates = tuple(
-        value
-        for value in kubectl.list_resources(
-            ("prometheuses.monitoring.coreos.com",), namespace
-        )
-        if ((value.get("metadata") or {}).get("labels") or {}).get(
-            "app.kubernetes.io/instance"
-        )
-        == release_name
-    )
-    if len(candidates) != 1 or (identity := _identity(candidates[0])) is None:
-        raise DeploymentError(
-            f"managed Prometheus release {namespace}/{release_name} must own exactly "
-            "one Prometheus custom resource"
-        )
-    return PrometheusRef(identity[1], identity[0], ())
-
-
 def prometheus_query(
     kubectl: Kubectl,
     prometheus: PrometheusRef,

@@ -7,17 +7,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import random
 import sqlite3
+import threading
 import time
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
+    from benchmarks.profiling.capture import BenchmarkProfile
     from evalscope.perf.utils.perf_models import BenchmarkSummary, PercentileResult
     from evalscope.perf.utils.trace_metrics import TraceLevelSummary
 
@@ -105,11 +109,12 @@ def _evalscope_arguments_type() -> type:
         ) from error
 
     class ForetokenEvalScopeArguments(Arguments):
-        """EvalScope arguments carrying Foretoken request-field omission semantics."""
+        """Carry Foretoken request semantics and an unpersisted capture handle into EvalScope."""
 
         omit_temperature: bool = Field(default=False, exclude=True, repr=False)
         max_retries: int = Field(ge=0)
         output_length_range: tuple[int, int] | None = None
+        profile: Any = Field(default=None, exclude=True, repr=False)
 
     @register_dataset(_EVALSCOPE_DATASET)
     class ForetokenConversationDataset(DatasetPluginBase):
@@ -170,6 +175,8 @@ def _evalscope_arguments_type() -> type:
             self, client_session: Any, url: str, headers: dict, body: dict
         ) -> Any:
             """Retry transient failures before any response content, counting wait time in latency."""
+            if self.param.profile is not None:
+                await self.param.profile.before_request()
             last_turn = body.pop(_FINAL_TURN, True)
             started_at = time.perf_counter()
             for attempt in range(self.param.max_retries + 1):
@@ -239,6 +246,8 @@ def _evalscope_arguments_type() -> type:
             diagnostics_path = Path(self.param.outputs_dir) / "request_diagnostics.jsonl"
             with diagnostics_path.open("a", encoding="utf-8") as file:
                 file.write(json.dumps(diagnostic, ensure_ascii=False) + "\n")
+            if self.param.profile is not None:
+                self.param.profile.response_received(result.success)
             return result
 
     return ForetokenEvalScopeArguments
@@ -617,12 +626,37 @@ def _read_evalscope_request_measurements(
     return measurements, first_start
 
 
+@contextmanager
+def _evalscope_phase(label: str, conversations: int) -> Iterator[None]:
+    """Announce a workload phase and scope its EvalScope log filtering to this call."""
+    from evalscope.utils.logger import get_logger
+
+    logger = get_logger()
+    thread_id = threading.get_ident()
+
+    def include_record(record: logging.LogRecord) -> bool:
+        # The native handoff warning describes overlapping built-in warmup;
+        # Foretoken finishes its separate warmup before starting measurement.
+        return record.thread != thread_id or record.funcName != "_log_warmup_handoff"
+
+    logger.addFilter(include_record)
+    try:
+        logger.info("%s: %d conversations", label, conversations)
+        yield
+    finally:
+        logger.removeFilter(include_record)
+
+
 def run_evalscope_standard_load(
     benchmark: BenchmarkConfig,
     service: ModelService,
     output_dir: str,
+    *,
+    phase_label: str,
+    profile: BenchmarkProfile | None = None,
 ) -> tuple[dict[str, Any], list[RequestMeasurement], float | None]:
     """Run through EvalScope and return metrics, measurements, and their monotonic origin."""
+
     try:
         from evalscope.perf.main import run_one_benchmark
         from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
@@ -641,6 +675,7 @@ def run_evalscope_standard_load(
         os.path.join(output_dir, "benchmark.log"),
     )
     arguments = _evalscope_arguments(benchmark, service, output_dir)
+    arguments.profile = profile
     seed_everything(benchmark.resolved_workload.random_seed)
     materialized_dataset = (
         arguments.dataset_path
@@ -649,9 +684,14 @@ def run_evalscope_standard_load(
     )
     try:
         # EvalScope owns its event loop and signal cancellation on the main thread.
-        result = run_one_benchmark(arguments, output_dir)
+        with _evalscope_phase(phase_label, benchmark.load.request_count):
+            result = run_one_benchmark(arguments, output_dir)
     except PerfBenchmarkInterrupted as error:
         raise SystemExit(error.exit_code) from None
+    except asyncio.CancelledError:
+        if profile is not None and profile.error is not None:
+            raise profile.error from None
+        raise
     finally:
         if materialized_dataset:
             Path(materialized_dataset).unlink(missing_ok=True)

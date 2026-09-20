@@ -58,11 +58,17 @@ class ResourceProgress:
 class Kubectl:
     """Run kubectl commands using the caller's active Kubernetes context."""
 
-    def __init__(self) -> None:
+    def __init__(self, context: str | None = None) -> None:
+        self.context = context
         if shutil.which("kubectl") is None:
             raise DeploymentError(
                 "kubectl is required to deploy or inspect Foretoken services"
             )
+
+    def command(self, args: Iterable[str]) -> list[str]:
+        """Build an invocation with the same cluster selection for text and streamed calls."""
+        context = ["--context", self.context] if self.context is not None else []
+        return ["kubectl", *context, *args]
 
     def run(
         self,
@@ -72,7 +78,7 @@ class Kubectl:
         timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Execute kubectl within an optional caller-owned timeout and preserve diagnostics."""
-        command = ["kubectl", *args]
+        command = self.command(args)
         try:
             completed = subprocess.run(
                 command,
@@ -119,6 +125,19 @@ class Kubectl:
                 f"--timeout={timeout}",
             ],
             input_text=rendered,
+        )
+
+    def rollout_status(self, resource: ResourceRef, timeout: str) -> None:
+        """Wait for one namespaced workload to become ready."""
+        self.run(
+            [
+                "rollout",
+                "status",
+                f"{resource.kind.lower()}/{resource.name}",
+                "--namespace",
+                resource.namespace,
+                f"--timeout={timeout}",
+            ]
         )
 
     def wait_for_crds(self, names: tuple[str, ...], timeout: str) -> None:
@@ -478,6 +497,14 @@ def resource_progress(
 
     condition_status = str(ready_condition.get("status") or "Unknown")
     if condition_status == "True":
+        if (
+            resource.kind == "ModelService"
+            and int(status.get("servingGeneration") or 0) != generation
+        ):
+            return ResourceProgress(
+                resource, "Progressing", "Updating",
+                "Waiting for the current ModelService generation to serve", False,
+            )
         if not alerts_selected and alerts_condition is not None:
             return ResourceProgress(
                 resource, "Progressing", "AlertsRemoving",
