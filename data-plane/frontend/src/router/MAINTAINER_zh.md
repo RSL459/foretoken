@@ -62,4 +62,4 @@ Registry 为每个模型执行组保留一份遥测历史。组级计数器和�
 `active_request` 使用 frontend 按目标和 DP rank 维护的本地预留量，不叠加引擎调度指标或其他 frontend 的请求。
 选择目标和预留共用一把锁；路由 session 负责清理，RuntimeBuilder 在 serving snapshot 替换时保留此状态。
 
-可选参数配置在 `FrontendService.spec.routerPipeline.scorerParameters` 中，由所选 scorer 在 frontend 启动时读取。
+算法参数配置在 `FrontendService.spec.routerPipeline.<stage>.parameters` 中，由对应的 Filter、Scorer 或 Picker 在 frontend 启动时读取。

@@ -10,9 +10,15 @@ Router 为每个推理请求选择兼容且健康的模型目标。
 ```yaml
 spec:
   routerPipeline:
-    filter: allow_all
-    scorer: kv_least_loaded
-    picker: round_robin
+    filter:
+      algorithm: allow_all
+      parameters: {}
+    scorer:
+      algorithm: kv_least_loaded
+      parameters: {}
+    picker:
+      algorithm: round_robin
+      parameters: {}
 ```
 
 | 阶段 | 当前可选值 | 默认值 | 作用 |
@@ -25,7 +31,7 @@ spec:
 
 将 `scorer` 设为 `queue_depth`，可优先选择调度器中等待请求较少的目标；设为 `running_request`，可优先选择运行请求较少的目标；设为 `kv_cache_utilization`，可优先选择实测 KV cache 使用率较低的目标。
 
-将 `scorer` 设为 `active_request`，即可优先选择当前 frontend 跟踪的活跃请求较少的目标。
+将 `scorer.algorithm` 设为 `active_request`，即可优先选择当前 frontend 跟踪的活跃请求较少的目标；如需调整默认行为，可配置 `scorer.parameters.idleThreshold` 和 `scorer.parameters.maxBusyScore`。
 
 路由会区分同一模型执行组内的各个 DP rank。负载策略使用对应 rank 的当前调度器计数，使用率策略使用对应 rank 的 KV Cache 使用率；收到首个遥测响应即可评分，无需等满速率窗口。缺失观测不代表零负载：有实测值的候选优于未知候选，全部未知时仍由 Picker 选择。这三个纯指标策略不叠加前缀位置、待派发请求或下游阶段负载。
 

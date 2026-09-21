@@ -10,9 +10,15 @@ Configure routing in `FrontendService.spec.routerPipeline`:
 ```yaml
 spec:
   routerPipeline:
-    filter: allow_all
-    scorer: kv_least_loaded
-    picker: round_robin
+    filter:
+      algorithm: allow_all
+      parameters: {}
+    scorer:
+      algorithm: kv_least_loaded
+      parameters: {}
+    picker:
+      algorithm: round_robin
+      parameters: {}
 ```
 
 | Stage | Current values | Default | Effect |
@@ -25,7 +31,7 @@ spec:
 
 Set `scorer` to `queue_depth` to prefer fewer requests waiting in the engine scheduler, `running_request` to prefer fewer running requests, or `kv_cache_utilization` to prefer lower measured KV-cache utilization.
 
-Set `scorer` to `active_request` to prefer fewer active requests tracked by this frontend.
+Set `scorer.algorithm` to `active_request` to prefer fewer active requests tracked by this frontend. Configure `scorer.parameters.idleThreshold` and `scorer.parameters.maxBusyScore` when the defaults are not suitable.
 
 Routing distinguishes DP ranks within each model group. Load policies use each rank's current scheduler counts; the utilization policy uses that rank's KV-cache usage. These gauges are available from the first telemetry response, without waiting for a rate window. Missing rank observations are not treated as zero load: measured candidates rank ahead of unknown candidates, while equally unknown candidates remain eligible for the Picker. The three metric-only policies do not add prefix locality, pending dispatches, or downstream-stage load.
 

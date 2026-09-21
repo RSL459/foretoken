@@ -64,4 +64,4 @@ Each selected stage remains counted until completion or session drop.
 or other frontend replicas' requests. Selection and reservation share one lock; routing sessions own
 cleanup, and RuntimeBuilder retains the state across serving-snapshot replacements.
 
-Set optional parameters in `FrontendService.spec.routerPipeline.scorerParameters`; the selected scorer reads them at frontend startup.
+Set algorithm parameters in `FrontendService.spec.routerPipeline.<stage>.parameters`; the selected Filter, Scorer, or Picker reads its own parameters at frontend startup.
