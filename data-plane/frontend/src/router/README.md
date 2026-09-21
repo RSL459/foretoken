@@ -12,13 +12,10 @@ spec:
   routerPipeline:
     filter:
       algorithm: allow_all
-      parameters: {}
     scorer:
       algorithm: kv_least_loaded
-      parameters: {}
     picker:
       algorithm: round_robin
-      parameters: {}
 ```
 
 | Stage | Current values | Default | Effect |
