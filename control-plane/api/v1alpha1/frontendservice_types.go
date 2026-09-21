@@ -67,7 +67,7 @@ type FrontendServiceSpec struct {
 	Observability *FrontendObservability `json:"observability,omitempty"`
 
 	// +optional
-	// +kubebuilder:default={}
+	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:round_robin}}
 	RouterPipeline RouterPipeline `json:"routerPipeline,omitempty"`
 
 	// Hostname is required when the platform exposes frontends through a Gateway.

@@ -168,15 +168,5 @@ jobs:
           kubectl get crd/modelpools.inference.foretoken.io
           kubectl get crd/modelgroups.inference.foretoken.io
           ! kubectl get clusterrole/foretoken-platform-foretoken-control-plane
-      - name: Dump operator diagnostics
-        if: ${{ failure() }}
-        run: |
-          kubectl get pods --all-namespaces -o wide || true
-          kubectl describe deployment/foretoken-control-plane --namespace foretoken-platform || true
-          kubectl get pods --namespace foretoken-platform -l app.kubernetes.io/name=foretoken-control-plane -o name | while read -r pod; do
-            kubectl describe "$pod" --namespace foretoken-platform || true
-            kubectl logs "$pod" --namespace foretoken-platform -c crd-apply --ignore-errors=true || true
-            kubectl logs "$pod" --namespace foretoken-platform -c manager --ignore-errors=true || true
-          done
       - name: Check generated files
         run: git diff --exit-code
