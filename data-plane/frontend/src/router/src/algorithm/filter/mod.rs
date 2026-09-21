@@ -38,7 +38,10 @@ pub trait RouteFilter<C: Send + 'static = ()>: Send + Sync {
 
     /// Applies algorithm-owned parameters during pipeline construction.
     fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
-        if parameters.as_object().is_some_and(|parameters| parameters.is_empty()) {
+        if parameters
+            .as_object()
+            .is_some_and(|parameters| parameters.is_empty())
+        {
             Ok(())
         } else {
             Err("this filter accepts no parameters".into())
