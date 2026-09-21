@@ -21,7 +21,7 @@ pub use metrics::render_metrics;
 pub use request::RouterRequest;
 pub use route_target_stats::{RouteTargetLatencyStats, RouteTargetStats, RouteTargetStatsReader};
 pub use selection::{
-    AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, PickerAlgorithm,
+    AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, FilterStage, PickerStage, ScorerStage, PickerAlgorithm,
     PickerDescriptor, PipelineRouter, RouteCandidate, RouteError, RouteScore, RouteSession, Router,
     RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError, RoutingProgress, RoutingStage,
     ScoredCandidate, ScorerAlgorithm, ScorerDescriptor,
