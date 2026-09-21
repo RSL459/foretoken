@@ -62,105 +62,41 @@ spec:
                   side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
                 properties:
                   adjustment:
-                    description: ModelAutoscalingAdjustmentConfig configures how desired
-                      replica capacity is applied.
+                    description: |-
+                      ModelAutoscalingAlgorithmConfig selects a controller-supported algorithm
+                      for one autoscaling stage (trigger, decision, and adjustment) and optionally supplies its parameters.
                     properties:
                       algorithm:
-                        default: step
-                        description: AutoscalingAdjustmentAlgorithm selects how a
-                          desired replica count is stabilized before lifecycle resolution.
-                        enum:
-                        - direct
-                        - step
+                        description: Algorithm names the controller-supported algorithm
+                          for this stage.
+                        minLength: 1
                         type: string
-                      scaleDown:
-                        description: ModelAutoscalingScaleDownConfig controls downward
-                          stabilization.
-                        properties:
-                          stabilizationWindow:
-                            default: 300s
-                            description: NonNegativeDuration is a Go-style duration
-                              that may be zero.
-                            minLength: 2
-                            pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
-                            type: string
-                            x-kubernetes-validations:
-                            - message: must be a non-negative duration
-                              rule: duration(self) >= duration('0s')
+                      parameters:
+                        description: Parameters contains optional settings for the
+                          selected algorithm; omitted fields use its defaults.
                         type: object
-                      scaleUp:
-                        description: ModelAutoscalingScaleUpConfig controls upward
-                          stabilization.
-                        properties:
-                          stabilizationWindow:
-                            default: 0s
-                            description: NonNegativeDuration is a Go-style duration
-                              that may be zero.
-                            minLength: 2
-                            pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
-                            type: string
-                            x-kubernetes-validations:
-                            - message: must be a non-negative duration
-                              rule: duration(self) >= duration('0s')
-                        type: object
-                    type: object
-                    x-kubernetes-validations:
-                    - message: direct adjustment does not accept scaleUp or scaleDown
-                        configuration
-                      rule: self.algorithm != 'direct' || (!has(self.scaleUp) && !has(self.scaleDown))
-                  decision:
-                    description: ModelAutoscalingDecisionConfig configures desired-capacity
-                      calculation.
-                    properties:
-                      algorithm:
-                        description: AutoscalingDecisionAlgorithm selects how observed
-                          demand is converted into desired replica capacity.
-                        enum:
-                        - queue
-                        - queue_threshold
-                        type: string
-                      queue:
-                        description: ModelAutoscalingQueueDecisionConfig configures
-                          HPA-style average queue capacity.
-                        properties:
-                          targetAverageQueuedRequests:
-                            default: 1
-                            description: TargetAverageQueuedRequests is the desired
-                              average waiting requests per replica.
-                            format: int64
-                            minimum: 1
-                            type: integer
-                        type: object
-                      queueThreshold:
-                        description: ModelAutoscalingQueueThresholdDecisionConfig
-                          configures absolute backlog boundaries.
-                        properties:
-                          scaleDownQueuedRequests:
-                            default: 0
-                            description: ScaleDownQueuedRequests is the queue depth
-                              at or below which one fewer idle replica is recommended.
-                            format: int64
-                            minimum: 0
-                            type: integer
-                          scaleUpQueuedRequests:
-                            default: 1
-                            description: ScaleUpQueuedRequests is the queue depth
-                              above which one additional replica is recommended.
-                            format: int64
-                            minimum: 0
-                            type: integer
-                        type: object
-                        x-kubernetes-validations:
-                        - message: scaleDownQueuedRequests must not exceed scaleUpQueuedRequests
-                          rule: self.scaleDownQueuedRequests <= self.scaleUpQueuedRequests
+                        x-kubernetes-preserve-unknown-fields: true
                     required:
                     - algorithm
                     type: object
-                    x-kubernetes-validations:
-                    - message: autoscaling decision must configure exactly the selected
-                        algorithm
-                      rule: 'self.algorithm == ''queue'' ? has(self.queue) && !has(self.queueThreshold)
-                        : has(self.queueThreshold) && !has(self.queue)'
+                  decision:
+                    description: |-
+                      ModelAutoscalingAlgorithmConfig selects a controller-supported algorithm
+                      for one autoscaling stage (trigger, decision, and adjustment) and optionally supplies its parameters.
+                    properties:
+                      algorithm:
+                        description: Algorithm names the controller-supported algorithm
+                          for this stage.
+                        minLength: 1
+                        type: string
+                      parameters:
+                        description: Parameters contains optional settings for the
+                          selected algorithm; omitted fields use its defaults.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    required:
+                    - algorithm
+                    type: object
                   maxReplicas:
                     format: int32
                     minimum: 1
@@ -171,27 +107,21 @@ spec:
                     minimum: 1
                     type: integer
                   trigger:
-                    default: {}
                     description: Trigger may be omitted to use periodic evaluation
                       every five seconds.
                     properties:
                       algorithm:
-                        default: periodic
-                        description: AutoscalingTriggerAlgorithm selects how observations
-                          enter automatic capacity evaluation.
-                        enum:
-                        - periodic
+                        description: Algorithm names the controller-supported algorithm
+                          for this stage.
+                        minLength: 1
                         type: string
-                      interval:
-                        default: 5s
-                        description: Interval controls how often the controller runs
-                          the Trigger stage.
-                        minLength: 2
-                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
-                        type: string
-                        x-kubernetes-validations:
-                        - message: must be a positive duration
-                          rule: duration(self) > duration('0s')
+                      parameters:
+                        description: Parameters contains optional settings for the
+                          selected algorithm; omitted fields use its defaults.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    required:
+                    - algorithm
                     type: object
                 required:
                 - decision
@@ -204,11 +134,6 @@ spec:
                 enum:
                 - vllm
                 type: string
-              dtype:
-                description: DType selects the model weight and activation data type
-                  supported by the engine.
-                minLength: 1
-                type: string
               ecProfile:
                 description: ECProfile selects the platform-maintained EC runtime
                   for a complete E/P/D topology.
@@ -220,16 +145,11 @@ spec:
                 required:
                 - profile
                 type: object
-              enforceEager:
-                description: EnforceEager disables graph capture when true; omission
-                  preserves the engine default.
-                type: boolean
               engineArgs:
                 additionalProperties:
                   x-kubernetes-preserve-unknown-fields: true
-                description: |-
-                  EngineArgs uses the selected backend's native option names without leading --.
-                  Explicit common fields in spec take precedence over matching engine options.
+                description: EngineArgs uses the selected backend's native option
+                  names without leading --.
                 type: object
               features:
                 description: Features declares explicit opt-in capabilities for the
@@ -261,13 +181,6 @@ spec:
                   tools:
                     type: boolean
                 type: object
-              gpuMemoryUtilization:
-                description: GPUMemoryUtilization is the fraction of device memory
-                  available to each engine instance.
-                exclusiveMinimum: true
-                maximum: 1
-                minimum: 0
-                type: number
               internalGenerateRequestBodyLimitBytes:
                 default: 67108864
                 description: |-
@@ -330,32 +243,9 @@ spec:
                 - message: kvCache.offload and kvCache.mooncakeStore are mutually
                     exclusive
                   rule: '!(has(self.offload) && has(self.mooncakeStore))'
-              kvCacheDType:
-                description: KVCacheDType selects the data type used for the engine's
-                  KV cache.
-                minLength: 1
-                type: string
               maxInputTokens:
                 description: MaxInputTokens is the prompt admission limit for requests
                   routed to the default Pool.
-                format: int32
-                minimum: 1
-                type: integer
-              maxModelLen:
-                description: MaxModelLen limits the combined prompt and generated
-                  sequence length.
-                format: int32
-                minimum: 1
-                type: integer
-              maxNumBatchedTokens:
-                description: MaxNumBatchedTokens limits the tokens scheduled in one
-                  engine iteration.
-                format: int32
-                minimum: 1
-                type: integer
-              maxNumSeqs:
-                description: MaxNumSeqs limits the sequences scheduled in one engine
-                  iteration.
                 format: int32
                 minimum: 1
                 type: integer
@@ -481,10 +371,9 @@ spec:
                       type: string
                     nodes:
                       default: 1
-                      description: Nodes is the number of physical Kubernetes Nodes
+                      description: Nodes is the number of distinct Kubernetes Nodes
                         used by each ModelGroup.
                       format: int32
-                      maximum: 1
                       minimum: 1
                       type: integer
                     replicas:
@@ -597,10 +486,9 @@ spec:
                 - name
                 x-kubernetes-list-type: map
               nodes:
-                description: Nodes is the number of physical Kubernetes Nodes used
+                description: Nodes is the number of distinct Kubernetes Nodes used
                   by each ModelGroup; the compiler defaults it to 1.
                 format: int32
-                maximum: 1
                 minimum: 1
                 type: integer
               observability:
@@ -652,15 +540,11 @@ spec:
                     enum:
                     - pytorch
                     - nsight
+                    - mctracer
                     type: string
                 required:
                 - engine
                 type: object
-              quantization:
-                description: Quantization selects the engine's weight quantization
-                  method.
-                minLength: 1
-                type: string
               replicas:
                 description: |-
                   Replicas is the baseline service replica count; the compiler defaults it to 1.
@@ -756,13 +640,6 @@ spec:
                 - hf
                 - modelscope
                 type: string
-              speculativeDecoding:
-                additionalProperties:
-                  x-kubernetes-preserve-unknown-fields: true
-                description: |-
-                  SpeculativeDecoding is the complete native speculative configuration for the selected backend.
-                  It replaces the corresponding engineArgs option when present.
-                type: object
               timeouts:
                 description: ModelTimeouts defines ModelService lifecycle budgets.
                 properties:
@@ -827,29 +704,12 @@ spec:
                 has(pool.role) && pool.role == ''decode'') && self.modelPools.all(pool,
                 has(pool.role) && (pool.role == ''encoder'' || pool.role == ''prefill''
                 || pool.role == ''decode'')))'
-            - message: E/P/D modelPools must contain exactly one encoder, prefill,
-                and decode Pool
-              rule: '!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role)
-                && pool.role == ''encoder'') || (size(self.modelPools.filter(pool,
-                has(pool.role) && pool.role == ''encoder'')) == 1 && size(self.modelPools.filter(pool,
-                has(pool.role) && pool.role == ''prefill'')) == 1 && size(self.modelPools.filter(pool,
-                has(pool.role) && pool.role == ''decode'')) == 1)'
-            - message: E/P/D modelPools must have equal encoder, prefill, and decode
-                replica counts
-              rule: '!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role)
-                && pool.role == ''encoder'') || self.modelPools.filter(pool, has(pool.role)
-                && pool.role == ''encoder'').all(e, self.modelPools.filter(pool, has(pool.role)
-                && pool.role == ''prefill'').all(p, (has(e.replicas) ? e.replicas
-                : 1) == (has(p.replicas) ? p.replicas : 1)) && self.modelPools.filter(pool,
-                has(pool.role) && pool.role == ''decode'').all(d, (has(e.replicas)
-                ? e.replicas : 1) == (has(d.replicas) ? d.replicas : 1)))'
           status:
             description: ModelServiceStatus defines the observed state of a model
               service.
             properties:
               autoscaling:
-                description: Autoscaling contains the latest decision for each Pool
-                  or linked E/P/D processing unit.
+                description: Autoscaling contains the latest decision for each ModelPool.
                 items:
                   description: AutoscalingTargetStatus is the latest complete autoscaling
                     evaluation for one scaling target.
@@ -927,7 +787,6 @@ spec:
                     kind:
                       enum:
                       - Pool
-                      - EPDPipelineScope
                       type: string
                     observationEndAt:
                       description: |-
@@ -947,7 +806,6 @@ spec:
                       - Encoder
                       - Prefill
                       - Decode
-                      - EPD
                       type: string
                     routableReplicas:
                       format: int32

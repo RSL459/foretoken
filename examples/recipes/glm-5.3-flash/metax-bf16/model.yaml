@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: glm-5-3-flash
+spec:
+  model: zai-org/GLM-5.3-Flash-BF16
+  source: local
+  backend: vllm
+  replicas: 1
+  nodes: 2
+  resources:
+    requests:
+      cpu: "32"
+      memory: 512Gi
+      gpu:
+        count: 8
+    limits:
+      cpu: "64"
+      memory: 768Gi
+  timeouts:
+    startup: 60m
+    drain: 5m
+  kvCache:
+    mooncakeStore:
+      kvServiceRef:
+        name: shared-kv
+  engineArgs:
+    dtype: bfloat16
+    max-model-len: 1048576
+    tensor-parallel-size: 8
+    data-parallel-size: 2
+    enable-expert-parallel: true
+    speculative-config:
+      method: mtp
+      num_speculative_tokens: 5
+    max-num-seqs: 4
+    max-num-batched-tokens: 8192
+    gpu-memory-utilization: 0.9
+    enable-flashinfer-autotune: false
+    tool-call-parser: glm47
+    enable-auto-tool-choice: true
+    reasoning-parser: glm47

@@ -29,16 +29,22 @@ pub struct PipelineRouter<C: Send + 'static = ()> {
     route_target_stats_reader: Arc<dyn RouteTargetStatsReader>,
     pipeline: Arc<RouterPipeline<C>>,
     routing_load: Arc<Mutex<RoutingReservations>>,
+    metrics: Arc<crate::metrics::RouterMetricsScope>,
 }
 impl<C: Send + 'static> PipelineRouter<C> {
     /// Creates a Router with no-op KV-prefix and route-target statistics readers.
     pub fn with_pipeline(inventory: Arc<dyn RouteInventory>, pipeline: RouterPipeline<C>) -> Self {
+        let metrics = Arc::new(crate::metrics::RouterMetricsScope::new(
+            inventory.as_ref(),
+            pipeline.algorithm_names,
+        ));
         Self {
             inventory,
             kv_prefix_indexer: Arc::new(NoopKvPrefixIndexer),
             route_target_stats_reader: Arc::new(NoopRouteTargetStatsReader),
             pipeline: Arc::new(pipeline),
             routing_load: Arc::new(Mutex::new(RoutingReservations::default())),
+            metrics,
         }
     }
 
@@ -64,7 +70,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
     }
 
     // Builds the immutable, rank-expanded candidate snapshot for one selection round. Dynamic
-    // health, capabilities, and aggregate telemetry are captured before algorithms observe it.
+    // health, capabilities, rank-local telemetry, and frontend reservations are captured before
+    // algorithms observe it.
     fn candidates(
         &self,
         request: &RouterRequest,
@@ -84,11 +91,19 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         .inventory
                         .effective_capabilities(&route.route_target_id),
                     request,
+                    // In E/P/D, Encoder owns media encoding; P/D consume its result and KV.
+                    !matches!(
+                        route.role,
+                        ModelServerRole::Prefill | ModelServerRole::Decode
+                    ) || !route
+                        .pipeline_scope_id
+                        .as_deref()
+                        .is_some_and(|scope| self.pipeline_scope_has_encoder(request, scope)),
                 )
             })
             .flat_map(|route| {
-                // Statistics are route-target aggregate telemetry. Read once with the core-owned
-                // window, then share the same immutable observation across all rank candidates.
+                // Read the group's aggregate and rank-local gauges once, then share the immutable
+                // observation across candidates; scorers select the candidate's exact DP rank.
                 let stats = self
                     .route_target_stats_reader
                     .stats(&route.route_target_id, ROUTE_TARGET_STATS_WINDOW)
@@ -121,7 +136,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
         error: RouteError,
     ) -> Result<RouteCandidate, RouteError> {
         let started = Instant::now();
-        let metrics = &crate::metrics::METRICS;
+        let metrics = &self.metrics;
         let round = routing_progress.current_stage;
         let [filter_name, scorer_name, picker_name] = self.pipeline.algorithm_names;
         // Keep every early return inside the round so failed candidate discovery or invalid
@@ -135,7 +150,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .lock()
                 .expect("routing load lock poisoned");
             let candidates = self.candidates(request, &reservations);
-            metrics.candidates(round, "available", candidates.len());
+            metrics.candidates(&request.model, round, "available", candidates.len());
             let stage_started = Instant::now();
             let filtered_indexes = self.pipeline.filter.filter(
                 request,
@@ -144,7 +159,13 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 routing_progress,
                 customized_context,
             );
-            metrics.stage(round, "filter", filter_name, stage_started.elapsed());
+            metrics.stage(
+                &request.model,
+                round,
+                "filter",
+                filter_name,
+                stage_started.elapsed(),
+            );
             let mut seen_indexes = BTreeSet::new();
             let filtered = filtered_indexes
                 .into_iter()
@@ -158,7 +179,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         .ok_or(RouteError::InvalidFilterIndex { index: index.0 })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            metrics.candidates(round, "filtered", filtered.len());
+            metrics.candidates(&request.model, round, "filtered", filtered.len());
             let stage_started = Instant::now();
             let scores = self.pipeline.scorer.score(
                 request,
@@ -167,7 +188,13 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 routing_progress,
                 customized_context,
             );
-            metrics.stage(round, "scorer", scorer_name, stage_started.elapsed());
+            metrics.stage(
+                &request.model,
+                round,
+                "scorer",
+                scorer_name,
+                stage_started.elapsed(),
+            );
             if scores.len() != filtered.len() {
                 return Err(RouteError::InvalidScorerResult {
                     expected: filtered.len(),
@@ -184,7 +211,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .filter(|candidate| eligible(&candidate.candidate, &scored))
                 .cloned()
                 .collect::<Vec<_>>();
-            metrics.candidates(round, "selectable", selectable.len());
+            metrics.candidates(&request.model, round, "selectable", selectable.len());
             if selectable.is_empty() {
                 return Err(error);
             }
@@ -195,16 +222,42 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 routing_progress,
                 customized_context,
             );
-            metrics.stage(round, "picker", picker_name, stage_started.elapsed());
+            metrics.stage(
+                &request.model,
+                round,
+                "picker",
+                picker_name,
+                stage_started.elapsed(),
+            );
             let picked = picked.ok_or(RouteError::EmptyPickerResult)?;
             let candidate = selectable
                 .get(picked.0)
                 .map(|candidate| candidate.candidate.clone())
                 .ok_or(RouteError::InvalidPickerIndex { index: picked.0 })?;
+            // Selection facts and engine load outcomes share the generation request identity.
+            // Keep request IDs out of metric labels and never record prompt tokens or cache salts.
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                let observation = request
+                    .kv_prefix_lookup(
+                        candidate.route_target_id.as_str(),
+                        candidate.data_parallel_rank,
+                    )
+                    .map_or_else(
+                        foretoken_kv_indexer::KvPrefixQueryResult::Unavailable,
+                        |lookup| self.kv_prefix_indexer.prefix_matches(lookup),
+                    );
+                tracing::debug!(
+                    request_id = %request.generate_request.request_id,
+                    route_target_id = %candidate.route_target_id.as_str(),
+                    data_parallel_rank = candidate.data_parallel_rank,
+                    cache_observation = ?observation,
+                    "KV routing observation"
+                );
+            }
             reservations.reserve(request, &candidate);
             Ok(candidate)
         })();
-        metrics.selection(round, started.elapsed(), result.as_ref().err());
+        metrics.selection(&request.model, round, started.elapsed(), result.as_ref());
         result
     }
 
@@ -495,6 +548,7 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                 route_target_stats_reader: self.route_target_stats_reader.clone(),
                 pipeline: self.pipeline.clone(),
                 routing_load: self.routing_load.clone(),
+                metrics: self.metrics.clone(),
             },
             customized_context: (self.pipeline.customized_context_factory)(&request),
             request,

@@ -39,6 +39,7 @@ class ModelServiceSource:
 
     kustomize_path: str = ""
     url: str = ""
+    health_url: str = ""
     model: str = ""
     api_key: str = "EMPTY"
     timeout_seconds: int = 300
@@ -314,11 +315,6 @@ class BenchmarkConfig:
             return replace(workload, fixed_prompt="Hello")
         return workload
 
-    @property
-    def is_multi_turn(self) -> bool:
-        """Return whether a dataset row owns a conversation lifecycle."""
-        return not self.trace.trace_selector
-
     def validate(self) -> None:
         """Validate each section, then the rules that span sections, before acquiring resources."""
         self.service.validate()
@@ -416,6 +412,7 @@ class BenchmarkConfig:
         service = {
             "kustomize_path": self.service.kustomize_path,
             "url": self.service.url,
+            "health_url": self.service.health_url,
             "model": self.service.model,
             "timeout": self.service.timeout_seconds,
             "max_retries": self.service.max_retries,
@@ -445,8 +442,7 @@ class BenchmarkConfig:
             "trace_max_concurrency": self.trace.max_concurrency,
             "trace_synthetic_prefix_reuse": self.trace.synthetic_prefix_reuse,
         }
-        if self.is_multi_turn:
-            dataset["multi_turn"] = True
+        if not self.trace.trace_selector:
             dataset["max_turns"] = workload.max_turns
         return {
             "service": service,

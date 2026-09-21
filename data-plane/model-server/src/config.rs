@@ -9,11 +9,36 @@ use crate::launch::LaunchPlanV1;
 
 const LAUNCH_PLAN_ENV: &str = "FORETOKEN_VLLM_LAUNCH_PLAN";
 const LISTEN_ENV: &str = "FORETOKEN_INTERNAL_LISTEN";
+/// Controller-projected ModelGroup identity shared by all member Pods.
+pub const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeConfig {
     pub launch: LaunchPlanV1,
     pub listen_address: SocketAddr,
+    pub member: Option<MemberContext>,
+}
+
+/// Pod-local identity supplied by Kubernetes and LeaderWorkerSet for distributed startup.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberContext {
+    pub model_group_uid: String,
+    pub index: usize,
+    pub address: std::net::IpAddr,
+    pub leader_address: String,
+}
+
+impl MemberContext {
+    /// Resolves a member through LWS's leader/worker DNS naming within the same group.
+    pub fn node_address(&self, index: usize) -> String {
+        if index == 0 {
+            return self.leader_address.clone();
+        }
+        match self.leader_address.split_once('.') {
+            Some((leader, domain)) => format!("{leader}-{index}.{domain}"),
+            None => format!("{}-{index}", self.leader_address),
+        }
+    }
 }
 
 impl RuntimeConfig {
@@ -25,9 +50,29 @@ impl RuntimeConfig {
         let listen_address = required_env(LISTEN_ENV)?
             .parse()
             .map_err(|_| format!("{LISTEN_ENV} must be a socket address"))?;
+        let member = if launch.node_count > 1 {
+            let index = required_env("LWS_WORKER_INDEX")?
+                .parse::<usize>()
+                .map_err(|_| "LWS_WORKER_INDEX must be a nonnegative integer".to_string())?;
+            if index >= launch.node_count {
+                return Err("LWS_WORKER_INDEX is outside the model group".into());
+            }
+            let address = required_env("FORETOKEN_MEMBER_IP")?
+                .parse::<std::net::IpAddr>()
+                .map_err(|_| "FORETOKEN_MEMBER_IP must be a Pod IP address".to_string())?;
+            Some(MemberContext {
+                model_group_uid: required_env(MODEL_GROUP_UID_ENV)?,
+                index,
+                address,
+                leader_address: required_env("LWS_LEADER_ADDRESS")?,
+            })
+        } else {
+            None
+        };
         Ok(Self {
             launch,
             listen_address,
+            member,
         })
     }
 }

@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: KVService
+metadata:
+  name: shared-kv
+spec:
+  backend: mooncakeStandaloneStore
+  master:
+    image: foretoken-mooncake
+    fsGroup: 65532
+    resources:
+      requests:
+        cpu: "2"
+        memory: 4Gi
+  storagePools:
+    - name: host-memory
+      replicas: 2
+      client:
+        image: foretoken-mooncake
+        fsGroup: 65532
+        protocol: rdma
+        # Use the platform's allocated RDMA resource when reusing an external plugin.
+        rdmaResourceName: rdma/foretoken_rdma
+        resources:
+          requests:
+            cpu: "4"
+            memory: 280Gi
+        memoryCapacity: 256Gi
+        storageRegistration:
+          enabled: true
+  requester:
+    localBufferSize: 1Gi
+  timeouts:
+    startup: 10m
+    drain: 2m

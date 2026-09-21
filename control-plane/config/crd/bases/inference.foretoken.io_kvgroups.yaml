@@ -60,13 +60,11 @@ spec:
               from a KVPool.
             properties:
               client:
-                description: |-
-                  KVGroupClientConfig is the resolved immutable Mooncake client workload input.
-                  Disk is mandatory: this first standalone Store profile enables SSD offload.
+                description: KVGroupClientConfig is the resolved immutable Mooncake
+                  client workload input.
                 properties:
                   disk:
-                    description: KVGroupDisk is the resolved SSD offload claim for
-                      one client Group.
+                    description: Disk is absent for memory-only Store clients.
                     properties:
                       retentionPolicy:
                         description: |-
@@ -216,7 +214,6 @@ spec:
                         type: integer
                     type: object
                 required:
-                - disk
                 - image
                 - memoryCapacityBytes
                 - port
@@ -242,19 +239,19 @@ spec:
                 - name
                 - uid
                 type: object
-              masterAdminPort:
-                format: int32
-                maximum: 65535
-                minimum: 1
-                type: integer
-              masterRPCPort:
-                format: int32
-                maximum: 65535
-                minimum: 1
-                type: integer
-              masterServiceDNS:
-                description: MasterServiceDNS is the namespaced ClusterIP Service
-                  DNS name resolved by KVPool.
+              masterAdminEndpoint:
+                description: MasterAdminEndpoint resolves through the leader-only
+                  Kubernetes Service.
+                minLength: 1
+                type: string
+              masterClusterID:
+                description: MasterClusterID selects the native HA namespace when
+                  MasterServerAddress uses etcd discovery.
+                type: string
+              masterServerAddress:
+                description: |-
+                  MasterServerAddress is the complete native Mooncake Master entry. It is a
+                  Service address in single-Master mode or an etcd:// entry in HA mode.
                 minLength: 1
                 type: string
               ordinal:
@@ -291,8 +288,7 @@ spec:
             required:
             - client
             - kvPoolRef
-            - masterRPCPort
-            - masterServiceDNS
+            - masterServerAddress
             - ordinal
             - revision
             - timeouts

@@ -12,19 +12,24 @@ use serde_json::json;
 use vllm_managed_engine::ManagedEngineConfig;
 
 use foretoken_artifacts::ModelSource;
-use foretoken_model_protocol::RuntimeEcTransferMetadata;
+use foretoken_model_protocol::{
+    KvCacheLocality, KvPlacement, KvStorageTier, RuntimeEcTransferMetadata,
+};
 
-use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC, LOOPBACK_HOST};
+use crate::runtime_transport::{KV_EVENT_TOPIC, LOOPBACK_HOST, kv_event_endpoint};
 
 const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
 const VLLM_USE_MODELSCOPE_ENV: &str = "VLLM_USE_MODELSCOPE";
 const DEFAULT_VLLM_PYTHON: &str = "python";
 
+/// Python adapters bundled with the model-server image for its managed engine.
+pub const PYTHON_MODULE_PATH: &str = "/opt/foretoken/python";
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchPlanV1 {
     pub version: u8,
-    /// Physical model nodes represented by this launch plan; v1 currently permits one.
+    /// Kubernetes nodes participating in this complete execution group.
     #[serde(rename = "nodeCount")]
     pub node_count: usize,
     pub artifacts: Artifacts,
@@ -142,10 +147,15 @@ impl KvRole {
 pub enum MooncakeProtocol {
     #[serde(rename = "rdma")]
     Rdma,
+    #[serde(rename = "tcp")]
+    Tcp,
 }
 impl MooncakeProtocol {
     fn as_str(self) -> &'static str {
-        "rdma"
+        match self {
+            Self::Rdma => "rdma",
+            Self::Tcp => "tcp",
+        }
     }
 }
 
@@ -215,7 +225,8 @@ impl EcTransferPlan {
     fn transfer_config(&self) -> Option<serde_json::Value> {
         let role = self.role?;
         Some(json!({
-            "ec_connector": self.connector,
+            "ec_connector": "SharedStorageConnector",
+            "ec_connector_module_path": "foretoken_ec",
             "ec_role": role.as_str(),
             "ec_connector_extra_config": {
                 "shared_storage_path": self.shared_storage_path,
@@ -258,8 +269,8 @@ impl LaunchPlanV1 {
         if self.version != 1 {
             return Err("launch plan version must be 1".into());
         }
-        if self.node_count != 1 {
-            return Err("launch plan currently supports exactly one model node".into());
+        if self.node_count == 0 {
+            return Err("launch plan requires a positive node count".into());
         }
         for (name, value) in [
             ("model", &self.artifacts.model),
@@ -275,16 +286,8 @@ impl LaunchPlanV1 {
         if p.tp == 0 || p.pp == 0 || p.dp == 0 || p.pcp == 0 || p.dcp == 0 {
             return Err("launch plan topology values must be positive".into());
         }
-        if p.pcp > 1 && p.dp > 1 {
-            return Err(
-                "prefill context parallelism greater than 1 requires data parallelism 1".into(),
-            );
-        }
-        if p.pcp == 1 && !p.tp.is_multiple_of(p.dcp) {
-            return Err("decode context parallelism must divide tensor parallelism".into());
-        }
-        if p.pcp > 1 && p.dcp != 1 && p.dcp != p.pcp && p.dcp != p.tp * p.pcp {
-            return Err("decode context parallelism is incompatible with tensor and prefill context parallelism".into());
+        if !(p.tp * p.pp * p.pcp * p.dp).is_multiple_of(self.node_count) {
+            return Err("worker count must divide evenly across model nodes".into());
         }
         if let Some(ep) = &p.ep
             && ep.eplb
@@ -294,9 +297,6 @@ impl LaunchPlanV1 {
         }
         if self.lifecycle.startup_seconds == 0 || self.lifecycle.drain_seconds == 0 {
             return Err("launch plan lifecycle seconds must be positive".into());
-        }
-        if self.kv.events() != (p.dp == 1) {
-            return Err("KV events must be enabled exactly when DP is 1".into());
         }
         match &self.kv {
             KvPlan::CpuOffload { cpu_bytes, .. } | KvPlan::FilesystemOffload { cpu_bytes, .. }
@@ -375,21 +375,40 @@ impl LaunchPlanV1 {
     ///
     /// The model-server image selects Python through `FORETOKEN_VLLM_PYTHON`; the process handle
     /// takes the resulting configuration, while the plan contributes validated vLLM flags.
-    pub fn managed_engine(&self, handshake_port: u16) -> Result<ManagedEngineConfig, String> {
-        Ok(ManagedEngineConfig {
+    pub fn managed_engine(
+        &self,
+        handshake_port: u16,
+        member: Option<&crate::config::MemberContext>,
+    ) -> Result<ManagedEngineConfig, String> {
+        let mut config = ManagedEngineConfig {
             python: self.python_executable(),
             model: self.artifacts.model.clone(),
             handshake_host: LOOPBACK_HOST.into(),
             handshake_port,
             data_parallel_size: self.parallelism.dp,
-            python_args: self.render_vllm_args()?,
-        })
+            python_args: self.render_vllm_args(member)?,
+        };
+        if let Some(member) = member {
+            config.handshake_host = member.leader_address.clone();
+            config.python_args.extend([
+                format!("--nnodes={}", self.node_count),
+                format!("--node-rank={}", member.index),
+                format!("--master-addr={}", member.leader_address),
+                "--master-port=29800".into(),
+                "--distributed-executor-backend=mp".into(),
+                "--data-parallel-backend=mp".into(),
+            ]);
+        }
+        Ok(config)
     }
 
     /// Renders the owned vLLM arguments consumed by the managed-engine child process.
     ///
     /// Validation runs before rendering; the returned vector does not borrow the launch plan.
-    pub fn render_vllm_args(&self) -> Result<Vec<String>, String> {
+    pub fn render_vllm_args(
+        &self,
+        member: Option<&crate::config::MemberContext>,
+    ) -> Result<Vec<String>, String> {
         self.validate()?;
         let p = &self.parallelism;
         let mut args = Vec::new();
@@ -418,9 +437,14 @@ impl LaunchPlanV1 {
                 args.push("--enable-eplb".into());
             }
         }
-        // The controller has already merged common fields and native options.
+        // The controller has already normalized native option names.
         // Keep argument values intact: this command never goes through a shell.
         for (name, value) in &self.engine_args {
+            if matches!(self.ec.role, Some(EcRole::Producer))
+                && matches!(name.as_str(), "mm-encoder-only" | "enforce-eager")
+            {
+                continue;
+            }
             match value {
                 serde_json::Value::Null => {}
                 serde_json::Value::Bool(enabled) => args.push(if *enabled {
@@ -449,12 +473,19 @@ impl LaunchPlanV1 {
             }
         }
         if matches!(self.ec.role, Some(EcRole::Producer)) {
-            args.push("--no-enable-prefix-caching".into());
+            args.extend([
+                "--mm-encoder-only".into(),
+                "--enforce-eager".into(),
+                "--no-enable-prefix-caching".into(),
+            ]);
         }
         if self.kv.events() {
-            args.push(format!("--kv-events-config={}", json!({"publisher":"zmq","endpoint":KV_EVENT_ENDPOINT,"topic":KV_EVENT_TOPIC,"enable_kv_cache_events":true,"hwm":4096,"max_queue_size":4096})));
+            args.push(format!("--kv-events-config={}", json!({"publisher":"zmq","endpoint":kv_event_endpoint(member.map_or(LOOPBACK_HOST, |member| member.leader_address.as_str()), 0),"topic":KV_EVENT_TOPIC,"enable_kv_cache_events":true,"hwm":4096,"max_queue_size":4096})));
         }
-        if let Some(config) = self.kv.transfer_config() {
+        if let Some(config) = self.kv.transfer_config(
+            self.shared_prefix_lookup(),
+            member.map(|member| member.model_group_uid.as_str()),
+        ) {
             args.push(format!("--kv-transfer-config={config}"));
         }
         if let Some(config) = self.ec.transfer_config() {
@@ -464,15 +495,29 @@ impl LaunchPlanV1 {
     }
 }
 
-impl KvPlan {
-    /// Reports whether the active prompt-side Store connector can answer shared-prefix queries.
-    pub fn shared_prefix_lookup(&self) -> bool {
-        matches!(
-            self,
-            Self::MooncakeStore { events: true, .. } | Self::MultiConnector { events: true, .. }
-        )
+impl LaunchPlanV1 {
+    /// Returns the connector-owned placement exposed by live prefix observation.
+    pub fn shared_prefix_placement(&self) -> Option<KvPlacement> {
+        match self.kv {
+            KvPlan::FilesystemOffload { .. } => Some(KvPlacement {
+                tier: KvStorageTier::Disk,
+                locality: KvCacheLocality::Local,
+            }),
+            KvPlan::MooncakeStore { .. } | KvPlan::MultiConnector { .. } => Some(KvPlacement {
+                tier: KvStorageTier::External,
+                locality: KvCacheLocality::Remote,
+            }),
+            _ => None,
+        }
     }
 
+    /// Reports whether the selected connector exposes live shared-prefix observations.
+    pub fn shared_prefix_lookup(&self) -> bool {
+        self.shared_prefix_placement().is_some()
+    }
+}
+
+impl KvPlan {
     fn events(&self) -> bool {
         match self {
             Self::None { events }
@@ -485,16 +530,21 @@ impl KvPlan {
     }
     // Map each validated KV plan to the vLLM child-process contract. The rendered value is owned
     // by argv construction, keeping controller plan fields separate from backend-specific JSON.
-    fn transfer_config(&self) -> Option<serde_json::Value> {
+    fn transfer_config(
+        &self,
+        shared_prefix_lookup: bool,
+        model_group_uid: Option<&str>,
+    ) -> Option<serde_json::Value> {
         let pd = |role: KvRole, protocol: MooncakeProtocol, device_name: &str| json!({"kv_connector":"MooncakeConnector","kv_role":role.as_str(),"kv_connector_extra_config":{"mooncake_protocol":protocol.as_str(),"device_name":device_name}});
         let store = |role: KvRole| {
             let mut config = json!({"kv_connector":"MooncakeStoreConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute"});
-            if self.shared_prefix_lookup() {
-                config["kv_connector_module_path"] = json!(crate::shared_kv::CONNECTOR_MODULE);
+            if shared_prefix_lookup {
+                config["kv_connector_module_path"] =
+                    json!(crate::shared_kv::MOONCAKE_CONNECTOR_MODULE);
             }
             config
         };
-        match self {
+        let mut config = match self {
             Self::None { .. } => None,
             Self::Pd {
                 role,
@@ -502,15 +552,17 @@ impl KvPlan {
                 device_name,
                 ..
             } => Some(pd(*role, *protocol, device_name)),
-            Self::CpuOffload { cpu_bytes, .. } => Some(
-                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"CPUOffloadingSpec"}}),
+            Self::CpuOffload {
+                cpu_bytes, events, ..
+            } => Some(
+                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"CPUOffloadingSpec","self_describing_kv_events":events}}),
             ),
             Self::FilesystemOffload {
                 cpu_bytes,
                 storage_path,
                 events,
             } => Some(
-                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"TieringOffloadingSpec","secondary_tiers":[{"type":"fs","root_dir":storage_path,"enable_kv_events":events}]}}),
+                json!({"kv_connector":"OffloadingConnector","kv_connector_module_path":crate::shared_kv::OFFLOADING_CONNECTOR_MODULE,"kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"TieringOffloadingSpec","secondary_tiers":[{"type":"fs","root_dir":storage_path,"enable_kv_events":events}]}}),
             ),
             Self::MooncakeStore { role, .. } => Some(store(*role)),
             Self::MultiConnector {
@@ -528,7 +580,13 @@ impl KvPlan {
                     json!({"kv_connector":"MultiConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute","kv_connector_extra_config":{"connectors":[pd(*role, *protocol, device_name), store(store_role)]}}),
                 )
             }
+        }?;
+        // MultiConnector children inherit this identity after vLLM adds DP suffixes.
+        // Independently launched nodes must not generate unrelated engine UUIDs.
+        if let Some(uid) = model_group_uid {
+            config["engine_id"] = json!(uid);
         }
+        Some(config)
     }
 }
 

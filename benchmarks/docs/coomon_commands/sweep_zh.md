@@ -34,12 +34,8 @@ foretoken deploy examples/quickstart --timeout 20m
 
 ## 输出示例
 
-单张 A100 80GB PCIe 上的 Qwen3-0.6B：
+Qwen3-0.6B 的 NVIDIA GPU 测量示例：
 
 ![扫描命令的实际输出](../imgs/sweep-cli.png)
 
-W&B 按一秒完成窗口展示 E2EL p95；帕累托图比较整组运行中每个配置用户、每张声明 GPU 的吞吐量。
-
-![按一秒完成窗口统计的 E2EL p95 时间曲线](../imgs/sweep-wandb.png)
-
-![实测帕累托前沿](../imgs/sweep-pareto.png)
+W&B 按一秒完成窗口展示 E2EL p95；帕累托图比较整组运行中每用户、每张声明 GPU 的输出 tok/s。缺少任一分母的点不会进入图中。

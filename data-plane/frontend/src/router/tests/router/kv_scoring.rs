@@ -61,17 +61,17 @@ fn prefix(tokens: usize, tier: KvStorageTier, locality: KvCacheLocality) -> KvPr
     }
 }
 
-// Protects cache locality from requests whose cache identity cannot be shared safely.
+// Preserves explicit cache isolation and honors requests that disable prefix reuse.
 #[test]
-fn kv_lookup_rejects_requests_with_separate_cache_semantics() {
+fn kv_lookup_preserves_salt_and_rejects_disabled_prefix_cache() {
     let mut salted = request();
     Arc::get_mut(&mut salted.generate_request)
         .expect("test request has one owner")
         .cache_salt = Some("tenant-a".into());
-    assert!(matches!(
-        salted.kv_prefix_lookup("target", 0),
-        Err(KvPrefixUnavailableReason::UnsupportedRequest)
-    ));
+    assert_eq!(
+        salted.kv_prefix_lookup("target", 0).unwrap().cache_salt,
+        Some("tenant-a")
+    );
 
     let mut disabled = request();
     Arc::get_mut(&mut disabled.generate_request)
@@ -94,6 +94,12 @@ fn initial_routing_progress() -> RoutingProgress<'static> {
 
 fn target_stats(running_requests: u64) -> Arc<RouteTargetStats> {
     Arc::new(RouteTargetStats {
+        data_parallel_ranks: vec![foretoken_model_protocol::DataParallelTelemetry {
+            data_parallel_rank: 0,
+            scheduler_running_requests: Some(running_requests),
+            scheduler_waiting_requests: Some(0),
+            kv_cache_usage: None,
+        }],
         collected_at_unix_ms: 1,
         observed_window: Duration::from_secs(60),
         running_requests,
@@ -216,30 +222,52 @@ fn prefill_downstream_load_is_scoped_to_its_pipeline_scope() {
     }
 }
 
-// Protects load-aware routing from ignoring requests queued inside the vLLM scheduler.
+// Ranks in one group have different scheduler loads; missing rank telemetry must not appear idle.
 #[test]
-fn load_scoring_uses_scheduler_backlog_without_double_counting_admission() {
-    let mut idle = candidate("idle", ModelServerRole::Aggregate, 1);
-    let mut queued = candidate("queued", ModelServerRole::Aggregate, 2);
-    Arc::get_mut(idle.route_target_stats.as_mut().unwrap())
-        .unwrap()
-        .scheduler_running_requests = Some(1);
-    let queued_stats = Arc::get_mut(queued.route_target_stats.as_mut().unwrap()).unwrap();
-    queued_stats.scheduler_running_requests = Some(2);
-    queued_stats.scheduler_waiting_requests = Some(5);
-
-    let candidates = vec![idle, queued];
-    let scores = LeastLoadedScorer.score(
-        &request(),
-        &candidates,
-        &PrefixFacts,
-        &initial_routing_progress(),
-        &mut (),
-    );
-
-    assert_eq!(scores[0].load, -1);
-    assert_eq!(scores[1].load, -7);
-    assert!(scores[0] > scores[1]);
+fn load_scoring_distinguishes_dp_ranks_and_preserves_unknown_observations() {
+    let mut busy = candidate("same-group", ModelServerRole::Aggregate, 400);
+    let stats = Arc::get_mut(busy.route_target_stats.as_mut().unwrap()).unwrap();
+    stats.data_parallel_ranks = vec![
+        foretoken_model_protocol::DataParallelTelemetry {
+            data_parallel_rank: 0,
+            scheduler_running_requests: Some(2),
+            scheduler_waiting_requests: Some(5),
+            kv_cache_usage: Some(0.8),
+        },
+        foretoken_model_protocol::DataParallelTelemetry {
+            data_parallel_rank: 1,
+            scheduler_running_requests: Some(1),
+            scheduler_waiting_requests: Some(0),
+            kv_cache_usage: Some(0.1),
+        },
+    ];
+    let idle = RouteCandidate {
+        data_parallel_rank: 1,
+        ..busy.clone()
+    };
+    let unknown = RouteCandidate {
+        data_parallel_rank: 2,
+        ..busy.clone()
+    };
+    let candidates = vec![busy, idle, unknown];
+    let scorers: Vec<Box<dyn RouteScorer>> = vec![
+        Box::new(LeastLoadedScorer),
+        Box::new(KvLeastLoadedScorer),
+        Box::new(foretoken_router::algorithm::QueueDepthScorer),
+        Box::new(foretoken_router::algorithm::RunningRequestScorer),
+        Box::new(foretoken_router::algorithm::KvCacheUtilizationScorer),
+    ];
+    for scorer in scorers {
+        let scores = scorer.score(
+            &request(),
+            &candidates,
+            &PrefixFacts,
+            &initial_routing_progress(),
+            &mut (),
+        );
+        assert!(scores[1] > scores[0], "{scores:?}");
+        assert!(scores[0] > scores[2], "{scores:?}");
+    }
 }
 
 struct RankFacts;

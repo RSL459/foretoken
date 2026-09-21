@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Starts a managed local EngineCore child and serves the restricted internal API.
+//! Manages local engine processes and the execution group's restricted internal API.
 
 use std::future::IntoFuture;
 use std::io;
@@ -13,7 +13,7 @@ use foretoken_artifacts::ModelSource;
 use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
-use foretoken_model_server::config::RuntimeConfig;
+use foretoken_model_server::config::{MODEL_GROUP_UID_ENV, RuntimeConfig};
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
 use foretoken_model_server::managed_engine::ManagedEngine;
 use foretoken_model_server::profiling;
@@ -31,7 +31,6 @@ use vllm_managed_engine::allocate_handshake_port;
 
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
-const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
 const TEMPORARY_MODEL_SOURCE_ROOT: &str = "/tmp/foretoken-model-source";
 
 #[tokio::main]
@@ -67,6 +66,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    if config
+        .member
+        .as_ref()
+        .is_some_and(|member| member.index != 0)
+    {
+        return run_worker(
+            &config,
+            cache_config.as_ref(),
+            profiling_config.as_ref(),
+            &mut cache_server,
+            cache_shutdown,
+        )
+        .await;
+    }
     // Resolve optional KV projection state now; connect only after the engine publisher is ready.
     let kv_events = match kv_event_adapter(&config) {
         Ok(adapter) => Some(adapter),
@@ -91,6 +104,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         Ok((engine, client)) => (engine, client, runtime_cache::Mode::Persistent),
         Err(EngineStartupFailure::PersistentCache { context, source }) => {
+            // Distributed members restart together; a local retry would reuse stale peers.
+            if config.member.is_some() {
+                return Err(io::Error::new(source.kind(), format!("{context}: {source}")).into());
+            }
             let cache = cache_config
                 .as_ref()
                 .expect("persistent cache failure requires a mounted RuntimeCache");
@@ -172,7 +189,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let kv_events = if let Some(adapter) = kv_events {
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-        tokio::spawn(adapter.clone().serve(ready_tx));
+        let host = config.member.as_ref().map_or_else(
+            || LOOPBACK_HOST.to_string(),
+            |member| member.address.to_string(),
+        );
+        tokio::spawn(adapter.clone().serve(host, ready_tx));
         if ready_rx.await == Ok(true) {
             Some(adapter)
         } else {
@@ -213,10 +234,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(kv_events) = kv_events {
         app_state = app_state.with_kv_events(kv_events);
     }
-    if config.launch.kv.shared_prefix_lookup() {
+    if config.launch.shared_prefix_lookup() {
         app_state = app_state.with_shared_kv(shared_kv::SharedKvLookup::new(
             required_env(MODEL_GROUP_UID_ENV)?,
             required_env(KV_SCOPE_ENV)?,
+            &config,
         ));
     }
     if let Some(cache_config) = cache_config {
@@ -326,6 +348,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+// Workers own only their local child and cache observer. Collective readiness is
+// established by the leader's handshake with every EngineCore before Group admission.
+async fn run_worker(
+    config: &RuntimeConfig,
+    cache: Option<&runtime_cache::Config>,
+    profiling: Option<&profiling::Config>,
+    cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
+    cache_shutdown: Arc<Notify>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind(config.listen_address).await?;
+    let (engine, _, _) = spawn_engine_attempt(
+        config,
+        cache,
+        profiling,
+        runtime_cache::Mode::Persistent,
+        Instant::now() + config.launch.startup_timeout(),
+    )
+    .await
+    .map_err(EngineStartupFailure::into_error)?;
+    let shutdown = Arc::new(Notify::new());
+    let server_shutdown = shutdown.clone();
+    let app = axum::Router::new()
+        .route(
+            "/healthz",
+            axum::routing::get(|| async { axum::http::StatusCode::OK }),
+        )
+        .route(
+            "/readyz",
+            axum::routing::get(|| async { axum::http::StatusCode::OK }),
+        );
+    let mut server = Box::pin(
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { server_shutdown.notified().await })
+            .into_future(),
+    );
+    let failure = tokio::select! {
+        () = shutdown_signal() => None,
+        status = engine.wait_for_exit() => Some(format!("managed worker exited: {status}")),
+        result = &mut server => Some(format!("worker health server stopped: {result:?}")),
+        reason = wait_cache_server(cache_server) => Some(reason),
+        error = wait_cache_write_failure(cache, runtime_cache::Mode::Persistent) => Some(error.to_string()),
+    };
+    shutdown.notify_waiters();
+    cache_shutdown.notify_waiters();
+    engine.shutdown(config.launch.drain_timeout()).await?;
+    match failure {
+        Some(message) => Err(io::Error::other(message).into()),
+        None => Ok(()),
+    }
+}
+
 enum EngineStartupFailure {
     PersistentCache { context: String, source: io::Error },
     Other(io::Error),
@@ -385,14 +458,14 @@ async fn wait_cache_write_failure(
     cache.wait_until_unwritable(mode).await
 }
 
-async fn start_engine_attempt(
+// Prepare cache, profiling and native arguments once for both leader and worker processes.
+async fn spawn_engine_attempt(
     config: &RuntimeConfig,
     cache: Option<&runtime_cache::Config>,
     profiling: Option<&profiling::Config>,
     mode: runtime_cache::Mode,
     startup_deadline: Instant,
-    cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
-) -> Result<(ManagedEngine, EngineCoreClient), EngineStartupFailure> {
+) -> Result<(ManagedEngine, EngineCoreProtocol, u16), EngineStartupFailure> {
     let mut environment = if let Some(cache) = cache {
         cache.set_mode(mode);
         cache
@@ -409,8 +482,13 @@ async fn start_engine_attempt(
             cache_mode_failure(mode, "profiling storage preparation failed", error)
         })?;
     }
-    if config.launch.kv.shared_prefix_lookup() {
-        let mut python_paths = vec![std::path::PathBuf::from(shared_kv::PYTHON_MODULE_PATH)];
+    if config.launch.shared_prefix_lookup()
+        || config.launch.ec.enabled()
+        || config.launch.profiling.engine == profiling::Engine::Mctracer
+    {
+        let mut python_paths = vec![PathBuf::from(
+            foretoken_model_server::launch::PYTHON_MODULE_PATH,
+        )];
         if let Some(existing) = std::env::var_os("PYTHONPATH") {
             python_paths.extend(std::env::split_paths(&existing));
         }
@@ -420,9 +498,11 @@ async fn start_engine_attempt(
             "PYTHONPATH".into(),
             python_path.to_string_lossy().into_owned(),
         ));
+    }
+    if config.launch.shared_prefix_lookup() {
         environment.push((
             shared_kv::LOOKUP_ENDPOINT_ENV.into(),
-            shared_kv::LOOKUP_ENDPOINT.into(),
+            shared_kv::lookup_endpoint("*", 0),
         ));
     }
     let model_root = cache
@@ -430,12 +510,19 @@ async fn start_engine_attempt(
         .or_else(foretoken_artifacts::model_root)
         .unwrap_or_else(|| PathBuf::from(TEMPORARY_MODEL_SOURCE_ROOT));
     environment.extend(config.launch.source_environment(&model_root));
-    let handshake_port = allocate_handshake_port(LOOPBACK_HOST)
-        .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+    let handshake_port = if config.member.is_some() {
+        29700
+    } else {
+        allocate_handshake_port(LOOPBACK_HOST)
+            .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?
+    };
     let mut managed_engine = config
         .launch
-        .managed_engine(handshake_port)
+        .managed_engine(handshake_port, config.member.as_ref())
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+    if let Some(member) = &config.member {
+        environment.push(("VLLM_HOST_IP".into(), member.address.to_string()));
+    }
     // Local source is strict: both identifiers must resolve before any engine process starts.
     if config.launch.artifacts.source == ModelSource::Local {
         let model = local_artifact_path(&config.launch.artifacts.model)
@@ -453,6 +540,11 @@ async fn start_engine_attempt(
         && let Some(profile) = profiling
     {
         managed_engine.python_args.push(profile.engine_argument());
+        if config.launch.profiling.engine == profiling::Engine::Mctracer {
+            managed_engine
+                .python_args
+                .push("--worker-cls=foretoken_mctracer.Worker".into());
+        }
     }
     let protocol_timeout = startup_deadline.saturating_duration_since(Instant::now());
     if protocol_timeout.is_zero() {
@@ -471,6 +563,12 @@ async fn start_engine_attempt(
         ))
     })?
     .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
+    // Rust preprocessing already normalizes pixels. Newer engines otherwise normalize them twice.
+    if matches!(engine_protocol, EngineCoreProtocol::V0_28ToV0_30) {
+        managed_engine
+            .python_args
+            .push("--no-mm-device-do-normalize".into());
+    }
     let mut command = managed_engine.to_command();
     command.envs(environment);
     let instrumentation = profiling.filter(|_| mode == runtime_cache::Mode::Persistent);
@@ -483,6 +581,29 @@ async fn start_engine_attempt(
                 format!("could not spawn managed EngineCore: {error}"),
             )
         })?;
+    Ok((engine, engine_protocol, handshake_port))
+}
+
+// Only the group leader owns the EngineCore handshake, DP coordination and request transport.
+async fn start_engine_attempt(
+    config: &RuntimeConfig,
+    cache: Option<&runtime_cache::Config>,
+    profiling: Option<&profiling::Config>,
+    mode: runtime_cache::Mode,
+    startup_deadline: Instant,
+    cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
+) -> Result<(ManagedEngine, EngineCoreClient), EngineStartupFailure> {
+    let (engine, engine_protocol, handshake_port) =
+        spawn_engine_attempt(config, cache, profiling, mode, startup_deadline).await?;
+    // vLLM keeps its single EngineCore handshake local even when TP/PP spans nodes.
+    let advertised_host = config
+        .member
+        .as_ref()
+        .filter(|_| config.launch.parallelism.dp > 1)
+        .map_or_else(
+            || LOOPBACK_HOST.to_string(),
+            |member| member.address.to_string(),
+        );
     let ready_timeout = startup_deadline.saturating_duration_since(Instant::now());
     if ready_timeout.is_zero() {
         let _ = engine.shutdown(config.launch.drain_timeout()).await;
@@ -492,14 +613,15 @@ async fn start_engine_attempt(
     }
     let client_config = EngineCoreClientConfig {
         transport_mode: TransportMode::HandshakeOwner {
-            handshake_address: format!("tcp://{LOOPBACK_HOST}:{handshake_port}"),
-            advertised_host: LOOPBACK_HOST.into(),
+            handshake_address: format!("tcp://{advertised_host}:{handshake_port}"),
+            advertised_host,
             engine_count: config.launch.parallelism.dp,
             ready_timeout,
             local_input_address: None,
             local_output_address: None,
         },
-        coordinator_mode: None,
+        coordinator_mode: (config.launch.parallelism.dp > 1)
+            .then_some(vllm_engine_core_client::CoordinatorMode::InProc),
         model_name: config.launch.artifacts.model.clone(),
         client_index: 0,
     };
@@ -577,9 +699,9 @@ async fn detect_engine_protocol(
         (Some(0), Some(20)) => Ok(EngineCoreProtocol::V0_20),
         (Some(0), Some(21..=25)) => Ok(EngineCoreProtocol::V0_21ToV0_25),
         (Some(0), Some(26..=27)) => Ok(EngineCoreProtocol::V0_26ToV0_27),
-        (Some(0), Some(28)) => Ok(EngineCoreProtocol::V0_28),
+        (Some(0), Some(28..=30)) => Ok(EngineCoreProtocol::V0_28ToV0_30),
         _ => Err(format!(
-            "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.28"
+            "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.30"
         )
         .into()),
     }

@@ -19,7 +19,6 @@ type KVGroupDisk struct {
 }
 
 // KVGroupClientConfig is the resolved immutable Mooncake client workload input.
-// Disk is mandatory: this first standalone Store profile enables SSD offload.
 // +kubebuilder:validation:XValidation:rule="self.protocol == 'rdma' ? has(self.rdmaResourceName) && has(self.rdmaResourceCount) : !has(self.rdmaResourceName) && !has(self.rdmaResourceCount)",message="resolved RDMA clients require resource name and count; TCP must omit RDMA resources"
 type KVGroupClientConfig struct {
 	Image string `json:"image"`
@@ -40,7 +39,9 @@ type KVGroupClientConfig struct {
 	// +kubebuilder:validation:Minimum=1
 	RDMAResourceCount   int32        `json:"rdmaResourceCount,omitempty"`
 	MemoryCapacityBytes ByteQuantity `json:"memoryCapacityBytes"`
-	Disk                KVGroupDisk  `json:"disk"`
+	// Disk is absent for memory-only Store clients.
+	// +optional
+	Disk *KVGroupDisk `json:"disk,omitempty"`
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// +optional
@@ -55,18 +56,19 @@ type KVGroupSpec struct {
 	Revision string `json:"revision"`
 	// +kubebuilder:validation:Minimum=0
 	Ordinal int32 `json:"ordinal"`
-	// MasterServiceDNS is the namespaced ClusterIP Service DNS name resolved by KVPool.
+	// MasterServerAddress is the complete native Mooncake Master entry. It is a
+	// Service address in single-Master mode or an etcd:// entry in HA mode.
 	// +kubebuilder:validation:MinLength=1
-	MasterServiceDNS string `json:"masterServiceDNS"`
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	MasterRPCPort int32 `json:"masterRPCPort"`
+	MasterServerAddress string `json:"masterServerAddress"`
+	// MasterClusterID selects the native HA namespace when MasterServerAddress uses etcd discovery.
 	// +optional
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	MasterAdminPort int32               `json:"masterAdminPort,omitempty"`
-	Client          KVGroupClientConfig `json:"client"`
-	Timeouts        KVTimeouts          `json:"timeouts"`
+	MasterClusterID string `json:"masterClusterID,omitempty"`
+	// MasterAdminEndpoint resolves through the leader-only Kubernetes Service.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	MasterAdminEndpoint string              `json:"masterAdminEndpoint,omitempty"`
+	Client              KVGroupClientConfig `json:"client"`
+	Timeouts            KVTimeouts          `json:"timeouts"`
 }
 
 // +enum

@@ -9,12 +9,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
+	"path"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
-
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
@@ -68,7 +69,7 @@ type LaunchExpertPlan struct {
 }
 
 // LaunchKVPlan uses a closed kind discriminator rather than an untyped vLLM
-// config map. KV Events are the fixed controller configuration for single-DP groups.
+// config map. KV events are collected independently for every DP rank.
 type LaunchKVPlan struct {
 	Kind        string `json:"kind"`
 	Role        string `json:"role,omitempty"`
@@ -119,7 +120,7 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if effective.TokenizerRevision == "" {
 		effective.TokenizerRevision = effective.Revision
 	}
-	args, err := compileEngineArgs(template.EngineArgs, template.Inference)
+	args, err := compileEngineArgs(template.EngineArgs)
 	if err != nil {
 		return EffectiveConfig{}, err
 	}
@@ -133,10 +134,6 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if err := validateParallelism(effective.Parallelism); err != nil {
 		return EffectiveConfig{}, err
 	}
-	p := effective.Parallelism
-	if template.Role != inferencev1alpha1.ModelRoleAggregate && (p.TP != 1 || p.PP != 1 || p.DP != 1 || p.PCP != 1 || p.DCP != 1 || p.EP != nil) {
-		return EffectiveConfig{}, fmt.Errorf("split serving currently requires single-rank engine parallelism")
-	}
 	capacity := int64(template.NodeCount) * int64(template.Resources.Requests.GPU.Count)
 	ranks := int64(effective.Parallelism.PP) * int64(effective.Parallelism.TP) * int64(effective.Parallelism.PCP) * int64(effective.Parallelism.DP)
 	if capacity != ranks {
@@ -147,8 +144,8 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 
 // BuildLaunchPlan projects a verified ModelGroupSpec into the private launch wire contract.
 func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, error) {
-	if group.NodeCount != 1 {
-		return LaunchPlanV1{}, fmt.Errorf("model-server launch plan currently supports exactly one node")
+	if group.NodeCount < 1 {
+		return LaunchPlanV1{}, fmt.Errorf("model-server launch plan requires a positive node count")
 	}
 	startup, err := parsePositiveDuration(group.Timeouts.Startup, "startup")
 	if err != nil {
@@ -196,7 +193,7 @@ func buildKVPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchKVPlan, error) {
 	} else if group.Role == inferencev1alpha1.ModelRoleDecode {
 		role = "kv_consumer"
 	}
-	plan := LaunchKVPlan{Kind: kvNone, Events: group.Parallelism.DP == 1}
+	plan := LaunchKVPlan{Kind: kvNone, Events: true}
 	if group.PDRuntime != nil && group.KVRuntime == nil {
 		return LaunchKVPlan{Kind: kvPD, Role: role, Protocol: group.PDRuntime.Protocol, DeviceName: group.PDRuntime.RDMADeviceName, Events: plan.Events}, nil
 	}
@@ -250,7 +247,7 @@ func buildECPlan(group inferencev1alpha1.ModelGroupSpec) (*LaunchECPlan, error) 
 	return &LaunchECPlan{
 		ProfileName: ec.ProfileName, ProfileRevision: ec.ProfileRevision,
 		Connector: ec.Connector, Role: string(ec.Role),
-		SharedStoragePath: ec.SharedStoragePath,
+		SharedStoragePath: path.Join(ec.SharedStoragePath, ec.ServiceUID, fmt.Sprint(ec.Generation), "profile="+url.PathEscape(ec.ProfileRevision)),
 	}, nil
 }
 
@@ -312,19 +309,49 @@ func extractParallelism(args inferencev1alpha1.EngineArguments) (inferencev1alph
 	return p, nil
 }
 
+// CompatibleKVTransfer reports whether controller-selected Groups can exchange Mooncake KV.
+// Worker and scheduler sizing may differ; model interpretation and cache representation may not.
+func CompatibleKVTransfer(left, right inferencev1alpha1.ModelGroupSpec) bool {
+	if left.Runtime.Backend != right.Runtime.Backend || left.Runtime.Image != right.Runtime.Image {
+		return false
+	}
+	leftTP, rightTP := left.Parallelism.TP, right.Parallelism.TP
+	if leftTP < 1 || rightTP < 1 || (leftTP%rightTP != 0 && rightTP%leftTP != 0) {
+		return false
+	}
+	names := make(map[string]struct{}, len(left.Runtime.EngineArgs)+len(right.Runtime.EngineArgs))
+	for name := range left.Runtime.EngineArgs {
+		names[name] = struct{}{}
+	}
+	for name := range right.Runtime.EngineArgs {
+		names[name] = struct{}{}
+	}
+	for name := range names {
+		switch name {
+		case "gpu-memory-utilization", "kv-cache-memory-bytes", "max-num-seqs", "max-num-batched-tokens", "max-model-len", "enforce-eager", "compilation-config", "cuda-graph-sizes", "max-cudagraph-capture-size", "scheduling-policy", "enable-chunked-prefill", "mm-processor-cache-gb", "mm-encoder-only":
+			continue
+		}
+		var leftValue, rightValue any
+		if value, ok := left.Runtime.EngineArgs[name]; ok {
+			if json.Unmarshal(value.Raw, &leftValue) != nil {
+				return false
+			}
+		}
+		if value, ok := right.Runtime.EngineArgs[name]; ok {
+			if json.Unmarshal(value.Raw, &rightValue) != nil {
+				return false
+			}
+		}
+		if !reflect.DeepEqual(leftValue, rightValue) {
+			return false
+		}
+	}
+	return true
+}
+
 func validateParallelism(parallelism inferencev1alpha1.CompiledParallelism) error {
 	if parallelism.TP < 1 || parallelism.PP < 1 || parallelism.DP < 1 || parallelism.PCP < 1 || parallelism.DCP < 1 {
 		return fmt.Errorf("vLLM topology values must be positive")
-	}
-	if parallelism.PCP > 1 && parallelism.DP > 1 {
-		return fmt.Errorf("vLLM prefill context parallelism greater than 1 requires data parallelism 1")
-	}
-	if parallelism.PCP == 1 {
-		if parallelism.TP%parallelism.DCP != 0 {
-			return fmt.Errorf("vLLM decode context parallelism must divide tensor parallelism")
-		}
-	} else if parallelism.DCP != 1 && parallelism.DCP != parallelism.PCP && parallelism.DCP != parallelism.TP*parallelism.PCP {
-		return fmt.Errorf("vLLM decode context parallelism is incompatible with tensor and prefill context parallelism")
 	}
 	if parallelism.EP != nil && parallelism.EP.EPLB && parallelism.EP.Size == 1 {
 		return fmt.Errorf("vLLM EPLB requires more than one expert-parallel rank")
@@ -341,16 +368,16 @@ var controllerOwnedArgs = []string{
 	"--distributed-executor-backend", "--download-dir", "--ec-manager-config", "--ec-transfer-config",
 	"--enable-elastic-ep", "--enable-prefix-caching",
 	"--grpc", "--headless", "--hf-token", "--host", "--kv-events-config", "--kv-transfer-config",
-	"--master-addr", "--master-port", "--model", "--nnodes", "--node-rank",
+	"--master-addr", "--master-port", "--mm-device-do-normalize", "--model", "--nnodes", "--node-rank",
 	"--port", "--profiler-config", "--revision",
-	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision",
+	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision", "--worker-cls",
 }
 
 var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
-// compileEngineArgs applies explicit service choices once, before runtime publication.
+// compileEngineArgs normalizes native option names and protects platform-owned startup options.
 // Backend values stay native; the Rust adapter renders the resolved map into argv.
-func compileEngineArgs(input inferencev1alpha1.EngineArguments, inference inferencev1alpha1.InferenceParameters) (inferencev1alpha1.EngineArguments, error) {
+func compileEngineArgs(input inferencev1alpha1.EngineArguments) (inferencev1alpha1.EngineArguments, error) {
 	args := make(inferencev1alpha1.EngineArguments, len(input))
 	names := make([]string, 0, len(input))
 	for name := range input {
@@ -379,45 +406,6 @@ func compileEngineArgs(input inferencev1alpha1.EngineArguments, inference infere
 		args[key] = *value.DeepCopy()
 	}
 
-	common := map[string]any{
-		"max-model-len":          inference.MaxModelLen,
-		"dtype":                  inference.DType,
-		"quantization":           inference.Quantization,
-		"kv-cache-dtype":         inference.KVCacheDType,
-		"gpu-memory-utilization": inference.GPUMemoryUtilization,
-		"max-num-seqs":           inference.MaxNumSeqs,
-		"max-num-batched-tokens": inference.MaxNumBatchedTokens,
-		"enforce-eager":          inference.EnforceEager,
-	}
-	for name, value := range common {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return nil, fmt.Errorf("encode %s: %w", name, err)
-		}
-		if string(encoded) == "null" || string(encoded) == `""` {
-			continue
-		}
-		// An abbreviated native spelling must not override the explicit field later in argparse.
-		for key := range args {
-			if strings.HasPrefix(name, key) {
-				delete(args, key)
-			}
-		}
-		args[name] = apiextensionsv1.JSON{Raw: encoded}
-	}
-	if speculative := inference.SpeculativeDecoding; speculative != nil {
-		// Remove equivalent CLI spellings so the merged configuration has one owner.
-		for key := range args {
-			if strings.HasPrefix("speculative-config", key) || strings.HasPrefix("spec-method", key) || strings.HasPrefix("spec-model", key) || strings.HasPrefix("spec-tokens", key) {
-				delete(args, key)
-			}
-		}
-		encoded, err := json.Marshal(speculative)
-		if err != nil {
-			return nil, err
-		}
-		args["speculative-config"] = apiextensionsv1.JSON{Raw: encoded}
-	}
 	if len(args) == 0 {
 		return nil, nil
 	}

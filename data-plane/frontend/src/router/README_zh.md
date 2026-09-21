@@ -21,19 +21,13 @@ spec:
 | Scorer | `kv_least_loaded`、`least_loaded`、`uniform`、`queue_depth`、`running_request`、`kv_cache_utilization`、`active_request` | `kv_least_loaded` | 为保留目标评分 |
 | Picker | `max`、`round_robin` | `round_robin` | 从最高分目标中选择一个 |
 
-每个 pipeline 阶段都通过名称选择算法。如果部署提供了其他路由实现，也可以在相同的 `routerPipeline` 字段中填写对应名称。
-
-`kv_least_loaded` 优先选择可复用前缀更长的目标；长度相同时，本地加速器缓存优于共享 Store 缓存，再比较负载。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
+`kv_least_loaded` 优先选择可复用前缀更长的目标；长度相同时，依次比较已确认的设备、本机 CPU、本机磁盘和外部 Store，再比较负载。无法提供完整缓存身份的层级不会获得位置偏好。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
 
 将 `scorer` 设为 `queue_depth`，可优先选择调度器中等待请求较少的目标；设为 `running_request`，可优先选择运行请求较少的目标；设为 `kv_cache_utilization`，可优先选择实测 KV cache 使用率较低的目标。
 
 将 `scorer` 设为 `active_request`，即可优先选择当前 frontend 跟踪的活跃请求较少的目标。
 
-这三个策略只使用 Model Server 端点的当前指标，不叠加前缀位置、待派发请求或下游阶段负载。
-同一 Model Server 的所有 DP rank 共享端点评分，无法通过这些策略区分各 rank 的负载。
-收到首个遥测响应后即可使用 gauge，无需等满速率统计窗口。未观测到的指标按零处理；
-后续响应缺失某项指标时，仅在其原始观测快照仍处于保留窗口内时使用之前的值。
-时间戳或计数器发生重置后，缺失指标保持未观测状态，直到生产者重新上报。
+路由会区分同一模型执行组内的各个 DP rank。负载策略使用对应 rank 的当前调度器计数，使用率策略使用对应 rank 的 KV Cache 使用率；收到首个遥测响应即可评分，无需等满速率窗口。缺失观测不代表零负载：有实测值的候选优于未知候选，全部未知时仍由 Picker 选择。这三个纯指标策略不叠加前缀位置、待派发请求或下游阶段负载。
 
 只有模型、输入限制、请求能力和目标健康状态都兼容时，请求才会成为候选项。对于预填充/解码分离或编码/预填充/解码分离的服务，路由会确保选中的各阶段彼此兼容。
 

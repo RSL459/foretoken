@@ -165,6 +165,11 @@ spec:
                     enum:
                     - ECExampleConnector
                     type: string
+                  generation:
+                    description: Generation selects the owning service configuration's
+                      encoder cache directory.
+                    format: int64
+                    type: integer
                   profileName:
                     maxLength: 256
                     minLength: 1
@@ -179,6 +184,11 @@ spec:
                     enum:
                     - producer
                     - consumer
+                    type: string
+                  serviceUID:
+                    description: ServiceUID isolates encoder entries from other services
+                      sharing the volume.
+                    minLength: 1
                     type: string
                   sharedStorageClaim:
                     description: |-
@@ -195,9 +205,11 @@ spec:
                     type: string
                 required:
                 - connector
+                - generation
                 - profileName
                 - profileRevision
                 - role
+                - serviceUID
                 - sharedStorageClaim
                 - sharedStoragePath
                 type: object
@@ -297,7 +309,6 @@ spec:
                 description: MemberCount is the number of runtime member Pods in this
                   Group.
                 format: int32
-                maximum: 1
                 minimum: 1
                 type: integer
               modelPoolRef:
@@ -320,10 +331,9 @@ spec:
                 pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
                 type: string
               nodeCount:
-                description: NodeCount is the number of physical Kubernetes Nodes
+                description: NodeCount is the number of distinct Kubernetes Nodes
                   used by this Group.
                 format: int32
-                maximum: 1
                 minimum: 1
                 type: integer
               ordinal:
@@ -423,20 +433,16 @@ spec:
                   protocol:
                     enum:
                     - rdma
+                    - tcp
                     type: string
                   rdmaDeviceName:
                     description: |-
                       RDMADeviceName optionally limits Mooncake to a comma-separated HCA list.
                       When omitted, Mooncake selects from the devices allocated to the Pod.
                     type: string
-                  rdmaResourceCount:
-                    format: int32
-                    minimum: 1
-                    type: integer
-                  rdmaResourceName:
-                    description: |-
-                      RDMAResourceName is the platform-owned Kubernetes extended resource
-                      whose device plugin injects the P/D transport devices.
+                  serviceUID:
+                    description: ServiceUID bounds transfer side channels to Pools
+                      owned by one ModelService.
                     minLength: 1
                     type: string
                 required:
@@ -446,8 +452,21 @@ spec:
                 - profileName
                 - profileRevision
                 - protocol
-                - rdmaResourceCount
-                - rdmaResourceName
+                - serviceUID
+                type: object
+              rdma:
+                description: RDMA is shared by engine collectives and transfer connectors.
+                properties:
+                  resourceCount:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  resourceName:
+                    minLength: 1
+                    type: string
+                required:
+                - resourceCount
+                - resourceName
                 type: object
               resources:
                 description: ModelResources defines resources for one runtime member
@@ -555,8 +574,8 @@ spec:
                   engineArgs:
                     additionalProperties:
                       x-kubernetes-preserve-unknown-fields: true
-                    description: EngineArgs is the effective backend configuration
-                      after applying common fields.
+                    description: EngineArgs contains resolved native options; worker
+                      topology is stored in Parallelism.
                     type: object
                   image:
                     maxLength: 2048
@@ -585,6 +604,7 @@ spec:
                         enum:
                         - pytorch
                         - nsight
+                        - mctracer
                         type: string
                     required:
                     - engine

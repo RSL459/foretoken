@@ -21,20 +21,13 @@ spec:
 | Scorer | `kv_least_loaded`, `least_loaded`, `uniform`, `queue_depth`, `running_request`, `kv_cache_utilization`, `active_request` | `kv_least_loaded` | Ranks retained targets |
 | Picker | `max`, `round_robin` | `round_robin` | Selects among the highest-scoring targets |
 
-Each pipeline stage selects an algorithm by name. Deployments with additional routing implementations can use their names in the same `routerPipeline` fields.
-
-`kv_least_loaded` prefers longer reusable KV prefixes, choosing local accelerator cache over shared Store cache for equal lengths, then lower load. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
+`kv_least_loaded` prefers longer reusable KV prefixes. For equal lengths it orders confirmed tiers as device, local CPU, local disk, then external Store, before comparing load. Tiers without identity-complete observations receive no locality preference. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
 
 Set `scorer` to `queue_depth` to prefer fewer requests waiting in the engine scheduler, `running_request` to prefer fewer running requests, or `kv_cache_utilization` to prefer lower measured KV-cache utilization.
 
 Set `scorer` to `active_request` to prefer fewer active requests tracked by this frontend.
 
-`queue_depth`, `running_request`, and `kv_cache_utilization` use current Model Server endpoint gauges. They do not add prefix locality,
-pending dispatches, or downstream-stage load. All DP ranks of one Model Server share its
-endpoint score; these policies do not distinguish load between ranks. Gauges are usable after
-the first telemetry response, without waiting for the rate observation window. An unobserved gauge is treated
-as zero. Later omissions preserve the previous value while its measured snapshot remains in retained
-history. After a timestamp or counter reset, omitted gauges remain unobserved until reported again.
+Routing distinguishes DP ranks within each model group. Load policies use each rank's current scheduler counts; the utilization policy uses that rank's KV-cache usage. These gauges are available from the first telemetry response, without waiting for a rate window. Missing rank observations are not treated as zero load: measured candidates rank ahead of unknown candidates, while equally unknown candidates remain eligible for the Picker. The three metric-only policies do not add prefix locality, pending dispatches, or downstream-stage load.
 
 A target is eligible only when it is healthy and supports the requested model, input length, and capabilities. For services with separate prefill/decode or encoder/prefill/decode stages, routing keeps the selected stages compatible with one another.
 

@@ -27,6 +27,7 @@ pub enum Engine {
     #[default]
     Pytorch,
     Nsight,
+    Mctracer,
 }
 
 /// Optional launch configuration; an omitted choice preserves existing PyTorch capture.
@@ -79,10 +80,12 @@ impl Config {
     }
 
     fn staging(&self) -> PathBuf {
-        self.profile_root().join(".staging").join(&self.runtime_id)
+        // One group-local supervisor starts and seals captures across every engine.
+        // All members mount the same cache and write into this group-owned staging directory.
+        self.profile_root().join(".staging").join(&self.group_uid)
     }
 
-    /// Prepares this process's isolated staging directory before the inference engine starts.
+    /// Prepares the group-owned staging directory before any member starts its engine.
     pub fn prepare(&self) -> io::Result<()> {
         // The persistent mount must already exist; never substitute Pod-local storage.
         fs::metadata(&self.data_root)?;
@@ -94,8 +97,8 @@ impl Config {
 
     /// Renders native configuration without enabling recording at process startup.
     pub fn engine_argument(&self) -> String {
-        if self.engine == Engine::Nsight {
-            // Nsight controls process-tree collection; no competing CUPTI profiler is installed.
+        if self.engine != Engine::Pytorch {
+            // Native collectors own recording; do not install a competing PyTorch profiler.
             return "--profiler-config={}".into();
         }
         format!(
@@ -345,6 +348,7 @@ impl Supervisor {
             match config.engine {
                 Engine::Pytorch => backend.set_profiling(start).await,
                 Engine::Nsight => nsight::set_recording(&config, start).await,
+                Engine::Mctracer => backend.set_mctracer(start, &config.staging()).await,
             }
         }));
         let budget = if start { START_TIMEOUT } else { STOP_TIMEOUT };
@@ -492,9 +496,9 @@ async fn publish_capture(
 ) -> io::Result<Record> {
     if record.phase == "Succeeded" {
         let inspection = match config.engine {
-            Engine::Pytorch => {
+            Engine::Pytorch | Engine::Mctracer => {
                 let config = config.clone();
-                tokio::task::spawn_blocking(move || validate_torch(&config))
+                tokio::task::spawn_blocking(move || validate_trace(&config))
                     .await
                     .map_err(io::Error::other)?
             }
@@ -561,8 +565,13 @@ fn sync_capture(directory: &Path) -> io::Result<()> {
 }
 
 // Validate one native Chrome trace per expected worker before publishing a successful capture.
-fn validate_torch(config: &Config) -> io::Result<bool> {
+fn validate_trace(config: &Config) -> io::Result<bool> {
     let staging = config.staging();
+    let suffix = match config.engine {
+        Engine::Pytorch => ".pt.trace.json",
+        Engine::Mctracer => ".mctracer.json",
+        Engine::Nsight => unreachable!("Nsight reports use their native inspector"),
+    };
     let mut traces = 0;
     let mut gpu_activity = false;
     for entry in fs::read_dir(&staging)? {
@@ -570,10 +579,10 @@ fn validate_torch(config: &Config) -> io::Result<bool> {
         if path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".pt.trace.json"))
+            .is_some_and(|name| name.ends_with(suffix))
         {
             let file = File::open(path)?;
-            let trace: TorchTrace = serde_json::from_reader(BufReader::new(&file))?;
+            let trace: NativeTrace = serde_json::from_reader(BufReader::new(&file))?;
             gpu_activity |= trace.events.0;
             traces += 1;
         }
@@ -588,7 +597,7 @@ fn validate_torch(config: &Config) -> io::Result<bool> {
 }
 
 #[derive(Deserialize)]
-struct TorchTrace {
+struct NativeTrace {
     #[serde(rename = "traceEvents")]
     events: KernelEvents,
 }
@@ -611,10 +620,19 @@ impl<'de> Deserialize<'de> for KernelEvents {
                 #[derive(Deserialize)]
                 struct Event {
                     cat: Option<String>,
+                    args: Option<KernelArguments>,
+                }
+                #[derive(Deserialize)]
+                struct KernelArguments {
+                    grid: Option<serde::de::IgnoredAny>,
+                    block: Option<serde::de::IgnoredAny>,
                 }
                 let mut kernel = false;
                 while let Some(event) = sequence.next_element::<Event>()? {
-                    kernel |= event.cat.as_deref() == Some("kernel");
+                    kernel |= event.cat.as_deref() == Some("kernel")
+                        || event
+                            .args
+                            .is_some_and(|args| args.grid.is_some() && args.block.is_some());
                 }
                 Ok(KernelEvents(kernel))
             }

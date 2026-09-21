@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](profiling_zh.md)
 
-Inspect inference execution with PyTorch Profiler or NVIDIA Nsight Systems. Profiling currently supports vLLM on NVIDIA GPUs and requires a [source-installed](../docs/custom-deployment.md) CLI and platform. Results use persistent RuntimeCache storage, which the Quick Start already configures.
+Inspect vLLM execution with PyTorch Profiler on NVIDIA or [MetaX GPUs](../docs/metax-deployment.md), Nsight Systems on NVIDIA GPUs, or mcTracer on MetaX GPUs. Profiling requires a [source-installed](../docs/custom-deployment.md) CLI and platform. Results use persistent RuntimeCache storage, which the Quick Start already configures.
 
 ## Capture a benchmark workload
 
@@ -30,6 +30,21 @@ foretoken deploy examples/quickstart \
 ```
 
 Capture starts when the service is ready and records externally supplied requests. The service remains running afterwards. Use `--model MODEL_ID` to select the capture target in a multi-model deployment. `--profile-duration` sets the maximum recording time; benchmark capture also stops when the workload finishes early.
+
+## MetaX mcTracer
+
+The model-server image must provide the matching MACA SDK's `mcTracer` executable on `PATH` and `libmcpti.so`; update older images before capturing.
+
+In your deployment directory, add this under `spec` in the ModelService YAML:
+
+```yaml
+profiling:
+  engine: mctracer
+```
+
+Then use either deploy or benchmark command above with `--profile-engine mctracer`. YAML selects the profiler prepared by the model processes; the CLI flag selects the capture engine and must match it. Omitting the YAML field prepares PyTorch. After changing it, use deploy to update the model processes. Benchmark can create an absent deployment and reuses an existing service unchanged.
+
+CUDA Graph can remain enabled. Stopping capture leaves inference running; repeat the command to capture another window.
 
 ## Nsight Systems
 
@@ -77,7 +92,9 @@ Run on your local computer with a kubeconfig for the target cluster:
 foretoken profile view
 ```
 
-Open the printed URL to browse capture directories and their subfolders. PyTorch traces open in Perfetto; the browser needs access to `ui.perfetto.dev`. For Nsight, download the `.nsys-rep` report and open it in Nsight Systems, or download the SQLite export for analysis. Press Ctrl+C to close the viewer; files are preserved.
+Open the printed URL to browse captures. PyTorch traces open in Perfetto; the browser needs access to `ui.perfetto.dev`. Select an Nsight timeline and click “Open in NVIDIA Nsight Systems” to open the official viewer in a new tab. mcTracer JSON opens in the same Perfetto view when the report uses the Perfetto-compatible trace format.
+
+The selected report opens in a new browser tab. Press Ctrl+C to stop the viewer; capture files remain available for download.
 
 When the deployment and capture records are no longer needed, clean up with:
 

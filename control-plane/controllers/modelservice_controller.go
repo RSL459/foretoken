@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"slices"
 	"sync"
-	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -36,7 +35,6 @@ const (
 	conditionPoolsMaterialized = "PoolsMaterialized"
 	conditionReady             = "Ready"
 	maxDesiredReplicas         = int32(1<<31 - 1)
-	defaultScalingPollInterval = 5 * time.Second
 )
 
 // ScalingMetricsProvider supplies one read-only, target-attributed metrics snapshot.
@@ -121,7 +119,11 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 			ready:    conditionState{metav1.ConditionFalse, "KVServiceNotReady", "Referenced KVService is not ready"},
 		})
 	}
-	compiledPools, autoscalingStatus, err := reconciler.applyScaling(ctx, service, compiledPools)
+	scaling, err := reconciler.scalingConfig(service)
+	var autoscalingStatus []inferencev1alpha1.AutoscalingTargetStatus
+	if err == nil {
+		compiledPools, autoscalingStatus, err = reconciler.applyScaling(ctx, service, compiledPools, scaling)
+	}
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
 			compiled: conditionState{metav1.ConditionFalse, "ScalingFailed", err.Error()},
@@ -182,10 +184,6 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
-	scaling, err := reconciler.scalingConfig(service)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
 	if scaling.Autoscaler.Automatic() {
 		return ctrl.Result{RequeueAfter: scaling.PollingInterval}, nil
 	}
@@ -205,6 +203,25 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 			return fmt.Errorf("ModelService owns duplicate ModelPools for poolName %q", pool.Spec.PoolName)
 		}
 		byPoolName[pool.Spec.PoolName] = pool
+	}
+
+	// Cache identity follows encoder content, not replica counts or service alert settings.
+	cacheGeneration := service.Generation
+	for _, compiled := range compiledPools {
+		if compiled.Template.Role != inferencev1alpha1.ModelRoleEncoder {
+			continue
+		}
+		if previous := byPoolName[compiled.Name]; previous != nil {
+			before, after := previous.Spec.Template, compiled.Template
+			if before.EncoderCacheGeneration > 0 && before.Model == after.Model && before.Source == after.Source && before.ModelRevision == after.ModelRevision && before.Backend == after.Backend && before.ECProfile == after.ECProfile && reflect.DeepEqual(before.EngineArgs, after.EngineArgs) {
+				cacheGeneration = before.EncoderCacheGeneration
+			}
+		}
+	}
+	for index := range compiledPools {
+		if compiledPools[index].Template.ECProfile != "" {
+			compiledPools[index].Template.EncoderCacheGeneration = cacheGeneration
+		}
 	}
 
 	desired := make(map[string]struct{}, len(compiledPools))
@@ -299,7 +316,10 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 	})
 	if len(selected) > 0 {
 		switch {
-		case poolsHaveEPD(servicePools):
+		case poolsHaveEPD(servicePools) || serviceDeclaresEPD(candidate):
+			if !poolsContainCompleteEPD(servicePools) {
+				return false, nil
+			}
 			if _, _, err := projectServiceEPDComponents(candidate, servicePools, groups.Items); err != nil {
 				return false, err
 			}

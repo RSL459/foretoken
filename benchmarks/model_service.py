@@ -11,6 +11,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import yaml
@@ -30,6 +31,35 @@ from foretoken.storage import DirectoryVolumes
 logger = logging.getLogger(__name__)
 
 
+async def require_health_endpoint(url: str) -> None:
+    """Check one public health URL without forwarding service credentials or routing headers."""
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("health URL must be an absolute HTTP or HTTPS URL")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("health URL contains an invalid port") from exc
+    hostname = parsed.hostname
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    if port is not None:
+        hostname = f"{hostname}:{port}"
+    display_url = urlunsplit((parsed.scheme, hostname, parsed.path, "", ""))
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise ValueError(
+            f"Health check failed for {display_url}: HTTP {exc.response.status_code}"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise ValueError(
+            f"Health check failed for {display_url}: {type(exc).__name__}"
+        ) from exc
+
+
 @dataclass(frozen=True)
 class ModelService:
     """Describe one OpenAI-compatible model service that is ready for benchmark requests.
@@ -47,7 +77,7 @@ class ModelService:
     api_key: str
     models: tuple[str, ...]
     hostname: str
-    gpu_count: int
+    gpu_count: int | None
     routing_host: str
     model_service_refs: tuple[ResourceRef, ...]
     # Capture must use the same rendered target that supplied the HTTP endpoint.
@@ -263,7 +293,7 @@ def resolve_model_service(
             api_key=source.api_key,
             models=(source.model,),
             hostname="",
-            gpu_count=1,
+            gpu_count=None,
             routing_host="",
             model_service_refs=(),
         )

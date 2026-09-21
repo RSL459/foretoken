@@ -16,7 +16,7 @@ foretoken install
 foretoken deploy examples/quickstart
 ```
 
-`foretoken install` 会复用集群中已有的 Prometheus，没有时安装一套由 CLI 管理的 kube-prometheus-stack。CLI 管理的 Grafana 会自动加载看板。先获取自动生成的管理员凭据，再通过集群提供的地址打开 Grafana：
+`foretoken install` 会复用集群中已有的 Prometheus，没有时安装一套由 CLI 管理的 kube-prometheus-stack。如果安装了监控栈，使用 CLI 管理的 Grafana 并获取自动生成的管理员凭据；如果复用已有监控栈，则使用该平台的 Grafana 和凭据：
 
 ```bash
 GRAFANA_USER="$(kubectl get secret \
@@ -31,7 +31,11 @@ printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
 ```
 
-在 Grafana 中选择中文看板 Foretoken 系统概览，或英文看板 Foretoken System Overview。它沿着请求链路依次展示 Frontend、模型服务、缓存和加速器，最后是扩缩容决策；路由和控制面的细节放在折叠分区里。可以按命名空间、Frontend 服务、模型组、模型角色、模型或模型服务筛选。
+在 Grafana 中打开 Foretoken 系统概览，或英文版 Foretoken System Overview。先选命名空间和模型，再按模型实例、执行角色或引擎 rank 缩小范围。模型服务、缓存、GPU 和路由面板随之筛选。“路由决策”展示同一模型、同一角色内各实例的份额；只选一个实例时，分母仍保留该模型该角色的全部实例。
+
+“共享前端”展示所选前端的全部流量，不归属于单个模型。扩缩容按所选模型和服务查看，控制面诊断则反映整个平台。
+
+升级 Foretoken 后，再执行 `foretoken install`，更新控制器、前端、采集配置和看板。只导入看板 JSON 不会更新指标生产端。
 
 ## 确认采集正常
 
@@ -40,7 +44,7 @@ kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-在 Prometheus 的 Targets 页面确认 Foretoken target 为 `UP`，在 Rules 页面确认 `foretoken.recording` 已加载。下面的查询返回 Frontend 请求速率：
+在 Prometheus 的 Targets 页面确认 Foretoken target 为 `UP`，在 Rules 页面确认 `foretoken.recording` 已加载；启用服务告警时，再确认对应的 `foretoken.alerting` 规则已加载。下面的查询返回 Frontend 请求速率：
 
 ```promql
 sum(foretoken:frontend_http_response_starts:rate5m)
@@ -119,7 +123,7 @@ foretoken deploy examples/observability --timeout 20m
 | mxExporter | 沐曦利用率和显存 |
 | kubelet/cAdvisor | 容器 CPU 和内存 |
 
-看板中的 TTFT 和 E2EL 使用秒，TPOT 和 ITL 使用毫秒。TPOT 同时提供百分位和平均值。
+看板中的 TTFT 和 E2EL 使用秒，TPOT 和 ITL 使用毫秒。p50/p95/p99 分位数按模型和角色，合并所选实例的请求直方图后计算。前缀缓存命中率使用命中 token 总数除以查询 token 总数，没有查询或指标缺失时不显示比例。路由份额统计选择次数，不代表请求完成率或缓存命中率。
 
 下列记录规则供告警和固定窗口查询使用。模型服务相关规则来自 vLLM 指标。
 

@@ -17,18 +17,18 @@ from benchmarks.config.benchmark import (
     ParameterSweepConfig,
     normalize_output_token_limit,
 )
-from benchmarks.runs.http import GeneratedLoadBenchmark
+from benchmarks.datasets.conversations import iter_jsonl_rows
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_sweep_results
 from benchmarks.results.output import (
     BenchmarkRun,
     result_directory_path,
+    wandb_group_name,
     write_json,
 )
 from benchmarks.results.pareto import plot_sweep_pareto
 from benchmarks.results.sweep import summarize_sweep, write_sweep_csv
-from benchmarks.results.wandb import wandb_group_name
-from benchmarks.datasets.conversations import iter_jsonl_rows
+from benchmarks.runs.http import GeneratedLoadBenchmark
 
 logger = logging.getLogger(__name__)
 
@@ -351,8 +351,6 @@ class ParameterSweepBenchmark:
                 point["parameter_group"] = str(combination["_parameter_group"])
                 point["run_number"] = run_number
                 point["gpu_count"] = self.service.gpu_count
-                if point_benchmark.is_multi_turn:
-                    point["multi_turn"] = True
                 point["bench"] = dict(combination)
                 point["label"] = f"{combination_name}|p={point['parallel']}"
                 all_points.append(point)
@@ -361,8 +359,9 @@ class ParameterSweepBenchmark:
         if len(all_points) > 1:
             if local_enabled:
                 fig_path = plot_sweep_pareto(all_points, experiment_dir)
-                artifacts["pareto"] = fig_path
-                logger.info("Pareto plot: %s", fig_path)
+                if fig_path is not None:
+                    artifacts["pareto"] = fig_path
+                    logger.info("Pareto plot: %s", fig_path)
             if not self.benchmark.outputs.includes("quiet"):
                 log_sweep_results(all_points)
 

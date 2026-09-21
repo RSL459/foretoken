@@ -6,17 +6,14 @@
 
 from __future__ import annotations
 
-import logging
+import json
 import math
-import os
-from datetime import datetime
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
-import wandb
+from benchmarks.results.metrics import percentile_summary
 
-from benchmarks.config.benchmark import BenchmarkConfig, WandbRunConfig
-from benchmarks.model_service import ModelService
-from benchmarks.results.metrics import RequestMeasurement, percentile_summary
+if TYPE_CHECKING:
+    from benchmarks.results.output import BenchmarkRun
 from benchmarks.results.replicas import replica_history_rows
 from benchmarks.results.timeseries import (
     ELAPSED_TIME,
@@ -26,9 +23,7 @@ from benchmarks.results.timeseries import (
     time_series,
 )
 
-logger = logging.getLogger(__name__)
 
-_SYSTEM_STATS_INTERVAL_S = 1.0
 _TIME_TAKEN = "Benchmark duration (s)"
 _CONCURRENCY = "Concurrency limit"
 _REQUEST_RATE = "Arrival rate (req/s)"
@@ -36,15 +31,17 @@ _TOTAL_REQUESTS = "Requests"
 _SUCCEED_REQUESTS = "Successful requests"
 _FAILED_REQUESTS = "Failed requests"
 _REQUESTS_PER_SECOND = "Request throughput (req/s)"
-_AVERAGE_LATENCY = "Mean end-to-end latency (E2EL) (s)"
+_SUCCESS_RATE = "Success rate (%)"
 _AVERAGE_INPUT_TOKENS = "Mean input tokens"
 _INPUT_TOKENS_PER_SECOND = "Input token throughput (tokens/s)"
 _GENERATION_TOKENS_PER_SECOND = "Output token throughput (tokens/s)"
 _TOTAL_TOKENS_PER_SECOND = "Total tokens per second (tokens/s)"
-_AVERAGE_TTFT = "Mean TTFT (s)"
-_AVERAGE_TPOT = "Mean TPOT (ms)"
-_AVERAGE_ITL = "Mean ITL (ms)"
 _AVERAGE_OUTPUT_TOKENS = "Mean output tokens"
+_AVERAGE_CACHED_INPUT_TOKENS = "Mean reported cached input tokens"
+_GENERATION_TOKENS_PER_CONFIGURED_CONCURRENCY = (
+    "Output tok/s / user"
+)
+_GENERATION_TOKENS_PER_GPU = "Output token throughput per GPU (tokens/s)"
 _CONCURRENT_CONVERSATIONS = "Concurrent conversations"
 _CONVERSATIONS = "Conversations attempted"
 _CONVERSATIONS_PER_SECOND = "Attempted conversations per second"
@@ -58,31 +55,23 @@ _DISTRIBUTION_METRICS = (
     ("latency", "End-to-end latency (E2EL) (s)", 1.0),
     ("ttft", "TTFT (s)", 1.0),
     ("tpot", "TPOT (ms)", 1000.0),
+    ("itl", "ITL (ms)", 1000.0),
     ("replay_delay", "Replay delay (s)", 1.0),
     ("trace_e2e_ttft", "TTFT including replay delay (s)", 1.0),
     ("trace_e2e_latency", "E2EL including replay delay (s)", 1.0),
+)
+_TRACE_DISTRIBUTION_METRICS = tuple(
+    item for item in _DISTRIBUTION_METRICS if item[0] != "itl"
 )
 _TRACE_HISTORY_KEYS = {
     "requests_per_second": "Trace/Scheduled requests per second",
     "successful_requests_per_second": "Trace/Successful scheduled requests/s",
     **{
         key: f"Trace/{name} p95"
-        for key, name, _ in _DISTRIBUTION_METRICS
+        for key, name, _ in _TRACE_DISTRIBUTION_METRICS
     },
 }
 
-
-def wandb_run_timestamp() -> str:
-    """Return a local timestamp for W&B names and grouping."""
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
-def wandb_group_name(
-    config: BenchmarkConfig,
-    service: ModelService,
-) -> str:
-    """Resolve the explicit group or generate one for a multi-run composition."""
-    return config.wandb.group.strip() or f"{service.model}_{wandb_run_timestamp()}"
 
 
 def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -95,24 +84,32 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         _TOTAL_REQUESTS: int(metrics["request_num"]),
         _SUCCEED_REQUESTS: int(metrics["success_num"]),
         _FAILED_REQUESTS: int(metrics["failed_num"]),
+        _SUCCESS_RATE: round(float(metrics["success_rate"]) * 100.0, 4),
         _REQUESTS_PER_SECOND: round(float(throughput["requests_per_second"]), 4),
-        _INPUT_TOKENS_PER_SECOND: round(
-            float(throughput["prompt_tokens_per_second"]), 4
-        ),
-        _GENERATION_TOKENS_PER_SECOND: round(
-            float(throughput["generation_tokens_per_second"]), 4
-        ),
-        _TOTAL_TOKENS_PER_SECOND: round(
-            float(throughput["total_tokens_per_second"]), 4
-        ),
     }
+    throughput_fields = (
+        ("prompt_tokens_per_second", _INPUT_TOKENS_PER_SECOND),
+        ("generation_tokens_per_second", _GENERATION_TOKENS_PER_SECOND),
+        ("total_tokens_per_second", _TOTAL_TOKENS_PER_SECOND),
+        (
+            "generation_tokens_per_second_per_user",
+            _GENERATION_TOKENS_PER_CONFIGURED_CONCURRENCY,
+        ),
+        ("generation_tokens_per_second_per_gpu", _GENERATION_TOKENS_PER_GPU),
+    )
+    for source, destination in throughput_fields:
+        value = throughput.get(source)
+        if value is not None:
+            message[destination] = round(float(value), 4)
     optional = (
         ("avg_input_tokens", _AVERAGE_INPUT_TOKENS, 1.0, 4),
         ("avg_output_tokens", _AVERAGE_OUTPUT_TOKENS, 1.0, 4),
-        ("latency", _AVERAGE_LATENCY, 1.0, 4),
-        ("ttft", _AVERAGE_TTFT, 1.0, 4),
-        ("tpot", _AVERAGE_TPOT, 1000.0, 2),
-        ("itl", _AVERAGE_ITL, 1000.0, 2),
+        (
+            "avg_cached_input_tokens",
+            _AVERAGE_CACHED_INPUT_TOKENS,
+            1.0,
+            4,
+        ),
     )
     for source, destination, scale, digits in optional:
         value = metrics[source]
@@ -134,7 +131,7 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         message[_CONCURRENT_CONVERSATIONS] = int(metrics["parallel"])
         message[_CONVERSATIONS] = int(conversation["attempted_num"])
         message[_CONVERSATIONS_PER_SECOND] = round(
-            float(throughput["attempted_conversations_per_second"]), 4
+            float(conversation["attempted_conversations_per_second"]), 4
         )
         message[_AVERAGE_TURNS_PER_CONVERSATION] = round(
             float(conversation["avg_turn_requests"]), 4
@@ -147,7 +144,6 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
                 if value is not None:
                     message[f"{name}/{percentile}"] = round(float(value), 4)
     return message
-
 
 
 def _trace_bucket_rows(
@@ -177,7 +173,7 @@ def _trace_bucket_rows(
             "requests_per_second": len(bucket_results) / bucket_seconds,
             "successful_requests_per_second": len(successful) / bucket_seconds,
         }
-        for key, _, scale in _DISTRIBUTION_METRICS:
+        for key, _, scale in _TRACE_DISTRIBUTION_METRICS:
             values = [
                 float(result[key])
                 for result in successful
@@ -190,132 +186,65 @@ def _trace_bucket_rows(
     return rows
 
 
-class WandbBenchmarkRun:
-    """Own the optional W&B run lifecycle for one benchmark workload point."""
+def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
+    """Publish one completed HTTP benchmark to an already-open W&B SDK run."""
+    replica_observations = None
+    replica_path = run.artifacts.get("replica_observations")
+    if replica_path is not None:
+        replica_observations = json.loads(replica_path.read_text(encoding="utf-8"))
 
-    def __init__(self) -> None:
-        self._run: Optional[Any] = None
-
-    def start(
-        self,
-        config: BenchmarkConfig,
-        service: ModelService,
-        *,
-        output_dir: str,
-        parallel: int,
-        rate: float,
-        name_suffix: Optional[str] = None,
-        group: Optional[str] = None,
-    ) -> None:
-        """Create an independent run for the workload point when W&B output is enabled."""
-        wandb_config: WandbRunConfig = config.wandb
-        if not config.outputs.includes("wandb"):
-            return
-
-        os.makedirs(output_dir, exist_ok=True)
-        base = wandb_config.run_name.strip() or f"{service.model}_{wandb_run_timestamp()}"
-        group = wandb_config.group.strip() or group
-        name = f"{base}_{name_suffix}" if name_suffix else base
-        init_kwargs: dict[str, Any] = {
-            "project": wandb_config.project,
-            "name": name,
-            "reinit": "create_new",
-            "config": config.to_dict(),
-            "dir": output_dir,
-            "settings": wandb.Settings(
-                x_stats_sampling_interval=_SYSTEM_STATS_INTERVAL_S
-            ),
-        }
-        if group:
-            init_kwargs["group"] = group
-        if wandb_config.entity:
-            init_kwargs["entity"] = wandb_config.entity
-        try:
-            self._run = wandb.init(**init_kwargs)
-        except wandb.errors.Error as exc:
-            logger.warning(
-                "W&B unavailable; continuing with local results: %s",
-                exc,
-            )
-            return
-        logger.info(
-            "W&B logging enabled: project=%s name=%s group=%s concurrency=%s rate=%s",
-            wandb_config.project,
-            name,
-            group or "-",
-            parallel,
-            rate,
-        )
-
-    def log_metrics(self, metrics: dict[str, Any]) -> None:
-        """Publish final aggregates as one chartable W&B history point."""
-        if self._run is None:
-            return
-        self._run.log(wandb_metric_fields(metrics))
-
-    def log_request_history(
-        self,
-        measurements: list[RequestMeasurement],
-        *,
-        duration: float,
-        stream: bool,
-        replica_observations: list[dict[str, Any]] | None = None,
-    ) -> None:
-        """Publish request and replica observations on monotonic explicit axes."""
-        if self._run is None:
-            return
-        self._run.define_metric(ELAPSED_TIME)
-        self._run.define_metric(REQUEST_INDEX)
+    if run.measurements is not None:
+        sdk_run.define_metric(ELAPSED_TIME)
+        sdk_run.define_metric(REQUEST_INDEX)
         elapsed_rows = [
-            *time_series(measurements, duration=duration, stream=stream),
-            *cumulative_series(measurements, stream=stream),
+            *time_series(
+                run.measurements,
+                duration=float(run.metrics["benchmark_time"]),
+                stream=bool(run.metrics["stream"]),
+            ),
+            *cumulative_series(
+                run.measurements,
+                stream=bool(run.metrics["stream"]),
+            ),
         ]
         if replica_observations:
             elapsed_rows.extend(replica_history_rows(replica_observations))
         elapsed_rows.sort(key=lambda row: float(row[ELAPSED_TIME]))
         series = (
             (ELAPSED_TIME, elapsed_rows),
-            (REQUEST_INDEX, request_series(measurements, stream=stream)),
+            (
+                REQUEST_INDEX,
+                request_series(
+                    run.measurements,
+                    stream=bool(run.metrics["stream"]),
+                ),
+            ),
         )
         for axis, rows in series:
             defined = {axis}
             for row in rows:
                 for key in row.keys() - defined:
-                    self._run.define_metric(key, step_metric=axis, step_sync=False)
+                    sdk_run.define_metric(key, step_metric=axis, step_sync=False)
                     defined.add(key)
-                self._run.log(row)
+                sdk_run.log(row)
 
-    def log_trace_measurements(self, results: list[dict[str, Any]]) -> None:
-        """Upload trace history organized by scheduled time after replay completes."""
-        if self._run is None:
-            return
-        rows = _trace_bucket_rows(results)
-        try:
-            self._run.define_metric(_TRACE_TIME)
-            for wandb_key in _TRACE_HISTORY_KEYS.values():
-                self._run.define_metric(wandb_key, step_metric=_TRACE_TIME)
-            for row in rows:
-                message = {_TRACE_TIME: row[_TRACE_TIME]}
-                message.update(
-                    {
-                        wandb_key: row[key]
-                        for key, wandb_key in _TRACE_HISTORY_KEYS.items()
-                        if key in row
-                    }
-                )
-                self._run.log(message)
-        except wandb.errors.Error:
-            logger.exception("Failed to upload W&B trace charts")
-            return
-        logger.info(
-            "W&B trace charts uploaded: requests=%d buckets=%d",
-            len(results),
-            len(rows),
+    raw_output = run.artifacts.get("raw_output")
+    if raw_output is not None:
+        rows = _trace_bucket_rows(
+            json.loads(raw_output.read_text(encoding="utf-8"))
         )
+        sdk_run.define_metric(_TRACE_TIME)
+        for wandb_key in _TRACE_HISTORY_KEYS.values():
+            sdk_run.define_metric(wandb_key, step_metric=_TRACE_TIME)
+        for row in rows:
+            message = {_TRACE_TIME: row[_TRACE_TIME]}
+            message.update(
+                {
+                    wandb_key: row[key]
+                    for key, wandb_key in _TRACE_HISTORY_KEYS.items()
+                    if key in row
+                }
+            )
+            sdk_run.log(message)
 
-    def finish(self) -> None:
-        """Finish only the run owned by this object; leave other W&B runs in the process unchanged."""
-        run = self._run
-        self._run = None
-        if run is not None:
-            run.finish()
+    sdk_run.log(wandb_metric_fields(run.metrics))
