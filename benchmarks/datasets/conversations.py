@@ -317,9 +317,9 @@ def _load_dataset_tasks(
 
 
 def load_conversation_tasks(benchmark: BenchmarkConfig) -> list[Task]:
-    """Read complete conversation scripts for EvalScope interactive multi-turn runs."""
+    """Read enough conversation scripts to cover the request budget."""
     workload = benchmark.resolved_workload
-    conversation_count = benchmark.load.request_count
+    request_budget = benchmark.load.request_count
     row_offset = int(workload.row_offset)
     if workload.fixed_prompt and not workload.dataset_selectors:
         return [
@@ -327,22 +327,32 @@ def load_conversation_tasks(benchmark: BenchmarkConfig) -> list[Task]:
                 id=f"prompt:{index}",
                 turns=(Turn(role="user", content=workload.fixed_prompt),),
             )
-            for index in range(conversation_count)
+            for index in range(request_budget)
         ]
 
-    if len(workload.dataset_selectors) != 1:
-        raise ValueError(
-            "A conversation child run requires exactly one dataset source"
-        )
-    dataset_selector = workload.dataset_selectors[0]
-    if dataset_selector == "random":
+    if not workload.dataset_selectors:
+        raise ValueError("A conversation workload requires a dataset source")
+    if "random" in workload.dataset_selectors:
         raise ValueError("EvalScope owns standard random dataset generation")
-    return _load_dataset_tasks(
-        dataset_selector,
-        conversation_count,
-        row_offset,
-        _conversation_task,
-        "conversations",
+
+    tasks: list[Task] = []
+    request_count = 0
+    for dataset_selector in workload.dataset_selectors:
+        for dataset_path, line_number, row_index, row in iter_dataset_rows(
+            dataset_selector
+        ):
+            if row_index < row_offset:
+                continue
+            task = _conversation_task(row, dataset_path, line_number, row_index)
+            tasks.append(task)
+            turn_count = len(split_chat_conversation(task.messages()))
+            if workload.max_turns is not None and workload.max_turns > 0:
+                turn_count = min(turn_count, workload.max_turns)
+            request_count += turn_count
+            if request_count >= request_budget:
+                return tasks
+    raise ValueError(
+        f"Loaded {request_count} conversation requests, need {request_budget}"
     )
 
 

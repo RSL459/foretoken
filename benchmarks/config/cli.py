@@ -23,6 +23,7 @@ from benchmarks.config.benchmark import (
     HttpLoadSchedule,
     ModelServiceSource,
     ParameterSweepConfig,
+    SlaTuneConfig,
     WandbRunConfig,
 )
 
@@ -95,7 +96,7 @@ def _add_benchmark_arguments(
         help=(
             "Number of video requests; zero uses all selected rows"
             if video
-            else "Conversations per run; total across multiple datasets"
+            else "HTTP request budget per run; shared across multiple datasets"
         ),
     )
     parser.add_argument(
@@ -405,12 +406,34 @@ def _add_benchmark_arguments(
         "--num-runs",
         type=int,
         default=_default(ParameterSweepConfig, "num_runs"),
-        help="Runs per parameter combination",
+        help="Runs per sweep combination or repeated SLA probe",
     )
     parser.add_argument(
         "--experiment-name",
         default=_default(ParameterSweepConfig, "experiment_name"),
         help="Sweep directory name under --output-dir",
+    )
+
+    parser.add_argument(
+        "--sla-params",
+        type=json.loads,
+        default=_default(SlaTuneConfig, "params"),
+        help=(
+            "JSON SLA constraints that enable search; metrics in one object are ANDed, "
+            "objects are searched independently"
+        ),
+    )
+    parser.add_argument(
+        "--sla-upper-bound",
+        type=int,
+        default=_default(SlaTuneConfig, "upper_bound"),
+        help="Upper bound of the SLA search variable",
+    )
+    parser.add_argument(
+        "--sla-lower-bound",
+        type=int,
+        default=_default(SlaTuneConfig, "lower_bound"),
+        help="Lower bound of the SLA search variable",
     )
 
 
@@ -479,6 +502,12 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             path=namespace.sweep,
             num_runs=namespace.num_runs,
             experiment_name=namespace.experiment_name,
+        ),
+        sla=SlaTuneConfig(
+            params=namespace.sla_params,
+            num_runs=namespace.num_runs,
+            upper_bound=namespace.sla_upper_bound,
+            lower_bound=namespace.sla_lower_bound,
         ),
         profile=(
             BenchmarkProfileConfig(namespace.profile_engine, namespace.profile_duration)

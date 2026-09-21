@@ -129,6 +129,16 @@ def run_http_dataset(
     wandb_group: str | None,
 ) -> BenchmarkRun:
     """Run one dataset with the output location and group selected by its composition."""
+    if benchmark.is_multi_turn:
+        from benchmarks.runs.conversation import ConversationBudgetBenchmark
+
+        return ConversationBudgetBenchmark(
+            benchmark,
+            service,
+            label=label,
+            output_dir=output_dir,
+            wandb_group=wandb_group,
+        ).run()
     return GeneratedLoadBenchmark(
         benchmark, service, label=label, output_dir=output_dir, wandb_group=wandb_group
     ).run()

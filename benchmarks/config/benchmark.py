@@ -280,6 +280,41 @@ class ParameterSweepConfig:
 
 
 @dataclass
+class SlaTuneConfig:
+    """Store SLA search criteria and concurrency bounds."""
+
+    params: list[dict[str, str]] | None = None
+    num_runs: int = 1
+    upper_bound: int = 65536
+    lower_bound: int = 1
+
+    def validate(self) -> None:
+        """Validate SLA criteria and search bounds before starting a workload."""
+        if self.params is None:
+            return
+        if not self.params or any(
+            not isinstance(group, dict) or not group for group in self.params
+        ):
+            raise ValueError(
+                "--sla-params must be a non-empty JSON array of non-empty objects"
+            )
+        if any(
+            not all(
+                isinstance(metric, str) and isinstance(criterion, str)
+                for metric, criterion in group.items()
+            )
+            for group in self.params
+        ):
+            raise ValueError("--sla-params metric names and criteria must be strings")
+        if self.num_runs < 1:
+            raise ValueError("--num-runs must be >= 1")
+        if self.lower_bound < 1:
+            raise ValueError("--sla-lower-bound must be >= 1")
+        if self.upper_bound < self.lower_bound:
+            raise ValueError("--sla-upper-bound must be >= --sla-lower-bound")
+
+
+@dataclass
 class BenchmarkProfileConfig:
     """Select one runtime-owned capture accompanying a generated workload."""
 
@@ -301,6 +336,7 @@ class BenchmarkConfig:
     outputs: BenchmarkOutputConfig = field(default_factory=BenchmarkOutputConfig)
     wandb: WandbRunConfig = field(default_factory=WandbRunConfig)
     sweep: ParameterSweepConfig = field(default_factory=ParameterSweepConfig)
+    sla: SlaTuneConfig = field(default_factory=SlaTuneConfig)
     profile: BenchmarkProfileConfig | None = None
 
     @property
@@ -315,6 +351,16 @@ class BenchmarkConfig:
             return replace(workload, fixed_prompt="Hello")
         return workload
 
+    @property
+    def is_multi_turn(self) -> bool:
+        """Return whether the resolved workload is conversation-driven."""
+        workload = self.resolved_workload
+        return (
+            not self.trace.trace_selector
+            and bool(workload.dataset_selectors)
+            and workload.dataset_selectors != ["random"]
+        )
+
     def validate(self) -> None:
         """Validate each section, then the rules that span sections, before acquiring resources."""
         self.service.validate()
@@ -322,12 +368,14 @@ class BenchmarkConfig:
             if not self.service.kustomize_path:
                 raise ValueError("--profile requires a Foretoken Kustomize deployment")
             if (
-                self.trace.trace_selector or self.sweep.path
+                self.trace.trace_selector
+                or self.sweep.path
                 or self.resolved_workload.has_multiple_datasets
+                or self.is_multi_turn
             ):
                 raise ValueError(
                     "--profile supports one generated workload, not trace replay, "
-                    "sweeps or multiple datasets"
+                    "sweeps, multi-turn workloads or multiple datasets"
                 )
             if self.load.arrival_rate != -1:
                 raise ValueError(
@@ -342,7 +390,20 @@ class BenchmarkConfig:
         workload.validate()
         if self.generation.min_output_length is not None and workload.dataset_selectors != ["random"]:
             raise ValueError("output length control requires --dataset random")
+        if self.load.warmup_requests and self.is_multi_turn:
+            raise ValueError("--warmup-requests requires a generated workload")
+        if self.is_multi_turn and self.load.arrival_rate != -1:
+            raise ValueError("multi-turn workloads require --rate -1")
         self.trace.validate()
+        self.sla.validate()
+
+        if self.sla.params:
+            if self.sweep.path:
+                raise ValueError("--sla-params cannot be combined with --sweep")
+            if self.load.arrival_rate != -1 and not self.trace.trace_selector:
+                raise ValueError(
+                    "--sla-params requires --rate -1 for generated workloads"
+                )
 
         trace = self.trace
         has_trace = bool(trace.trace_selector)
@@ -387,7 +448,7 @@ class BenchmarkConfig:
                 raise ValueError(
                     "--trace uses record timestamps; omit --rate"
                 )
-            if self.load != HttpLoadSchedule():
+            if self.load != HttpLoadSchedule() and not self.sla.params:
                 raise ValueError(
                     "--trace replays the selected trace window; use "
                     "--trace-max-concurrency instead of --parallel/--number"
@@ -476,6 +537,12 @@ class BenchmarkConfig:
                 "path": self.sweep.path,
                 "num_runs": self.sweep.num_runs,
                 "experiment_name": self.sweep.experiment_name,
+            },
+            "sla": {
+                "params": self.sla.params,
+                "num_runs": self.sla.num_runs,
+                "upper_bound": self.sla.upper_bound,
+                "lower_bound": self.sla.lower_bound,
             },
             "profile": (
                 {"engine": self.profile.engine, "duration": self.profile.duration}

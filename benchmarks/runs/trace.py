@@ -140,9 +140,16 @@ class TraceReplayBenchmark:
         self,
         benchmark: BenchmarkConfig,
         service: ModelService,
+        *,
+        label: str = "",
+        output_dir: str | None = None,
+        wandb_group: str | None = None,
     ) -> None:
         self.benchmark = benchmark
         self.service = service
+        self.label = label
+        self.output_dir = output_dir
+        self.wandb_group = wandb_group
 
     async def _send_event(
         self,
@@ -276,6 +283,8 @@ class TraceReplayBenchmark:
             start_offset_seconds=trace.start_offset_seconds,
             duration_seconds=trace.duration_seconds,
         )
+        if self.benchmark.sla.params:
+            events = events[: self.benchmark.load.request_count]
         trace_format = reader.trace_format
         if trace_format is None:
             raise RuntimeError("Trace format was not detected")
@@ -321,7 +330,14 @@ class TraceReplayBenchmark:
                 "payload_source": request_origin,
             }
         )
-        with ResultOutputs(self.benchmark, self.service, record) as outputs:
+        with ResultOutputs(
+            self.benchmark,
+            self.service,
+            record,
+            label=self.label,
+            output_dir=self.output_dir,
+            wandb_group=self.wandb_group,
+        ) as outputs:
             async with ChatCompletionsLoadClient(
                 self.benchmark,
                 self.service,

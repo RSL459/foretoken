@@ -54,10 +54,17 @@ class MultiDatasetBenchmark:
         benchmark: BenchmarkConfig,
         service: ModelService,
         run_dataset: Callable[[BenchmarkConfig, ModelService, str, str, str | None], BenchmarkRun],
+        *,
+        output_dir: str | None = None,
+        wandb_group: str | None = None,
+        label: str = "",
     ) -> None:
         self.benchmark = benchmark
         self.service = service
         self._run_dataset = run_dataset
+        self._output_dir = output_dir
+        self._wandb_group = wandb_group
+        self._label = label
 
     def run(self) -> BenchmarkRun:
         """Benchmark each dataset in order and publish one merged result."""
@@ -80,7 +87,7 @@ class MultiDatasetBenchmark:
 
         # The merged result is printed and saved locally; each child dataset
         # owns its own W&B run inside the shared group.
-        output_dir = result_directory_path(self.benchmark)
+        output_dir = result_directory_path(self.benchmark, self._output_dir)
         sinks: list[ResultSink] = []
         if not self.benchmark.outputs.includes("quiet"):
             sinks.append(ConsoleSink())
@@ -94,7 +101,7 @@ class MultiDatasetBenchmark:
         for sink in sinks:
             sink.open(record)
 
-        wandb_group = (
+        wandb_group = self._wandb_group or (
             wandb_group_name(self.benchmark, self.service)
             if self.benchmark.outputs.includes("wandb")
             else None
@@ -122,6 +129,8 @@ class MultiDatasetBenchmark:
                 request_count,
             )
             child_name = _dataset_directory_name(index, dataset_selector)
+            if self._label:
+                child_name = f"{self._label}-{child_name}"
             child_benchmark = replace(
                 self.benchmark,
                 workload=replace(

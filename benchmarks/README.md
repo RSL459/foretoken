@@ -70,7 +70,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-`--dataset` also accepts a local JSONL file. Each row is a conversation, and all turns run by default using the model's actual answers. Use `--max-turns 1` for the first turn only. Multi-turn conversations currently require `--rate -1`.
+`--dataset` also accepts a local JSONL file. Each row is a conversation, and all turns run by default using the model's actual answers. `--number` is the HTTP request budget; use `--max-turns 1` to limit each conversation to its first turn. Multi-turn conversations require `--rate -1`.
 
 ### Capture while benchmarking
 
@@ -106,6 +106,19 @@ foretoken bench examples/quickstart \
 ```
 
 For parameter sweeps, pass a deployment configuration directory such as `examples/quickstart`; `--url` is currently unsupported. See [Parameter sweeps](docs/coomon_commands/sweep.md) to customize points and compare configurations.
+
+### SLA auto-tune
+
+```bash
+foretoken bench examples/quickstart \
+  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 256 \
+  --parallel 2 \
+  --sla-params '[{"p99_latency":"<=2"}]' \
+  --sla-upper-bound 32 --output local,wandb
+```
+
+Search reuses EvalScope; see [SLA auto-tune](docs/coomon_commands/sla.md) for metric names and limits.
 
 ### An existing service URL
 

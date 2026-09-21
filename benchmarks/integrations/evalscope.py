@@ -260,22 +260,33 @@ def _evalscope_arguments_type() -> type:
 def _materialize_evalscope_request_dataset(
     benchmark: BenchmarkConfig,
     output_dir: str,
-) -> tuple[str, bool]:
-    """Prepare complete tool-aware turn deltas and report whether they need multi-turn workers."""
+) -> tuple[str, bool, int]:
+    """Materialize conversations without exceeding the configured request budget."""
     tasks = load_conversation_tasks(benchmark)
-    turn_lists = [split_chat_conversation(task.messages()) for task in tasks]
+    request_budget = benchmark.load.request_count
     max_turns = benchmark.resolved_workload.max_turns
-    effective_turn_lists = [
-        turns[:max_turns] if max_turns is not None and max_turns > 0 else turns
-        for turns in turn_lists
-    ]
+    effective_turn_lists: list[list[list[dict[str, Any]]]] = []
+    remaining = request_budget
+    for task in tasks:
+        turns = split_chat_conversation(task.messages())
+        if max_turns is not None and max_turns > 0:
+            turns = turns[:max_turns]
+        if not turns or remaining <= 0:
+            break
+        selected = turns[:remaining]
+        effective_turn_lists.append(selected)
+        remaining -= len(selected)
     multi_turn = any(len(turns) > 1 for turns in effective_turn_lists)
     path = Path(output_dir) / "request_dataset.jsonl"
     with path.open("w", encoding="utf-8") as file:
         for task, turns in zip(tasks, effective_turn_lists):
-            json.dump({"turns": turns, "fields": dict(task.metadata)}, file, ensure_ascii=False)
+            json.dump(
+                {"turns": turns, "fields": dict(task.metadata)},
+                file,
+                ensure_ascii=False,
+            )
             file.write("\n")
-    return str(path), multi_turn
+    return str(path), multi_turn, len(effective_turn_lists)
 
 
 def _evalscope_arguments(
@@ -369,7 +380,7 @@ def _evalscope_arguments(
             }
         )
     else:
-        dataset_path, multi_turn = _materialize_evalscope_request_dataset(
+        dataset_path, multi_turn, conversation_count = _materialize_evalscope_request_dataset(
             benchmark, output_dir
         )
         if multi_turn and schedule.arrival_rate != -1:
@@ -383,6 +394,9 @@ def _evalscope_arguments(
                 "dataset": _EVALSCOPE_DATASET,
                 "dataset_path": dataset_path,
                 "dataset_offset": 0,
+                # EvalScope's multi-turn scheduler counts conversations; the
+                # materialized dataset already enforces Foretoken's request budget.
+                "number": conversation_count if multi_turn else schedule.request_count,
                 "multi_turn": multi_turn,
                 # EvalScope uses None for an unbounded custom conversation; -1
                 # is Foretoken's explicit complete-conversation spelling.
@@ -417,9 +431,9 @@ def _conversation_metrics(
     benchmark: BenchmarkConfig,
     summary: BenchmarkSummary,
     trace_summary: TraceLevelSummary | None,
+    conversation_count: int,
 ) -> dict[str, Any]:
-    """Map EvalScope's actual multi-turn trace summary without duplicating request metrics."""
-    conversation_count = int(benchmark.load.request_count)
+    """Map EvalScope's multi-turn trace summary without duplicating request metrics."""
     benchmark_time = float(summary.time_taken)
     return {
         "attempted_num": conversation_count,
@@ -617,7 +631,7 @@ def run_evalscope_standard_load(
     )
     if arguments.multi_turn:
         metrics["conversation"] = _conversation_metrics(
-            benchmark, summary, trace_summary
+            benchmark, summary, trace_summary, int(arguments.number)
         )
         if benchmark.generation.stream and any(
             item.succeeded and item.ttft is None for item in measurements

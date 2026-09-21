@@ -28,6 +28,8 @@ from benchmarks.results.console import (
     print_model_service,
 )
 from benchmarks.runs.http import GeneratedLoadBenchmark, run_http_dataset
+from benchmarks.runs.conversation import ConversationBudgetBenchmark
+from benchmarks.runs.sla import SlaAutoTuneBenchmark
 from benchmarks.runs.sweep import ParameterSweepBenchmark
 from benchmarks.runs.trace import TraceReplayBenchmark
 
@@ -40,16 +42,22 @@ def select_benchmark(
 ) -> (
     TraceReplayBenchmark
     | ParameterSweepBenchmark
+    | SlaAutoTuneBenchmark
+    | ConversationBudgetBenchmark
     | MultiDatasetBenchmark
     | GeneratedLoadBenchmark
 ):
     """Choose the benchmark that owns the configured workload; its ``run()`` returns a ``BenchmarkRun``."""
+    if benchmark.sla.params:
+        return SlaAutoTuneBenchmark(benchmark, service)
     if benchmark.trace.trace_selector:
         return TraceReplayBenchmark(benchmark, service)
     if benchmark.sweep.path:
         return ParameterSweepBenchmark(benchmark, service)
     if benchmark.resolved_workload.has_multiple_datasets:
         return MultiDatasetBenchmark(benchmark, service, run_http_dataset)
+    if benchmark.is_multi_turn:
+        return ConversationBudgetBenchmark(benchmark, service)
     return GeneratedLoadBenchmark(benchmark, service)
 
 

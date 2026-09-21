@@ -20,7 +20,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-With `--rate -1 --parallel -1`, the entire request budget starts as fast as possible. Multi-turn data currently requires `--rate -1`; concurrency then counts conversations.
+With `--rate -1 --parallel -1`, the entire request budget starts as fast as possible. Multi-turn data requires `--rate -1`; `--number` remains the HTTP request budget and `--parallel` limits conversations in progress.
 
 ## Example output
 

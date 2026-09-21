@@ -310,7 +310,8 @@ def build_benchmark_run_record(
             "rate": load_record["rate"],
         },
     }
-    if not benchmark.trace.trace_selector:
+    if benchmark.is_multi_turn:
+        record["multi_turn"] = True
         record["max_turns"] = workload.max_turns
     if workload.dataset_selectors == ["random"]:
         record["random_seed"] = workload.random_seed

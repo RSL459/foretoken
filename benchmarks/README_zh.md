@@ -70,7 +70,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-`--dataset` 也接受本地 JSONL 文件。每行是一段对话，默认运行全部轮次，并使用模型的真实回答继续；`--max-turns 1` 只运行首轮。多轮目前要求 `--rate -1`。
+`--dataset` 也接受本地 JSONL 文件。每行是一段对话，默认运行全部轮次，并使用模型的真实回答继续。`--number` 表示 HTTP 请求预算；`--max-turns 1` 可将每段对话限制为首轮。多轮要求 `--rate -1`。
 
 ### 在评测时采集 Profile
 
@@ -106,6 +106,19 @@ foretoken bench examples/quickstart \
 ```
 
 参数扫描需传入部署配置目录，例如 `examples/quickstart`，目前不支持 `--url`。自定义负载点与配置对比见[参数扫描](docs/coomon_commands/sweep_zh.md)。
+
+### SLA 自动调参
+
+```bash
+foretoken bench examples/quickstart \
+  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 256 \
+  --parallel 2 \
+  --sla-params '[{"p99_latency":"<=2"}]' \
+  --sla-upper-bound 32 --output local,wandb
+```
+
+搜索复用 EvalScope；指标名与限制见 [SLA 自动调参](docs/coomon_commands/sla_zh.md)。
 
 ### 使用已有服务地址
 

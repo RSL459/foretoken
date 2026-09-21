@@ -20,7 +20,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-`--rate -1 --parallel -1` 会尽快启动指定数量的全部请求。多轮数据目前要求 `--rate -1`，此时并发统计对话数。
+`--rate -1 --parallel -1` 会尽快启动请求预算内的请求。多轮数据要求 `--rate -1`；`--number` 仍表示 HTTP 请求预算，`--parallel` 限制同时执行的对话数。
 
 ## 输出示例
 

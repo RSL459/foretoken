@@ -10,7 +10,7 @@ foretoken bench examples/quickstart \
   --number 2 --parallel 2 --output local,wandb
 ```
 
-文件包含一个单轮对话和一个多轮对话。默认运行全部用户轮次，用模型真实回答继续，而不是参考答案。`--number` 统计对话数，不是 HTTP 轮次数。多轮要求 `--rate -1`。
+文件包含一个单轮对话和一个多轮对话。默认运行全部用户轮次，用模型真实回答继续，而不是参考答案。`--number` 是这些对话共享的 HTTP 请求预算。多轮要求 `--rate -1`，结果会分别报告请求数和对话数。
 
 只运行首个用户轮次：
 
