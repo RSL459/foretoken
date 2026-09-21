@@ -173,9 +173,10 @@ jobs:
         run: |
           kubectl get pods --all-namespaces -o wide || true
           kubectl describe deployment/foretoken-control-plane --namespace foretoken-platform || true
-          kubectl get pods --namespace foretoken-platform -l control-plane=controller-manager -o name | while read -r pod; do
+          kubectl get pods --namespace foretoken-platform -l app.kubernetes.io/name=foretoken-control-plane -o name | while read -r pod; do
             kubectl describe "$pod" --namespace foretoken-platform || true
-            kubectl logs "$pod" --namespace foretoken-platform --all-containers=true --ignore-errors=true || true
+            kubectl logs "$pod" --namespace foretoken-platform -c crd-apply --ignore-errors=true || true
+            kubectl logs "$pod" --namespace foretoken-platform -c manager --ignore-errors=true || true
           done
       - name: Check generated files
         run: git diff --exit-code
