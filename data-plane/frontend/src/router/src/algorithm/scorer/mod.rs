@@ -16,6 +16,7 @@ use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
     active_request_scorer => ActiveRequestScorer = "active_request",
+    token_load_scorer => TokenLoadScorer = "token_load",
     kv_cache_utilization_scorer => KvCacheUtilizationScorer = "kv_cache_utilization",
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
     least_loaded_scorer => LeastLoadedScorer = "least_loaded",

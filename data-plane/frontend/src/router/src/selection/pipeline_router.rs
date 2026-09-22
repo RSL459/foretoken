@@ -254,7 +254,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     "KV routing observation"
                 );
             }
-            reservations.reserve(request, &candidate);
+            reservations.reserve(request, &candidate, self.kv_prefix_indexer.as_ref());
             Ok(candidate)
         })();
         metrics.selection(&request.model, round, started.elapsed(), result.as_ref());
@@ -399,6 +399,17 @@ impl<C: Send + 'static> Drop for Session<C> {
     }
 }
 impl<C: Send + 'static> RouteSession for Session<C> {
+    fn response_started(&mut self) {
+        let mut reservations = self
+            .router
+            .routing_load
+            .lock()
+            .expect("routing load lock poisoned");
+        for key in &self.selected {
+            reservations.release_prompt_load(key, &self.request.generate_request.request_id);
+        }
+    }
+
     fn stage_complete(&mut self) {
         if self.selected.is_empty() {
             return;
