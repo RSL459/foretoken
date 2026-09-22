@@ -19,6 +19,7 @@ fn every_compiled_builtin_name_parses_and_builds() {
         ("allow_all", "kv_cache_utilization", "round_robin"),
         ("allow_all", "queue_depth", "round_robin"),
         ("allow_all", "token_load", "round_robin"),
+        ("allow_all", "prefix", "round_robin"),
     ] {
         let config = RouterPipelineConfig {
             filter: FilterStage {
