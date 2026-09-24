@@ -1286,6 +1286,8 @@ dependencies = [
  "foretoken-artifacts",
  "foretoken-model-protocol",
  "futures",
+ "http-body-util",
+ "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
  "rustix",
