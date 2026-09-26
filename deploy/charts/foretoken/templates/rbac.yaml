@@ -289,6 +289,16 @@ rules:
       - patch
       - delete
   - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+  - apiGroups:
       - ""
     resources:
       - pods
