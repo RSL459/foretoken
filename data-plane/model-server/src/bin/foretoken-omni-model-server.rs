@@ -192,6 +192,7 @@ async fn metadata(State(state): State<AppState>) -> Json<RuntimeMetadataResponse
         },
         model_dtype: None,
         effective_max_model_len: 0,
+        max_logprobs: None,
         ec_transfer: None,
         capabilities: ["video".to_owned()].into_iter().collect(),
     })
@@ -340,9 +341,14 @@ fn engine_command(plan: &LaunchPlan) -> Result<Command, Box<dyn std::error::Erro
             command.arg(format!("--revision={}", plan.revision));
         }
     }
-    if matches!(plan.source, ModelSource::ModelScope) {
-        command.env("VLLM_USE_MODELSCOPE", "true");
-    }
+    command.env(
+        "VLLM_USE_MODELSCOPE",
+        if matches!(plan.source, ModelSource::ModelScope) {
+            "true"
+        } else {
+            "false"
+        },
+    );
     Ok(command)
 }
 

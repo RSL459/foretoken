@@ -17,8 +17,10 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
 
+// Backend identifies the managed Omni execution adapter in resolved model contracts.
 const Backend = "vllm-omni"
 
+// EffectiveConfig supplies Omni-specific inputs to the shared ModelGroup projection.
 type EffectiveConfig struct {
 	Model             string
 	Source            inferencev1alpha1.ModelSource
@@ -29,6 +31,7 @@ type EffectiveConfig struct {
 	EngineArgs        inferencev1alpha1.EngineArguments
 }
 
+// LaunchPlanV1 is the controller-owned command and lifecycle contract consumed by the Omni adapter.
 type LaunchPlanV1 struct {
 	Version      int                               `json:"version"`
 	Model        string                            `json:"model"`
@@ -39,11 +42,13 @@ type LaunchPlanV1 struct {
 	EngineArgs   inferencev1alpha1.EngineArguments `json:"engineArgs,omitempty"`
 }
 
+// LaunchLifecycle carries compiled startup and shutdown budgets, not generation deadlines.
 type LaunchLifecycle struct {
 	StartupSeconds int64 `json:"startupSeconds"`
 	DrainSeconds   int64 `json:"drainSeconds"`
 }
 
+// Compile validates the supported single-node Omni topology and normalizes engine arguments.
 func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig, error) {
 	if template.NodeCount != 1 || template.MemberCount != 1 {
 		return EffectiveConfig{}, fmt.Errorf("vLLM-Omni initially supports one member on one node")
@@ -93,6 +98,7 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	}, nil
 }
 
+// BuildLaunchPlan derives the internal engine command contract from one resolved ModelGroup.
 func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, error) {
 	if group.Runtime.Backend != Backend {
 		return LaunchPlanV1{}, fmt.Errorf("vLLM-Omni launch plan requires backend %q", Backend)
@@ -119,6 +125,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	}, nil
 }
 
+// JSON serializes the launch plan for the workload's FORETOKEN_OMNI_LAUNCH_PLAN environment.
 func (plan LaunchPlanV1) JSON() (string, error) {
 	data, err := json.Marshal(plan)
 	return string(data), err

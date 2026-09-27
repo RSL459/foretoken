@@ -1,64 +1,41 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# MiniMax H3 FL2VA 双卡 A100 原生 BF16
+# 双 NVIDIA A100 上的 MiniMax H3 BF16
 
 [English](README.md) | 简体中文
 
-在单节点的两张 NVIDIA A100 80 GB GPU 上运行一个原生 BF16 的 MiniMax H3
-FL2VA 模型组。Foretoken 通过薄适配器 `foretoken-omni-model-server` 管理
-vLLM-Omni 进程的生命周期，并直接暴露生成的 ModelGroup Service。
+在两张 A100 80 GB 上，以原生 BF16、TP=2 部署 MiniMax H3。
+视频请求通过 Foretoken 标准前端进入；Omni adapter 负责内部引擎执行和生命周期。
 
-运行时镜像、Kubernetes 部署、H3 权重加载，以及一次完整的 FL2VA 视频请求，
-已在两张 NVIDIA A100 80 GB GPU 上验证。但该次使用的本地 vLLM-Omni 镜像
-尚不能从已发布的源码版本重建；所缺的源码输入见下文。
+同一份配方用于 FL2VA 或 Ref2VA，在部署前选择分区。
 
-## 准备
+## 构建和安装
 
-### 构建 H3 vLLM-Omni 基础镜像
-
-基础镜像需要包含兼容 H3 的 vLLM-Omni Python 包及其插件。已验证的本地镜像
-基于上游提交 `a4ea67a21b20054dacc6e83952f9bd407e8ee4e7` 的源码，
-但还包含未发布为提交或补丁集的本地修改。**只检出该上游提交，不能重建出
-已经验证的双卡镜像。** 在其他环境构建前，需先把必要的 H3 修改整理为固定、
-可审查的源码版本，并检出该版本；不能依赖开发者的 Conda 环境或未提交工作树。
-
-在干净的 H3 兼容 vLLM-Omni 源码目录根部构建 CUDA 镜像。Omni 的 Dockerfile
-会将该源码安装到以 vLLM 0.26.0 为基础的镜像中，不会复制宿主机 Python 环境。
-同时记录源码版本和镜像 ID：
+按照 [k3d 指南](../../../../docs/k3d-deployment_zh.md) 准备可用的 Foretoken 集群。
+节点至少需要 256 GiB 主机内存，并为所选分区的权重预留足够的缓存空间。
+在 Foretoken 仓库根目录执行：
 
 ```bash
-git status --short
-test -z "$(git status --porcelain)"
-git rev-parse HEAD
-DOCKER_BUILDKIT=1 docker build \
-  --build-arg BASE_IMAGE=vllm/vllm-openai:v0.26.0 \
-  -f docker/Dockerfile.cuda \
-  -t vllm-omni-h3:bf16-tp2 .
-docker run --rm --entrypoint python vllm-omni-h3:bf16-tp2 \
-  -m pip show vllm vllm-omni
-docker image inspect vllm-omni-h3:bf16-tp2 --format '{{.Id}}'
+make image-vllm-omni VLLM_OMNI_IMAGE=foretoken-vllm-omni:h3
+make image-model-server-omni \
+  INFERENCE_ENGINE_IMAGE=foretoken-vllm-omni:h3 \
+  OMNI_MODEL_SERVER_IMAGE=foretoken-omni-model-server:h3
 ```
 
-若需精确重建，还应固定上游基础镜像 digest。Omni 的 Dockerfile 在构建时解析
-Python 依赖；需要日后得到同一组依赖时，还须记录或锁定依赖版本。固定的 H3
-源码版本是本配方目前尚未提供的前提，不能将上述命令视为已完成独立复现。
+引擎构建固定使用公开 vLLM-Omni 提交
+`ad025defe68a46bdc3590c53161889aa6932ff4c` 和 `vllm/vllm-openai:v0.30.0`。
+源码和依赖在镜像内安装，不复制主机 checkout 或 Conda 环境，也不依赖未发布的 H3 补丁。
+需要固定基础镜像身份时，可用 `VLLM_OMNI_BASE_IMAGE` 指定不可变 digest。
 
-### 叠加 Foretoken 适配器
-
-回到 Foretoken 仓库根目录，在 H3 Omni 镜像上构建运行时镜像。这一步只加入
-Foretoken 适配器，不安装 H3，也不打包模型权重。使用本地 k3d 集群时，先按
-[k3d 指南](../../../../docs/k3d-deployment_zh.md)设置 `CLUSTER`，再导入镜像：
+k3d 用户将镜像导入自己的集群（`CLUSTER` 来自 k3d 指南）：
 
 ```bash
-make image-model-server-omni \
-  INFERENCE_ENGINE_IMAGE=vllm-omni-h3:bf16-tp2 \
-  OMNI_MODEL_SERVER_IMAGE=foretoken-omni-model-server:h3
 k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:h3
 ```
 
-非 k3d 集群则需将镜像标记并推送到节点可访问的仓库，并将下方本地镜像名
-替换为推送后的地址。在 Foretoken 平台 values 中指定镜像：
+其他集群将 Omni 镜像推送到节点可访问的镜像仓库。
+在 `platform-values.yaml` 中使用现有平台配置选择它：
 
 ```yaml
 runtime:
@@ -66,95 +43,116 @@ runtime:
     image: foretoken-omni-model-server:h3
 ```
 
-将上述 values 保存为 `platform-values.yaml`，再安装或更新 Foretoken：
-
 ```bash
 foretoken install -e . --values platform-values.yaml
 ```
 
-### 准备 FL2VA 权重
+平台镜像由标准源码安装命令构建并分发。远程集群按
+[源码部署指南](../../../../docs/custom-deployment_zh.md) 添加 `--registry`。
 
-MiniMax H3 模型仓库需要授权访问，构建机还需安装 `hf` 命令行工具。权重与
-镜像分开下载；下面固定的是已验证权重的版本。选择目标 GPU 节点已挂载的
-绝对数据目录；
-[k3d 指南](../../../../docs/k3d-deployment_zh.md)在创建集群时挂载仓库的
-`data` 目录：
+## 部署和请求
 
-```bash
-mkdir -p data
-DATA_ROOT="$(realpath data)"
-hf auth login
-hf download MiniMaxAI/MiniMax-H3 \
-  --revision 42ed227ee7df40d41602854ae760620d6eb651fe \
-  --include 'model_index.json' 'FL2VA/*' \
-  --local-dir "$DATA_ROOT/models/MiniMax-H3"
-test -f "$DATA_ROOT/models/MiniMax-H3/FL2VA/model_index.json"
-```
+默认模型源是公开 Hugging Face 仓库 `MiniMaxAI/MiniMax-H3`。
+通过 `model.yaml` 中的 `spec.engineArgs.task-type` 选择 `fl2va`（默认）或 `ref2va`，
+由上游 loader 解析对应分区。两个分区使用同一个仓库 ID。
+Foretoken 提供配置的模型缓存，首次启动时自动下载权重。登录是可选项，不是前置条件。
 
-将本配方 `cache.yaml` 中的 `spec.directory` 改成 `DATA_ROOT` 的绝对路径，
-不要填 `models/MiniMax-H3/FL2VA` 子目录。部署时权重应位于：
+按 [模型存储](../../../../docs/model-storage_zh.md) 将 `cache.yaml` 设置为 GPU 节点
+可访问的数据目录。RuntimeCache 指向缓存根目录，不是模型分区目录。
 
-```text
-<data-root>/models/MiniMax-H3/FL2VA/
-```
+### FL2VA（默认）
 
-如果 k3d 集群已经创建，部署前需确认节点确实挂载了相同数据目录。权重不会
-复制进两个 Docker 镜像；不要将 Hugging Face 凭据放入模型目录或镜像构建上下文。
-
-目录存储和动态存储的说明见[模型存储](../../../../docs/model-storage_zh.md)。
-清单默认申请两张 GPU、32 个 CPU 核和 256 GiB 主机内存；可根据目标节点调整
-CPU 和内存。
-
-## 部署与请求
-
-在仓库根目录执行：
+准备本地参考 PNG，将 `REFERENCE_IMAGE` 设置为它的路径：
 
 ```bash
 RECIPE=examples/recipes/minimax-h3/a100-bf16-tp2
+REFERENCE_IMAGE=/path/to/reference.png
 foretoken deploy "$RECIPE" --timeout 1h
-kubectl -n foretoken-h3 get modelservices,modelpools,modelgroups,pods -w
-```
-
-控制器根据申请的 GPU 拓扑自动生成 `num-gpus=2`、
-`tensor-parallel-size=2`、`usp=1` 和 `ring=1`。本配方不创建
-`FrontendService`，因为当前 token frontend 不负责视频生成请求的路由。
-请直接转发生成的 ModelGroup Service：
-
-```bash
-SERVICE="$(
-  kubectl -n foretoken-h3 get service \
-    -l inference.foretoken.io/model-group \
-    -o jsonpath='{.items[0].metadata.name}'
-)"
-kubectl -n foretoken-h3 port-forward "service/$SERVICE" 8091:9000
-```
-
-在另一个终端发送同步视频请求：
-
-```bash
-curl --fail-with-body \
-  -X POST http://127.0.0.1:8091/v1/videos/sync \
+ENDPOINT="$(foretoken endpoint "$RECIPE" --timeout 10m)"
+curl --fail-with-body --max-time 4000 \
+  -X POST "${ENDPOINT%/}/v1/videos/sync" \
+  -F model=MiniMaxAI/MiniMax-H3 \
   -F 'prompt=A cinematic tracking shot of a sailboat crossing a calm bay at sunrise.' \
-  -F width=1024 \
-  -F height=576 \
-  -F num_frames=124 \
-  -F fps=24 \
-  -F num_inference_steps=50 \
-  -F aspect_ratio=16:9 \
-  -F flow_shift=12 \
-  -F seed=1 \
+  -F "input_reference=@${REFERENCE_IMAGE};type=image/png" \
+  -F width=1024 -F height=576 -F num_frames=124 -F fps=24 \
+  -F num_inference_steps=50 -F aspect_ratio=16:9 -F flow_shift=12 -F seed=1 \
   -F 'extra_params={"task":"fl2va","audio_flow_shift":3}' \
   --output h3-fl2va.mp4
 ```
 
-Omni 镜像将同步视频请求超时设为 4000 秒；构建镜像时可通过
-`OMNI_VIDEO_SYNC_TIMEOUT` 覆盖。独立的 `timeouts.drain` 控制 Pod 关闭时
-已接收请求的排空时间。
+recipe 包含 `FrontendService`，端点发现复用标准 LoadBalancer/Gateway 接入方式，
+不直接暴露内部 ModelGroup Service。控制器根据申请的两张 GPU 推导 TP=2。
 
-清理工作负载：
+前端和 Omni 同步请求预算均为 4000 秒。构建 adapter 镜像时，
+`OMNI_VIDEO_SYNC_TIMEOUT` 同时设置 Omni 的 HTTP 超时和完整生成请求的 worker RPC 预算；
+`timeouts.drain` 是独立的 Pod 关闭排空预算。
+
+### 参考视频生成
+
+使用 Ref2VA 时，将 `model.yaml` 中的 `spec.engineArgs.task-type` 改为 `ref2va`，
+再部署同一份配方。只有两张可用 GPU 时，先删除已有部署以释放 GPU；
+切换前先等待正在生成的请求完成；已有权重仍保留在缓存中。
+准备一个本地参考 MP4，将 `REFERENCE_VIDEO` 设置为它的路径：
 
 ```bash
-foretoken delete "$RECIPE" --timeout 10m
+RECIPE=examples/recipes/minimax-h3/a100-bf16-tp2
+REFERENCE_VIDEO=/path/to/reference.mp4
+foretoken delete "$RECIPE" --timeout 2h
+foretoken deploy "$RECIPE" --timeout 1h
+ENDPOINT="$(foretoken endpoint "$RECIPE" --timeout 10m)"
+curl --fail-with-body --max-time 4000 \
+  -X POST "${ENDPOINT%/}/v1/videos/sync" \
+  -F model=MiniMaxAI/MiniMax-H3 \
+  -F 'prompt=Continue the scene shown in the reference video with a smooth camera movement.' \
+  -F "input_references=@${REFERENCE_VIDEO};type=video/mp4" \
+  -F width=1024 -F height=576 -F num_frames=124 -F fps=24 \
+  -F num_inference_steps=50 -F aspect_ratio=16:9 -F flow_shift=12 -F seed=1 \
+  -F 'extra_params={"task":"ref2va","audio_flow_shift":3}' \
+  --output h3-ref2va.mp4
 ```
 
-已配置数据目录中的权重和运行时缓存文件会保留。
+请求中的任务必须与部署分区一致。参考媒体处理由 vLLM-Omni 完成，
+Foretoken 通过标准路由转发原始 multipart 输入。
+切回 FL2VA 时，先删除部署，将 `task-type` 改回 `fl2va` 并重新部署，再使用上面的 FL2VA 请求。
+
+两个分区均已在双 A100 80 GB 上通过标准前端完成真实生成：原生 BF16、TP=2、
+50 步去噪、1024x576、124 帧、24 FPS。返回的视频通过完整解码和抽帧画面检查。
+生成测试复用原始 HF 权重缓存；HF、ModelScope 和 HF 兼容镜像站的下载检查
+覆盖配置文件，不包含重新下载全部权重。
+
+## 其他模型源
+
+ModelScope 的 H3 仓库名称与 HF 不同。使用时修改 `model.yaml` 中的以下字段，
+请求的 `model` 字段也改为 `MiniMax/MiniMax-H3`：
+
+```yaml
+spec:
+  model: MiniMax/MiniMax-H3
+  source: modelscope
+```
+
+保留所选的 `task-type`。镜像包含 ModelScope SDK，上游 loader 将对应分区的文件
+下载到同一个已配置的 RuntimeCache。下面的 Hugging Face 镜像站设置不适用于 ModelScope。
+
+使用 Hugging Face 兼容镜像站时，配置现有平台选项：
+
+```yaml
+runtime:
+  vllm:
+    modelSource:
+      endpoint: https://your-huggingface-compatible-mirror.example
+```
+
+控制器只将此端点投影到 Hugging Face 工作负载。镜像站须提供对应仓库和 revision；
+下载失败时 Foretoken 不会自动切换来源。
+
+离线或已下载权重可选用 `source: local`，将 `model` 设置为挂载的 checkpoint 根目录
+或所选分区目录，具体见 [模型源](../../../../docs/model-sources_zh.md)。
+multipart `model` 字段使用同一个模型标识。
+如需认证以使用登录用户的下载配额，复用平台 Secret 配置，不将凭据写入镜像。
+
+```bash
+foretoken delete "$RECIPE" --timeout 2h
+```
+
+删除部署后保留配置的模型缓存。

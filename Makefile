@@ -7,6 +7,8 @@ CONTROL_PLANE_IMAGE ?= foretoken-control-plane:dev
 FRONTEND_IMAGE ?= foretoken-frontend:dev
 MODEL_SERVER_IMAGE ?= foretoken-model-server:dev
 OMNI_MODEL_SERVER_IMAGE ?= foretoken-omni-model-server:dev
+VLLM_OMNI_IMAGE ?= foretoken-vllm-omni:h3
+VLLM_OMNI_REVISION ?= ad025defe68a46bdc3590c53161889aa6932ff4c
 MOONCAKE_IMAGE ?= foretoken-mooncake
 MOONCAKE_VERSION ?=
 
@@ -20,7 +22,7 @@ GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GIT
 
 .PHONY: vllm-source build-data-plane format verify-data-plane dev-build dev-deploy \
 	image-control-plane image-frontend image-vllm-metax image-model-server image-model-server-omni \
-	image-model-server-metax image-benchmark dashboard alert-receivers
+	image-model-server-metax image-vllm-omni image-benchmark dashboard alert-receivers
 
 # Regenerates the localized Grafana dashboards shipped by the chart; needs the `dev` extra installed.
 dashboard:
@@ -101,6 +103,14 @@ image-model-server: vllm-source
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
 		-f data-plane/model-server/Dockerfile -t "$(MODEL_SERVER_IMAGE)" .
+
+image-vllm-omni:
+	docker build \
+		--build-arg VLLM_OMNI_REVISION="$(VLLM_OMNI_REVISION)" \
+		$(if $(VLLM_OMNI_BASE_IMAGE),--build-arg BASE_IMAGE="$(VLLM_OMNI_BASE_IMAGE)",) \
+		$(if $(FORETOKEN_GITHUB_MIRROR),--build-arg FORETOKEN_GITHUB_MIRROR="$(FORETOKEN_GITHUB_MIRROR)",) \
+		--build-arg UV_DEFAULT_INDEX \
+		-f deploy/inference-engines/vllm-omni/Dockerfile -t "$(VLLM_OMNI_IMAGE)" .
 
 image-model-server-omni: vllm-source
 	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \

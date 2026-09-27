@@ -4,10 +4,10 @@
 apiVersion: inference.foretoken.io/v1alpha1
 kind: ModelService
 metadata:
-  name: h3-fl2va
+  name: h3
 spec:
-  model: MiniMax-H3/FL2VA
-  source: local
+  model: MiniMaxAI/MiniMax-H3
+  source: hf
   backend: vllm-omni
   replicas: 1
   nodes: 1
@@ -24,6 +24,8 @@ spec:
     startup: 1h
     drain: 4000s
   engineArgs:
+    task-type: fl2va # Select fl2va or ref2va before deployment.
+    dtype: bfloat16
     init-timeout: 3600
     stage-init-timeout: 3600
     trust-remote-code: true

@@ -48,7 +48,7 @@ class ForetokenDeployment:
     path: Path
     rendered: str
     namespace: str
-    frontend: str | None
+    frontend: str
     hostname: str
     models: dict[str, str]
     runtime_caches: tuple[RuntimeCacheManifest, ...]
@@ -56,14 +56,12 @@ class ForetokenDeployment:
 
     def service_refs(self) -> tuple[ResourceRef, ...]:
         """Return the services whose current generation defines deployment readiness."""
-        resources = tuple(
-            ResourceRef("ModelService", name, self.namespace) for name in self.models
-        )
-        if self.frontend is None:
-            return resources
         return (
             ResourceRef("FrontendService", self.frontend, self.namespace),
-            *resources,
+            *(
+                ResourceRef("ModelService", name, self.namespace)
+                for name in self.models
+            ),
         )
 
 
@@ -143,33 +141,32 @@ def parse_deployment(path: Path, rendered: str) -> ForetokenDeployment:
             )
         models[name] = model
 
-    if len(frontends) > 1:
-        raise DeploymentError("a deployment may render at most one FrontendService")
+    if len(frontends) != 1:
+        raise DeploymentError(
+            "a deployment must render exactly one Foretoken FrontendService"
+        )
     if not models:
         raise DeploymentError(
             "a deployment must render at least one Foretoken ModelService"
         )
     if len(namespaces) != 1:
         raise DeploymentError(
-            "Foretoken serving resources must share one namespace"
+            "FrontendService and ModelService resources must share one namespace"
         )
 
-    name = None
-    hostname = ""
-    if frontends:
-        frontend = frontends[0]
-        metadata = frontend.get("metadata") or {}
-        name = str(metadata.get("name") or "").strip()
-        if not name:
-            raise DeploymentError("FrontendService requires metadata.name")
-        hostname = str((frontend.get("spec") or {}).get("hostname") or "").strip()
+    frontend = frontends[0]
+    metadata = frontend.get("metadata") or {}
+    name = str(metadata.get("name") or "").strip()
+    if not name:
+        raise DeploymentError("FrontendService requires metadata.name")
     namespace = next(iter(namespaces))
     if any(cache.namespace != namespace for cache in runtime_caches):
         raise DeploymentError(
-            "RuntimeCache resources must share the serving-resource namespace"
+            "RuntimeCache resources must share the FrontendService and ModelService namespace"
         )
     if len(runtime_caches) > 1:
         raise DeploymentError("a deployment may render at most one RuntimeCache")
+    hostname = str((frontend.get("spec") or {}).get("hostname") or "").strip()
     return ForetokenDeployment(
         path=path,
         rendered=rendered,
