@@ -6,6 +6,5 @@ kind: RuntimeCache
 metadata:
   name: models
 spec:
-  # Set this to an absolute data directory available on the target GPU node.
-  directory: /var/lib/foretoken/h3-data
-  accessMode: ReadWriteOnce
+  directory: ../../../../data
+  accessMode: ReadWriteMany

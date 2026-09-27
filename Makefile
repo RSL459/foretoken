@@ -7,8 +7,7 @@ CONTROL_PLANE_IMAGE ?= foretoken-control-plane:dev
 FRONTEND_IMAGE ?= foretoken-frontend:dev
 MODEL_SERVER_IMAGE ?= foretoken-model-server:dev
 OMNI_MODEL_SERVER_IMAGE ?= foretoken-omni-model-server:dev
-VLLM_OMNI_IMAGE ?= foretoken-vllm-omni:h3
-VLLM_OMNI_REVISION ?= ad025defe68a46bdc3590c53161889aa6932ff4c
+VLLM_OMNI_IMAGE ?= foretoken-vllm-omni:dev
 MOONCAKE_IMAGE ?= foretoken-mooncake
 MOONCAKE_VERSION ?=
 
@@ -106,7 +105,7 @@ image-model-server: vllm-source
 
 image-vllm-omni:
 	docker build \
-		--build-arg VLLM_OMNI_REVISION="$(VLLM_OMNI_REVISION)" \
+		$(if $(VLLM_OMNI_REVISION),--build-arg VLLM_OMNI_REVISION="$(VLLM_OMNI_REVISION)",) \
 		$(if $(VLLM_OMNI_BASE_IMAGE),--build-arg BASE_IMAGE="$(VLLM_OMNI_BASE_IMAGE)",) \
 		$(if $(FORETOKEN_GITHUB_MIRROR),--build-arg FORETOKEN_GITHUB_MIRROR="$(FORETOKEN_GITHUB_MIRROR)",) \
 		--build-arg UV_DEFAULT_INDEX \
