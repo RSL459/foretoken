@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+// SPDX-FileCopyrightText: Copyright 2025 The llm-d Authors.
+
+//! Cold-request LRU scoring, ported from llm-d's no-hit-lru-scorer.
+
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::{Arc, Mutex};
+
+use foretoken_kv_indexer::KvPrefixIndexer;
+use serde::Deserialize;
+
+use super::RouteScoring;
+use crate::{RouteCandidate, RouteScore, RouteScorer, RouteTargetId, RouterRequest, RoutingProgress};
+
+/// Prefers targets least recently selected for cold requests; hot requests leave history unchanged.
+/// One pipeline owns the history across requests and serving-snapshot replacements.
+pub struct NoHitLruScorer {
+    capacity: usize,
+    history: Arc<Mutex<VecDeque<(RouteTargetId, u32)>>>,
+}
+
+impl Default for NoHitLruScorer {
+    fn default() -> Self {
+        Self {
+            capacity: 1024,
+            history: Arc::default(),
+        }
+    }
+}
+
+impl RouteScorer for NoHitLruScorer {
+    /// Requests the same complete-block prefix observations as the prefix scorer.
+    fn needs_kv_prefix(&self) -> bool {
+        true
+    }
+
+    /// Applies the upstream LRU capacity before serving; nonpositive or null values use 1024.
+    fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Parameters {
+            lru_size: Option<i64>,
+        }
+        let parameters: Parameters =
+            serde_json::from_value(parameters).map_err(|error| error.to_string())?;
+        *self = Self::default();
+        if let Some(size) = parameters.lru_size.filter(|size| *size > 0) {
+            self.capacity = usize::try_from(size).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Returns scores without committing a selection or changing cold-request history.
+    fn score(
+        &self,
+        request: &RouterRequest,
+        candidates: &[RouteCandidate],
+        kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &RoutingProgress<'_>,
+        customized_context: &mut (),
+    ) -> Vec<RouteScore> {
+        self.score_for_selection(
+            request,
+            candidates,
+            kv_prefix_indexer,
+            routing_progress,
+            customized_context,
+        )
+        .scores
+    }
+
+    /// Returns upstream LRU scores and captures a cold-only update for the validated selection.
+    /// Ranks candidates against the full history, including targets absent from this round.
+    fn score_for_selection(
+        &self,
+        request: &RouterRequest,
+        candidates: &[RouteCandidate],
+        kv_prefix_indexer: &dyn KvPrefixIndexer,
+        _routing_progress: &RoutingProgress<'_>,
+        _customized_context: &mut (),
+    ) -> RouteScoring {
+        if candidates.iter().any(|candidate| {
+            crate::cache::cache_match(request, candidate, kv_prefix_indexer)
+                .is_some_and(|matched| matched.matched_blocks > 0)
+        }) {
+            return vec![
+                RouteScore {
+                    preference: 0.5,
+                    ..RouteScore::default()
+                };
+                candidates.len()
+            ]
+            .into();
+        }
+
+        let positions: BTreeMap<_, _> = self
+            .history
+            .lock()
+            .expect("cold-request history lock poisoned")
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(position, key)| (key, position))
+            .collect();
+        let keys: Vec<_> = candidates
+            .iter()
+            .map(|candidate| (candidate.route_target_id.clone(), candidate.data_parallel_rank))
+            .collect();
+        let never_used = keys.iter().filter(|key| !positions.contains_key(*key)).count();
+        let mut next_unused = 0;
+        let scores = keys
+            .iter()
+            .map(|key| {
+                let rank = positions.get(key).map_or_else(
+                    || {
+                        let rank = next_unused;
+                        next_unused += 1;
+                        rank
+                    },
+                    |position| never_used + position,
+                );
+                RouteScore {
+                    preference: if candidates.len() == 1 {
+                        1.0
+                    } else {
+                        (1.0 - rank as f64 / (candidates.len() - 1) as f64).max(0.0)
+                    },
+                    ..RouteScore::default()
+                }
+            })
+            .collect();
+        let history = self.history.clone();
+        let capacity = self.capacity;
+        RouteScoring {
+            scores,
+            on_selected: Some(Box::new(move |candidate| {
+                let key = (candidate.route_target_id.clone(), candidate.data_parallel_rank);
+                let mut history = history.lock().expect("cold-request history lock poisoned");
+                if let Some(position) = history.iter().position(|existing| existing == &key) {
+                    history.remove(position);
+                }
+                history.push_back(key);
+                if history.len() > capacity {
+                    history.pop_front();
+                }
+            })),
+        }
+    }
+}
