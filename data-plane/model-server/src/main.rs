@@ -758,21 +758,36 @@ async fn prepare_model() -> Result<(), Box<dyn std::error::Error>> {
     };
     let code = r#"
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 source = os.environ["FORETOKEN_PREPARE_SOURCE"]
 model = (os.environ["FORETOKEN_PREPARE_MODEL"], os.environ["FORETOKEN_PREPARE_MODEL_REVISION"])
 tokenizer = (os.environ["FORETOKEN_PREPARE_TOKENIZER"], os.environ["FORETOKEN_PREPARE_TOKENIZER_REVISION"])
 artifacts = [model] if tokenizer == model else [model, tokenizer]
+
 if source == "hf":
     from huggingface_hub import snapshot_download
-    for repository, revision in artifacts:
-        snapshot_download(repo_id=repository, revision=revision)
+
+    def download(artifact):
+        repository, revision = artifact
+        return snapshot_download(repo_id=repository, revision=revision)
+
 elif source == "modelscope":
     from modelscope import snapshot_download
-    for repository, revision in artifacts:
-        snapshot_download(model_id=repository, revision=revision, cache_dir=os.environ["MODELSCOPE_CACHE"])
+
+    def download(artifact):
+        repository, revision = artifact
+        return snapshot_download(
+            model_id=repository,
+            revision=revision,
+            cache_dir=os.environ["MODELSCOPE_CACHE"],
+        )
+
 else:
     raise RuntimeError(f"unsupported model preparation source: {source}")
+
+with ThreadPoolExecutor(max_workers=len(artifacts)) as executor:
+    list(executor.map(download, artifacts))
 "#;
     let mut command = tokio::process::Command::new(python);
     command
