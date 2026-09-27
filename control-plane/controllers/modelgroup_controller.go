@@ -40,6 +40,7 @@ import (
 
 const (
 	conditionWorkloadMaterialized  = "WorkloadMaterialized"
+	conditionModelPreparation      = "ModelPreparation"
 	conditionWorkloadAvailable     = "WorkloadAvailable"
 	conditionSchedulingCapacity    = "SchedulingCapacity"
 	modelGroupLabel                = "inference.foretoken.io/model-group"
@@ -667,6 +668,7 @@ type schedulingCapacityState = modelGroupConditionState
 
 type modelGroupStatusState struct {
 	phase        inferencev1alpha1.ModelGroupPhase
+	preparation  modelGroupConditionState
 	materialized modelGroupConditionState
 	available    bool
 	scheduling   schedulingCapacityState
@@ -679,6 +681,7 @@ func schedulingNotEvaluated() schedulingCapacityState {
 func modelGroupFailureState(err error) modelGroupStatusState {
 	return modelGroupStatusState{
 		phase:        inferencev1alpha1.ModelGroupPhaseFailed,
+		preparation:  modelGroupConditionState{status: metav1.ConditionUnknown, reason: "NotEvaluated", message: "Model preparation was not evaluated"},
 		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "UnsupportedProfile", message: err.Error()},
 		scheduling:   schedulingNotEvaluated(),
 	}
@@ -687,7 +690,8 @@ func modelGroupFailureState(err error) modelGroupStatusState {
 func modelGroupPreparationState() modelGroupStatusState {
 	return modelGroupStatusState{
 		phase:        inferencev1alpha1.ModelGroupPhaseProvisioning,
-		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "PreparingModel", message: "Remote model artifacts are being prepared in the shared RuntimeCache"},
+		preparation:  modelGroupConditionState{status: metav1.ConditionFalse, reason: "PreparingModel", message: "Remote model artifacts are being prepared in the shared RuntimeCache"},
+		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "PreparingModel", message: "The serving workload waits for model preparation"},
 		scheduling:   schedulingNotEvaluated(),
 	}
 }
@@ -695,7 +699,8 @@ func modelGroupPreparationState() modelGroupStatusState {
 func modelGroupPreparationFailureState(err error) modelGroupStatusState {
 	return modelGroupStatusState{
 		phase:        inferencev1alpha1.ModelGroupPhaseFailed,
-		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "ModelPreparationFailed", message: err.Error()},
+		preparation:  modelGroupConditionState{status: metav1.ConditionFalse, reason: "ModelPreparationFailed", message: err.Error()},
+		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "ModelPreparationFailed", message: "The serving workload was not materialized"},
 		scheduling:   schedulingNotEvaluated(),
 	}
 }
@@ -707,6 +712,7 @@ func modelGroupMaterializedState(available bool, scheduling schedulingCapacitySt
 	}
 	return modelGroupStatusState{
 		phase:        phase,
+		preparation:  modelGroupConditionState{status: metav1.ConditionTrue, reason: "Prepared", message: "Model artifacts are available in the RuntimeCache"},
 		materialized: modelGroupConditionState{status: metav1.ConditionTrue, reason: "Applied", message: "Group workload was materialized"},
 		available:    available,
 		scheduling:   scheduling,
@@ -762,6 +768,7 @@ func (reconciler *ModelGroupReconciler) updateStatus(ctx context.Context, group 
 	} else {
 		group.Status.ReadyMembers = 0
 	}
+	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionModelPreparation, Status: state.preparation.status, Reason: state.preparation.reason, Message: state.preparation.message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadMaterialized, Status: state.materialized.status, Reason: state.materialized.reason, Message: state.materialized.message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionSchedulingCapacity, Status: state.scheduling.status, Reason: state.scheduling.reason, Message: state.scheduling.message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadAvailable, Status: conditionStatus(state.available), Reason: availabilityReason(state.available), Message: availabilityMessage(state.available), ObservedGeneration: group.Generation})
