@@ -185,7 +185,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .collect::<Result<Vec<_>, _>>()?;
             metrics.candidates(&request.model, round, "filtered", filtered.len());
             let stage_started = Instant::now();
-            let crate::algorithm::RouteScoring {
+            let crate::algorithm::ScoringOutcome {
                 scores,
                 on_selected,
             } = self.pipeline.scorer.score_for_selection(

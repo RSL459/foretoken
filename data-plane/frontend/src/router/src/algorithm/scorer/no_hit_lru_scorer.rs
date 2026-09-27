@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use foretoken_kv_indexer::KvPrefixIndexer;
 use serde::Deserialize;
 
-use super::RouteScoring;
+use super::ScoringOutcome;
 use crate::{RouteCandidate, RouteScore, RouteScorer, RouteTargetId, RouterRequest, RoutingProgress};
 
 /// Prefers targets least recently selected for cold requests; hot requests leave history unchanged.
@@ -79,7 +79,7 @@ impl RouteScorer for NoHitLruScorer {
         kv_prefix_indexer: &dyn KvPrefixIndexer,
         _routing_progress: &RoutingProgress<'_>,
         _customized_context: &mut (),
-    ) -> RouteScoring {
+    ) -> ScoringOutcome {
         if candidates.iter().any(|candidate| {
             crate::cache::cache_match(request, candidate, kv_prefix_indexer)
                 .is_some_and(|matched| matched.matched_blocks > 0)
@@ -132,7 +132,7 @@ impl RouteScorer for NoHitLruScorer {
             .collect();
         let history = self.history.clone();
         let capacity = self.capacity;
-        RouteScoring {
+        ScoringOutcome {
             scores,
             on_selected: Some(Box::new(move |candidate| {
                 let key = (candidate.route_target_id.clone(), candidate.data_parallel_rank);

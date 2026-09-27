@@ -32,7 +32,7 @@ pub type RouteSelectionUpdate = Box<dyn FnOnce(&RouteCandidate) + Send>;
 
 /// Scores and an optional state update for one selection attempt.
 /// Router runs the update only after validating the picker result; failed attempts drop it.
-pub struct RouteScoring {
+pub struct ScoringOutcome {
     /// One numeric or locality score for each candidate supplied to the scorer.
     pub scores: Vec<RouteScore>,
     /// Captures scoring-time facts needed when the chosen target is committed before dispatch.
@@ -40,7 +40,7 @@ pub struct RouteScoring {
     pub on_selected: Option<RouteSelectionUpdate>,
 }
 
-impl From<Vec<RouteScore>> for RouteScoring {
+impl From<Vec<RouteScore>> for ScoringOutcome {
     fn from(scores: Vec<RouteScore>) -> Self {
         Self {
             scores,
@@ -125,7 +125,7 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
         kv_prefix_indexer: &dyn KvPrefixIndexer,
         routing_progress: &RoutingProgress<'_>,
         customized_context: &mut C,
-    ) -> RouteScoring {
+    ) -> ScoringOutcome {
         self.score(
             request,
             candidates,
