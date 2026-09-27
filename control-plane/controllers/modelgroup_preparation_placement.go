@@ -23,7 +23,7 @@ func (reconciler *ModelGroupReconciler) preparationNodeAffinity(ctx context.Cont
 		return nil, fmt.Errorf("list accelerator nodes for model preparation: %w", err)
 	}
 	resourceName := corev1.ResourceName(group.Spec.Accelerator.DeviceResourceName)
-	var names []string
+	var terms []corev1.NodeSelectorTerm
 	for _, node := range nodes.Items {
 		allocatable := node.Status.Allocatable[resourceName]
 		if node.Spec.Unschedulable || allocatable.Value() < int64(group.Spec.Resources.Requests.GPU.Count) {
@@ -39,15 +39,16 @@ func (reconciler *ModelGroupReconciler) preparationNodeAffinity(ctx context.Cont
 		if !ready || !preparationNodeTaintsSupported(node.Spec.Taints, string(resourceName)) {
 			continue
 		}
-		names = append(names, node.Name)
+		// Node field selectors accept one value; separate terms express eligible alternatives.
+		terms = append(terms, corev1.NodeSelectorTerm{MatchFields: []corev1.NodeSelectorRequirement{{
+			Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{node.Name},
+		}}})
 	}
-	if len(names) == 0 {
+	if len(terms) == 0 {
 		return nil, errNoPreparationPlacement
 	}
 	return &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-		NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{
-			Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: names,
-		}}}},
+		NodeSelectorTerms: terms,
 	}}, nil
 }
 
