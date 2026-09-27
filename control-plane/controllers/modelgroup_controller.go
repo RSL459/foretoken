@@ -7,6 +7,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -44,6 +45,7 @@ const (
 	conditionWorkloadAvailable     = "WorkloadAvailable"
 	conditionSchedulingCapacity    = "SchedulingCapacity"
 	modelGroupLabel                = "inference.foretoken.io/model-group"
+	modelPreparationGroupLabel     = "inference.foretoken.io/model-preparation-group"
 	modelGroupUIDLabel             = "inference.foretoken.io/model-group-uid"
 	modelGroupRoleLabel            = "inference.foretoken.io/model-role"
 	modelGroupPDPipelineScopeLabel = "inference.foretoken.io/pd-pipeline-scope"
@@ -62,6 +64,7 @@ type ModelGroupReconciler struct {
 	Now                   func() time.Time
 	ControlPlaneNamespace string
 	ImagePullSecrets      []corev1.LocalObjectReference
+	ModelDistribution     runtimeconfig.ModelDistributionProfile
 	LeaderWorkerSets      bool
 }
 
@@ -88,6 +91,9 @@ func (reconciler *ModelGroupReconciler) SetupWithManager(manager ctrl.Manager) e
 // Workload controllers, rather than ModelGroups, directly own the Pods.
 func (reconciler *ModelGroupReconciler) modelGroupsForPod(_ context.Context, object client.Object) []reconcile.Request {
 	groupName := object.GetLabels()[modelGroupLabel]
+	if groupName == "" {
+		groupName = object.GetLabels()[modelPreparationGroupLabel]
+	}
 	if groupName == "" {
 		return nil
 	}
@@ -116,6 +122,22 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, group.Namespace); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := reconciler.reconcileNetworkPolicy(ctx, group); err != nil {
+		return ctrl.Result{}, err
+	}
+	prepared, err := reconciler.reconcilePreparation(ctx, group, pool)
+	if err == errNoPreparationPlacement {
+		return ctrl.Result{RequeueAfter: runtimeCachePollInterval}, reconciler.updateStatus(ctx, group, modelGroupPlacementState())
+	}
+	if err != nil {
+		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(err)))
+	}
+	if !prepared {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupPreparationState())
+	}
+
+	// Acquisition has no serving requests to drain; its Job can be cancelled by owner deletion.
+	// Protect serving resources before creating them, including a concurrent delete request.
 	if !controllerutil.ContainsFinalizer(group, modelGroupDrainFinalizer) {
 		base := group.DeepCopy()
 		controllerutil.AddFinalizer(group, modelGroupDrainFinalizer)
@@ -125,22 +147,11 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	prepared, err := reconciler.reconcilePreparation(ctx, group)
-	if err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(err))
-	}
-	if !prepared {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupPreparationState())
-	}
-
 	available, err := reconciler.reconcileWorkload(ctx, group)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := reconciler.reconcileService(ctx, group, pool); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := reconciler.reconcileNetworkPolicy(ctx, group); err != nil {
 		return ctrl.Result{}, err
 	}
 	scheduling, err := reconciler.schedulingCapacity(ctx, group)
@@ -175,11 +186,19 @@ func (reconciler *ModelGroupReconciler) owningModelPool(ctx context.Context, gro
 // Workload reconciliation and desired resources.
 
 // reconcilePreparation runs source acquisition before allocating ModelGroup accelerator Pods.
-func (reconciler *ModelGroupReconciler) reconcilePreparation(ctx context.Context, group *inferencev1alpha1.ModelGroup) (bool, error) {
-	if group.Spec.Artifacts.Cache == nil || group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceLocal {
+func (reconciler *ModelGroupReconciler) reconcilePreparation(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) (bool, error) {
+	// Existing cohorts retain their acquisition contract until the Pool replaces them.
+	// Once materialized, the serving runtime owns cache recovery.
+	if group.Spec.Runtime.PreparationVersion == 0 || meta.IsStatusConditionTrue(group.Status.Conditions, conditionWorkloadMaterialized) {
 		return true, nil
 	}
-	desired, err := desiredPreparationJob(group, reconciler.ImagePullSecrets)
+	if group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceLocal {
+		return true, nil
+	}
+	if err := reconciler.reconcilePreparationSource(ctx, group, pool); err != nil {
+		return false, err
+	}
+	desired, err := desiredPreparationJob(group, reconciler.ImagePullSecrets, reconciler.ModelDistribution)
 	if err != nil {
 		return false, err
 	}
@@ -188,6 +207,16 @@ func (reconciler *ModelGroupReconciler) reconcilePreparation(ctx context.Context
 	}
 	current := new(batchv1.Job)
 	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); apierrors.IsNotFound(err) {
+		if group.Spec.Artifacts.Cache != nil {
+			affinity, err := reconciler.preparationNodeAffinity(ctx, group)
+			if err != nil {
+				return false, err
+			}
+			desired.Spec.Template.Spec.Affinity = &corev1.Affinity{NodeAffinity: affinity}
+		}
+		if err := placeRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &desired.Spec.Template); err != nil {
+			return false, err
+		}
 		if err := reconciler.Create(ctx, desired); err != nil {
 			return false, fmt.Errorf("create model preparation Job: %w", err)
 		}
@@ -200,6 +229,13 @@ func (reconciler *ModelGroupReconciler) reconcilePreparation(ctx context.Context
 	}
 	for _, condition := range current.Status.Conditions {
 		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+			// A ModelGroup is a continuing service intent. A terminal Job ends one
+			// acquisition attempt; its replacement reuses the published source and SDK partials.
+			if current.DeletionTimestamp.IsZero() {
+				if err := reconciler.Delete(ctx, current, client.PropagationPolicy(metav1.DeletePropagationForeground), client.Preconditions{UID: &current.UID}); client.IgnoreNotFound(err) != nil {
+					return false, fmt.Errorf("retire failed model preparation Job: %w", err)
+				}
+			}
 			return false, fmt.Errorf("model preparation Job %q failed: %s", current.Name, condition.Message)
 		}
 		if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
@@ -210,7 +246,7 @@ func (reconciler *ModelGroupReconciler) reconcilePreparation(ctx context.Context
 }
 
 // desiredPreparationJob builds a CPU/network/storage-only source preparation workload.
-func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference) (*batchv1.Job, error) {
+func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference, distribution runtimeconfig.ModelDistributionProfile) (*batchv1.Job, error) {
 	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
 	if err != nil {
 		return nil, fmt.Errorf("build model preparation launch plan: %w", err)
@@ -220,47 +256,72 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 		return nil, fmt.Errorf("marshal model preparation launch plan: %w", err)
 	}
 	cache := group.Spec.Artifacts.Cache
-	if cache == nil || group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceLocal {
-		return nil, fmt.Errorf("model preparation requires a remote source and RuntimeCache")
+	if group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceLocal {
+		return nil, fmt.Errorf("model preparation requires a remote source")
 	}
-	name := group.Name + "-prepare"
-	if len(name) > kubevalidation.DNS1123SubdomainMaxLength {
-		name = strings.TrimRight(name[:kubevalidation.DNS1123SubdomainMaxLength], "-")
+	name := "prepare-" + string(group.UID)
+	env := []corev1.EnvVar{
+		{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON},
+		{Name: runtimeconfig.ModelPreparationScopeEnv, Value: group.Spec.ModelPoolRef.UID + "/" + group.Spec.Revision},
+		{Name: preparationConfigMapEnv, Value: preparationSourceName(group.Spec)},
+		{Name: preparationNamespaceEnv, Value: group.Namespace},
+		// CUDA base images expose all devices unless CPU-only preparation overrides them.
+		{Name: "NVIDIA_VISIBLE_DEVICES", Value: "void"},
 	}
-	env := []corev1.EnvVar{{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON}}
-	env = append(env, vllmconfig.RuntimeCacheEnv(cache, "")...)
+	env = append(env, vllmconfig.RuntimeCacheEnv(cache, group.Namespace, "")...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
-	if group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceHF {
-		env = append(env, corev1.EnvVar{Name: "HF_XET_HIGH_PERFORMANCE", Value: "1"})
-	}
-	if group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceModelScope {
-		env = append(env, corev1.EnvVar{Name: "MODELSCOPE_CACHE", Value: path.Join(cache.MountPath, "modelscope")})
-	}
 	startupSeconds, err := durationSeconds(group.Spec.Timeouts.Startup)
 	if err != nil {
 		return nil, fmt.Errorf("parse model preparation timeout: %w", err)
 	}
-	backoffLimit := int32(0)
+	volumes := []corev1.Volume{{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
+	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}}
+	command := "resolve"
+	var nodeSelector map[string]string
+	var tolerations []corev1.Toleration
+	var ports []corev1.ContainerPort
+	if cache != nil {
+		command = "prepare"
+		env = append(env, runtimeCacheObserverEnv(*cache, group.Spec.Runtime.Port)...)
+		ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
+		volumes = append(volumes, corev1.Volume{Name: runtimeCacheVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: cache.ClaimName}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: runtimeCacheVolumeName, MountPath: cache.MountPath})
+		nodeSelector = maps.Clone(group.Spec.Accelerator.NodeSelector)
+		tolerations = acceleratorTolerations(group.Spec.Accelerator.DeviceResourceName)
+	}
+	if cache != nil && distribution.DragonflySocketPath != "" {
+		// Mount the directory so daemon restarts can replace the socket without rebinding the Pod.
+		directory := path.Dir(distribution.DragonflySocketPath)
+		directoryType := corev1.HostPathDirectory
+		volumes = append(volumes, corev1.Volume{Name: "dragonfly", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: directory, Type: &directoryType}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "dragonfly", MountPath: directory, ReadOnly: true})
+		env = append(env, corev1.EnvVar{Name: runtimeconfig.DragonflySocketEnv, Value: distribution.DragonflySocketPath})
+	}
+	automountToken := true
 	return &batchv1.Job{
 		TypeMeta:   metav1.TypeMeta{APIVersion: batchv1.SchemeGroupVersion.String(), Kind: "Job"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: group.Namespace, Labels: modelGroupLabels(group)},
 		Spec: batchv1.JobSpec{
-			BackoffLimit:          &backoffLimit,
 			ActiveDeadlineSeconds: &startupSeconds,
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: modelGroupLabels(group)},
+				// Preparation Pods must not match serving member or cache-observer selectors.
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{modelPreparationGroupLabel: group.Name}},
 				Spec: corev1.PodSpec{
-					RestartPolicy:    corev1.RestartPolicyNever,
-					ImagePullSecrets: slices.Clone(imagePullSecrets),
-					NodeSelector:     maps.Clone(group.Spec.Accelerator.NodeSelector),
-					Volumes:          []corev1.Volume{{Name: runtimeCacheVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: cache.ClaimName}}}},
+					ServiceAccountName:           preparationSourceName(group.Spec),
+					AutomountServiceAccountToken: &automountToken,
+					RestartPolicy:                corev1.RestartPolicyNever,
+					ImagePullSecrets:             slices.Clone(imagePullSecrets),
+					NodeSelector:                 nodeSelector,
+					Tolerations:                  tolerations,
+					Volumes:                      volumes,
 					Containers: []corev1.Container{{
 						Name:            "model-preparation",
 						Image:           group.Spec.Runtime.Image,
 						ImagePullPolicy: corev1.PullIfNotPresent,
-						Args:            []string{"prepare"},
+						Args:            []string{command},
+						Ports:           ports,
 						Env:             env,
-						VolumeMounts:    []corev1.VolumeMount{{Name: runtimeCacheVolumeName, MountPath: cache.MountPath}},
+						VolumeMounts:    mounts,
 					}},
 				},
 			},
@@ -282,8 +343,14 @@ func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context,
 		if !metav1.IsControlledBy(current, group) {
 			return nil, fmt.Errorf("Deployment %q is not controlled by ModelGroup", current.Name)
 		}
+		if group.Spec.Runtime.PreparationVersion == 0 {
+			return current, nil
+		}
 	} else if !apierrors.IsNotFound(err) {
 		return nil, fmt.Errorf("get Deployment: %w", err)
+	}
+	if err := placeRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &desired.Spec.Template); err != nil {
+		return nil, err
 	}
 	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
 		return nil, fmt.Errorf("apply Deployment: %w", err)
@@ -340,7 +407,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: "FORETOKEN_KV_SCOPE_ID", Value: kvScopeID(group)},
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
 	}
-	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Spec.Runtime.TritonCacheDirectory)...)
+	if group.Spec.Runtime.PreparationVersion > 0 {
+		env = append(env, corev1.EnvVar{Name: runtimeconfig.ModelPreparationScopeEnv, Value: group.Spec.ModelPoolRef.UID + "/" + group.Spec.Revision})
+	}
+	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Spec.Runtime.TritonCacheDirectory)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	if group.Spec.PDRuntime != nil {
 		// Transport selection is explicit: RDMA must find an allocated HCA, while TCP
@@ -392,12 +462,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		volumes = append(volumes, corev1.Volume{Name: runtimeCacheVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: cache.ClaimName}}})
 		mounts = append(mounts, corev1.VolumeMount{Name: runtimeCacheVolumeName, MountPath: cache.MountPath})
 		ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
-		env = append(env,
-			corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
-			corev1.EnvVar{Name: runtimeCacheClaimEnv, Value: cache.ClaimName},
-			corev1.EnvVar{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(runtimeCacheObservationPort(group.Spec.Runtime.Port)))},
-			corev1.EnvVar{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
-		)
+		env = append(env, runtimeCacheObserverEnv(*cache, group.Spec.Runtime.Port)...)
 	}
 	if group.Spec.ECRuntime != nil {
 		volumes = append(volumes, corev1.Volume{Name: "ec-shared-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: group.Spec.ECRuntime.SharedStorageClaim}}})
@@ -418,7 +483,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		runtimeClassName = &group.Spec.Accelerator.RuntimeClassName
 	}
 
-	return &appsv1.Deployment{
+	deployment := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: appsv1.SchemeGroupVersion.String(), Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{Name: group.Name, Namespace: group.Namespace, Labels: labels},
 		Spec: appsv1.DeploymentSpec{
@@ -428,7 +493,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 			Strategy:                appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Selector:                &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+				ObjectMeta: metav1.ObjectMeta{Labels: maps.Clone(labels), Annotations: annotations},
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken:  &automountToken,
 					EnableServiceLinks:            &enableServiceLinks,
@@ -438,6 +503,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 					SchedulerName:                 corev1.DefaultSchedulerName,
 					RuntimeClassName:              runtimeClassName,
 					NodeSelector:                  maps.Clone(group.Spec.Accelerator.NodeSelector),
+					Tolerations:                   acceleratorTolerations(group.Spec.Accelerator.DeviceResourceName),
 					TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
 					SecurityContext: &corev1.PodSecurityContext{
 						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
@@ -466,7 +532,12 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 				},
 			},
 		},
-	}, nil
+	}
+	mountPreparationSource(group, &deployment.Spec.Template)
+	if err := configureWeightSources(group.Spec, &deployment.Spec.Template); err != nil {
+		return nil, err
+	}
+	return deployment, nil
 }
 
 func dns1035NamePart(value string) string {
@@ -590,15 +661,17 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 		},
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &modelServerPort}},
 	}}
+	var preparationIngress []networkingv1.NetworkPolicyIngressRule
 	if group.Spec.Artifacts.Cache != nil {
 		cacheObservationPort := intstr.FromString("cache-observe")
-		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+		preparationIngress = []networkingv1.NetworkPolicyIngressRule{{
 			From: []networkingv1.NetworkPolicyPeer{{
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": reconciler.ControlPlaneNamespace}},
 				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{controlPlanePodLabel: controlPlanePodLabelValue}},
 			}},
 			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &cacheObservationPort}},
-		})
+		}}
+		ingress = append(ingress, preparationIngress...)
 	}
 	if group.Spec.NodeCount > 1 {
 		// EngineCore and collectives allocate additional ports during the group handshake.
@@ -630,6 +703,7 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 			})
 		}
 	}
+	ingress = append(ingress, weightSourceIngress(group.Spec)...)
 	desired := &networkingv1.NetworkPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: networkingv1.SchemeGroupVersion.String(), Kind: "NetworkPolicy"},
 		ObjectMeta: metav1.ObjectMeta{Name: group.Name, Namespace: group.Namespace, Labels: labels},
@@ -639,19 +713,33 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 			Ingress:     ingress,
 		},
 	}
-	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
-		return fmt.Errorf("set NetworkPolicy owner: %w", err)
+	policies := []*networkingv1.NetworkPolicy{desired}
+	if group.Spec.Artifacts.Source != inferencev1alpha1.ModelSourceLocal {
+		policies = append(policies, &networkingv1.NetworkPolicy{
+			TypeMeta:   metav1.TypeMeta{APIVersion: networkingv1.SchemeGroupVersion.String(), Kind: "NetworkPolicy"},
+			ObjectMeta: metav1.ObjectMeta{Name: "prepare-" + string(group.UID), Namespace: group.Namespace},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{modelPreparationGroupLabel: group.Name}},
+				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+				Ingress:     preparationIngress,
+			},
+		})
 	}
-	current := new(networkingv1.NetworkPolicy)
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err == nil {
-		if !metav1.IsControlledBy(current, group) {
-			return fmt.Errorf("NetworkPolicy %q is not controlled by ModelGroup", current.Name)
+	for _, desired := range policies {
+		if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
+			return fmt.Errorf("set NetworkPolicy owner: %w", err)
 		}
-	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("get NetworkPolicy: %w", err)
-	}
-	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
-		return fmt.Errorf("apply NetworkPolicy: %w", err)
+		current := new(networkingv1.NetworkPolicy)
+		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err == nil {
+			if !metav1.IsControlledBy(current, group) {
+				return fmt.Errorf("NetworkPolicy %q is not controlled by ModelGroup", current.Name)
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("get NetworkPolicy: %w", err)
+		}
+		if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
+			return fmt.Errorf("apply NetworkPolicy: %w", err)
+		}
 	}
 	return nil
 }
@@ -690,8 +778,17 @@ func modelGroupFailureState(err error) modelGroupStatusState {
 func modelGroupPreparationState() modelGroupStatusState {
 	return modelGroupStatusState{
 		phase:        inferencev1alpha1.ModelGroupPhaseProvisioning,
-		preparation:  modelGroupConditionState{status: metav1.ConditionFalse, reason: "PreparingModel", message: "Remote model artifacts are being prepared in the shared RuntimeCache"},
+		preparation:  modelGroupConditionState{status: metav1.ConditionFalse, reason: "PreparingModel", message: "Remote model sources and artifacts are being prepared"},
 		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "PreparingModel", message: "The serving workload waits for model preparation"},
+		scheduling:   schedulingNotEvaluated(),
+	}
+}
+
+func modelGroupPlacementState() modelGroupStatusState {
+	return modelGroupStatusState{
+		phase:        inferencev1alpha1.ModelGroupPhaseProvisioning,
+		preparation:  modelGroupConditionState{status: metav1.ConditionFalse, reason: "WaitingForPlacement", message: "No schedulable accelerator node matches the model preparation workload"},
+		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "WaitingForPlacement", message: "The serving workload waits for model preparation placement"},
 		scheduling:   schedulingNotEvaluated(),
 	}
 }
@@ -712,7 +809,7 @@ func modelGroupMaterializedState(available bool, scheduling schedulingCapacitySt
 	}
 	return modelGroupStatusState{
 		phase:        phase,
-		preparation:  modelGroupConditionState{status: metav1.ConditionTrue, reason: "Prepared", message: "Model artifacts are available in the RuntimeCache"},
+		preparation:  modelGroupConditionState{status: metav1.ConditionTrue, reason: preparationSourceReadyReason, message: "Model preparation completed using resolved source versions"},
 		materialized: modelGroupConditionState{status: metav1.ConditionTrue, reason: "Applied", message: "Group workload was materialized"},
 		available:    available,
 		scheduling:   scheduling,
@@ -767,6 +864,9 @@ func (reconciler *ModelGroupReconciler) updateStatus(ctx context.Context, group 
 		group.Status.ReadyMembers = group.Spec.MemberCount
 	} else {
 		group.Status.ReadyMembers = 0
+	}
+	if state.preparation.status == metav1.ConditionTrue && (group.Spec.Runtime.PreparationVersion == 0 || group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceLocal) {
+		state.preparation = modelGroupConditionState{status: metav1.ConditionTrue, reason: "NotRequired", message: "Model acquisition is handled by the serving runtime"}
 	}
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionModelPreparation, Status: state.preparation.status, Reason: state.preparation.reason, Message: state.preparation.message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadMaterialized, Status: state.materialized.status, Reason: state.materialized.reason, Message: state.materialized.message, ObservedGeneration: group.Generation})

@@ -10,13 +10,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use foretoken_artifacts::ModelSource;
-use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
+use foretoken_model_protocol::{PreparedTokenizer, RuntimeMetadataResponse, RuntimeModelIdentity};
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::config::{MODEL_GROUP_UID_ENV, RuntimeConfig};
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
 use foretoken_model_server::launch::LaunchPlanV1;
 use foretoken_model_server::managed_engine::ManagedEngine;
+use foretoken_model_server::preparation;
 use foretoken_model_server::profiling;
 use foretoken_model_server::runtime_cache;
 use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
@@ -38,9 +39,17 @@ const TEMPORARY_MODEL_SOURCE_ROOT: &str = "/tmp/foretoken-model-source";
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     vllm_tracing::init_tracing("ForetokenModelServer");
 
-    if std::env::args().nth(1).as_deref() == Some("prepare") {
-        prepare_model().await?;
-        return Ok(());
+    match std::env::args().nth(1).as_deref() {
+        Some("prepare") => {
+            prepare_model().await?;
+            return Ok(());
+        }
+        Some("resolve") => {
+            let plan = LaunchPlanV1::parse(&required_env("FORETOKEN_VLLM_LAUNCH_PLAN")?)?;
+            preparation::resolve(&plan).await?;
+            return Ok(());
+        }
+        _ => {}
     }
 
     // Resolve the controller-owned launch plan before starting any engine or network task.
@@ -98,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The model-server owns one startup deadline across the persistent attempt and one
     // Pod-scoped temporary retry, including complete teardown of a failed child process.
     let startup_deadline = Instant::now() + config.launch.startup_timeout();
-    let (engine, client, cache_mode) = match start_engine_attempt(
+    let (engine, client, cache_mode, prepared_tokenizer) = match start_engine_attempt(
         &config,
         cache_config.as_ref(),
         profiling_config.as_ref(),
@@ -108,7 +117,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await
     {
-        Ok((engine, client)) => (engine, client, runtime_cache::Mode::Persistent),
+        Ok((engine, client, prepared)) => {
+            (engine, client, runtime_cache::Mode::Persistent, prepared)
+        }
         Err(EngineStartupFailure::PersistentCache { context, source }) => {
             // Distributed members restart together; a local retry would reuse stale peers.
             if config.member.is_some() {
@@ -133,12 +144,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await
             {
-                Ok((engine, client)) => {
+                Ok((engine, client, prepared)) => {
                     info!(
                         cache_mode = runtime_cache::Mode::Temporary.as_str(),
                         "EngineCore started with Pod-scoped temporary cache storage"
                     );
-                    (engine, client, runtime_cache::Mode::Temporary)
+                    (engine, client, runtime_cache::Mode::Temporary, prepared)
                 }
                 Err(failure) => {
                     return Err(io::Error::other(format!(
@@ -181,6 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .first()
             .and_then(|ready| ready.max_logprobs),
         ec_transfer: config.launch.ec.runtime_metadata(),
+        prepared_tokenizer,
         capabilities: if config.launch.ec.enabled() {
             ["ec_transfer".into()].into_iter().collect()
         } else {
@@ -368,7 +380,7 @@ async fn run_worker(
     cache_shutdown: Arc<Notify>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(config.listen_address).await?;
-    let (engine, _, _) = spawn_engine_attempt(
+    let (engine, _, _, _) = spawn_engine_attempt(
         config,
         cache,
         profiling,
@@ -475,7 +487,15 @@ async fn spawn_engine_attempt(
     profiling: Option<&profiling::Config>,
     mode: runtime_cache::Mode,
     startup_deadline: Instant,
-) -> Result<(ManagedEngine, EngineCoreProtocol, u16), EngineStartupFailure> {
+) -> Result<
+    (
+        ManagedEngine,
+        EngineCoreProtocol,
+        u16,
+        Option<PreparedTokenizer>,
+    ),
+    EngineStartupFailure,
+> {
     let mut environment = if let Some(cache) = cache {
         cache.set_mode(mode);
         cache
@@ -515,11 +535,26 @@ async fn spawn_engine_attempt(
             shared_kv::lookup_endpoint("*", 0),
         ));
     }
+    // Both cache modes consume the same mounted source publication.
     let model_root = cache
         .map(|cache| cache.model_root(mode))
         .or_else(foretoken_artifacts::model_root)
         .unwrap_or_else(|| PathBuf::from(TEMPORARY_MODEL_SOURCE_ROOT));
-    environment.extend(config.launch.source_environment(&model_root));
+    // Existing Pod templates retain native acquisition until their Pool rolls out preparation.
+    let legacy_acquisition = std::env::var_os(preparation::PREPARATION_SCOPE_ENV).is_none();
+    environment.push((
+        "VLLM_USE_MODELSCOPE".into(),
+        (legacy_acquisition && config.launch.artifacts.source == ModelSource::ModelScope)
+            .to_string(),
+    ));
+    if legacy_acquisition && config.launch.artifacts.source == ModelSource::ModelScope {
+        environment.push((
+            foretoken_artifacts::MODELSCOPE_CACHE_ENV.into(),
+            foretoken_artifacts::modelscope_cache_root(&model_root)
+                .display()
+                .to_string(),
+        ));
+    }
     let handshake_port = if config.member.is_some() {
         29700
     } else {
@@ -532,6 +567,41 @@ async fn spawn_engine_attempt(
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
     if let Some(member) = &config.member {
         environment.push(("VLLM_HOST_IP".into(), member.address.to_string()));
+    }
+    let mut prepared_tokenizer = None;
+    if config.launch.artifacts.source != ModelSource::Local && !legacy_acquisition {
+        let scope = required_env(preparation::PREPARATION_SCOPE_ENV)
+            .map_err(|error| EngineStartupFailure::Other(io::Error::other(error.to_string())))?;
+        let remaining = startup_deadline.saturating_duration_since(Instant::now());
+        let persistent_root = cache.map(|cache| cache.model_root(runtime_cache::Mode::Persistent));
+        let reusable_root = persistent_root
+            .as_deref()
+            .filter(|root| *root != model_root);
+        let prepared = tokio::time::timeout(
+            remaining,
+            preparation::prepare(&config.launch, &model_root, &scope, true, reusable_root),
+        )
+        .await
+        .map_err(|_| {
+            EngineStartupFailure::Other(io::Error::other(
+                "model preparation exceeded the startup deadline",
+            ))
+        })?
+        .map_err(|error| classify_engine_startup_failure(cache, mode, error.to_string()))?;
+        managed_engine.model = prepared.model.display().to_string();
+        managed_engine.python_args.retain(|argument| {
+            !argument.starts_with("--revision=") && !argument.starts_with("--tokenizer-revision=")
+        });
+        for argument in &mut managed_engine.python_args {
+            if argument.starts_with("--tokenizer=") {
+                *argument = format!("--tokenizer={}", prepared.tokenizer.display());
+            }
+        }
+        let binding = persistent_root
+            .as_ref()
+            .filter(|root| prepared.tokenizer.starts_with(root))
+            .and_then(|_| std::env::var(foretoken_artifacts::RUNTIME_CACHE_BINDING_ENV).ok());
+        prepared_tokenizer = Some(prepared.tokenizer_metadata(&scope, binding));
     }
     // Local source is strict: both identifiers must resolve before any engine process starts.
     if config.launch.artifacts.source == ModelSource::Local {
@@ -591,7 +661,7 @@ async fn spawn_engine_attempt(
                 format!("could not spawn managed EngineCore: {error}"),
             )
         })?;
-    Ok((engine, engine_protocol, handshake_port))
+    Ok((engine, engine_protocol, handshake_port, prepared_tokenizer))
 }
 
 // Only the group leader owns the EngineCore handshake, DP coordination and request transport.
@@ -602,8 +672,8 @@ async fn start_engine_attempt(
     mode: runtime_cache::Mode,
     startup_deadline: Instant,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
-) -> Result<(ManagedEngine, EngineCoreClient), EngineStartupFailure> {
-    let (engine, engine_protocol, handshake_port) =
+) -> Result<(ManagedEngine, EngineCoreClient, Option<PreparedTokenizer>), EngineStartupFailure> {
+    let (engine, engine_protocol, handshake_port, prepared_tokenizer) =
         spawn_engine_attempt(config, cache, profiling, mode, startup_deadline).await?;
     // vLLM keeps its single EngineCore handshake local even when TP/PP spans nodes.
     let advertised_host = config
@@ -645,7 +715,7 @@ async fn start_engine_attempt(
         error = wait_cache_write_failure(cache, mode) => Err(cache_mode_failure(mode, format!("{} cache became unwritable during EngineCore startup", mode.as_str()), error)),
     };
     match client {
-        Ok(client) => Ok((engine, client)),
+        Ok(client) => Ok((engine, client, prepared_tokenizer)),
         Err(error) => {
             // Failed cleanup must end this runtime, not start a temporary-cache retry beside the old engine.
             engine
@@ -738,79 +808,31 @@ fn kv_event_adapter(
     ))
 }
 
-/// Prepares a model source in the mounted cache before the engine container starts.
-///
-/// ModelGroup init containers invoke this mode with the same launch plan and cache mount as the
-/// serving process. The provider owns its cache layout and resumability; this process only selects
-/// the provider call and reports its exit status.
+/// Publishes provider snapshots for the controller-owned preparation Job.
 async fn prepare_model() -> Result<(), Box<dyn std::error::Error>> {
     let plan = LaunchPlanV1::parse(&required_env("FORETOKEN_VLLM_LAUNCH_PLAN")?)?;
     let model_root = foretoken_artifacts::model_root()
         .ok_or("FORETOKEN_MODEL_ROOT must be set for model preparation")?;
-    let python = std::env::var("FORETOKEN_VLLM_PYTHON")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "python".into());
-    let source = match plan.artifacts.source {
-        ModelSource::Hf => "hf",
-        ModelSource::ModelScope => "modelscope",
-        ModelSource::Local => return Ok(()),
+    let scope = required_env(preparation::PREPARATION_SCOPE_ENV)?;
+    let shutdown = Arc::new(Notify::new());
+    let mut observer =
+        if let Some(cache) = runtime_cache::Config::from_env().map_err(io::Error::other)? {
+            let listener = TcpListener::bind(("0.0.0.0", cache.observation_port())).await?;
+            let stopped = shutdown.clone();
+            Some(tokio::spawn(runtime_cache::serve(listener, cache, stopped)))
+        } else {
+            None
+        };
+    let result = tokio::select! {
+        result = preparation::prepare(&plan, &model_root, &scope, false, None) => result,
+        reason = wait_cache_server(&mut observer) => return Err(io::Error::other(reason).into()),
+        () = shutdown_signal() => Err(io::Error::new(io::ErrorKind::Interrupted, "model preparation cancelled")),
     };
-    let code = r#"
-import os
-from concurrent.futures import ThreadPoolExecutor
-
-source = os.environ["FORETOKEN_PREPARE_SOURCE"]
-model = (os.environ["FORETOKEN_PREPARE_MODEL"], os.environ["FORETOKEN_PREPARE_MODEL_REVISION"])
-tokenizer = (os.environ["FORETOKEN_PREPARE_TOKENIZER"], os.environ["FORETOKEN_PREPARE_TOKENIZER_REVISION"])
-artifacts = [model] if tokenizer == model else [model, tokenizer]
-
-if source == "hf":
-    from huggingface_hub import snapshot_download
-
-    def download(artifact):
-        repository, revision = artifact
-        return snapshot_download(repo_id=repository, revision=revision)
-
-elif source == "modelscope":
-    from modelscope import snapshot_download
-
-    def download(artifact):
-        repository, revision = artifact
-        return snapshot_download(
-            model_id=repository,
-            revision=revision,
-            cache_dir=os.environ["MODELSCOPE_CACHE"],
-        )
-
-else:
-    raise RuntimeError(f"unsupported model preparation source: {source}")
-
-with ThreadPoolExecutor(max_workers=len(artifacts)) as executor:
-    list(executor.map(download, artifacts))
-"#;
-    let mut command = tokio::process::Command::new(python);
-    command
-        .args(["-c", code])
-        .env("FORETOKEN_PREPARE_SOURCE", source)
-        .env("FORETOKEN_PREPARE_MODEL", &plan.artifacts.model)
-        .env("FORETOKEN_PREPARE_MODEL_REVISION", &plan.artifacts.revision)
-        .env("FORETOKEN_PREPARE_TOKENIZER", &plan.artifacts.tokenizer)
-        .env(
-            "FORETOKEN_PREPARE_TOKENIZER_REVISION",
-            &plan.artifacts.tokenizer_revision,
-        )
-        .env(foretoken_artifacts::MODEL_ROOT_ENV, &model_root)
-        .env("HF_HOME", &model_root)
-        .env("HF_HUB_CACHE", model_root.join("hub"))
-        .env(
-            foretoken_artifacts::MODELSCOPE_CACHE_ENV,
-            foretoken_artifacts::modelscope_cache_root(&model_root),
-        );
-    let status = command.status().await?;
-    if !status.success() {
-        return Err(format!("model preparation failed with status {status}").into());
+    shutdown.notify_one();
+    if let Some(observer) = observer {
+        observer.await??;
     }
+    result?;
     Ok(())
 }
 

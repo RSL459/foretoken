@@ -231,6 +231,9 @@ async fn model_runtimes(
         let model_dtype = registry
             .effective_model_dtype(&model)
             .map_err(RuntimeBuildError::ModelRuntime)?;
+        let prepared_tokenizer = registry
+            .prepared_tokenizer(&model)
+            .map_err(RuntimeBuildError::ModelRuntime)?;
         let SnapshotRuntime {
             text_processor,
             tokenizer,
@@ -246,6 +249,7 @@ async fn model_runtimes(
                 foretoken_text::backend::SamplingLimits::DEFAULT_MAX_LOGPROBS,
             ),
             model_dtype,
+            prepared_tokenizer.as_ref(),
         )
         .await
         .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))?;

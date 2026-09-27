@@ -6,8 +6,10 @@
 package resolver
 
 import (
+	"encoding/json"
 	"fmt"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -47,6 +49,7 @@ type ECProfile struct {
 type RuntimeProfile struct {
 	Image              string
 	NsightImage        string
+	ModelExpress       bool
 	ModelServerPort    int32
 	DeviceResourceName string
 	RuntimeClassName   string
@@ -145,8 +148,22 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
 		}
 	}
+	// Fixed-weight cohorts share upstream ModelExpress sources. DP may reuse world ranks,
+	// while EPLB mutates expert placement after loading; both retain native file loading.
+	loader, explicitLoader := effective.EngineArgs["load-format"]
+	var loaderName string
+	requestedModelExpress := json.Unmarshal(loader.Raw, &loaderName) == nil && loaderName == "modelexpress"
+	modelExpress := ((profile.ModelExpress && !explicitLoader) || requestedModelExpress) && profile.RDMA != nil && profile.DeviceResourceName == "nvidia.com/gpu" &&
+		template.RuntimeCache != nil && template.Source != inferencev1alpha1.ModelSourceLocal &&
+		effective.Parallelism.DP == 1 && (effective.Parallelism.EP == nil || !effective.Parallelism.EP.EPLB)
+	if modelExpress {
+		if effective.EngineArgs == nil {
+			effective.EngineArgs = make(inferencev1alpha1.EngineArguments)
+		}
+		effective.EngineArgs["load-format"] = apiextensionsv1.JSON{Raw: []byte(`"modelexpress"`)}
+	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
+	if modelExpress || template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
@@ -182,6 +199,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			HuggingFaceAccess: template.HuggingFaceAccess.DeepCopy(),
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
+			PreparationVersion:                    1,
 			Backend:                               template.Backend,
 			Image:                                 image,
 			Port:                                  profile.ModelServerPort,

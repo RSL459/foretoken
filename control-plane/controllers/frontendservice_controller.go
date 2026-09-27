@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -114,7 +115,8 @@ func (reconciler *FrontendServiceReconciler) frontendsInNamespace(ctx context.Co
 	return requests
 }
 
-// servingCacheReady reports whether every selected ModelGroup revision uses the configured cache.
+// servingCacheReady lets frontends share a cache only after a serving workload has bound it.
+// Every selected cohort must use that cache before the frontend changes its mount.
 func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding) (bool, error) {
 	var services inferencev1alpha1.ModelServiceList
 	if err := reconciler.List(ctx, &services, client.InNamespace(namespace)); err != nil {
@@ -128,12 +130,14 @@ func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Conte
 	if err := reconciler.List(ctx, &groups, client.InNamespace(namespace)); err != nil {
 		return false, fmt.Errorf("list ModelGroups for frontend runtime cache: %w", err)
 	}
+	selectedRevision := false
 	for serviceIndex := range services.Items {
 		service := &services.Items[serviceIndex]
 		if !service.DeletionTimestamp.IsZero() {
 			continue
 		}
 		for _, selected := range service.Status.ServingPoolRevisions {
+			selectedRevision = true
 			var pool *inferencev1alpha1.ModelPool
 			for poolIndex := range pools.Items {
 				candidate := &pools.Items[poolIndex]
@@ -160,7 +164,31 @@ func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Conte
 			}
 		}
 	}
-	return true, nil
+	return cache == nil || selectedRevision, nil
+}
+
+// placeFrontendCache shares the cache placement contract and permits its accelerator-node taint.
+func (reconciler *FrontendServiceReconciler) placeFrontendCache(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, pod *corev1.PodTemplateSpec) error {
+	if err := placeRuntimeCache(ctx, reconciler.Client, namespace, cache, pod); err != nil {
+		return err
+	}
+	if pod.Spec.Affinity == nil {
+		return nil
+	}
+	var groups inferencev1alpha1.ModelGroupList
+	if err := reconciler.List(ctx, &groups, client.InNamespace(namespace)); err != nil {
+		return err
+	}
+	for _, group := range groups.Items {
+		if binding := group.Spec.Artifacts.Cache; binding != nil && binding.ClaimName == cache.ClaimName {
+			for _, toleration := range acceleratorTolerations(group.Spec.Accelerator.DeviceResourceName) {
+				if !slices.Contains(pod.Spec.Tolerations, toleration) {
+					pod.Spec.Tolerations = append(pod.Spec.Tolerations, toleration)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // Reconcile applies frontend resources and keeps readiness fail-closed until a serving snapshot is installed.
@@ -217,6 +245,11 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	deployment, service, route, err := frontendDesiredResources(frontend, profile)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
+	}
+	if applyDeployment && profile.RuntimeCache != nil {
+		if err := reconciler.placeFrontendCache(ctx, frontend.Namespace, profile.RuntimeCache, &deployment.Spec.Template); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	objects := []client.Object{service}
 	if applyDeployment {
