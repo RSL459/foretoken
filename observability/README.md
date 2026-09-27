@@ -138,7 +138,11 @@ Selecting the power alert also requires a positive `spec.observability.alerts.th
 | mxExporter | MetaX utilization, memory, board power, and chip hotspot temperature |
 | kubelet/cAdvisor | Container CPU and memory |
 
-Dashboard latency metrics use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. Model-wide p50/p95/p99 percentiles combine request histogram buckets before calculating quantiles. In disaggregated serving, input throughput counts Aggregate/Prefill engines; output throughput, completions and generation latency count Aggregate/Decode engines. Scheduler and preemption totals count execution-stage requests and events across all roles. Prefix-cache hit ratios divide total hit tokens by total queried tokens. GPU utilization, memory, power, and temperature are shown per device. Cache filesystem panels show each model instance's highest utilization and least available space. Routing shares count selection decisions, not completed requests or cache hits.
+The dashboard opens on the last 15 minutes. Rate windows follow Grafana's data resolution: a five-second scrape typically uses about 20 seconds in this view and longer windows when zoomed out. Summary tiles use the value at the selected range's end rather than carrying forward an older nonempty value. TTFT and E2EL use seconds; TPOT and ITL use milliseconds. Model-wide p50/p95/p99 combine histogram buckets before calculating quantiles. Bucket interpolation can look precise with few observations, so compare ITL with its mean and the latency observation rate.
+
+Speculative decoding shows draft and accepted token rates, token-weighted acceptance, accepted tokens per draft iteration, and acceptance by draft position. No drafts produce no ratio; acceptance does not measure generation speedup.
+
+In disaggregated serving, input throughput counts Aggregate/Prefill engines; output throughput, completions and generation latency count Aggregate/Decode engines. Scheduler and preemption totals count execution-stage requests and events across all roles. Prefix-cache hit ratios divide total hit tokens by total queried tokens. GPU utilization, memory, power, and temperature are shown per device. Cache filesystem panels show each model instance's highest utilization and least available space. Routing shares count selection decisions, not completed requests or cache hits.
 
 The following recording rules remain available for alerts and fixed-window queries. Model-serving rules are derived from vLLM metrics.
 
