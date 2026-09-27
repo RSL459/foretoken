@@ -251,6 +251,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 				Spec: corev1.PodSpec{
 					RestartPolicy:    corev1.RestartPolicyNever,
 					ImagePullSecrets: slices.Clone(imagePullSecrets),
+					NodeSelector:     maps.Clone(group.Spec.Accelerator.NodeSelector),
 					Volumes:          []corev1.Volume{{Name: runtimeCacheVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: cache.ClaimName}}}},
 					Containers: []corev1.Container{{
 						Name:            "model-preparation",
