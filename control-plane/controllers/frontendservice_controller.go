@@ -274,21 +274,24 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		}
 	}
 
-	// Status is calculated from persisted workload and optional Gateway observations.
-	currentDeployment := new(appsv1.Deployment)
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(deployment), currentDeployment); err != nil {
-		return ctrl.Result{}, fmt.Errorf("get frontend Deployment: %w", err)
+	// Apply returns the persisted objects; an informer read can still contain the previous template.
+	currentDeployment := deployment
+	if !applyDeployment {
+		currentDeployment = new(appsv1.Deployment)
+		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(deployment), currentDeployment); err != nil {
+			return ctrl.Result{}, fmt.Errorf("get frontend Deployment: %w", err)
+		}
 	}
 	routeRequired := route != nil
 	routeReady := !routeRequired
 	if routeRequired {
-		currentRoute := new(gatewayv1.HTTPRoute)
-		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(route), currentRoute); err != nil {
-			return ctrl.Result{}, fmt.Errorf("get frontend HTTPRoute: %w", err)
-		}
-		routeReady = httpRouteAccepted(currentRoute, *reconciler.RuntimeProfile.Gateway, frontend.Namespace)
+		routeReady = httpRouteAccepted(route, *reconciler.RuntimeProfile.Gateway, frontend.Namespace)
 	}
-	available := frontendDeploymentAvailable(currentDeployment)
+	// An old admission-only Pod may be available while the cache-backed replacement starts.
+	// Deployment submission completes only when the requested frontend template is ready.
+	available := frontendDeploymentAvailable(currentDeployment) &&
+		currentDeployment.Status.UpdatedReplicas == *currentDeployment.Spec.Replicas &&
+		currentDeployment.Status.Replicas == *currentDeployment.Spec.Replicas
 	state := frontendState{
 		Materialized:  true,
 		Available:     available,
