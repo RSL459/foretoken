@@ -179,7 +179,13 @@ impl VideoTaskClient {
             {
                 return Err(StatusCode::BAD_REQUEST);
             }
-            input.path = format!("tasks/{id}/input-{index}");
+            // Media loaders may use the filename suffix in addition to Content-Type.
+            let extension = Path::new(&input.path)
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| format!(".{value}"))
+                .unwrap_or_default();
+            input.path = format!("tasks/{id}/input-{index}{extension}");
             sources.push((source, self.output_mount.join(&input.path)));
         }
         let inputs_ready = sources.is_empty();
