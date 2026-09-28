@@ -74,6 +74,12 @@ spec:
             - {{ printf "--cache-claim=%s" . | quote }}
             - {{ printf "--cache-mount-path=%s" $.Values.workload.cache.mountPath | quote }}
             {{- end }}
+            {{- if .Values.modelDistribution.modelexpress.enabled }}
+            - --model-distribution-modelexpress=true
+            {{- end }}
+            {{- if .Values.modelDistribution.dragonfly.enabled }}
+            - {{ printf "--model-distribution-dragonfly-socket=%s" .Values.modelDistribution.dragonfly.socketPath | quote }}
+            {{- end }}
             {{- with .Values.runtime.vllm.modelSource.endpoint }}
             - {{ printf "--model-source-endpoint=%s" . | quote }}
             {{- end }}

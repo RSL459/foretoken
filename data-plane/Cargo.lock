@@ -1382,6 +1382,7 @@ dependencies = [
  "foretoken-artifacts",
  "foretoken-chat",
  "foretoken-engine-core-client",
+ "foretoken-model-protocol",
  "foretoken-tokenizer",
  "hf-hub",
  "reqwest 0.12.28",
