@@ -46,13 +46,23 @@ func main() {
 	endpoint := os.Getenv("FORETOKEN_VIDEO_ENDPOINT")
 	model := os.Getenv("FORETOKEN_VIDEO_MODEL")
 	outputPath := os.Getenv("FORETOKEN_VIDEO_OUTPUT_PATH")
-	if endpoint == "" || model == "" || outputPath == "" {
-		fatal(fmt.Errorf("FORETOKEN_VIDEO_ENDPOINT, FORETOKEN_VIDEO_MODEL and FORETOKEN_VIDEO_OUTPUT_PATH are required"))
+	outputMount := os.Getenv("FORETOKEN_VIDEO_OUTPUT_MOUNT")
+	if endpoint == "" || model == "" || outputPath == "" || outputMount == "" {
+		fatal(fmt.Errorf("FORETOKEN_VIDEO_ENDPOINT, FORETOKEN_VIDEO_MODEL, FORETOKEN_VIDEO_OUTPUT_PATH and FORETOKEN_VIDEO_OUTPUT_MOUNT are required"))
 	}
+	if filepath.IsAbs(outputPath) || filepath.Clean(outputPath) == "." || filepath.Clean(outputPath) == ".." {
+		fatal(fmt.Errorf("FORETOKEN_VIDEO_OUTPUT_PATH must be a relative path"))
+	}
+	outputPath = filepath.Join(outputMount, outputPath)
 
 	reader, writer := io.Pipe()
 	multipartWriter := multipart.NewWriter(writer)
 	errCh := make(chan error, 1)
+	for index := range request.InputFiles {
+		if !filepath.IsAbs(request.InputFiles[index].Path) {
+			request.InputFiles[index].Path = filepath.Join(outputMount, request.InputFiles[index].Path)
+		}
+	}
 	go func() {
 		errCh <- writeMultipart(multipartWriter, request, model)
 	}()
@@ -104,24 +114,32 @@ func decodeRequest(value string) (videoRequest, error) {
 
 func writeMultipart(writer *multipart.Writer, request videoRequest, model string) error {
 	defer writer.Close()
+	extraParams := map[string]any{"task": request.Task}
+	if request.AudioFlowShift != nil {
+		extraParams["audio_flow_shift"] = *request.AudioFlowShift
+	}
+	if len(request.FrameIndices) > 0 {
+		extraParams["frame_indices"] = request.FrameIndices
+	}
+	extraJSON, err := json.Marshal(extraParams)
+	if err != nil {
+		return err
+	}
 	fields := map[string]string{
 		"model":               model,
 		"prompt":              request.Prompt,
-		"task":                request.Task,
 		"width":               strconv.FormatInt(int64(request.Width), 10),
 		"height":              strconv.FormatInt(int64(request.Height), 10),
 		"num_frames":          strconv.FormatInt(int64(request.NumFrames), 10),
 		"fps":                 strconv.FormatInt(int64(request.FPS), 10),
 		"num_inference_steps": strconv.FormatInt(int64(request.NumInferenceSteps), 10),
+		"extra_params":        string(extraJSON),
 	}
 	if request.AspectRatio != "" {
 		fields["aspect_ratio"] = request.AspectRatio
 	}
 	if request.FlowShift != nil {
 		fields["flow_shift"] = strconv.FormatFloat(*request.FlowShift, 'f', -1, 64)
-	}
-	if request.AudioFlowShift != nil {
-		fields["audio_flow_shift"] = strconv.FormatFloat(*request.AudioFlowShift, 'f', -1, 64)
 	}
 	if request.Seed != nil {
 		fields["seed"] = strconv.FormatInt(*request.Seed, 10)

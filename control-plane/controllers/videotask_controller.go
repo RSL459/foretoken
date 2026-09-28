@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -164,6 +165,9 @@ func (r *VideoTaskReconciler) prepareVideoTask(ctx context.Context, task *api.Vi
 	}
 	if task.Spec.Worker.Image == "" || task.Spec.Worker.Endpoint == "" || task.Spec.Worker.OutputClaimName == "" || task.Spec.Worker.OutputPath == "" {
 		return api.VideoExecutionPlan{}, fmt.Errorf("worker image, endpoint, outputClaimName and outputPath are required")
+	}
+	if filepath.IsAbs(task.Spec.Worker.OutputPath) || filepath.Clean(task.Spec.Worker.OutputPath) == "." || filepath.Clean(task.Spec.Worker.OutputPath) == ".." || len(filepath.Clean(task.Spec.Worker.OutputPath)) >= 256 {
+		return api.VideoExecutionPlan{}, fmt.Errorf("outputPath must be a relative path below the worker output mount")
 	}
 	return api.VideoExecutionPlan{
 		Model:             service.Spec.Model,
