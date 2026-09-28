@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-// SPDX-FileCopyrightText: Copyright 2025 The llm-d Authors.
 
-//! Threshold-based waiting-queue scores, ported from llm-d's load-aware-scorer.
+//! Threshold-based waiting-queue scores.
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 use serde::Deserialize;
@@ -21,7 +20,7 @@ impl Default for LoadAwareScorer {
 }
 
 impl RouteScorer for LoadAwareScorer {
-    /// Reads llm-d's integer threshold; missing, null, and nonpositive values use the default.
+    /// Reads the integer threshold; missing, null, and nonpositive values use the default.
     fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
