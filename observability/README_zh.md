@@ -44,9 +44,7 @@ foretoken deploy examples/quickstart
 
 日志与指标沿用相同的 Grafana 访问设置。需要登录后查看时，使用下文的认证选项。
 
-### 自定义日志存储
-
-例如，要将日志保留时间改为 30 天，在 `platform-values.yaml` 中填写：
+如需保留日志 30 天，在 `platform-values.yaml` 中填写：
 
 ```yaml
 observability:
@@ -54,21 +52,19 @@ observability:
     retention: 720h
 ```
 
-应用配置：
+修改文件后执行以下命令；源码安装则在原安装命令中添加 `--values platform-values.yaml`：
 
 ```bash
 foretoken install --values platform-values.yaml
 ```
 
-源码安装在原安装命令中添加 `--values platform-values.yaml`。后续安装会保留这些设置；需要调整时，修改文件并重新执行命令。
-
-其他选项也写在 `observability.logs` 下：
+`observability.logs` 的其他选项：
 
 | 配置 | 用途 |
 | --- | --- |
 | `storageClass` / `storageSize` | 创建日志存储时，指定集群中的 StorageClass 名称和申请容量。 |
-| `endpoint` | 填写采集器和 Grafana 可访问的现有 Loki HTTP(S) 基础地址，由原平台管理存储和保留时间。 |
-| `enabled: false` | 停止 Foretoken 日志采集，保留已有日志存储和历史查询；改为 `true` 并重新应用即可恢复采集。 |
+| `endpoint` | 填写采集器和 Grafana 可访问的现有 Loki HTTP(S) 基础地址。 |
+| `enabled: false` | 停止 Foretoken 日志采集，历史日志仍可查询。 |
 
 ## 要求登录并获取密码
 
@@ -227,4 +223,4 @@ foretoken deploy examples/observability --timeout 20m
 
 ## 停止采集
 
-删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus、DCGM Exporter、沐曦 mxExporter、日志采集器和 Loki。Loki 的持久卷声明（PVC）会保留，托管的查询服务停止。使用原安装命令和日志配置重新安装后，可恢复查询保留的日志。复用的安装保持不变。
+删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus、DCGM Exporter、沐曦 mxExporter、日志采集器和 Loki。日志存储会保留，需使用原安装命令和日志配置重新安装后才能恢复查询。复用的安装保持不变。

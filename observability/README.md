@@ -44,9 +44,7 @@ Filter further by `pod`, `container`, `node`, or `stream`. To find an error or a
 
 Logs use the same Grafana access settings as metrics. To require a login, use the authentication option below.
 
-### Customize log storage
-
-For example, to retain logs for 30 days, save this in `platform-values.yaml`:
+To retain logs for 30 days, save this in `platform-values.yaml`:
 
 ```yaml
 observability:
@@ -54,21 +52,19 @@ observability:
     retention: 720h
 ```
 
-Apply changes with:
+Run this after editing the file; for source installations, add `--values platform-values.yaml` to the original install command:
 
 ```bash
 foretoken install --values platform-values.yaml
 ```
 
-For a source installation, add `--values platform-values.yaml` to the original installation command. Later installs retain these settings; edit the file and reapply it to change them.
-
-Other choices belong under the same `observability.logs` mapping:
+Other options under `observability.logs`:
 
 | Setting | Use |
 | --- | --- |
 | `storageClass` / `storageSize` | Choose the cluster's StorageClass name and requested capacity when creating log storage. |
-| `endpoint` | Use an existing Loki HTTP(S) base URL reachable by collectors and Grafana. Its owner manages storage and retention. |
-| `enabled: false` | Stop Foretoken log collection while keeping existing log storage and historical queries. Set `true` and reapply to resume. |
+| `endpoint` | Use an existing Loki HTTP(S) base URL reachable by collectors and Grafana. |
+| `enabled: false` | Stop Foretoken log collection while keeping historical queries available. |
 
 ## Require a login and retrieve credentials
 
@@ -227,4 +223,4 @@ For a short CPU/GPU capture on an existing diagnostic service, see [Profiling](.
 
 ## Remove collection
 
-After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus, DCGM Exporter, MetaX mxExporter, log collectors, and Loki. It retains Loki's persistent volume claim (PVC), but stops the managed query services. Reinstall with the original installation command and log settings to resume querying retained logs. Reused installations are left unchanged.
+After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus, DCGM Exporter, MetaX mxExporter, log collectors, and Loki. Log storage is retained; querying it requires reinstalling with the original command and log settings. Reused installations are left unchanged.
