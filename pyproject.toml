@@ -32,7 +32,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "grafana-foundation-sdk==1769699379!11.6.0",
-    "pytest>=7.0",
 ]
 
 [project.scripts]
@@ -50,9 +49,12 @@ packages = [
     "benchmarks.runs",
     "benchmarks.sweeps",
     "benchmarks.integrations",
+    "benchmarks.integrations.evalscope",
+    "benchmarks.integrations.lm_eval",
     "benchmarks.scoring",
     "benchmarks.profiling",
     "benchmarks.results",
+    "benchmarks.results.plots",
 ]
 package-dir = { foretoken = "cli/foretoken", benchmarks = "benchmarks" }
 

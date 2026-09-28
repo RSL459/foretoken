@@ -43,6 +43,7 @@ class PlatformConfig:
     envoy_gateway: ManagedChart
     metallb: ManagedChart
     leader_worker: ManagedChart
+    dragonfly: ManagedChart
     envoy_gateway_default_controller: str
     envoy_gateway_controller: str
     dcgm_metrics: str
@@ -85,6 +86,7 @@ def _chart_source(
 def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
     """Return version-aligned release identities and optional OCI mirror paths."""
     registry = _oci_registry(oci_registry)
+    dragonfly_version = "1.8.5"
     return PlatformConfig(
         namespace="foretoken-platform",
         load_balancer_namespace="metallb-system",
@@ -158,6 +160,16 @@ def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
             source=_chart_source(registry, "oci://registry.k8s.io/lws/charts/lws"),
             version="0.10.0",
         ),
+        dragonfly=ManagedChart(
+            release_name="foretoken-dragonfly",
+            source=_chart_source(
+                registry,
+                "https://github.com/dragonflyoss/helm-charts/releases/download/"
+                f"dragonfly-{dragonfly_version}/dragonfly-{dragonfly_version}.tgz",
+                "dragonflyoss.github.io/helm-charts/dragonfly",
+            ),
+            version=dragonfly_version if registry else None,
+        ),
         envoy_gateway_default_controller=(
             "gateway.envoyproxy.io/gatewayclass-controller"
         ),
@@ -202,6 +214,14 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
             raise DeploymentError(
                 f"Helm values file {path} sets observability.prometheus; use --prometheus"
             )
+        distribution = values.get("modelDistribution", {})
+        if isinstance(distribution, dict):
+            dragonfly = distribution.get("dragonfly", {})
+            if isinstance(dragonfly, dict) and "socketPath" in dragonfly:
+                raise DeploymentError(
+                    f"Helm values file {path} sets modelDistribution.dragonfly.socketPath; "
+                    "foretoken install resolves it from the managed or existing Dragonfly release"
+                )
         frontend = values.get("frontend")
         if isinstance(frontend, dict):
             reserved = tuple(key for key in ("mode", "gateway") if key in frontend)

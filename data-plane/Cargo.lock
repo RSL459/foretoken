@@ -256,6 +256,7 @@ dependencies = [
  "matchit",
  "memchr",
  "mime",
+ "multer",
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
@@ -1171,7 +1172,6 @@ dependencies = [
 name = "foretoken-backend-registry"
 version = "0.0.1"
 dependencies = [
- "axum",
  "foretoken-artifacts",
  "foretoken-engine-core-client",
  "foretoken-kv-indexer",
@@ -1181,7 +1181,6 @@ dependencies = [
  "futures",
  "reqwest 0.12.28",
  "serde",
- "serde_json",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -1225,15 +1224,12 @@ name = "foretoken-kv-indexer"
 version = "0.0.1"
 dependencies = [
  "async-trait",
- "axum",
  "base64 0.22.1",
- "blake3",
  "foretoken-model-protocol",
  "futures",
  "patricia_tree",
  "reqwest 0.12.28",
  "serde",
- "serde_json",
  "tokio",
  "tracing",
 ]
@@ -1244,8 +1240,6 @@ version = "0.0.1"
 dependencies = [
  "async-stream",
  "async-trait",
- "axum",
- "foretoken-engine-core-client",
  "foretoken-model-protocol",
  "foretoken-router",
  "futures",
@@ -1293,7 +1287,7 @@ dependencies = [
  "foretoken-artifacts",
  "foretoken-model-protocol",
  "futures",
- "http-body-util",
+ "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
  "rustix",
@@ -1301,7 +1295,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
- "tower",
  "tracing",
  "uuid",
  "vllm-engine-core-client",
@@ -1333,7 +1326,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "tokio",
  "tracing",
  "vllm-llm",
 ]
@@ -1346,10 +1338,10 @@ dependencies = [
  "foretoken-backend-registry",
  "foretoken-kv-indexer",
  "foretoken-llm-facade",
- "foretoken-metrics",
  "foretoken-router",
  "foretoken-server",
  "foretoken-text",
+ "reqwest 0.12.28",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
@@ -1364,10 +1356,9 @@ dependencies = [
  "async-stream",
  "async-trait",
  "axum",
- "foretoken-backend-registry",
+ "bytes",
  "foretoken-chat",
  "foretoken-engine-core-client",
- "foretoken-kv-indexer",
  "foretoken-llm-facade",
  "foretoken-metrics",
  "foretoken-model-protocol",
@@ -1375,11 +1366,11 @@ dependencies = [
  "foretoken-text",
  "foretoken-tokenizer",
  "futures",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
- "tower",
  "uuid",
  "vllm-llm",
 ]
@@ -1391,6 +1382,7 @@ dependencies = [
  "foretoken-artifacts",
  "foretoken-chat",
  "foretoken-engine-core-client",
+ "foretoken-model-protocol",
  "foretoken-tokenizer",
  "hf-hub",
  "reqwest 0.12.28",
@@ -2349,6 +2341,23 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "multer"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83e87776546dc87511aa5ee218730c92b666d7264ab6ed41f9d215af9cd5224b"
+dependencies = [
+ "bytes",
+ "encoding_rs",
+ "futures-util",
+ "http",
+ "httparse",
+ "memchr",
+ "mime",
+ "spin",
+ "version_check",
 ]
 
 [[package]]
@@ -3623,6 +3632,12 @@ dependencies = [
  "libc",
  "winapi",
 ]
+
+[[package]]
+name = "spin"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 
 [[package]]
 name = "spm_precompiled"
