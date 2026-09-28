@@ -23,7 +23,7 @@ impl RouteScorer for LoadAwareScorer {
     /// Reads the integer threshold; missing, null, and nonpositive values use the default.
     fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
         #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct Parameters {
             threshold: Option<i64>,
         }
@@ -48,11 +48,17 @@ impl RouteScorer for LoadAwareScorer {
         candidates
             .iter()
             .map(|candidate| {
-                let waiting = candidate
+                let Some(waiting) = candidate
                     .route_target_stats
                     .as_ref()
                     .and_then(|stats| stats.scheduler_waiting_requests)
-                    .unwrap_or(0) as f64;
+                else {
+                    return RouteScore {
+                        preference: -1.0,
+                        ..RouteScore::default()
+                    };
+                };
+                let waiting = waiting as f64;
                 RouteScore {
                     preference: if waiting == 0.0 {
                         0.5
