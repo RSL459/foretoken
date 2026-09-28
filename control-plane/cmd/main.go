@@ -15,9 +15,11 @@ import (
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -88,6 +90,8 @@ func main() {
 	var modelExpress bool
 	var observabilityPrometheus string
 	var observabilityLabelsJSON string
+	var logStorageStatefulSet string
+	var logStorageMaxSize string
 
 	// Metrics stay disabled until the chart exposes a secured endpoint.
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
@@ -95,6 +99,8 @@ func main() {
 	flag.BoolVar(&leaderElection, "leader-elect", false, "Enable leader election.")
 	flag.StringVar(&observabilityPrometheus, "observability-prometheus", "", "Prometheus NAMESPACE/NAME selected for service alert rules.")
 	flag.StringVar(&observabilityLabelsJSON, "observability-labels", "{}", "JSON labels used to select controller-owned alert rules.")
+	flag.StringVar(&logStorageStatefulSet, "log-storage-statefulset", "", "Managed Loki StatefulSet in the platform namespace; empty disables log volume expansion.")
+	flag.StringVar(&logStorageMaxSize, "log-storage-max-size", "", "Maximum capacity of each managed log volume.")
 	flag.DurationVar(&autoscalingTelemetryCollectionTimeout, "autoscaling-telemetry-collection-timeout", 3*time.Second, "Total budget for one autoscaling telemetry observation.")
 	flag.DurationVar(&autoscalingTelemetryRequestTimeout, "autoscaling-telemetry-request-timeout", time.Second, "Timeout for one autoscaling telemetry HTTP request.")
 	flag.IntVar(&autoscalingTelemetryConcurrency, "autoscaling-telemetry-concurrency", 8, "Maximum concurrent autoscaling telemetry HTTP requests per source type.")
@@ -304,6 +310,27 @@ func main() {
 	if err != nil {
 		ctrl.Log.Error(err, "invalid observability configuration")
 		os.Exit(1)
+	}
+
+	if logStorageStatefulSet != "" {
+		maximum, err := resource.ParseQuantity(logStorageMaxSize)
+		if err != nil || maximum.Sign() <= 0 || maximum.CmpInt64(maximum.Value()) != 0 {
+			ctrl.Log.Error(errors.New("log-storage-max-size must be a positive whole-byte quantity"), "invalid log storage configuration")
+			os.Exit(1)
+		}
+		kubeClient, err := kubernetes.NewForConfig(restConfig)
+		if err != nil {
+			ctrl.Log.Error(err, "unable to configure log volume observations")
+			os.Exit(1)
+		}
+		if err := (&controllers.LogStorageReconciler{
+			Client: manager.GetClient(), Kubernetes: kubeClient,
+			StatefulSet: client.ObjectKey{Namespace: controlPlaneNamespace, Name: logStorageStatefulSet},
+			MaxSize:     maximum,
+		}).SetupWithManager(manager); err != nil {
+			ctrl.Log.Error(err, "unable to register log storage controller")
+			os.Exit(1)
+		}
 	}
 
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.

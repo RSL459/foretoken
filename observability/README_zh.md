@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 使用 Prometheus 采集服务和加速器指标，通过 Grafana 看板 Foretoken System Overview 展示。告警规则按需启用，默认关闭。
+Foretoken 提供服务和加速器指标、持久化服务日志，以及用于分析的 Grafana 看板。告警规则按需启用，默认关闭。
 
 ## 快速开始
 
@@ -25,6 +25,49 @@ foretoken deploy examples/quickstart
 “共享前端”展示所选前端的全部流量，不归属于单个模型。扩缩容按所选模型和服务查看，控制面诊断则反映整个平台。
 
 升级 Foretoken 后，再执行 `foretoken install`，更新控制器、前端、采集配置和看板。只导入看板 JSON 不会更新指标生产端。
+
+## 查询历史日志
+
+`foretoken install` 会自动采集并持久保存模型服务、前端、KV 服务和控制器的日志，包括推理引擎输出。服务 Pod 或其命名空间删除后，已采集的日志仍可查询。默认保留 14 天，通过集群默认 StorageClass 初始申请 5 GiB 存储。
+
+在 Grafana 中打开探索页面（Explore），选择 Foretoken Logs 数据源和时间范围。例如查看快速开始的日志：
+
+```logql
+{job="foretoken", namespace="foretoken-demo"}
+```
+
+可以进一步按 Pod、容器、节点或输出流筛选，对应标签为 `pod`、`container`、`node`、`stream`。查找异常或请求标识时，添加文本条件：
+
+```logql
+{job="foretoken"} |~ "(?i)error"
+```
+
+日志与指标沿用相同的 Grafana 访问设置。需要登录后查看时，使用下文的认证选项。
+
+如需保留日志 30 天，并允许存储增长至 50 GiB，在 `platform-values.yaml` 中填写：
+
+```yaml
+observability:
+  logs:
+    retention: 720h
+    maxSize: 50Gi
+```
+
+设置 `maxSize` 后，用量达到 80% 时自动将申请容量翻倍，直到该上限；存储驱动需支持在线扩容和按卷统计用量。
+
+修改文件后执行以下命令；源码安装则在原安装命令中添加 `--values platform-values.yaml`：
+
+```bash
+foretoken install --values platform-values.yaml
+```
+
+`observability.logs` 的其他选项：
+
+| 配置 | 用途 |
+| --- | --- |
+| `storageClass` / `initialSize` | 新建日志存储使用的 StorageClass 名称和初始容量；已有卷保留当前容量。 |
+| `endpoint` | 填写采集器和 Grafana 可访问的现有 Loki HTTP(S) 基础地址。 |
+| `enabled: false` | 停止 Foretoken 日志采集，历史日志仍可查询。 |
 
 ## 要求登录并获取密码
 
@@ -183,4 +226,4 @@ foretoken deploy examples/observability --timeout 20m
 
 ## 停止采集
 
-删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus、DCGM Exporter 和沐曦 mxExporter 资源。复用的安装保持不变。
+删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus、DCGM Exporter、沐曦 mxExporter、日志采集器和 Loki。日志存储会保留，需使用原安装命令和日志配置重新安装后才能恢复查询。复用的安装保持不变。
