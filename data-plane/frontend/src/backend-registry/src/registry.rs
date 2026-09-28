@@ -302,6 +302,16 @@ impl LlmFacadeResolver for BackendRegistry {
     }
 }
 impl RouteInventory for BackendRegistry {
+    fn http_endpoint(&self, decision: &RouteDecision) -> Option<String> {
+        if decision.role != foretoken_model_protocol::ModelServerRole::Aggregate {
+            return None;
+        }
+        match self.components.get(&decision.route_target_id)? {
+            Component::Aggregate { endpoint, .. } => Some(endpoint.clone()),
+            _ => None,
+        }
+    }
+
     fn model_routes(&self) -> &ModelRouteTable {
         &self.model_routes
     }
@@ -347,7 +357,7 @@ impl RouteTargetStatsReader for BackendRegistry {
 }
 
 fn requires_runtime_observation(capability: &str) -> bool {
-    matches!(capability, "lora")
+    matches!(capability, "lora" | "video")
 }
 
 async fn metadata(client: &reqwest::Client, endpoint: &str) -> Option<RuntimeMetadataResponse> {

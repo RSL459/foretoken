@@ -247,7 +247,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         |lookup| self.kv_prefix_indexer.prefix_matches(lookup),
                     );
                 tracing::debug!(
-                    request_id = %request.generate_request.request_id,
+                    request_id = %request.request_id(),
                     route_target_id = %candidate.route_target_id.as_str(),
                     data_parallel_rank = candidate.data_parallel_rank,
                     cache_observation = ?observation,
@@ -406,7 +406,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             .lock()
             .expect("routing load lock poisoned");
         for key in &self.selected {
-            reservations.release_prompt_load(key, &self.request.generate_request.request_id);
+            reservations.release_prompt_load(key, self.request.request_id());
         }
     }
 
@@ -420,7 +420,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             .lock()
             .expect("routing load lock poisoned");
         for key in self.selected.drain(..) {
-            reservations.release(&key, &self.request.generate_request.request_id);
+            reservations.release(&key, self.request.request_id());
         }
     }
 
