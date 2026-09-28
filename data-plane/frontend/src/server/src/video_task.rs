@@ -187,7 +187,7 @@ impl VideoTaskClient {
     pub(crate) async fn content(&self, id: &str) -> Result<Bytes, StatusCode> {
         let task = self.get(id).await?;
         if task.status.phase != "Succeeded" {
-            return Err(if task.status.phase == "" {
+            return Err(if task.status.phase.is_empty() {
                 StatusCode::NOT_FOUND
             } else {
                 StatusCode::CONFLICT
