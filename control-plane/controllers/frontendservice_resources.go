@@ -108,6 +108,18 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		mounts = append(mounts, corev1.VolumeMount{Name: "runtime-cache-temporary", MountPath: "/tmp/foretoken-runtime-cache"})
 	}
 
+	serviceAccountName := ""
+	if storage := frontend.Spec.VideoTasks; storage != nil {
+		if storage.ClaimName == "" || storage.MountPath == "" {
+			return nil, nil, nil, fmt.Errorf("videoTasks claimName and mountPath are required")
+		}
+		automountToken = true
+		serviceAccountName = frontend.Name
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_OUTPUT_MOUNT", Value: storage.MountPath})
+		volumes = append(volumes, corev1.Volume{Name: "video-task-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: storage.ClaimName}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "video-task-storage", MountPath: storage.MountPath})
+	}
+
 	deployment := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: appsv1.SchemeGroupVersion.String(), Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels},
@@ -117,6 +129,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					ServiceAccountName:            serviceAccountName,
 					AutomountServiceAccountToken:  &automountToken,
 					EnableServiceLinks:            &enableServiceLinks,
 					ImagePullSecrets:              slices.Clone(profile.ImagePullSecrets),

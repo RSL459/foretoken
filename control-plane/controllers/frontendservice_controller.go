@@ -15,6 +15,7 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -219,6 +220,14 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
 	}
 	objects := []client.Object{service}
+	if frontend.Spec.VideoTasks != nil {
+		labels := map[string]string{frontendServiceLabel: frontend.Name}
+		objects = append(objects,
+			&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels}},
+			&rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{"inference.foretoken.io"}, Resources: []string{"videotasks"}, Verbs: []string{"get", "list", "watch", "create"}}, {APIGroups: []string{"inference.foretoken.io"}, Resources: []string{"videotasks/status"}, Verbs: []string{"get"}}}},
+			&rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: frontend.Name}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: frontend.Name, Namespace: frontend.Namespace}}},
+		)
+	}
 	if applyDeployment {
 		objects = append([]client.Object{deployment}, objects...)
 	}

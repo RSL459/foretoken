@@ -250,6 +250,20 @@ spec:
                 x-kubernetes-validations:
                 - message: timeouts.streamIdle must not exceed timeouts.request
                   rule: duration(self.streamIdle) <= duration(self.request)
+              videoTasks:
+                description: VideoTasks enables asynchronous video task submission
+                  and result access.
+                properties:
+                  claimName:
+                    minLength: 1
+                    type: string
+                  mountPath:
+                    pattern: ^/.*
+                    type: string
+                required:
+                - claimName
+                - mountPath
+                type: object
             required:
             - resources
             - timeouts

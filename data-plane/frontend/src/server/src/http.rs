@@ -39,6 +39,7 @@ pub fn router(
             generation,
             models,
             stream_idle,
+            video_tasks: crate::video_task::VideoTaskClient::from_service_account(),
         })
         .layer(DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
         .layer(middleware::from_fn(foretoken_metrics::track_http_metrics))
