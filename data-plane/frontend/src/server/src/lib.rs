@@ -6,6 +6,9 @@
 mod api;
 mod http;
 mod runtime;
+mod video;
+
+pub use video::VideoRequest;
 
 pub use http::router;
 pub use runtime::{
