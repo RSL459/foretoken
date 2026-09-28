@@ -91,7 +91,7 @@ func (r *VideoTaskReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		return r.finishVideoTask(ctx, task)
 	}
 	if !task.Spec.InputsReady && task.Status.JobUID == "" {
-		deadline := task.CreationTimestamp.Add(time.Duration(task.Status.Plan.RetentionSeconds) * time.Second)
+		deadline := task.CreationTimestamp.Add(time.Duration(task.Status.Plan.TimeoutSeconds) * time.Second)
 		if !time.Now().Before(deadline) {
 			task.Status.Phase, task.Status.Reason, task.Status.Message = "Failed", "UploadIncomplete", "task input files were not finalized before upload timeout"
 			return r.finishVideoTask(ctx, task)
