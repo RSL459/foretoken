@@ -19,6 +19,7 @@ declare_router_algorithms! {
     token_load_scorer => TokenLoadScorer = "token_load",
     prefix_scorer => PrefixScorer = "prefix",
     no_hit_lru_scorer => NoHitLruScorer = "no_hit_lru",
+    load_aware_scorer => LoadAwareScorer = "load_aware",
     kv_cache_utilization_scorer => KvCacheUtilizationScorer = "kv_cache_utilization",
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
     least_loaded_scorer => LeastLoadedScorer = "least_loaded",
