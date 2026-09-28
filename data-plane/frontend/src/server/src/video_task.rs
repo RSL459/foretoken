@@ -357,11 +357,11 @@ impl VideoTaskClient {
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         let patch = method == Method::PATCH;
         let mut request = self.client.request(method, url).bearer_auth(token.trim());
-        if let Some(body) = body {
-            request = request.json(&body);
-        }
         if patch {
             request = request.header("Content-Type", "application/merge-patch+json");
+        }
+        if let Some(body) = body {
+            request = request.json(&body);
         }
         let response = request.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
         if response.status().is_success() {
