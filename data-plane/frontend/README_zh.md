@@ -46,6 +46,31 @@ curl --fail-with-body "$FRONTEND_URL/v1/messages" \
 
 支持图片的模型服务接受 base64 编码的图片 `data:` URL，而非远程图片 URL。
 
+## 异步视频任务
+
+`FrontendService` 可以通过专用 PVC 启用 Kubernetes 管理的视频任务：
+
+```yaml
+spec:
+  videoTasks:
+    claimName: video-results
+    mountPath: /var/lib/foretoken/video-tasks
+```
+
+提交任务时填写 worker 镜像、内部视频 endpoint、专用 PVC 中的输入路径，以及相对于挂载目录的输出路径：
+
+```bash
+curl --fail-with-body "$FRONTEND_URL/v1/videos" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "modelServiceRef":{"name":"h3"},
+    "request":{"task":"fl2va","prompt":"A sailboat at sunrise","width":1024,"height":576,"numFrames":124,"fps":24,"numInferenceSteps":50,"inputFiles":[{"field":"input_reference","path":"inputs/reference.png","contentType":"image/png"}]},
+    "worker":{"image":"foretoken-control-plane:dev","endpoint":"http://h3-group.foretoken-h3.svc:9000","outputClaimName":"video-results","outputPath":"results/task.mp4"}
+  }'
+```
+
+响应包含任务 ID。使用 `/v1/videos/{id}` 查询 `Pending`、`Starting`、`Running`、`Succeeded`、`Failed` 或 `Cancelled`，成功后从 `/v1/videos/{id}/content` 读取结果。worker 将结果写入专用 PVC，该 PVC 与模型 RuntimeCache 分开。
+
 ## 访问与运维
 
 默认通过 Kubernetes LoadBalancer 访问前端。使用域名访问时，参阅[网关模式](../../README_zh.md#网关模式)；TLS 和认证在集群入口配置。

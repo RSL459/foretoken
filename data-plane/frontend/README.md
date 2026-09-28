@@ -46,6 +46,31 @@ When the output budget is exhausted, Messages reports `max_tokens` and Responses
 
 Image-capable model services accept base64 image `data:` URLs rather than remote image URLs.
 
+## Asynchronous video tasks
+
+A FrontendService can enable Kubernetes-backed video tasks by mounting a dedicated PVC:
+
+```yaml
+spec:
+  videoTasks:
+    claimName: video-results
+    mountPath: /var/lib/foretoken/video-tasks
+```
+
+Submit a task with the worker image, internal video endpoint, input paths on the mounted PVC, and an output path relative to that mount:
+
+```bash
+curl --fail-with-body "$FRONTEND_URL/v1/videos" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "modelServiceRef":{"name":"h3"},
+    "request":{"task":"fl2va","prompt":"A sailboat at sunrise","width":1024,"height":576,"numFrames":124,"fps":24,"numInferenceSteps":50,"inputFiles":[{"field":"input_reference","path":"inputs/reference.png","contentType":"image/png"}]},
+    "worker":{"image":"foretoken-control-plane:dev","endpoint":"http://h3-group.foretoken-h3.svc:9000","outputClaimName":"video-results","outputPath":"results/task.mp4"}
+  }'
+```
+
+The response contains a task ID. Query `/v1/videos/{id}` for `Pending`, `Starting`, `Running`, `Succeeded`, `Failed`, or `Cancelled`, and read `/v1/videos/{id}/content` after success. The worker writes the artifact to the dedicated PVC; it is separate from the model RuntimeCache.
+
 ## Access and operations
 
 The default endpoint uses a Kubernetes LoadBalancer. For hostname-based access, see [Gateway mode](../../README.md#gateway-mode). Configure TLS and authentication at the cluster's ingress.
