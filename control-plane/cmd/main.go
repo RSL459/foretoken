@@ -302,6 +302,10 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ProfileRun controller")
 		os.Exit(1)
 	}
+	if err := (&controllers.VideoTaskReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+		ctrl.Log.Error(err, "unable to register VideoTask controller")
+		os.Exit(1)
+	}
 	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register RuntimeCache controller")
 		os.Exit(1)
