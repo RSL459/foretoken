@@ -15,7 +15,7 @@ use crate::runtime::GenerationError;
 
 /// Stages a request until its model is known, then transfers the file to backend dispatch.
 pub(super) async fn generate(State(state): State<ApiState>, request: Request) -> Response {
-    let (mut parts, incoming) = request.into_parts();
+    let (parts, incoming) = request.into_parts();
     let headers = parts.headers.clone();
     // An anonymous file preserves the multipart bytes regardless of field order. Its handles
     // own cleanup on parse failure, cancellation, and completion, without a persistent file name.
@@ -42,11 +42,11 @@ pub(super) async fn generate(State(state): State<ApiState>, request: Request) ->
             .await
             .map_err(|_| GenerationError::Internal)?;
         // Video media is disk-backed; the JSON endpoint body limit does not apply here.
-        parts.extensions.insert(DefaultBodyLimit::disable());
-        let parse_request = axum::http::Request::from_parts(
+        let mut parse_request = axum::http::Request::from_parts(
             parts,
             axum::body::Body::from_stream(ReaderStream::new(parse_file)),
         );
+        DefaultBodyLimit::disable().apply(&mut parse_request);
         let mut multipart = Multipart::from_request(parse_request, &())
             .await
             .map_err(|_| GenerationError::InvalidRequest)?;
