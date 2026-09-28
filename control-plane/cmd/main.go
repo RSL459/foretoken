@@ -50,6 +50,7 @@ func main() {
 	var frontendGatewayNamespace string
 	var frontendGatewaySectionName string
 	var inferenceEngineImage string
+	var omniInferenceEngineImage string
 	var nsightImage string
 	var modelServerPort int
 	var gpuResourceName string
@@ -119,6 +120,7 @@ func main() {
 	flag.StringVar(&dragonflySocketPath, "model-distribution-dragonfly-socket", "", "Node-local Dragonfly download socket used by model preparation.")
 	flag.BoolVar(&modelExpress, "model-distribution-modelexpress", false, "Use ModelExpress weight sources for compatible inference workloads.")
 	flag.StringVar(&inferenceEngineImage, "inference-engine-image", "", "Inference engine image containing the Foretoken model-server adapter.")
+	flag.StringVar(&omniInferenceEngineImage, "omni-inference-engine-image", "", "Optional vLLM-Omni image containing the Foretoken Omni adapter.")
 	flag.StringVar(&nsightImage, "nsight-image", "", "Optional NVIDIA model-server image prepared for Nsight Systems.")
 	flag.IntVar(&modelServerPort, "model-server-port", 9000, "Internal model-server HTTP port.")
 	flag.StringVar(&gpuResourceName, "gpu-resource-name", "nvidia.com/gpu", "Kubernetes extended resource used for accelerator devices.")
@@ -370,6 +372,7 @@ func main() {
 		Client: manager.GetClient(),
 		TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{
 			Image:              inferenceEngineImage,
+			OmniImage:          omniInferenceEngineImage,
 			NsightImage:        nsightImage,
 			ModelExpress:       modelExpress,
 			ModelServerPort:    int32(modelServerPort),

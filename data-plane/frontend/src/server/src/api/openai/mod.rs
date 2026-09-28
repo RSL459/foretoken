@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 mod output;
+mod video;
 
 use self::output::{
     CompletionResponseOptions, chat_collected, chat_stream_with_options, text_collected_many,
@@ -45,6 +46,7 @@ pub(super) fn router() -> Router<ApiState> {
         .route("/v1/generate", post(completions))
         .route("/v1/completions", post(completions))
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/videos/sync", post(video::generate))
 }
 
 fn model_card(id: String) -> Value {
@@ -604,10 +606,16 @@ fn completion_sampling(request: &CompletionRequest) -> SamplingParams {
         top_p: request.top_p,
         top_k: request.top_k,
         seed: request.seed,
-        max_tokens: request.max_tokens,
+        max_tokens: if request.echo && request.max_tokens == Some(0) {
+            Some(1)
+        } else {
+            request.max_tokens
+        },
         min_tokens: request.min_tokens,
         logprobs: request.logprobs,
-        prompt_logprobs: request.prompt_logprobs,
+        prompt_logprobs: request
+            .prompt_logprobs
+            .or(request.logprobs.filter(|_| request.echo)),
         min_p: request.min_p,
         frequency_penalty: request.frequency_penalty,
         presence_penalty: request.presence_penalty,
@@ -747,30 +755,20 @@ async fn completions(
             }
         }
     }
+    let options = CompletionResponseOptions {
+        n: request.n as usize,
+        candidates_per_prompt: best_of as usize,
+        echo: request.echo,
+        echo_without_generation: request.echo && request.max_tokens == Some(0),
+        expose_logprobs: public_logprobs,
+        return_token_ids: request.return_token_ids,
+        return_tokens_as_token_ids: request.return_tokens_as_token_ids,
+        return_prompt_token_ids: request.return_prompt_token_ids,
+    };
     if stream {
-        text_stream_many(
-            generated,
-            state.stream_idle,
-            include_usage,
-            request.return_token_ids,
-            request.return_tokens_as_token_ids,
-            request.return_prompt_token_ids,
-        )
+        text_stream_many(generated, state.stream_idle, include_usage, options)
     } else {
-        text_collected_many(
-            generated,
-            state.stream_idle,
-            CompletionResponseOptions {
-                n: request.n as usize,
-                candidates_per_prompt: best_of as usize,
-                echo: request.echo,
-                expose_logprobs: public_logprobs,
-                return_token_ids: request.return_token_ids,
-                return_tokens_as_token_ids: request.return_tokens_as_token_ids,
-                return_prompt_token_ids: request.return_prompt_token_ids,
-            },
-        )
-        .await
+        text_collected_many(generated, state.stream_idle, options).await
     }
 }
 

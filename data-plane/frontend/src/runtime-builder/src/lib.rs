@@ -12,7 +12,9 @@ use foretoken_backend_registry::{
 };
 use foretoken_kv_indexer::{KvIndexDegradedReason, KvIndexer};
 use foretoken_llm_facade::LlmFacadeResolver;
-use foretoken_router::{PipelineRouter, Router, RouterPipelineConfig};
+use foretoken_router::{
+    PipelineRouter, Router, RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError,
+};
 use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
     RuntimeState,
@@ -28,7 +30,7 @@ pub enum KvIndexCredential {
 }
 
 pub struct RuntimeBuilder {
-    router_pipeline: RouterPipelineConfig,
+    router_pipeline: Result<Arc<RouterPipeline>, RouterPipelineConfigError>,
     kv_credential: KvIndexCredential,
     routing_load: foretoken_router::RoutingLoadState,
 }
@@ -40,7 +42,7 @@ impl RuntimeBuilder {
     /// pipeline and KV credential for its lifetime.
     pub fn new(router_pipeline: RouterPipelineConfig, kv_credential: KvIndexCredential) -> Self {
         Self {
-            router_pipeline,
+            router_pipeline: router_pipeline.build().map(Arc::new),
             kv_credential,
             routing_load: Default::default(),
         }
@@ -96,15 +98,24 @@ impl RuntimeBuilder {
         if has_physical_backends && !registry.is_ready() {
             return Err(RuntimeBuildError::BackendUnavailable);
         }
+        let healthy_models = registry
+            .healthy_models()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let video_models = identities
+            .iter()
+            .filter(|(model, identity)| {
+                healthy_models.contains(*model) && identity.capabilities.contains("video")
+            })
+            .map(|(model, _)| model.clone())
+            .collect::<BTreeSet<_>>();
         let models = if has_physical_backends {
-            let healthy_models = registry
-                .healthy_models()
-                .into_iter()
-                .collect::<BTreeSet<_>>();
             model_runtimes(
                 identities
                     .into_iter()
-                    .filter(|(model, _)| healthy_models.contains(model))
+                    .filter(|(model, _)| {
+                        healthy_models.contains(model) && !video_models.contains(model)
+                    })
                     .collect(),
                 &registry,
             )
@@ -120,7 +131,11 @@ impl RuntimeBuilder {
                 .healthy_models()
                 .into_iter()
                 .collect::<BTreeSet<_>>();
-            if !models.keys().all(|model| healthy_models.contains(model)) {
+            if !models
+                .keys()
+                .chain(video_models.iter())
+                .all(|model| healthy_models.contains(model))
+            {
                 return Err(RuntimeBuildError::BackendBecameUnavailable);
             }
         }
@@ -128,15 +143,24 @@ impl RuntimeBuilder {
             PipelineRouter::with_pipeline(
                 registry.clone(),
                 self.router_pipeline
-                    .build()
-                    .map_err(|error| RuntimeBuildError::RouterPipeline(error.to_string()))?,
+                    .as_ref()
+                    .map_err(|error| RuntimeBuildError::RouterPipeline(error.to_string()))?
+                    .clone(),
             )
             .with_load_state(self.routing_load.clone())
             .with_kv_prefix_indexer(kv_indexer)
             .with_route_target_stats_reader(registry.clone()),
         );
+        let video_inventory: Arc<dyn foretoken_router::RouteInventory> = registry.clone();
         let resolver: Arc<dyn LlmFacadeResolver> = registry;
         let mut state = RuntimeState::new(models, router, resolver);
+        if !video_models.is_empty() {
+            let client = reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))?;
+            state = state.with_video_models(video_models, video_inventory, client);
+        }
         for (model, candidates) in admission_targets {
             state = state.with_admission_targets(model, candidates);
         }

@@ -193,7 +193,7 @@ type ModelGroupRuntime struct {
 	// +kubebuilder:validation:Maximum=1
 	PreparationVersion int32 `json:"preparationVersion,omitempty"`
 
-	// +kubebuilder:validation:Enum=vllm
+	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 
 	// +kubebuilder:validation:MinLength=1
