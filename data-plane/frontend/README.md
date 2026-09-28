@@ -5,50 +5,85 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Foretoken Frontend
 
-The frontend serves OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages at one address. Requests select a configured model through the `model` field.
+English | [简体中文](README_zh.md)
 
-## Send a request
+The frontend provides one entry point for deployed text and video models. Text requests return a complete response or stream output as it is generated. Video requests can save the generated video directly to a file.
 
-Deploy the repository [Quick Start](../../README.md#quick-start), which includes a Chat Completions example. From the repository root, use the same deployment for Responses or Messages:
+## Connect to a service
+
+From the repository root, resolve the deployment's address and request hostname. The text examples use the [Quick Start](../../README.md#quick-start) deployment:
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-
-# OpenAI Responses
-curl --fail-with-body "$FRONTEND_URL/v1/responses" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"Qwen/Qwen3-0.6B","input":"Hello","max_output_tokens":512,"store":false}'
-
-# Anthropic Messages
-curl --fail-with-body "$FRONTEND_URL/v1/messages" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"max_tokens":512}'
+DEPLOYMENT=examples/quickstart
+FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
+REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
 ```
 
-These requests return JSON. Add `"stream": true` to receive incremental server-sent events (SSE), and use `curl --no-buffer` to display them as they arrive.
+The requests below include a `Host` header and work with either LoadBalancer or [Gateway](../../README.md#gateway-mode) access. Configure TLS and authentication at the cluster ingress.
 
-## Choose an API
+## Generate text
 
-| API | POST path | Conversation input |
+Select the model through `model`. This request uses the Quick Start's `Qwen/Qwen3-0.6B`:
+
+```bash
+curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen3-0.6B",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 512
+  }'
+```
+
+The default response is JSON. Add `"stream": true` to the request and `--no-buffer` to `curl` to receive output as it is generated.
+
+### Choose an API
+
+| API | Path | Request input |
 | --- | --- | --- |
-| OpenAI Chat Completions | `/v1/chat/completions` | `messages` |
-| OpenAI Responses | `/v1/responses` | `input`; set `store: false` and send the conversation history on each turn |
-| Anthropic Messages | `/v1/messages` | `messages` and a required `max_tokens` output budget |
-| Anthropic token counting | `/v1/messages/count_tokens` | `messages`, with the same system prompt and tools as generation |
+| OpenAI Chat Completions | `POST /v1/chat/completions` | `model`, `messages` |
+| OpenAI Responses | `POST /v1/responses` | `model`, `input`; set `store: false` and send the conversation history on each turn |
+| Anthropic Messages | `POST /v1/messages` | `model`, `messages`, and a required `max_tokens` budget |
+| Anthropic token counting | `POST /v1/messages/count_tokens` | The same model, messages, system prompt, and tools used for generation |
+| Text completions | `POST /v1/completions` | `model`, `prompt` |
 
-`GET /v1/models` lists the configured model identifiers. Text completions use `POST /v1/completions`; `/tokenize` and `/detokenize` convert between text and token IDs.
+`GET /v1/models` lists model identifiers. `/tokenize` and `/detokenize` convert between text and token IDs.
 
-Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and unconstrained custom-text tools. Server-hosted tools and background responses are unsupported.
+Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and unconstrained custom-text tools. It does not support server-hosted tools or the Responses background mode. Forced tool choice and strict tool schemas require structured-output support in the model service.
 
-Forced tool choice and strict tool schemas require structured-output support in the model service. Thinking controls depend on the model's chat template. Output budgets include reasoning tokens; Messages uses `max_tokens` for the total budget and does not accept a separate `thinking.budget_tokens` allowance.
+Thinking controls depend on the model's chat template. Output budgets include reasoning tokens; Messages uses `max_tokens` and does not accept a separate `thinking.budget_tokens`. When the budget is exhausted, Messages reports `max_tokens` and Responses reports `incomplete`. Tool calls may be unfinished; execute only complete calls.
 
-When the output budget is exhausted, Messages reports `max_tokens` and Responses reports `incomplete`. Execute only complete tool calls; interrupted calls may be omitted or contain partial arguments.
+Image-capable text models accept base64 image `data:` URLs rather than remote image URLs.
 
-Image-capable model services accept base64 image `data:` URLs rather than remote image URLs.
+## Generate video
 
-## Asynchronous video tasks
+After deploying the [MiniMax H3 recipe](../../examples/recipes/minimax-h3/a100-bf16-tp2/README.md), send a local reference image and save the generated video as an MP4 file in one request.
 
-To keep generation running after a client disconnects, enable video tasks on the FrontendService. Choose a dedicated PVC in the same namespace that can be mounted by its frontend replicas and task workers. For replicas on different nodes, use shared ReadWriteMany storage. This storage is separate from the model cache.
+Set `REFERENCE_IMAGE` to an existing PNG on the client machine, then run from the repository root:
+
+```bash
+DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
+REFERENCE_IMAGE=/path/to/reference.png
+FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
+REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
+curl --fail --max-time 4000 \
+  "$FRONTEND_URL/v1/videos/sync" \
+  -H "Host: $REQUEST_HOST" \
+  -F model=MiniMaxAI/MiniMax-H3 \
+  -F 'prompt=A sailboat crossing a calm bay at sunrise' \
+  -F "input_reference=@${REFERENCE_IMAGE};type=image/png" \
+  -F width=1024 -F height=576 -F num_frames=124 -F fps=24 \
+  -F num_inference_steps=50 -F aspect_ratio=16:9 -F flow_shift=12 -F seed=1 \
+  -F 'extra_params={"task":"fl2va","audio_flow_shift":3}' \
+  --output video.mp4
+```
+
+When the command succeeds, `video.mp4` is in the current directory. Keep the connection open during generation; there is no task ID to poll. The request, including reference files, is limited to 48 MiB. For video-conditioned generation, see the H3 recipe.
+
+### Submit now and retrieve later
+
+Use `/v1/videos` when the client needs to disconnect after submission. This stores the task and its result on the service. Enable it in the deployment's `frontend.yaml`:
 
 ```yaml
 spec:
@@ -57,46 +92,54 @@ spec:
     retentionSeconds: 86400
 ```
 
-Reapply the deployment with `foretoken deploy`. Place reference files in the volume's `inputs/` directory, then submit a request naming the ModelService. Generation currently uses the synchronous video transport's 48 MiB multipart request limit, including reference files. For example, for the H3 recipe and `inputs/reference.png`:
+`video-results` must be an existing persistent volume claim (PVC) in the same namespace, separate from the model cache. Frontend replicas and task workers need access to it; use shared ReadWriteMany storage across nodes. Place the reference image at `inputs/reference.png` in this volume, then apply the configuration:
 
 ```bash
-RECIPE=examples/recipes/minimax-h3/a100-bf16-tp2
-FRONTEND_URL="$(foretoken endpoint "$RECIPE")"
-REQUEST_HOST="$(foretoken endpoint "$RECIPE" --host)"
+foretoken deploy "$DEPLOYMENT" --timeout 1h
+```
+
+Input paths are relative to the volume root, not the client machine. Submit with the ModelService name `h3`, rather than the model repository ID:
+
+```bash
 curl --fail-with-body "$FRONTEND_URL/v1/videos" \
   -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{
-    "modelServiceRef":{"name":"h3"},
-    "request":{"task":"fl2va","prompt":"A sailboat at sunrise","width":1024,"height":576,"numFrames":124,"fps":24,"numInferenceSteps":50,"inputFiles":[{"field":"input_reference","path":"inputs/reference.png","contentType":"image/png"}]}
+    "modelServiceRef": {"name": "h3"},
+    "request": {
+      "task": "fl2va",
+      "prompt": "A sailboat crossing a calm bay at sunrise",
+      "width": 1024, "height": 576,
+      "numFrames": 124, "fps": 24, "numInferenceSteps": 50,
+      "inputFiles": [{
+        "field": "input_reference",
+        "path": "inputs/reference.png",
+        "contentType": "image/png"
+      }]
+    }
   }'
 ```
 
-A successful submission returns `202` with an `id`, `status_url`, and `content_url`. Copy that ID into `TASK_ID`:
+A successful submission returns HTTP `202` with `id`, `status_url`, and `content_url`. Use the same frontend address for subsequent calls, replacing `{id}` with the returned task ID:
 
-```bash
-TASK_ID=video-UUID-from-response
-curl --fail-with-body -H "Host: $REQUEST_HOST" "$FRONTEND_URL/v1/videos/$TASK_ID"
-# Once phase is Succeeded:
-curl --fail-with-body -H "Host: $REQUEST_HOST" \
-  "$FRONTEND_URL/v1/videos/$TASK_ID/content" --output video.mp4
-```
+| Action | Endpoint | When to use it |
+| --- | --- | --- |
+| Check status | `GET /v1/videos/{id}` | `Pending`, `Starting`, and `Running` mean work is not complete; for `Failed`, read `reason` and `message` |
+| Save the video | `GET /v1/videos/{id}/content` | After `phase` becomes `Succeeded`, save the response with `curl --output video.mp4` |
+| Cancel | `POST /v1/videos/{id}/cancel` | After HTTP `202`, continue checking until a terminal state; backend computation may still be finishing |
+| Delete | `DELETE /v1/videos/{id}` | After HTTP `202`, the service removes the task and its files |
 
-Task phases are `Pending`, `Starting`, `Running`, `Succeeded`, `Failed`, and `Cancelled`. State and results are shared across replicas of the same FrontendService. Input copies and generated results expire after the configured retention interval; original files in `inputs/` remain available. Interrupted execution is reported as failed rather than automatically generating a second video.
+The configuration above retains results for one day after a task ends, then removes them automatically. Original reference files in `inputs/` are retained. This mode uses the same 48 MiB generation request limit.
 
-Use `POST /v1/videos/{id}/cancel` to stop waiting for an active generation, or `DELETE /v1/videos/{id}` to remove the task and its stored files. Cancellation terminates the worker request; backend computation may continue until the engine observes disconnection. Access to tasks is scoped to the FrontendService, with authentication managed at the cluster ingress.
-
-## Access and operations
-
-The default endpoint uses a Kubernetes LoadBalancer. For hostname-based access, see [Gateway mode](../../README.md#gateway-mode). Configure TLS and authentication at the cluster's ingress.
+## Operations
 
 | Endpoint | Purpose |
 | --- | --- |
 | `/healthz` | Frontend process liveness |
-| `/readyz` | Frontend readiness to accept requests |
-| `/statusz` | Serving and cache-index diagnostics |
+| `/readyz` | Readiness to accept generation requests |
+| `/statusz` | Serving and cache-index status |
 | `/metrics` | Prometheus metrics |
 
-Access to operator endpoints follows the cluster's network policy; Gateway mode exposes the client paths `/v1`, `/tokenize`, and `/detokenize`.
+Access to operator endpoints follows the cluster's network policy. Gateway exposes the client paths `/v1`, `/tokenize`, and `/detokenize`.
 
-After changing a service configuration, reapply it with `foretoken deploy`. Use `foretoken status` to inspect it and `foretoken delete` to remove it, passing the same configuration directory to each command.
+Use `foretoken status` to inspect a deployment and `foretoken delete` to remove it, passing its configuration directory to either command.
