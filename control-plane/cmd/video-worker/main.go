@@ -5,115 +5,214 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"syscall"
+	"time"
+
+	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
-type inputFile struct {
-	Field       string `json:"field"`
-	Path        string `json:"path"`
-	ContentType string `json:"contentType"`
-}
-
-type videoRequest struct {
-	Task              string      `json:"task"`
-	Prompt            string      `json:"prompt"`
-	Width             int32       `json:"width"`
-	Height            int32       `json:"height"`
-	NumFrames         int32       `json:"numFrames"`
-	FPS               int32       `json:"fps"`
-	NumInferenceSteps int32       `json:"numInferenceSteps"`
-	AspectRatio       string      `json:"aspectRatio,omitempty"`
-	FlowShift         *float64    `json:"flowShift,omitempty"`
-	AudioFlowShift    *float64    `json:"audioFlowShift,omitempty"`
-	Seed              *int64      `json:"seed,omitempty"`
-	FrameIndices      []int32     `json:"frameIndices,omitempty"`
-	InputFiles        []inputFile `json:"inputFiles,omitempty"`
-}
-
 func main() {
-	request, err := decodeRequest(os.Getenv("FORETOKEN_VIDEO_REQUEST_JSON"))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	var err error
+	if len(os.Args) == 2 && os.Args[1] == "--cleanup" {
+		err = cleanup()
+	} else if len(os.Args) != 1 {
+		err = fmt.Errorf("usage: video-worker [--cleanup]")
+	} else {
+		err = run(ctx)
+	}
 	if err != nil {
-		fatal(err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// run owns the request, mounted files, and output publication for one worker Job.
+func run(ctx context.Context) error {
+	var request api.VideoRequest
+	if value := os.Getenv("FORETOKEN_VIDEO_REQUEST_JSON"); value == "" {
+		return fmt.Errorf("FORETOKEN_VIDEO_REQUEST_JSON is required")
+	} else if err := json.Unmarshal([]byte(value), &request); err != nil {
+		return fmt.Errorf("decode video request: %w", err)
 	}
 	endpoint := os.Getenv("FORETOKEN_VIDEO_ENDPOINT")
 	model := os.Getenv("FORETOKEN_VIDEO_MODEL")
 	outputPath := os.Getenv("FORETOKEN_VIDEO_OUTPUT_PATH")
 	outputMount := os.Getenv("FORETOKEN_VIDEO_OUTPUT_MOUNT")
 	if endpoint == "" || model == "" || outputPath == "" || outputMount == "" {
-		fatal(fmt.Errorf("FORETOKEN_VIDEO_ENDPOINT, FORETOKEN_VIDEO_MODEL, FORETOKEN_VIDEO_OUTPUT_PATH and FORETOKEN_VIDEO_OUTPUT_MOUNT are required"))
+		return fmt.Errorf("FORETOKEN_VIDEO_ENDPOINT, FORETOKEN_VIDEO_MODEL, FORETOKEN_VIDEO_OUTPUT_PATH and FORETOKEN_VIDEO_OUTPUT_MOUNT are required")
 	}
-	if filepath.IsAbs(outputPath) || filepath.Clean(outputPath) == "." || filepath.Clean(outputPath) == ".." {
-		fatal(fmt.Errorf("FORETOKEN_VIDEO_OUTPUT_PATH must be a relative path"))
+	if !filepath.IsLocal(outputPath) {
+		return fmt.Errorf("FORETOKEN_VIDEO_OUTPUT_PATH must be local to the output mount")
 	}
-	outputPath = filepath.Join(outputMount, outputPath)
-
-	reader, writer := io.Pipe()
-	multipartWriter := multipart.NewWriter(writer)
-	errCh := make(chan error, 1)
-	for index := range request.InputFiles {
-		if !filepath.IsAbs(request.InputFiles[index].Path) {
-			request.InputFiles[index].Path = filepath.Join(outputMount, request.InputFiles[index].Path)
+	for _, input := range request.InputFiles {
+		if !filepath.IsLocal(input.Path) {
+			return fmt.Errorf("input path %q must be local to the output mount", input.Path)
 		}
 	}
-	go func() {
-		errCh <- writeMultipart(multipartWriter, request, model)
-	}()
+	if seconds := os.Getenv("FORETOKEN_VIDEO_TIMEOUT_SECONDS"); seconds != "" {
+		timeout, err := time.ParseDuration(seconds + "s")
+		if err != nil || timeout <= 0 {
+			return fmt.Errorf("FORETOKEN_VIDEO_TIMEOUT_SECONDS must be a positive number of seconds")
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 
-	httpRequest, err := http.NewRequest(http.MethodPost, endpoint+"/v1/videos/sync", reader)
+	root, err := os.OpenRoot(outputMount)
 	if err != nil {
-		fatal(err)
+		return fmt.Errorf("open output mount: %w", err)
+	}
+	defer root.Close()
+
+	// Kubernetes may replace a lost Job Pod before its predecessor is known to have stopped.
+	// Claim this task once on durable storage; an uncertain attempt is never retried automatically.
+	parentPath := filepath.Dir(outputPath)
+	if err := root.MkdirAll(parentPath, 0o750); err != nil {
+		return err
+	}
+	claim, err := root.OpenFile(filepath.Join(parentPath, "execution.started"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
+	if err != nil {
+		return fmt.Errorf("claim video execution: %w", err)
+	}
+	if err := errors.Join(claim.Sync(), claim.Close()); err != nil {
+		return err
+	}
+	directory, err := root.Open(parentPath)
+	if err != nil {
+		return err
+	}
+	if err := errors.Join(directory.Sync(), directory.Close()); err != nil {
+		return err
+	}
+
+	reader, pipeWriter := io.Pipe()
+	multipartWriter := multipart.NewWriter(pipeWriter)
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/videos/sync", reader)
+	if err != nil {
+		reader.Close()
+		pipeWriter.Close()
+		return err
 	}
 	httpRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	writeResult := make(chan error, 1)
+	go func() {
+		writeErr := writeMultipart(multipartWriter, root, request, model)
+		writeErr = errors.Join(writeErr, multipartWriter.Close())
+		pipeWriter.CloseWithError(writeErr)
+		writeResult <- writeErr
+	}()
+	// A cancelled request must unblock a writer waiting on io.Pipe even if the backend stops reading.
+	stopPipe := context.AfterFunc(ctx, func() { reader.CloseWithError(ctx.Err()) })
+	defer stopPipe()
+	defer reader.Close()
+
 	response, err := (&http.Client{}).Do(httpRequest)
 	if err != nil {
-		fatal(err)
+		reader.CloseWithError(err)
+		if writeErr := <-writeResult; writeErr != nil && ctx.Err() == nil {
+			return fmt.Errorf("write video request: %w", writeErr)
+		}
+		return fmt.Errorf("request video: %w", err)
 	}
 	defer response.Body.Close()
-	if err := <-errCh; err != nil {
-		fatal(err)
-	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		fatal(fmt.Errorf("video backend returned %s: %s", response.Status, string(body)))
+		reader.CloseWithError(fmt.Errorf("video backend returned %s", response.Status))
+		<-writeResult
+		return fmt.Errorf("video backend returned %s", response.Status)
 	}
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
-		fatal(err)
+	// An early success response must not keep the pipe writer blocked indefinitely.
+	select {
+	case writeErr := <-writeResult:
+		if writeErr != nil {
+			return fmt.Errorf("write video request: %w", writeErr)
+		}
+	default:
+		reader.CloseWithError(fmt.Errorf("backend replied before consuming the request"))
+		if writeErr := <-writeResult; writeErr != nil {
+			return fmt.Errorf("write video request: %w", writeErr)
+		}
 	}
-	output, err := os.OpenFile(outputPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
+	return publishResult(ctx, root, outputPath, response.Body)
+}
+
+// cleanup removes only the controller-owned task directory from the shared output mount.
+func cleanup() error {
+	id := os.Getenv("FORETOKEN_VIDEO_TASK_ID")
+	mount := os.Getenv("FORETOKEN_VIDEO_OUTPUT_MOUNT")
+	if !filepath.IsLocal(id) || filepath.Base(id) != id || mount == "" {
+		return fmt.Errorf("FORETOKEN_VIDEO_TASK_ID must be one local path component and FORETOKEN_VIDEO_OUTPUT_MOUNT is required")
+	}
+	root, err := os.OpenRoot(mount)
 	if err != nil {
-		fatal(err)
+		return err
 	}
-	_, copyErr := io.Copy(output, response.Body)
+	defer root.Close()
+	return root.RemoveAll(filepath.Join("tasks", id))
+}
+
+// publishResult syncs a private file before atomically exposing the completed artifact.
+func publishResult(ctx context.Context, root *os.Root, outputPath string, body io.Reader) error {
+	parentPath := filepath.Dir(outputPath)
+	if err := root.MkdirAll(parentPath, 0o750); err != nil {
+		return err
+	}
+	parent, err := root.OpenRoot(parentPath)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+
+	var suffix [16]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return err
+	}
+	temporary := fmt.Sprintf(".video-%x.tmp", suffix)
+	output, err := parent.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o640)
+	if err != nil {
+		return err
+	}
+	defer parent.Remove(temporary)
+	written, copyErr := io.Copy(output, body)
+	if copyErr == nil && written == 0 {
+		copyErr = fmt.Errorf("video backend returned an empty result")
+	}
+	var syncErr error
+	if copyErr == nil {
+		syncErr = output.Sync()
+	}
 	closeErr := output.Close()
-	if copyErr != nil {
-		fatal(copyErr)
+	if err := errors.Join(copyErr, syncErr, closeErr, ctx.Err()); err != nil {
+		return fmt.Errorf("write video result: %w", err)
 	}
-	if closeErr != nil {
-		fatal(closeErr)
+	if err := parent.Rename(temporary, filepath.Base(outputPath)); err != nil {
+		return fmt.Errorf("publish video result: %w", err)
 	}
+	// The directory entry must also reach storage before a successful Job publishes its artifact.
+	directory, err := parent.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(directory.Sync(), directory.Close())
 }
 
-func decodeRequest(value string) (videoRequest, error) {
-	if value == "" {
-		return videoRequest{}, fmt.Errorf("FORETOKEN_VIDEO_REQUEST_JSON is required")
-	}
-	var request videoRequest
-	if err := json.Unmarshal([]byte(value), &request); err != nil {
-		return videoRequest{}, fmt.Errorf("decode video request: %w", err)
-	}
-	return request, nil
-}
-
-func writeMultipart(writer *multipart.Writer, request videoRequest, model string) error {
-	defer writer.Close()
+// writeMultipart maps the backend-neutral VideoRequest onto the synchronous video endpoint.
+func writeMultipart(writer *multipart.Writer, root *os.Root, request api.VideoRequest, model string) error {
 	extraParams := map[string]any{"task": request.Task}
 	if request.AudioFlowShift != nil {
 		extraParams["audio_flow_shift"] = *request.AudioFlowShift
@@ -150,7 +249,7 @@ func writeMultipart(writer *multipart.Writer, request videoRequest, model string
 		}
 	}
 	for _, input := range request.InputFiles {
-		file, err := os.Open(input.Path)
+		file, err := root.Open(input.Path)
 		if err != nil {
 			return fmt.Errorf("open %s: %w", input.Path, err)
 		}
@@ -164,17 +263,9 @@ func writeMultipart(writer *multipart.Writer, request videoRequest, model string
 			_, err = io.Copy(part, file)
 		}
 		closeErr := file.Close()
-		if err != nil {
+		if err := errors.Join(err, closeErr); err != nil {
 			return err
-		}
-		if closeErr != nil {
-			return closeErr
 		}
 	}
 	return nil
-}
-
-func fatal(err error) {
-	fmt.Fprintln(os.Stderr, err)
-	os.Exit(1)
 }

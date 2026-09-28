@@ -110,14 +110,20 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 
 	serviceAccountName := ""
 	if storage := frontend.Spec.VideoTasks; storage != nil {
-		if storage.ClaimName == "" || storage.MountPath == "" {
-			return nil, nil, nil, fmt.Errorf("videoTasks claimName and mountPath are required")
+		if storage.ClaimName == "" || storage.RetentionSeconds <= 0 || profile.WorkerImage == "" {
+			return nil, nil, nil, fmt.Errorf("videoTasks requires a claimName, positive retentionSeconds and platform worker image")
 		}
 		automountToken = true
 		serviceAccountName = frontend.Name
-		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_OUTPUT_MOUNT", Value: storage.MountPath})
+		frontendEnv = append(frontendEnv,
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_OUTPUT_MOUNT", Value: videoTaskOutputMount},
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_WORKER_IMAGE", Value: profile.WorkerImage},
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_ENDPOINT", Value: fmt.Sprintf("http://%s.%s.svc:%d", frontend.Name, frontend.Namespace, profile.Port)},
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_OUTPUT_CLAIM", Value: storage.ClaimName},
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_FRONTEND_UID", Value: string(frontend.UID)},
+		)
 		volumes = append(volumes, corev1.Volume{Name: "video-task-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: storage.ClaimName}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: "video-task-storage", MountPath: storage.MountPath})
+		mounts = append(mounts, corev1.VolumeMount{Name: "video-task-storage", MountPath: videoTaskOutputMount})
 	}
 
 	deployment := &appsv1.Deployment{

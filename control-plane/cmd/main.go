@@ -45,6 +45,7 @@ func main() {
 	var frontendEnabled bool
 	var frontendMode string
 	var frontendImage string
+	var videoWorkerImage string
 	var frontendPort int
 	var frontendGatewayName string
 	var frontendGatewayNamespace string
@@ -99,6 +100,7 @@ func main() {
 	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload reconciliation.")
 	flag.StringVar(&frontendMode, "frontend-mode", frontendModeLocal, "Frontend access mode: local or gateway.")
 	flag.StringVar(&frontendImage, "frontend-image", "", "Frontend runtime image.")
+	flag.StringVar(&videoWorkerImage, "video-worker-image", "", "Platform image containing the video-worker executable.")
 	flag.IntVar(&frontendPort, "frontend-port", 8080, "Frontend runtime HTTP port.")
 	flag.StringVar(&frontendGatewayName, "frontend-gateway-name", "", "Platform Gateway name used by frontend HTTPRoutes.")
 	flag.StringVar(&frontendGatewayNamespace, "frontend-gateway-namespace", "", "Platform Gateway namespace; defaults to the FrontendService namespace.")
@@ -302,7 +304,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ProfileRun controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.VideoTaskReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.VideoTaskReconciler{Client: manager.GetClient(), WorkerImage: videoWorkerImage, FrontendPort: int32(frontendPort), ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register VideoTask controller")
 		os.Exit(1)
 	}
@@ -326,6 +328,7 @@ func main() {
 			Alerts:       serviceAlerts,
 			RuntimeProfile: controllers.FrontendRuntimeProfile{
 				Image:             frontendImage,
+				WorkerImage:       videoWorkerImage,
 				Port:              int32(frontendPort),
 				ImagePullSecrets:  workloadImagePullSecrets,
 				HuggingFaceAccess: huggingFaceAccessProfile.Access(),

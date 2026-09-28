@@ -96,8 +96,10 @@ rules:
       - get
       - list
       - watch
+      - create
       - update
       - patch
+      - delete
   - apiGroups:
       - batch
     resources:
@@ -115,6 +117,29 @@ rules:
     verbs:
       - get
   {{- if .Values.frontend.enabled }}
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - delete
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - roles
+      - rolebindings
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - delete
   - apiGroups:
       - inference.foretoken.io
     resources:

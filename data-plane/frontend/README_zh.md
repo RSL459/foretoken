@@ -48,28 +48,44 @@ curl --fail-with-body "$FRONTEND_URL/v1/messages" \
 
 ## 异步视频任务
 
-`FrontendService` 可以通过专用 PVC 启用 Kubernetes 管理的视频任务：
+在 FrontendService 上启用视频任务，可以在客户端断开后继续生成。选择同一命名空间内、前端副本与任务执行进程都能挂载的专用 PVC；跨节点部署时使用 ReadWriteMany 共享存储，与模型缓存分开。
 
 ```yaml
 spec:
   videoTasks:
     claimName: video-results
-    mountPath: /var/lib/foretoken/video-tasks
+    retentionSeconds: 86400
 ```
 
-提交任务时填写 worker 镜像、内部视频 endpoint、专用 PVC 中的输入路径，以及相对于挂载目录的输出路径：
+通过 `foretoken deploy` 重新应用配置。将参考文件放到卷的 `inputs/` 目录，提交时指定 ModelService 名称。生成目前沿用同步视频传输的 48 MiB multipart 请求上限，参考文件也计入其中。例如 H3 配方使用 `inputs/reference.png`：
 
 ```bash
+RECIPE=examples/recipes/minimax-h3/a100-bf16-tp2
+FRONTEND_URL="$(foretoken endpoint "$RECIPE")"
+REQUEST_HOST="$(foretoken endpoint "$RECIPE" --host)"
 curl --fail-with-body "$FRONTEND_URL/v1/videos" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{
     "modelServiceRef":{"name":"h3"},
-    "request":{"task":"fl2va","prompt":"A sailboat at sunrise","width":1024,"height":576,"numFrames":124,"fps":24,"numInferenceSteps":50,"inputFiles":[{"field":"input_reference","path":"inputs/reference.png","contentType":"image/png"}]},
-    "worker":{"image":"foretoken-control-plane:dev","endpoint":"http://h3-group.foretoken-h3.svc:9000","outputClaimName":"video-results","outputPath":"results/task.mp4"}
+    "request":{"task":"fl2va","prompt":"A sailboat at sunrise","width":1024,"height":576,"numFrames":124,"fps":24,"numInferenceSteps":50,"inputFiles":[{"field":"input_reference","path":"inputs/reference.png","contentType":"image/png"}]}
   }'
 ```
 
-响应包含任务 ID。使用 `/v1/videos/{id}` 查询 `Pending`、`Starting`、`Running`、`Succeeded`、`Failed` 或 `Cancelled`，成功后从 `/v1/videos/{id}/content` 读取结果。worker 将结果写入专用 PVC，该 PVC 与模型 RuntimeCache 分开。
+提交成功后返回 `202`，响应包含 `id`、`status_url` 和 `content_url`。将返回的 ID 填入 `TASK_ID`：
+
+```bash
+TASK_ID=video-UUID-from-response
+curl --fail-with-body -H "Host: $REQUEST_HOST" "$FRONTEND_URL/v1/videos/$TASK_ID"
+# phase 为 Succeeded 后下载：
+curl --fail-with-body -H "Host: $REQUEST_HOST" \
+  "$FRONTEND_URL/v1/videos/$TASK_ID/content" --output video.mp4
+```
+
+任务状态包括 `Pending`、`Starting`、`Running`、`Succeeded`、`Failed` 和 `Cancelled`。
+同一 FrontendService 的各个副本共享任务状态和结果。任务完成后，输入副本与生成结果按保留时间清理；`inputs/` 中的原始文件保留。执行中断会报告失败，不会自动重新生成一份视频。
+
+使用 `POST /v1/videos/{id}/cancel` 停止等待正在执行的生成请求，使用 `DELETE /v1/videos/{id}` 删除任务及其文件。取消会终止任务执行进程的请求；后端计算可能持续到引擎感知连接断开。任务访问按 FrontendService 隔离，认证仍由集群入口负责。
 
 ## 访问与运维
 

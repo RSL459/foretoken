@@ -12,10 +12,12 @@ use serde_json::json;
 use super::ApiState;
 use crate::video_task::VideoTaskSubmit;
 
+/// Registers durable video submission, observation, cancellation, and result access.
 pub(super) fn router() -> Router<ApiState> {
     Router::new()
         .route("/v1/videos", axum::routing::post(create))
-        .route("/v1/videos/{id}", axum::routing::get(status))
+        .route("/v1/videos/{id}", axum::routing::get(status).delete(delete))
+        .route("/v1/videos/{id}/cancel", axum::routing::post(cancel))
         .route("/v1/videos/{id}/content", axum::routing::get(content))
 }
 
@@ -36,15 +38,33 @@ async fn status(State(state): State<ApiState>, Path(id): Path<String>) -> Respon
     match client.get(&id).await {
         Ok(task) => Json(json!({
             "id": task.metadata.name,
-            "namespace": task.metadata.namespace,
-            "phase": task.status.phase,
+            "phase": if task.status.phase.is_empty() { "Pending" } else { &task.status.phase },
             "reason": task.status.reason,
             "message": task.status.message,
             "status_url": format!("/v1/videos/{id}"),
             "content_url": format!("/v1/videos/{id}/content"),
-            "artifact": task.status.artifact,
         }))
         .into_response(),
+        Err(status) => status.into_response(),
+    }
+}
+
+async fn cancel(State(state): State<ApiState>, Path(id): Path<String>) -> Response {
+    let Some(client) = state.video_tasks else {
+        return StatusCode::NOT_IMPLEMENTED.into_response();
+    };
+    match client.cancel(&id).await {
+        Ok(()) => StatusCode::ACCEPTED.into_response(),
+        Err(status) => status.into_response(),
+    }
+}
+
+async fn delete(State(state): State<ApiState>, Path(id): Path<String>) -> Response {
+    let Some(client) = state.video_tasks else {
+        return StatusCode::NOT_IMPLEMENTED.into_response();
+    };
+    match client.delete(&id).await {
+        Ok(()) => StatusCode::ACCEPTED.into_response(),
         Err(status) => status.into_response(),
     }
 }

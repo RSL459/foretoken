@@ -59,8 +59,10 @@ type RouterPipeline struct {
 type VideoTaskStorage struct {
 	// +kubebuilder:validation:MinLength=1
 	ClaimName string `json:"claimName"`
-	// +kubebuilder:validation:Pattern=`^/.*`
-	MountPath string `json:"mountPath"`
+	// RetentionSeconds is the lifetime of a completed task and its stored files.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=9223372036
+	RetentionSeconds int64 `json:"retentionSeconds"`
 }
 
 // FrontendServiceSpec defines the desired state of a frontend service.

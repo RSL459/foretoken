@@ -48,28 +48,43 @@ Image-capable model services accept base64 image `data:` URLs rather than remote
 
 ## Asynchronous video tasks
 
-A FrontendService can enable Kubernetes-backed video tasks by mounting a dedicated PVC:
+To keep generation running after a client disconnects, enable video tasks on the FrontendService. Choose a dedicated PVC in the same namespace that can be mounted by its frontend replicas and task workers. For replicas on different nodes, use shared ReadWriteMany storage. This storage is separate from the model cache.
 
 ```yaml
 spec:
   videoTasks:
     claimName: video-results
-    mountPath: /var/lib/foretoken/video-tasks
+    retentionSeconds: 86400
 ```
 
-Submit a task with the worker image, internal video endpoint, input paths on the mounted PVC, and an output path relative to that mount:
+Reapply the deployment with `foretoken deploy`. Place reference files in the volume's `inputs/` directory, then submit a request naming the ModelService. Generation currently uses the synchronous video transport's 48 MiB multipart request limit, including reference files. For example, for the H3 recipe and `inputs/reference.png`:
 
 ```bash
+RECIPE=examples/recipes/minimax-h3/a100-bf16-tp2
+FRONTEND_URL="$(foretoken endpoint "$RECIPE")"
+REQUEST_HOST="$(foretoken endpoint "$RECIPE" --host)"
 curl --fail-with-body "$FRONTEND_URL/v1/videos" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{
     "modelServiceRef":{"name":"h3"},
-    "request":{"task":"fl2va","prompt":"A sailboat at sunrise","width":1024,"height":576,"numFrames":124,"fps":24,"numInferenceSteps":50,"inputFiles":[{"field":"input_reference","path":"inputs/reference.png","contentType":"image/png"}]},
-    "worker":{"image":"foretoken-control-plane:dev","endpoint":"http://h3-group.foretoken-h3.svc:9000","outputClaimName":"video-results","outputPath":"results/task.mp4"}
+    "request":{"task":"fl2va","prompt":"A sailboat at sunrise","width":1024,"height":576,"numFrames":124,"fps":24,"numInferenceSteps":50,"inputFiles":[{"field":"input_reference","path":"inputs/reference.png","contentType":"image/png"}]}
   }'
 ```
 
-The response contains a task ID. Query `/v1/videos/{id}` for `Pending`, `Starting`, `Running`, `Succeeded`, `Failed`, or `Cancelled`, and read `/v1/videos/{id}/content` after success. The worker writes the artifact to the dedicated PVC; it is separate from the model RuntimeCache.
+A successful submission returns `202` with an `id`, `status_url`, and `content_url`. Copy that ID into `TASK_ID`:
+
+```bash
+TASK_ID=video-UUID-from-response
+curl --fail-with-body -H "Host: $REQUEST_HOST" "$FRONTEND_URL/v1/videos/$TASK_ID"
+# Once phase is Succeeded:
+curl --fail-with-body -H "Host: $REQUEST_HOST" \
+  "$FRONTEND_URL/v1/videos/$TASK_ID/content" --output video.mp4
+```
+
+Task phases are `Pending`, `Starting`, `Running`, `Succeeded`, `Failed`, and `Cancelled`. State and results are shared across replicas of the same FrontendService. Input copies and generated results expire after the configured retention interval; original files in `inputs/` remain available. Interrupted execution is reported as failed rather than automatically generating a second video.
+
+Use `POST /v1/videos/{id}/cancel` to stop waiting for an active generation, or `DELETE /v1/videos/{id}` to remove the task and its stored files. Cancellation terminates the worker request; backend computation may continue until the engine observes disconnection. Access to tasks is scoped to the FrontendService, with authentication managed at the cluster ingress.
 
 ## Access and operations
 

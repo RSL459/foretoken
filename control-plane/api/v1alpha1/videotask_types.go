@@ -70,27 +70,42 @@ type VideoWorkerSpec struct {
 	OutputClaimName string `json:"outputClaimName"`
 	// +kubebuilder:validation:MinLength=1
 	OutputPath string `json:"outputPath"`
-	// +optional
-	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 }
 
 // VideoTaskSpec requests one durable asynchronous video generation.
-// +kubebuilder:validation:XValidation:rule="self.modelServiceRef == oldSelf.modelServiceRef && self.request == oldSelf.request && self.worker == oldSelf.worker",message="video task target, request and worker are immutable"
+// +kubebuilder:validation:XValidation:rule="self.frontendUID == oldSelf.frontendUID && self.modelServiceRef == oldSelf.modelServiceRef && self.request == oldSelf.request && self.worker == oldSelf.worker",message="video task frontend, target, request and worker are immutable"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.inputsReady) || !oldSelf.inputsReady || (has(self.inputsReady) && self.inputsReady)",message="ready task inputs cannot become unready"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested || (has(self.cancelRequested) && self.cancelRequested)",message="cancellation cannot be withdrawn"
 type VideoTaskSpec struct {
+	// FrontendUID binds this task to the FrontendService that admitted it.
+	// +kubebuilder:validation:MinLength=1
+	FrontendUID     string                    `json:"frontendUID"`
 	ModelServiceRef VideoTaskServiceReference `json:"modelServiceRef"`
 	Request         VideoRequest              `json:"request"`
 	Worker          VideoWorkerSpec           `json:"worker"`
+	// +optional
+	CancelRequested bool `json:"cancelRequested,omitempty"`
+	// InputsReady is set after task-local input files are durable on the shared PVC.
+	// +optional
+	InputsReady bool `json:"inputsReady,omitempty"`
 }
 
 // VideoExecutionPlan is controller-owned recovery state persisted before Job creation.
 type VideoExecutionPlan struct {
-	Model             string                `json:"model"`
-	ServiceUID        string                `json:"serviceUID"`
-	ServingGeneration int64                 `json:"servingGeneration"`
-	Revisions         []ServingPoolRevision `json:"revisions"`
-	JobName           string                `json:"jobName"`
-	OutputClaimName   string                `json:"outputClaimName"`
-	OutputPath        string                `json:"outputPath"`
+	// +optional
+	Model string `json:"model,omitempty"`
+	// +optional
+	ServiceUID string `json:"serviceUID,omitempty"`
+	// +optional
+	ServingGeneration int64 `json:"servingGeneration,omitempty"`
+	// +optional
+	Revisions        []ServingPoolRevision `json:"revisions,omitempty"`
+	JobName          string                `json:"jobName"`
+	OutputClaimName  string                `json:"outputClaimName"`
+	OutputPath       string                `json:"outputPath"`
+	WorkerImage      string                `json:"workerImage"`
+	RetentionSeconds int64                 `json:"retentionSeconds"`
+	TimeoutSeconds   int64                 `json:"timeoutSeconds"`
 }
 
 // VideoArtifactReference identifies the worker-produced artifact on retained storage.
@@ -117,11 +132,19 @@ type VideoTaskStatus struct {
 	// +optional
 	JobUID string `json:"jobUID,omitempty"`
 	// +optional
+	JobCreationRequested bool `json:"jobCreationRequested,omitempty"`
+	// +optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
 	// +optional
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 	// +optional
 	Artifact *VideoArtifactReference `json:"artifact,omitempty"`
+	// ExpiresAt is persisted once a terminal result is published.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+	// CleanupJobName keeps cleanup execution distinct from inference.
+	// +optional
+	CleanupJobName string `json:"cleanupJobName,omitempty"`
 }
 
 // +kubebuilder:object:root=true

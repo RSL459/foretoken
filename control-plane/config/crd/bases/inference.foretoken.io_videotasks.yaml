@@ -53,6 +53,17 @@ spec:
           spec:
             description: VideoTaskSpec requests one durable asynchronous video generation.
             properties:
+              cancelRequested:
+                type: boolean
+              frontendUID:
+                description: FrontendUID binds this task to the FrontendService that
+                  admitted it.
+                minLength: 1
+                type: string
+              inputsReady:
+                description: InputsReady is set after task-local input files are durable
+                  on the shared PVC.
+                type: boolean
               modelServiceRef:
                 description: VideoTaskServiceReference selects one existing ModelService
                   in the task namespace.
@@ -160,8 +171,6 @@ spec:
                   outputPath:
                     minLength: 1
                     type: string
-                  serviceAccountName:
-                    type: string
                 required:
                 - endpoint
                 - image
@@ -169,14 +178,22 @@ spec:
                 - outputPath
                 type: object
             required:
+            - frontendUID
             - modelServiceRef
             - request
             - worker
             type: object
             x-kubernetes-validations:
-            - message: video task target, request and worker are immutable
-              rule: self.modelServiceRef == oldSelf.modelServiceRef && self.request
-                == oldSelf.request && self.worker == oldSelf.worker
+            - message: video task frontend, target, request and worker are immutable
+              rule: self.frontendUID == oldSelf.frontendUID && self.modelServiceRef
+                == oldSelf.modelServiceRef && self.request == oldSelf.request && self.worker
+                == oldSelf.worker
+            - message: ready task inputs cannot become unready
+              rule: '!has(oldSelf.inputsReady) || !oldSelf.inputsReady || (has(self.inputsReady)
+                && self.inputsReady)'
+            - message: cancellation cannot be withdrawn
+              rule: '!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested ||
+                (has(self.cancelRequested) && self.cancelRequested)'
           status:
             description: VideoTaskStatus publishes durable Job observation and artifact
               identity.
@@ -193,9 +210,19 @@ spec:
                 - claimName
                 - path
                 type: object
+              cleanupJobName:
+                description: CleanupJobName keeps cleanup execution distinct from
+                  inference.
+                type: string
+              expiresAt:
+                description: ExpiresAt is persisted once a terminal result is published.
+                format: date-time
+                type: string
               finishedAt:
                 format: date-time
                 type: string
+              jobCreationRequested:
+                type: boolean
               jobName:
                 type: string
               jobUID:
@@ -226,6 +253,9 @@ spec:
                     type: string
                   outputPath:
                     type: string
+                  retentionSeconds:
+                    format: int64
+                    type: integer
                   revisions:
                     items:
                       description: ServingPoolRevision selects one prepared ModelPool
@@ -253,14 +283,18 @@ spec:
                   servingGeneration:
                     format: int64
                     type: integer
+                  timeoutSeconds:
+                    format: int64
+                    type: integer
+                  workerImage:
+                    type: string
                 required:
                 - jobName
-                - model
                 - outputClaimName
                 - outputPath
-                - revisions
-                - serviceUID
-                - servingGeneration
+                - retentionSeconds
+                - timeoutSeconds
+                - workerImage
                 type: object
               reason:
                 type: string

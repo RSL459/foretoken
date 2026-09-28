@@ -257,12 +257,16 @@ spec:
                   claimName:
                     minLength: 1
                     type: string
-                  mountPath:
-                    pattern: ^/.*
-                    type: string
+                  retentionSeconds:
+                    description: RetentionSeconds is the lifetime of a completed task
+                      and its stored files.
+                    format: int64
+                    maximum: 9223372036
+                    minimum: 1
+                    type: integer
                 required:
                 - claimName
-                - mountPath
+                - retentionSeconds
                 type: object
             required:
             - resources
