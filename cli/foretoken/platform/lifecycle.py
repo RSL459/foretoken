@@ -174,6 +174,10 @@ class PlatformLifecycle:
             (migrate_stored_rdma_values(helm.release_user_values(platform)),)
             if platform_exists else ()
         )
+        if stored_values:
+            stored_logs = stored_values[0].get("observability", {}).get("logs", {})
+            if "storageSize" in stored_logs:
+                stored_logs.setdefault("initialSize", stored_logs.pop("storageSize"))
         log_config = log_config_from_values((*stored_values, *values))
         log_plan = self._logs.plan(log_config)
         grafana_anonymous_access = grafana_anonymous_access_from_values(
@@ -521,7 +525,7 @@ class PlatformLifecycle:
                 timeout_seconds=timeout_seconds(command.timeout),
             )
 
-        log_endpoint = self._logs.install(log_config, command.timeout)
+        log_endpoint, log_storage_statefulset = self._logs.install(log_config, command.timeout)
         helm.install_platform(
             release=platform,
             source_images=source_images,
@@ -535,6 +539,7 @@ class PlatformLifecycle:
             observability_prometheus=f"{selected_prometheus.namespace}/{selected_prometheus.name}",
             grafana_anonymous_access=grafana_anonymous_access,
             log_endpoint=log_endpoint,
+            log_storage_statefulset=log_storage_statefulset,
             gpu_resource_name=gpu_resource_name,
             rdma_resource_name=rdma.resource_name,
             rdma_managed=rdma.managed,

@@ -24,7 +24,8 @@ class LogConfig:
     endpoint: str = ""
     retention: str = "336h"
     storage_class: str = ""
-    storage_size: str = "50Gi"
+    initial_size: str = "5Gi"
+    max_size: str = ""
     image_pull_secrets: tuple[str, ...] = ()
 
 
@@ -36,7 +37,8 @@ def log_config_from_values(values: tuple[dict[str, Any], ...]) -> LogConfig:
         "endpoint": "endpoint",
         "retention": "retention",
         "storageClass": "storage_class",
-        "storageSize": "storage_size",
+        "initialSize": "initial_size",
+        "maxSize": "max_size",
     }
     for item in values:
         if "imagePullSecrets" in item:
@@ -73,7 +75,7 @@ def loki_values(config: LogConfig) -> dict[str, Any]:
     """Configure one upstream Loki instance whose PVC outlives serving Pods and uninstall."""
     persistence: dict[str, Any] = {
         "enabled": True,
-        "size": config.storage_size,
+        "size": config.initial_size,
         "enableStatefulSetAutoDeletePVC": False,
     }
     if config.storage_class:
@@ -238,8 +240,8 @@ class LogCollectionLifecycle:
             actions.append((name, action, detail))
         return tuple(actions)
 
-    def install(self, config: LogConfig, timeout: str) -> str:
-        """Apply collection settings and return the Loki URL for Grafana provisioning."""
+    def install(self, config: LogConfig, timeout: str) -> tuple[str, str]:
+        """Return Grafana's URL and the managed StatefulSet selected for volume expansion."""
         endpoint = config.endpoint.rstrip("/") or (
             f"http://{self.loki.name}.{self.loki.namespace}.svc:3100"
         )
@@ -250,13 +252,19 @@ class LogCollectionLifecycle:
                 self._helm.release_exists(self.loki)
                 and self._helm.is_cleanup_managed(self.loki)
             )
-            return endpoint if config.endpoint or storage_exists else ""
-        if not config.endpoint:
-            self._helm.install_loki(self.loki, loki_values(config), timeout)
-        self._helm.install_log_collector(
-            self.collector, collector_values(endpoint, config.image_pull_secrets), timeout
+            if not config.endpoint and not storage_exists:
+                return "", ""
+        else:
+            if not config.endpoint:
+                self._helm.install_loki(self.loki, loki_values(config), timeout)
+            self._helm.install_log_collector(
+                self.collector, collector_values(endpoint, config.image_pull_secrets), timeout
+            )
+        statefulset = (
+            self._helm.loki_statefulset(self.loki).name
+            if config.max_size and not config.endpoint else ""
         )
-        return endpoint
+        return endpoint, statefulset
 
     def managed_releases(self) -> tuple[ReleaseRef, ...]:
         """Return managed releases in shutdown order, collector before storage."""

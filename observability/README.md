@@ -28,7 +28,7 @@ After upgrading Foretoken, run `foretoken install` again to update the controlle
 
 ## Query persistent logs
 
-`foretoken install` sets up persistent logs for model servers, frontends, KV services, and the controller, including inference-engine output. Logs remain available after a serving Pod or its namespace is deleted. The default retention is 14 days, using 50 GiB of storage from the cluster's default StorageClass.
+`foretoken install` sets up persistent logs for model servers, frontends, KV services, and the controller, including inference-engine output. Logs remain available after a serving Pod or its namespace is deleted. The default retention is 14 days, starting with 5 GiB of storage from the cluster's default StorageClass.
 
 In Grafana, open Explore, select Foretoken Logs, and choose a time range. For example:
 
@@ -44,13 +44,16 @@ Filter further by `pod`, `container`, `node`, or `stream`. To find an error or a
 
 Logs use the same Grafana access settings as metrics. To require a login, use the authentication option below.
 
-To retain logs for 30 days, save this in `platform-values.yaml`:
+To retain logs for 30 days and allow storage to grow up to 50 GiB, save this in `platform-values.yaml`:
 
 ```yaml
 observability:
   logs:
     retention: 720h
+    maxSize: 50Gi
 ```
+
+Setting `maxSize` enables automatic expansion at 80% usage, doubling the requested capacity up to that limit. The storage driver must support online expansion and per-volume usage statistics.
 
 Run this after editing the file; for source installations, add `--values platform-values.yaml` to the original install command:
 
@@ -62,7 +65,7 @@ Other options under `observability.logs`:
 
 | Setting | Use |
 | --- | --- |
-| `storageClass` / `storageSize` | Choose the cluster's StorageClass name and requested capacity when creating log storage. |
+| `storageClass` / `initialSize` | Choose the StorageClass and initial capacity for new log storage; existing volumes keep their capacity. |
 | `endpoint` | Use an existing Loki HTTP(S) base URL reachable by collectors and Grafana. |
 | `enabled: false` | Stop Foretoken log collection while keeping historical queries available. |
 

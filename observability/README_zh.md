@@ -28,7 +28,7 @@ foretoken deploy examples/quickstart
 
 ## 查询历史日志
 
-`foretoken install` 会自动采集并持久保存模型服务、前端、KV 服务和控制器的日志，包括推理引擎输出。服务 Pod 或其命名空间删除后，已采集的日志仍可查询。默认保留 14 天，通过集群默认 StorageClass 申请 50 GiB 存储。
+`foretoken install` 会自动采集并持久保存模型服务、前端、KV 服务和控制器的日志，包括推理引擎输出。服务 Pod 或其命名空间删除后，已采集的日志仍可查询。默认保留 14 天，通过集群默认 StorageClass 初始申请 5 GiB 存储。
 
 在 Grafana 中打开探索页面（Explore），选择 Foretoken Logs 数据源和时间范围。例如查看快速开始的日志：
 
@@ -44,13 +44,16 @@ foretoken deploy examples/quickstart
 
 日志与指标沿用相同的 Grafana 访问设置。需要登录后查看时，使用下文的认证选项。
 
-如需保留日志 30 天，在 `platform-values.yaml` 中填写：
+如需保留日志 30 天，并允许存储增长至 50 GiB，在 `platform-values.yaml` 中填写：
 
 ```yaml
 observability:
   logs:
     retention: 720h
+    maxSize: 50Gi
 ```
+
+设置 `maxSize` 后，用量达到 80% 时自动将申请容量翻倍，直到该上限；存储驱动需支持在线扩容和按卷统计用量。
 
 修改文件后执行以下命令；源码安装则在原安装命令中添加 `--values platform-values.yaml`：
 
@@ -62,7 +65,7 @@ foretoken install --values platform-values.yaml
 
 | 配置 | 用途 |
 | --- | --- |
-| `storageClass` / `storageSize` | 创建日志存储时，指定集群中的 StorageClass 名称和申请容量。 |
+| `storageClass` / `initialSize` | 新建日志存储使用的 StorageClass 名称和初始容量；已有卷保留当前容量。 |
 | `endpoint` | 填写采集器和 Grafana 可访问的现有 Loki HTTP(S) 基础地址。 |
 | `enabled: false` | 停止 Foretoken 日志采集，历史日志仍可查询。 |
 
