@@ -121,7 +121,7 @@ func (r *VideoTaskReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: task.Namespace, Name: task.Spec.ModelServiceRef.Name}, service); err != nil {
 			return ctrl.Result{}, err
 		}
-		if service.Status.ServingGeneration != plan.ServingGeneration || string(service.UID) != plan.ServiceUID {
+		if service.Status.ServingGeneration != plan.ServingGeneration || string(service.UID) != plan.ServiceUID || !reflect.DeepEqual(service.Status.ServingPoolRevisions, plan.Revisions) {
 			task.Status.Phase, task.Status.Reason, task.Status.Message = "Failed", "TargetChanged", "ModelService serving identity changed before worker creation"
 			return r.finishVideoTask(ctx, task)
 		}
