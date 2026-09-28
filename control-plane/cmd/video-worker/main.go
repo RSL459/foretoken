@@ -155,7 +155,7 @@ func run(ctx context.Context) error {
 func cleanup() error {
 	id := os.Getenv("FORETOKEN_VIDEO_TASK_ID")
 	mount := os.Getenv("FORETOKEN_VIDEO_OUTPUT_MOUNT")
-	if !filepath.IsLocal(id) || filepath.Base(id) != id || mount == "" {
+	if id == "." || !filepath.IsLocal(id) || filepath.Base(id) != id || mount == "" {
 		return fmt.Errorf("FORETOKEN_VIDEO_TASK_ID must be one local path component and FORETOKEN_VIDEO_OUTPUT_MOUNT is required")
 	}
 	root, err := os.OpenRoot(mount)
