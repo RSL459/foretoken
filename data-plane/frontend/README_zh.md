@@ -7,38 +7,31 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-前端为已部署的模型提供统一的文本和视频生成入口。文本请求可以返回完整回答或逐步输出，视频请求可以直接将生成结果保存为文件。
+前端为已部署的模型提供文本和视频生成接口。
 
-## 连接服务
+## 文本生成
 
-按仓库[快速开始](../../README_zh.md#快速开始)完成部署，再从仓库根目录执行以下命令，获取前端地址：
+按仓库[快速开始](../../README_zh.md#快速开始)完成部署，再从仓库根目录发送请求：
 
 ```bash
 DEPLOYMENT=examples/quickstart
 FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
 REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
-```
 
-下方请求携带 `Host` 请求头，可通过负载均衡地址或[网关](../../README_zh.md#网关模式)访问。TLS 加密和身份认证由集群入口配置。
-
-## 文本生成
-
-通过 `model` 指定模型标识。以下请求使用快速开始中部署的 `Qwen/Qwen3-0.6B`：
-
-```bash
-curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+# OpenAI Responses
+curl --fail-with-body "$FRONTEND_URL/v1/responses" \
   -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
-  -d '{
-    "model": "Qwen/Qwen3-0.6B",
-    "messages": [{"role": "user", "content": "你好"}],
-    "max_tokens": 512
-  }'
+  -d '{"model":"Qwen/Qwen3-0.6B","input":"你好","max_output_tokens":512,"store":false}'
+
+# Anthropic Messages
+curl --fail-with-body "$FRONTEND_URL/v1/messages" \
+  -H "Host: $REQUEST_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"max_tokens":512}'
 ```
 
-默认返回 JSON。在请求中添加 `"stream": true`，并为 `curl` 添加 `--no-buffer`，可实时接收生成内容。
-
-### 选择接口
+添加 `"stream": true` 和 `curl --no-buffer` 可实时接收生成内容。
 
 | 接口 | 路径 | 请求内容 |
 | --- | --- | --- |
@@ -48,42 +41,19 @@ curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
 | Anthropic token 计数 | `POST /v1/messages/count_tokens` | 与生成请求一致的模型、消息、系统提示和工具定义 |
 | 文本补全 | `POST /v1/completions` | `model`、`prompt` |
 
-`GET /v1/models` 列出模型标识；`/tokenize` 和 `/detokenize` 用于文本与 token ID 之间的转换。
+`GET /v1/models` 列出已配置的模型标识；`/tokenize` 和 `/detokenize` 用于文本与 token ID 之间的转换。支持图片的文本模型接受 base64 编码的图片 `data:` URL。
 
-工具由客户端执行，再将结果传入下一轮请求。Responses 接口支持函数工具、带命名空间的函数和无语法约束的自定义文本工具，不支持服务端托管工具或该接口的后台执行模式。强制选择工具、严格约束工具参数时，模型服务需要支持结构化输出。
+工具由客户端执行，再将结果传入下一轮请求。Responses 支持函数工具、带命名空间的函数和自定义文本工具，不支持服务端托管工具或后台执行模式。强制选择工具和严格约束工具参数需要模型支持结构化输出。
 
-思考控制取决于模型的聊天模板。输出 token 预算包含思考内容；Messages 接口使用 `max_tokens`，不接受独立的 `thinking.budget_tokens`。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `incomplete`。工具调用可能因此不完整，客户端只应执行完整的调用。
-
-支持图片的文本模型接受 base64 编码的图片 `data:` URL，而非远程图片 URL。
+输出 token 预算包含思考内容。Messages 使用 `max_tokens`，不接受独立的 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `incomplete`，客户端只应执行完整的工具调用。
 
 ## 视频生成
 
-按 [MiniMax H3 配方](../../examples/recipes/minimax-h3/a100-bf16-tp2/README_zh.md)部署模型后，可以发送本地参考图片，等待生成完成并直接保存为 MP4 文件。
+通过 `POST /v1/videos/sync` 提交提示词和参考图片或视频，生成完成后直接返回视频内容。[MiniMax H3 配方](../../examples/recipes/minimax-h3/a100-bf16-tp2/README_zh.md#根据图片生成视频)提供完整的部署和请求命令，将结果保存到 `./data/video.mp4`。
 
-将 `REFERENCE_IMAGE` 改为本机 PNG 文件的路径，在仓库根目录执行：
+### 后台生成
 
-```bash
-DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
-REFERENCE_IMAGE=/path/to/reference.png
-FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
-REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
-curl --fail --max-time 4000 \
-  "$FRONTEND_URL/v1/videos/sync" \
-  -H "Host: $REQUEST_HOST" \
-  -F model=MiniMaxAI/MiniMax-H3 \
-  -F 'prompt=A sailboat crossing a calm bay at sunrise' \
-  -F "input_reference=@${REFERENCE_IMAGE};type=image/png" \
-  -F width=1024 -F height=576 -F num_frames=124 -F fps=24 \
-  -F num_inference_steps=50 -F aspect_ratio=16:9 -F flow_shift=12 -F seed=1 \
-  -F 'extra_params={"task":"fl2va","audio_flow_shift":3}' \
-  --output video.mp4
-```
-
-生成的视频保存为当前目录下的 `video.mp4`。根据参考视频生成的用法见 H3 配方。
-
-### 提交后稍后获取结果
-
-需要在提交成功后断开连接时，可使用 `/v1/videos`。这种方式将任务和结果保存在服务端，需先在部署的 `frontend.yaml` 中启用：
+如需提交后离开、稍后获取结果，在部署的 `frontend.yaml` 中启用：
 
 ```yaml
 spec:
@@ -92,13 +62,17 @@ spec:
     retentionSeconds: 86400
 ```
 
-`video-results` 是同一命名空间内已准备好的持久化存储卷声明（PVC），与模型缓存分开。前端和任务执行进程都需要访问该卷；跨节点部署时使用 ReadWriteMany 共享存储。将参考图片放入卷的 `inputs/reference.png`，再应用配置：
+`video-results` 对应同一命名空间内已准备好的专用持久化存储声明（PVC）；跨节点运行时需支持 ReadWriteMany 共享访问。将参考图片放入该卷的 `inputs/reference.png`，然后应用配置：
 
 ```bash
+DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
 foretoken deploy "$DEPLOYMENT" --timeout 1h
+FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
+REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
+mkdir -p ./data
 ```
 
-此处的输入路径相对于存储卷根目录，不是本机路径。提交时使用 ModelService 名称 `h3`，而不是模型仓库 ID：
+以下请求选择名为 `h3` 的模型服务，输入路径相对于视频存储卷根目录：
 
 ```bash
 curl --fail-with-body "$FRONTEND_URL/v1/videos" \
@@ -120,26 +94,26 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
   }'
 ```
 
-提交成功返回 HTTP `202`，响应包含 `id`、`status_url` 和 `content_url`。后续操作使用同一个前端地址，将 `{id}` 替换为返回的任务 ID：
+响应包含任务 `id`、状态地址 `status_url` 和视频地址 `content_url`。继续使用同一个前端地址，将下表的 `{id}` 替换为返回的任务 ID：
 
-| 操作 | 接口 | 使用时机 |
+| 操作 | 接口 | 说明 |
 | --- | --- | --- |
-| 查询状态 | `GET /v1/videos/{id}` | `Pending`、`Starting`、`Running` 表示尚未完成；`Failed` 时查看 `reason` 和 `message` |
-| 保存视频 | `GET /v1/videos/{id}/content` | `phase` 为 `Succeeded` 后，用 `curl --output video.mp4` 保存响应 |
-| 取消任务 | `POST /v1/videos/{id}/cancel` | 返回 `202` 后继续查询，直到任务进入终态；后端计算可能仍在结束中 |
-| 删除任务 | `DELETE /v1/videos/{id}` | 返回 `202` 后，服务清理任务及其文件 |
+| 查看状态 | `GET /v1/videos/{id}` | 等待 `phase` 为 `Succeeded`；`Failed` 时查看 `reason` 和 `message` |
+| 保存视频 | `GET /v1/videos/{id}/content` | 生成成功后，用 `curl --output ./data/video.mp4` 保存响应 |
+| 取消任务 | `POST /v1/videos/{id}/cancel` | 请求取消，后端计算可能仍在结束中 |
+| 删除任务 | `DELETE /v1/videos/{id}` | 清理任务及其文件 |
 
-以上配置从任务结束起保留结果一天，到期后自动清理；`inputs/` 中的原始参考文件保留。
+取消和删除请求返回 `202` 后继续由服务处理。以上配置保留结果一天，从任务结束起算；到期后自动清理，原始参考文件保留。
 
 ## 运维
 
+使用 `foretoken status` 查看部署状态，使用 `foretoken delete` 删除部署，均传入对应配置目录。
+
 | 接口 | 用途 |
 | --- | --- |
-| `/healthz` | 前端进程存活状态 |
-| `/readyz` | 接收生成请求的就绪状态 |
+| `/healthz` | 进程存活状态 |
+| `/readyz` | 服务就绪状态 |
 | `/statusz` | 服务和缓存索引状态 |
 | `/metrics` | Prometheus 指标 |
 
-运维接口的访问范围由集群网络策略控制；网关对外提供 `/v1`、`/tokenize` 和 `/detokenize` 客户端路径。
-
-使用 `foretoken status` 查看部署状态，使用 `foretoken delete` 删除部署，均传入对应配置目录。
+网关配置见[网关模式](../../README_zh.md#网关模式)。TLS 和身份认证由集群入口配置，运维接口的访问范围由网络策略控制。

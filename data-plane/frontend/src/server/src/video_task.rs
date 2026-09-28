@@ -27,20 +27,7 @@ pub(crate) struct VideoTaskClient {
     output_claim: String,
 }
 
-/// Public generation intent; deployment identities and output locations are supplied by the platform.
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct VideoTaskSubmit {
-    pub model_service_ref: ServiceReference,
-    pub request: VideoTaskRequest,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ServiceReference {
-    pub name: String,
-}
-
+/// Generation parameters shared by task submission and the persisted VideoTask request.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct VideoTaskRequest {
@@ -95,7 +82,7 @@ pub(crate) struct TaskMetadata {
     labels: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VideoTaskStatus {
     #[serde(default)]
@@ -108,18 +95,11 @@ pub(crate) struct VideoTaskStatus {
     pub artifact: Option<VideoArtifact>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VideoArtifact {
     pub claim_name: String,
     pub path: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct VideoTaskAccepted {
-    pub id: String,
-    pub status_url: String,
-    pub content_url: String,
 }
 
 impl VideoTaskClient {
@@ -160,14 +140,15 @@ impl VideoTaskClient {
         })))
     }
 
-    /// Persists generation intent before acknowledging it; task identity owns the output path.
+    /// Persists generation intent and stages inputs, returning the task ID to the API adapter.
     pub(crate) async fn create(
         &self,
-        mut submit: VideoTaskSubmit,
-    ) -> Result<VideoTaskAccepted, StatusCode> {
+        model_service: &str,
+        mut request: VideoTaskRequest,
+    ) -> Result<String, StatusCode> {
         let id = format!("video-{}", Uuid::new_v4());
         let mut sources = Vec::new();
-        for (index, input) in submit.request.input_files.iter_mut().enumerate() {
+        for (index, input) in request.input_files.iter_mut().enumerate() {
             if !Path::new(&input.path).starts_with("inputs") {
                 return Err(StatusCode::BAD_REQUEST);
             }
@@ -196,8 +177,8 @@ impl VideoTaskClient {
             "spec": {
                 "frontendUID": self.frontend_uid,
                 "inputsReady": inputs_ready,
-                "modelServiceRef": submit.model_service_ref,
-                "request": submit.request,
+                "modelServiceRef": {"name": model_service},
+                "request": request,
                 "worker": {
                     "image": self.worker_image,
                     "endpoint": self.worker_endpoint,
@@ -239,11 +220,7 @@ impl VideoTaskClient {
             )
             .await?;
         }
-        Ok(VideoTaskAccepted {
-            id: id.clone(),
-            status_url: format!("/v1/videos/{id}"),
-            content_url: format!("/v1/videos/{id}/content"),
-        })
+        Ok(id)
     }
 
     /// Returns only tasks submitted through this FrontendService, across any of its replicas.

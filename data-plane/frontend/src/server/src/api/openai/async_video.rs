@@ -7,10 +7,33 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::ApiState;
-use crate::video_task::VideoTaskSubmit;
+use crate::video_task::VideoTaskRequest;
+
+/// Public submission envelope; execution settings are supplied by the task service.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VideoTaskSubmit {
+    model_service_ref: ModelServiceReference,
+    request: VideoTaskRequest,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelServiceReference {
+    name: String,
+}
+
+/// HTTP acknowledgement with URLs for subsequent task operations.
+#[derive(Serialize)]
+struct VideoTaskAccepted {
+    id: String,
+    status_url: String,
+    content_url: String,
+}
 
 /// Registers durable video submission, observation, cancellation, and result access.
 pub(super) fn router() -> Router<ApiState> {
@@ -25,8 +48,19 @@ async fn create(State(state): State<ApiState>, Json(request): Json<VideoTaskSubm
     let Some(client) = state.video_tasks else {
         return StatusCode::NOT_IMPLEMENTED.into_response();
     };
-    match client.create(request).await {
-        Ok(accepted) => (StatusCode::ACCEPTED, Json(accepted)).into_response(),
+    match client
+        .create(&request.model_service_ref.name, request.request)
+        .await
+    {
+        Ok(id) => (
+            StatusCode::ACCEPTED,
+            Json(VideoTaskAccepted {
+                status_url: format!("/v1/videos/{id}"),
+                content_url: format!("/v1/videos/{id}/content"),
+                id,
+            }),
+        )
+            .into_response(),
         Err(status) => status.into_response(),
     }
 }
