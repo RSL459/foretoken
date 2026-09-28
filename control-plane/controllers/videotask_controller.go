@@ -162,8 +162,8 @@ func (r *VideoTaskReconciler) prepareVideoTask(ctx context.Context, task *api.Vi
 	if !modelServiceReady(service) || !meta.IsStatusConditionTrue(service.Status.Conditions, conditionReady) {
 		return api.VideoExecutionPlan{}, fmt.Errorf("ModelService must already be Ready")
 	}
-	if task.Spec.Worker.Image == "" || task.Spec.Worker.OutputClaimName == "" || task.Spec.Worker.OutputPath == "" {
-		return api.VideoExecutionPlan{}, fmt.Errorf("worker image, outputClaimName and outputPath are required")
+	if task.Spec.Worker.Image == "" || task.Spec.Worker.Endpoint == "" || task.Spec.Worker.OutputClaimName == "" || task.Spec.Worker.OutputPath == "" {
+		return api.VideoExecutionPlan{}, fmt.Errorf("worker image, endpoint, outputClaimName and outputPath are required")
 	}
 	return api.VideoExecutionPlan{
 		Model:             service.Spec.Model,
@@ -199,6 +199,8 @@ func (r *VideoTaskReconciler) newVideoWorkerJob(task *api.VideoTask, plan api.Vi
 				Containers: []corev1.Container{{Name: "video-worker", Image: task.Spec.Worker.Image, Env: []corev1.EnvVar{
 					{Name: "FORETOKEN_VIDEO_TASK_UID", Value: string(task.UID)},
 					{Name: "FORETOKEN_VIDEO_MODEL_SERVICE", Value: task.Spec.ModelServiceRef.Name},
+					{Name: "FORETOKEN_VIDEO_ENDPOINT", Value: task.Spec.Worker.Endpoint},
+					{Name: "FORETOKEN_VIDEO_MODEL", Value: plan.Model},
 					{Name: "FORETOKEN_VIDEO_REQUEST_JSON", Value: string(requestJSON)},
 					{Name: "FORETOKEN_VIDEO_OUTPUT_PATH", Value: plan.OutputPath},
 					{Name: "FORETOKEN_VIDEO_OUTPUT_MOUNT", Value: videoTaskOutputMount},

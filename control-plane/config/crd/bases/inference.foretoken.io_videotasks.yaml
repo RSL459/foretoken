@@ -142,6 +142,11 @@ spec:
                 description: VideoWorkerSpec defines the execution contract for the
                   controller-created Job.
                 properties:
+                  endpoint:
+                    description: Endpoint is the internal video model-server endpoint
+                      used by the worker.
+                    minLength: 1
+                    type: string
                   image:
                     description: Image is the worker image implementing the Foretoken
                       video task contract.
@@ -158,6 +163,7 @@ spec:
                   serviceAccountName:
                     type: string
                 required:
+                - endpoint
                 - image
                 - outputClaimName
                 - outputPath

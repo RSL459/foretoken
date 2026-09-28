@@ -62,6 +62,9 @@ type VideoWorkerSpec struct {
 	// Image is the worker image implementing the Foretoken video task contract.
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
+	// Endpoint is the internal video model-server endpoint used by the worker.
+	// +kubebuilder:validation:MinLength=1
+	Endpoint string `json:"endpoint"`
 	// OutputClaimName is a namespace-local PVC mounted at OutputPath.
 	// +kubebuilder:validation:MinLength=1
 	OutputClaimName string `json:"outputClaimName"`

@@ -39,6 +39,7 @@ rules:
       - modelpools.inference.foretoken.io
       - modelgroups.inference.foretoken.io
       - profileruns.inference.foretoken.io
+      - videotasks.inference.foretoken.io
     verbs:
       - get
       - patch
@@ -85,6 +86,28 @@ rules:
       - watch
       - update
       - patch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - videotasks
+      - videotasks/status
+      - videotasks/finalizers
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
   - apiGroups:
       - apps
     resources:
