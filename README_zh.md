@@ -31,7 +31,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-准备好支持 GPU 和持久存储的 Kubernetes 集群，使用默认存储类（StorageClass）；在本机安装 Python 3.11+、`kubectl` 和 Helm。
+准备好支持 GPU 的 Kubernetes 集群，并在本机安装 Python 3.11+、`kubectl` 和 Helm。
 
 ### 1. 获取示例并安装命令行工具
 
