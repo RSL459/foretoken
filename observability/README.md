@@ -44,7 +44,31 @@ Filter further by `pod`, `container`, `node`, or `stream`. To find an error or a
 
 Logs use the same Grafana access settings as metrics. To require a login, use the authentication option below.
 
-The default installation uses the cluster's storage configuration. Platform administrators can change retention or connect an existing logging service through the platform installation configuration. These choices do not affect model deployment or request routing.
+### Customize log storage
+
+For example, to retain logs for 30 days, save this in `platform-values.yaml`:
+
+```yaml
+observability:
+  logs:
+    retention: 720h
+```
+
+Apply changes with:
+
+```bash
+foretoken install --values platform-values.yaml
+```
+
+For a source installation, add `--values platform-values.yaml` to the original installation command. Later installs retain these settings; edit the file and reapply it to change them.
+
+Other choices belong under the same `observability.logs` mapping:
+
+| Setting | Use |
+| --- | --- |
+| `storageClass` / `storageSize` | Choose the cluster's StorageClass name and requested capacity when creating log storage. |
+| `endpoint` | Use an existing Loki HTTP(S) base URL reachable by collectors and Grafana. Its owner manages storage and retention. |
+| `enabled: false` | Stop Foretoken log collection while keeping existing log storage and historical queries. Set `true` and reapply to resume. |
 
 ## Require a login and retrieve credentials
 
@@ -203,4 +227,4 @@ For a short CPU/GPU capture on an existing diagnostic service, see [Profiling](.
 
 ## Remove collection
 
-After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus, DCGM Exporter, MetaX mxExporter, log collectors, and Loki resources. Historical logs remain available for the platform's retention and storage lifecycle; reused installations are left unchanged.
+After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus, DCGM Exporter, MetaX mxExporter, log collectors, and Loki. It retains Loki's persistent volume claim (PVC), but stops the managed query services. Reinstall with the original installation command and log settings to resume querying retained logs. Reused installations are left unchanged.
