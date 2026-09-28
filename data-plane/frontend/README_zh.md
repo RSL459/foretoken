@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 连接服务
 
-从仓库根目录获取部署的地址和请求域名。文本示例使用[快速开始](../../README_zh.md#快速开始)中的配置：
+按仓库[快速开始](../../README_zh.md#快速开始)完成部署，再从仓库根目录执行以下命令，获取前端地址：
 
 ```bash
 DEPLOYMENT=examples/quickstart
@@ -79,7 +79,7 @@ curl --fail --max-time 4000 \
   --output video.mp4
 ```
 
-命令成功结束后，视频保存在当前目录的 `video.mp4`。生成期间保持连接，无需查询任务 ID。请求连同参考文件的总大小上限为 48 MiB。根据参考视频生成的用法见 H3 配方。
+生成的视频保存为当前目录下的 `video.mp4`。根据参考视频生成的用法见 H3 配方。
 
 ### 提交后稍后获取结果
 
@@ -129,7 +129,7 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
 | 取消任务 | `POST /v1/videos/{id}/cancel` | 返回 `202` 后继续查询，直到任务进入终态；后端计算可能仍在结束中 |
 | 删除任务 | `DELETE /v1/videos/{id}` | 返回 `202` 后，服务清理任务及其文件 |
 
-以上配置从任务结束起保留结果一天，到期后自动清理；`inputs/` 中的原始参考文件保留。这种调用方式同样受 48 MiB 生成请求上限约束。
+以上配置从任务结束起保留结果一天，到期后自动清理；`inputs/` 中的原始参考文件保留。
 
 ## 运维
 

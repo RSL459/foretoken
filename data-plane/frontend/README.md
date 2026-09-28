@@ -11,7 +11,7 @@ The frontend provides one entry point for deployed text and video models. Text r
 
 ## Connect to a service
 
-From the repository root, resolve the deployment's address and request hostname. The text examples use the [Quick Start](../../README.md#quick-start) deployment:
+Follow the repository [Quick Start](../../README.md#quick-start) to deploy a service, then run these commands from the repository root to get its frontend address:
 
 ```bash
 DEPLOYMENT=examples/quickstart
@@ -79,7 +79,7 @@ curl --fail --max-time 4000 \
   --output video.mp4
 ```
 
-When the command succeeds, `video.mp4` is in the current directory. Keep the connection open during generation; there is no task ID to poll. The request, including reference files, is limited to 48 MiB. For video-conditioned generation, see the H3 recipe.
+The generated video is saved as `video.mp4` in the current directory. For video-conditioned generation, see the H3 recipe.
 
 ### Submit now and retrieve later
 
@@ -129,7 +129,7 @@ A successful submission returns HTTP `202` with `id`, `status_url`, and `content
 | Cancel | `POST /v1/videos/{id}/cancel` | After HTTP `202`, continue checking until a terminal state; backend computation may still be finishing |
 | Delete | `DELETE /v1/videos/{id}` | After HTTP `202`, the service removes the task and its files |
 
-The configuration above retains results for one day after a task ends, then removes them automatically. Original reference files in `inputs/` are retained. This mode uses the same 48 MiB generation request limit.
+The configuration above retains results for one day after a task ends, then removes them automatically. Original reference files in `inputs/` are retained.
 
 ## Operations
 

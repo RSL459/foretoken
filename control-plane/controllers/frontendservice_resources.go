@@ -94,11 +94,13 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		cacheVolume.VolumeSource = corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: profile.RuntimeCache.ClaimName}}
 	}
 	volumes := []corev1.Volume{
+		{Name: "request-temporary", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: "serving", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: servingConfigMap}}}},
 		cacheVolume,
 		{Name: "kv-indexer", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: kvIndexerSecretName, Items: []corev1.KeyToPath{{Key: kvIndexerSecretKey, Path: "key"}}}}},
 	}
 	mounts := []corev1.VolumeMount{
+		{Name: "request-temporary", MountPath: "/tmp"},
 		{Name: "serving", MountPath: "/etc/foretoken/serving", ReadOnly: true},
 		{Name: "runtime-cache", MountPath: cacheMountPath},
 		{Name: "kv-indexer", MountPath: "/etc/foretoken/kv-indexer", ReadOnly: true},
