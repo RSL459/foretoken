@@ -32,7 +32,3 @@ Set `spec.routerPipeline` only when you want to change the routing strategy. By 
 | Picker | `max` · `power_of_two_choices` | Choose the highest score · sample two distinct targets and choose the higher score (random on ties). |
 
 When the KV index is unavailable, targets remain eligible without KV-prefix preference. See the [KV prefix index](../kv-indexer/README.md) for cache-locality behavior.
-
-For `two_tier`, set `picker: {algorithm: max}` alongside `scorer: {algorithm: two_tier}`; other pickers fail configuration validation. Under `scorer.parameters`, `balance_abs_threshold` defaults to 32, `balance_rel_threshold` to 1.1, and `cache_threshold` to 0.5. Both the load spread and the maximum-to-minimum load ratio must strictly exceed their thresholds before load overrides cache affinity. Load counts this frontend's active reservations for each target and rank. Otherwise, a Device-prefix hit ratio strictly above the cache threshold selects the least-loaded candidate with maximum overlap; below or at the threshold, least load wins. Ties use candidate order.
-
-The hit ratio counts complete cached blocks over the request's rounded-up block count. Missing cache observations contribute zero overlap. Cache comparison requires a common observed KV block size; differing sizes give all candidates equal scores. Host, disk, and external cache do not contribute.

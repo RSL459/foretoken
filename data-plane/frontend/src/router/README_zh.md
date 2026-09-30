@@ -32,7 +32,3 @@ spec:
 | Picker | `max` · `power_of_two_choices` | 选择最高分目标 · 随机抽取两个不同目标，选择分数较高者，同分时随机选取。 |
 
 KV 索引不可用时，目标仍可参与路由，只是不享有 KV 前缀偏好。缓存位置的说明见 [KV 前缀索引](../kv-indexer/README_zh.md)。
-
-使用 `two_tier` 时，在 `scorer: {algorithm: two_tier}` 同级设置 `picker: {algorithm: max}`；其他 picker 无法通过配置校验。`scorer.parameters` 中的 `balance_abs_threshold` 默认取 32，`balance_rel_threshold` 默认取 1.1，`cache_threshold` 默认取 0.5。负载极差和最大值相对最小值的比率必须同时严格超过阈值，才会优先按负载选择；负载为当前前端对各目标及 rank 的活跃预留请求数。否则，Device 前缀命中率严格超过缓存阈值时，在最大重叠量的候选中选择负载最低者；未超过时选择全体候选中负载最低者。同分按候选顺序选择。
-
-命中率以完整缓存块数除以向上取整的请求块数。缓存观测缺失时按零重叠处理；缓存比较要求观测到的 KV 块大小相同，不同时所有候选同分。Host、磁盘和外部缓存不计入重叠量。
