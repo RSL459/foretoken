@@ -131,7 +131,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
     }
 
     // Runs the complete Filter-Scorer-Picker stage, validating extension-produced indexes and
-    // delaying stage-specific eligibility until every candidate has been scored.
+    // computing stage eligibility before scoring; only eligible candidates reach Picker.
     fn select(
         &self,
         request: &RouterRequest,
@@ -147,8 +147,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
         // Keep every early return inside the round so failed candidate discovery or invalid
         // algorithm output is counted as well as successful selections.
         let result = (|| {
-            // Filter and Scorer see the complete compatible, healthy snapshot. Stage and connector
-            // eligibility are applied after scoring and before Picker.
+            // Filter sees the complete compatible, healthy snapshot. Scorer sees all filtered
+            // candidates with stage and connector eligibility marked; Picker sees only eligible ones.
             // Snapshot, scoring, and reservation share one lock so concurrent selections see load.
             let mut reservations = self
                 .routing_load
