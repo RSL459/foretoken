@@ -32,7 +32,3 @@ Set `spec.routerPipeline` only when you want to change the routing strategy. By 
 | Picker | `max` · `power_of_two_choices` | Choose the highest score · sample two distinct targets and choose the higher score (random on ties). |
 
 When the KV index is unavailable, targets remain eligible without KV-prefix preference. See the [KV prefix index](../kv-indexer/README.md) for cache-locality behavior.
-
-`session_affinity` supports only `strategy: session_id`, which is also its default. Send the same non-empty `session_id` in each Chat Completions, Completions, or Responses request body; surrounding whitespace is removed. An available binding scores 1 and other candidates score 0. A missing identifier, new session, or unavailable bound target gives every candidate 0. Use the `max` picker to honor an available binding; sampling another target does not change or refresh it. Bindings are committed after selection and migrate only when the previous target is no longer selectable.
-
-Bindings belong to each frontend pipeline and routing stage, survive serving-snapshot updates, and are not shared across replicas. Under `scorer.parameters.sessionIdConfig`, the idle TTL defaults to 300 seconds and the sweep interval to 10 seconds; zero uses the default and negative values are rejected. Selecting the bound target refreshes its timer. A sweep removes bindings idle for strictly longer than the TTL; until then, they can still be used and refreshed. Replacing the pipeline or restarting the frontend clears its bindings.
