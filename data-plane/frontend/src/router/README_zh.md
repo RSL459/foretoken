@@ -27,7 +27,12 @@ spec:
 | Scorer | `prefix` | 优先考虑可复用的 prompt 缓存块；可用 `matchLengthWeight`、`matchLengthScaleTokens` 调整匹配长度偏好。 |
 | Scorer | `no_hit_lru` | 优先选择尚未处理过冷请求的端点，其次选择最久未选中的端点；最多保留 `lruSize` 条记录。 |
 | Scorer | `load_aware` | 空等待队列记为 0.5 分，并随队列长度线性下降，在 `threshold` 处降至零。 |
+| Scorer | `two_tier` | 负载差异同时超过两个阈值时优先选择活跃请求少的目标；否则优先选择超过 `cache_threshold` 的最大 Device 前缀重叠量。必须搭配 `max` picker。 |
 | Picker | `gamble_sampling`（默认） | 根据完整分数排名采样：排名越高，选中概率越大；同分概率相同，低排名目标仍有机会被选中。 |
 | Picker | `max` · `power_of_two_choices` | 选择最高分目标 · 随机抽取两个不同目标，选择分数较高者，同分时随机选取。 |
 
 KV 索引不可用时，目标仍可参与路由，只是不享有 KV 前缀偏好。缓存位置的说明见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+
+使用 `two_tier` 时，在 `scorer: {algorithm: two_tier}` 同级设置 `picker: {algorithm: max}`；其他 picker 无法通过配置校验。`scorer.parameters` 中的 `balance_abs_threshold` 默认取 32，`balance_rel_threshold` 默认取 1.1，`cache_threshold` 默认取 0.5。负载极差和最大值相对最小值的比率必须同时严格超过阈值，才会优先按负载选择；负载为当前前端对各目标及 rank 的活跃预留请求数。否则，Device 前缀命中率严格超过缓存阈值时，在最大重叠量的候选中选择负载最低者；未超过时选择全体候选中负载最低者。同分按候选顺序选择。
+
+命中率以完整缓存块数除以向上取整的请求块数。缓存观测缺失时按零重叠处理；缓存比较要求观测到的 KV 块大小相同，不同时所有候选同分。Host、磁盘和外部缓存不计入重叠量。
