@@ -123,7 +123,7 @@ CLUSTER=foretoken-qwen-test
 k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
 ```
 
-远程集群沿用[前文](#远程集群与私有镜像仓库)的仓库登录和 `REGISTRY` 设置，推送模型服务镜像：
+远程集群沿用[前文](#远程集群)的仓库登录和 `REGISTRY` 设置，推送模型服务镜像：
 
 ```bash
 docker tag foretoken-omni-model-server:latest "$REGISTRY/omni-model-server:latest"

@@ -133,7 +133,7 @@ CLUSTER=foretoken-qwen-test
 k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
 ```
 
-For a remote cluster, use the registry login and `REGISTRY` configured [above](#remote-clusters-and-private-registries):
+For a remote cluster, use the registry login and `REGISTRY` configured [above](#remote-clusters):
 
 ```bash
 docker tag foretoken-omni-model-server:latest "$REGISTRY/omni-model-server:latest"

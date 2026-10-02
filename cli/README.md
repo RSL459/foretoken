@@ -81,7 +81,7 @@ This builds the platform in dedicated Pods and binds the checkout to the target 
 
 After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
 
-A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by their nodes. For a private repository, prepare pull Secrets before installation as described in [Deploy Foretoken from Source](../docs/custom-deployment.md#remote-clusters-and-private-registries). For publicly readable images, replace `example/foretoken` with a repository you can push to:
+A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by their nodes. For a private repository, prepare pull Secrets before installation as described in [Deploy Foretoken from Source](../docs/custom-deployment.md#remote-clusters). For publicly readable images, replace `example/foretoken` with a repository you can push to:
 
 ```bash
 docker login ghcr.io
