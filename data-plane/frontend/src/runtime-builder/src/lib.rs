@@ -29,23 +29,22 @@ pub enum KvIndexCredential {
     Degraded(KvIndexDegradedReason),
 }
 
+struct CachedModelBundle {
+    identity: ModelIdentity,
+    max_model_len: u32,
+    max_logprobs: Option<i32>,
+    dtype: Option<String>,
+    prepared_tokenizer: Option<String>,
+    bundle: Arc<RuntimeBundle>,
+}
+
+type ModelBundleCache = Mutex<BTreeMap<String, CachedModelBundle>>;
+
 pub struct RuntimeBuilder {
     router_pipeline: Result<Arc<RouterPipeline>, RouterPipelineConfigError>,
     kv_credential: KvIndexCredential,
     routing_load: foretoken_router::RoutingLoadState,
-    model_bundles: Mutex<
-        BTreeMap<
-            String,
-            (
-                ModelIdentity,
-                u32,
-                Option<i32>,
-                Option<String>,
-                Option<String>,
-                Arc<RuntimeBundle>,
-            ),
-        >,
-    >,
+    model_bundles: ModelBundleCache,
 }
 
 impl RuntimeBuilder {
@@ -259,19 +258,7 @@ impl RuntimeControl for RegistryRuntimeControl {
 async fn model_runtimes(
     identities: BTreeMap<String, ModelIdentity>,
     registry: &BackendRegistry,
-    cached_bundles: &Mutex<
-        BTreeMap<
-            String,
-            (
-                ModelIdentity,
-                u32,
-                Option<i32>,
-                Option<String>,
-                Option<String>,
-                Arc<RuntimeBundle>,
-            ),
-        >,
-    >,
+    cached_bundles: &ModelBundleCache,
 ) -> Result<BTreeMap<String, ModelRuntime>, RuntimeBuildError> {
     cached_bundles
         .lock()
@@ -302,23 +289,14 @@ async fn model_runtimes(
             .lock()
             .expect("model runtime cache lock poisoned")
             .get(&model)
-            .filter(
-                |(
-                    cached_identity,
-                    cached_len,
-                    cached_logprobs,
-                    cached_dtype,
-                    cached_prepared,
-                    _,
-                )| {
-                    cached_identity == &identity
-                        && *cached_len == max_model_len
-                        && *cached_logprobs == max_logprobs
-                        && *cached_dtype == dtype_key
-                        && *cached_prepared == prepared_key
-                },
-            )
-            .map(|(_, _, _, _, _, bundle)| bundle.clone())
+            .filter(|cached| {
+                cached.identity == identity
+                    && cached.max_model_len == max_model_len
+                    && cached.max_logprobs == max_logprobs
+                    && cached.dtype == dtype_key
+                    && cached.prepared_tokenizer == prepared_key
+            })
+            .map(|cached| cached.bundle.clone())
         {
             runtimes.insert(model, ModelRuntime::new(bundle));
             continue;
@@ -366,14 +344,14 @@ async fn model_runtimes(
             .expect("model runtime cache lock poisoned")
             .insert(
                 model.clone(),
-                (
+                CachedModelBundle {
                     identity,
                     max_model_len,
                     max_logprobs,
-                    dtype_key,
-                    prepared_key,
-                    bundle.clone(),
-                ),
+                    dtype: dtype_key,
+                    prepared_tokenizer: prepared_key,
+                    bundle: bundle.clone(),
+                },
             );
         runtimes.insert(model, ModelRuntime::new(bundle));
     }
