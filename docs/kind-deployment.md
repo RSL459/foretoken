@@ -39,4 +39,4 @@ foretoken uninstall
 kind delete cluster --name foretoken-dev
 ```
 
-For an existing K3s, RKE2, KubeSphere, cloud, or other Kubernetes cluster, use the [source deployment guide](custom-deployment.md#remote-clusters).
+For an existing K3s, RKE2, KubeSphere, cloud, or other Kubernetes cluster, use the [Kubernetes deployment guide](kubernetes-deployment.md).

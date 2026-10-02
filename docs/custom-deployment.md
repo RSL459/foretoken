@@ -31,43 +31,6 @@ foretoken install -e .
 
 Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. Online source selection is automatic. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
 
-### Remote clusters
-
-Set `REGISTRY` to a repository reachable by the Build Pods and target nodes. An internal registry without authentication is enough for a cluster on your network:
-
-```bash
-export REGISTRY=registry.example.com:5000/foretoken
-foretoken install -e . --registry "$REGISTRY"
-```
-
-If the registry requires authentication, log in and create an image pull Secret named `registry-auth` in `foretoken-platform` before installation and in each workload namespace before deployment:
-
-```bash
-docker login registry.example.com:5000
-kubectl create secret generic registry-auth \
-  --namespace foretoken-platform \
-  --from-file=.dockerconfigjson="$HOME/.docker/config.json" \
-  --type=kubernetes.io/dockerconfigjson
-```
-
-Create the same Secret in each workload namespace, then save these references in `deploy/platform-values.yaml`:
-
-```yaml
-imagePullSecrets:
-  - name: registry-auth
-workload:
-  imagePullSecrets:
-    - name: registry-auth
-```
-
-Install using that file:
-
-```bash
-foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
-```
-
-For an internal registry without authentication, omit `--values` unless other overrides are needed. For an authenticated registry, use the Secret references above.
-
 ## Deploy and update code
 
 Deploy the maintained [Quick Start](../README.md#quick-start) on a GPU-enabled cluster:
@@ -133,7 +96,7 @@ CLUSTER=foretoken-qwen-test
 k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
 ```
 
-For a remote cluster, use the `REGISTRY` configured [above](#remote-clusters). Log in first when that registry requires authentication:
+For a remote cluster, use the `REGISTRY` configured in the [Kubernetes deployment guide](kubernetes-deployment.md). Log in first when that registry requires authentication:
 
 ```bash
 docker tag foretoken-omni-model-server:latest "$REGISTRY/omni-model-server:latest"

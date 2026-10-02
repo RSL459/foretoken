@@ -39,4 +39,4 @@ foretoken uninstall
 kind delete cluster --name foretoken-dev
 ```
 
-已有 K3s、RKE2、KubeSphere、云上或其他 Kubernetes 集群，请使用[源码部署指南](custom-deployment_zh.md#远程集群)。
+已有 K3s、RKE2、KubeSphere、云上或其他 Kubernetes 集群，请使用 [Kubernetes 部署指南](kubernetes-deployment_zh.md)。

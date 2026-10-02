@@ -87,7 +87,7 @@ foretoken install -e .
 foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-如果仓库需要认证，安装前按[源码部署指南](../docs/custom-deployment_zh.md#远程集群)配置拉取 Secret。
+如果仓库需要认证，安装前按[源码部署指南](../docs/kubernetes-deployment_zh.md)配置拉取 Secret。
 
 ### 模型分发
 

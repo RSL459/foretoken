@@ -31,33 +31,6 @@ foretoken install -e .
 
 编译在专用 Pod 中执行，镜像直接载入集群节点。联网时自动选择镜像源。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
 
-### 远程集群
-
-将 `REGISTRY` 设置为构建 Pod 和目标节点都能访问的镜像仓库。服务器或内网中的无认证仓库即可：
-
-```bash
-export REGISTRY=registry.example.com:5000/foretoken
-foretoken install -e . --registry "$REGISTRY"
-```
-
-如果仓库需要认证，安装前先登录，并在 `foretoken-platform` 中创建名为 `registry-auth` 的镜像拉取 Secret；部署模型前，在各工作负载命名空间中创建同名 Secret。将引用保存到 `deploy/platform-values.yaml`：
-
-```yaml
-imagePullSecrets:
-  - name: registry-auth
-workload:
-  imagePullSecrets:
-    - name: registry-auth
-```
-
-带上该文件安装：
-
-```bash
-foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
-```
-
-使用无认证的内网仓库且没有其他自定义设置时，省略 `--values`。需要认证的仓库使用上面的 Secret 配置。
-
 ## 部署与更新代码
 
 在支持 GPU 的集群上部署仓库维护的[快速开始示例](../README_zh.md#快速开始)：
@@ -123,7 +96,7 @@ CLUSTER=foretoken-qwen-test
 k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
 ```
 
-远程集群沿用[前文](#远程集群)的 `REGISTRY` 设置；仓库需要认证时，先完成登录，再推送模型服务镜像：
+远程集群沿用 [Kubernetes 部署指南](kubernetes-deployment_zh.md) 中的 `REGISTRY` 设置；仓库需要认证时，先完成登录，再推送模型服务镜像：
 
 ```bash
 docker tag foretoken-omni-model-server:latest "$REGISTRY/omni-model-server:latest"

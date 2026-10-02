@@ -87,7 +87,7 @@ A standard active kind or k3d context loads the built images directly into its n
 foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-If the registry requires authentication, follow the [source deployment guide](../docs/custom-deployment.md#remote-clusters) before installation.
+If the registry requires authentication, follow the [source deployment guide](../docs/kubernetes-deployment.md) before installation.
 
 ### Model distribution
 
