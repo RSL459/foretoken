@@ -35,7 +35,9 @@ Choose the deployment path before running the common steps:
 
 | Situation | Start here | Image distribution |
 |---|---|---|
+| Create a local development cluster | [kind deployment](docs/kind-deployment.md) | Node-local containerd; no registry |
 | Create a single-host GPU cluster | [k3d deployment](docs/k3d-deployment.md) | Node-local containerd; no registry |
+| Create a small K3s cluster | [K3s deployment](docs/k3s-deployment.md) | Use a registry for source builds |
 | Use an existing kind or k3d cluster | [source deployment](docs/custom-deployment.md#install-from-source) | Node-local containerd; no registry |
 | Use an existing K3s, RKE2, KubeSphere, cloud, or other Kubernetes cluster | [source deployment](docs/custom-deployment.md#remote-clusters) | Registry reachable by Build Pods and nodes |
 | Use MetaX GPUs | [MetaX deployment](docs/metax-deployment.md) | Follow the MetaX runtime requirements |
@@ -168,8 +170,10 @@ The uninstall command preserves Foretoken CRDs, log storage, and reused cluster 
 
 ## Deployment Guides
 
-- [Source builds and private registries](docs/custom-deployment.md)
+- [Local development clusters with kind](docs/kind-deployment.md)
 - [Single-machine GPU clusters with k3d](docs/k3d-deployment.md)
+- [Small K3s clusters](docs/k3s-deployment.md)
+- [Source builds and remote registries](docs/custom-deployment.md)
 - [MetaX GPUs](docs/metax-deployment.md)
 
 ## Related Projects
