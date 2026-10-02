@@ -29,7 +29,7 @@ For a local kind or k3d cluster, build and install without a registry:
 foretoken install -e .
 ```
 
-Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
+Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. When the required images and dependencies are already cached, add `--offline` to skip automatic source selection. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
 
 ### Remote clusters and private registries
 
