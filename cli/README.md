@@ -15,12 +15,12 @@ You need Python 3.11 or later, an active Kubernetes context, `kubectl`, and Helm
 
 ## Install the command-line tool
 
-Install the published Foretoken command-line tool package with pip:
+Install the published command-line tool with pip:
 
 ```bash
 pip install foretoken
 
-# For source installation from the repository:
+# From a source checkout:
 # pip install -e .
 ```
 
@@ -32,7 +32,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-Run `foretoken --version` to check the installed command-line tool version.
+Run `foretoken --version` to check the installed CLI version.
 
 ## Install the Kubernetes platform
 
@@ -71,24 +71,28 @@ Add `--gateway-section-name LISTENER` only when more than one listener matches.
 
 ### Current source
 
-Prepare the build tools listed in the [source deployment guide](../docs/custom-deployment.md), then build and install from the repository root:
+Build and install from the repository root. The cluster needs a default StorageClass for compiler caches; see the [source deployment guide](../docs/custom-deployment.md) for storage overrides.
 
 ```bash
 foretoken install -e .
 ```
 
-A standard active kind or k3d context imports the built images locally. Other Kubernetes contexts need a registry reachable by their nodes. Sign in to the registry host with an account that can push the target repository before installation:
+This builds the platform in dedicated Pods and binds the checkout to the target cluster.
+
+After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
+
+A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by their nodes. For a private repository, prepare pull Secrets before installation as described in [Deploy Foretoken from Source](../docs/custom-deployment.md#remote-clusters-and-private-registries). For publicly readable images, replace `example/foretoken` with a repository you can push to:
 
 ```bash
 docker login ghcr.io
 foretoken install -e . --registry ghcr.io/example/foretoken
 ```
 
-Registry login authorizes the local image push. Private registries also need `imagePullSecrets` and `workload.imagePullSecrets` through `--values` so nodes can pull the images; see [Deploy Foretoken from Source](../docs/custom-deployment.md).
+Registry login authorizes the cluster build to push images.
 
 ### Model distribution
 
-To share public model downloads between nodes through Dragonfly, save this in `platform-values.yaml`:
+To share public model downloads between nodes through Dragonfly, save this in `deploy/platform-values.yaml`:
 
 ```yaml
 modelDistribution:
@@ -96,9 +100,13 @@ modelDistribution:
     enabled: true
 ```
 
+For a published platform installation, apply the values with:
+
 ```bash
-foretoken install --values platform-values.yaml
+foretoken install --values deploy/platform-values.yaml
 ```
+
+For a source installation, run `foretoken install -e . --values deploy/platform-values.yaml` from the repository root, retaining the original registry and engine-source options.
 
 Installation prepares Dragonfly or reuses an existing installation. Models that require authentication and custom model endpoints download directly from their provider. To select a particular Dragonfly Helm release, set `existingRelease: {name: dragonfly, namespace: dragonfly-system}` under `modelDistribution.dragonfly`.
 

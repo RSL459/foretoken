@@ -15,12 +15,12 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 
 ## 安装命令行工具
 
-使用 pip 安装已经发布的 Foretoken 命令行工具包：
+使用 pip 安装发布的命令行工具：
 
 ```bash
 pip install foretoken
 
-# 如果使用源码安装：
+# 从源码目录安装：
 # pip install -e .
 ```
 
@@ -32,7 +32,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-运行 `foretoken --version` 查看已安装的命令行工具版本。
+运行 `foretoken --version` 查看已安装的 CLI 版本。
 
 ## 安装 Kubernetes 平台
 
@@ -71,24 +71,28 @@ foretoken install \
 
 ### 当前源码
 
-按[源码部署指南](../docs/custom-deployment_zh.md)准备构建工具，再从仓库根目录安装：
+从仓库根目录构建并安装。集群需有保存编译缓存的默认存储类（StorageClass）；自定义存储设置见[源码部署指南](../docs/custom-deployment_zh.md)。
 
 ```bash
 foretoken install -e .
 ```
 
-当前 context 是标准 kind 或 k3d 时，命令会构建并导入本地镜像；其他 Kubernetes context 需要提供节点可访问的 registry。安装前先使用有目标仓库推送权限的账户登录 registry：
+命令在集群专用 Pod 中构建平台，并将源码目录绑定到目标集群。
+
+修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
+
+当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要节点可访问的镜像仓库。私有仓库需在安装前按[源码部署指南](../docs/custom-deployment_zh.md#远程集群与私有镜像仓库)准备拉取 Secret。镜像允许公开拉取时，将 `example/foretoken` 替换为有推送权限的仓库后执行：
 
 ```bash
 docker login ghcr.io
 foretoken install -e . --registry ghcr.io/example/foretoken
 ```
 
-登录 registry 用于授权本机推送镜像。私有 registry 还需要通过 `--values` 配置 `imagePullSecrets` 和 `workload.imagePullSecrets`，让节点能够拉取镜像，详见[从源码部署 Foretoken](../docs/custom-deployment_zh.md)。
+仓库登录用于授权集群构建任务推送镜像。
 
 ### 模型分发
 
-使用 Dragonfly 在节点间共享公开模型文件时，在 `platform-values.yaml` 中配置：
+使用 Dragonfly 在节点间共享公开模型文件时，在 `deploy/platform-values.yaml` 中配置：
 
 ```yaml
 modelDistribution:
@@ -96,9 +100,13 @@ modelDistribution:
     enabled: true
 ```
 
+使用发布镜像的平台执行：
+
 ```bash
-foretoken install --values platform-values.yaml
+foretoken install --values deploy/platform-values.yaml
 ```
+
+源码安装从仓库根目录执行 `foretoken install -e . --values deploy/platform-values.yaml`，保留原镜像仓库和引擎源码选项。
 
 安装命令会准备 Dragonfly，或复用已有安装。需要身份认证的模型及自定义模型源仍直接从源站下载。要选择特定的 Dragonfly Helm release，在 `modelDistribution.dragonfly` 下设置 `existingRelease: {name: dragonfly, namespace: dragonfly-system}`。
 

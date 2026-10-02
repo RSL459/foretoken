@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any
 
@@ -49,10 +50,7 @@ from foretoken.platform.rdma import (
     select_rdma,
 )
 from foretoken.platform.types import RuntimeOverrides
-from foretoken.source import (
-    prepare_source_images,
-    restart_changed_source_deployments,
-)
+from foretoken.source import prepare_source_images
 
 
 def _print_plan(responsibility: str, action: str, detail: str) -> None:
@@ -144,8 +142,28 @@ class PlatformLifecycle:
         self._logs = LogCollectionLifecycle(self._helm)
         self._model_distribution = ModelDistributionLifecycle(self._helm, self._kubectl)
 
-    def install(self, command: InstallCommand) -> None:
-        """Install managed dependencies and update the Foretoken platform release."""
+    def install(
+        self,
+        command: InstallCommand,
+        *,
+        source_base_image: str | None = None,
+        source_build_arguments: dict[str, str] | None = None,
+    ) -> None:
+        """Install the platform and commit successful source inputs to its workstation binding."""
+        with ExitStack() as artifacts:
+            self._install(
+                command, artifacts,
+                source_base_image=source_base_image,
+                source_build_arguments=source_build_arguments,
+            )
+
+    def _install(
+        self, command: InstallCommand, artifacts: ExitStack,
+        *,
+        source_base_image: str | None,
+        source_build_arguments: dict[str, str] | None,
+    ) -> None:
+        """Reconcile managed dependencies and the platform within the installation's artifact lifetime."""
         helm = self._helm
         kubectl = self._kubectl
         gateway = self._gateway
@@ -165,7 +183,7 @@ class PlatformLifecycle:
             requested_source = "source" if command.editable is not None else "release"
             if install_source != requested_source:
                 command_hint = (
-                    "foretoken install -e PATH"
+                    "foretoken install -e ."
                     if install_source == "source"
                     else "foretoken install"
                 )
@@ -282,7 +300,9 @@ class PlatformLifecycle:
             else stored_runtime.image
         )
         if command.editable is not None:
-            if current_runtime.image not in {None, "auto"}:
+            if source_base_image is not None:
+                source_runtime_image = source_base_image
+            elif current_runtime.image not in {None, "auto"}:
                 source_runtime_image = current_runtime.image or None
             elif runtime_selection is not None and runtime_selection.backend == "metax":
                 build_metax_runtime = True
@@ -464,15 +484,18 @@ class PlatformLifecycle:
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
         source_images = (
-            prepare_source_images(
-                command.editable,
-                command.registry,
-                self._oci_registry,
+            artifacts.enter_context(prepare_source_images(
+                command,
                 platform.namespace,
-                command.timeout,
+                (*stored_values, *values),
                 source_runtime_image,
+                installed_images=(
+                    helm.platform_image_references(platform) if platform_exists else None
+                ),
                 build_metax_runtime=build_metax_runtime,
-            )
+                runtime_backend=runtime_selection.backend if runtime_selection else "nvidia",
+                saved_arguments=source_build_arguments,
+            ))
             if command.editable is not None
             else None
         )
@@ -585,13 +608,6 @@ class PlatformLifecycle:
                     "check node drivers and network interfaces"
                 ),
             )
-        if source_images is not None:
-            restart_changed_source_deployments(
-                kubectl,
-                source_images,
-                platform.namespace,
-                command.timeout,
-            )
         for responsibility, action, detail in gateway.finish_update(
             gateway_plan, gateway_config, command.timeout
         ):
@@ -606,6 +622,10 @@ class PlatformLifecycle:
             _print_plan("Prometheus", "Ready", managed_prometheus.display_name)
         if install_managed_dcgm:
             _print_plan("NVIDIA DCGM Exporter", "Ready", managed_dcgm.display_name)
+        if source_images is not None:
+            from foretoken.editable import record_install
+
+            record_install(kubectl, command, source_runtime_image, source_images.inputs, build_state=source_images.build_state)
         _print_plan("Foretoken platform", "Ready", platform.display_name)
         if not load_balancer_plan.install and load_balancer_plan.action != "Reuse":
             _print_plan(
@@ -635,6 +655,9 @@ class PlatformLifecycle:
                 "use its existing Helm lifecycle"
             )
 
+        from foretoken.editable import has_source_state
+
+        source_builds = (platform_exists and helm.release_install_source(platform) == "source") or has_source_state(kubectl)
         dcgm_exists = helm.release_exists(managed_dcgm)
         dcgm_managed = dcgm_exists and helm.is_cleanup_managed(managed_dcgm)
         prometheus_exists = helm.release_exists(managed_prometheus)
@@ -731,3 +754,9 @@ class PlatformLifecycle:
         load_balancer_result = load_balancer.finish_uninstall(command.timeout)
         if load_balancer_result is not None:
             _print_plan("LoadBalancer", *load_balancer_result)
+        from foretoken.editable import forget_install
+        from foretoken.source import remove_build_caches
+
+        if source_builds:
+            remove_build_caches(kubectl, command.timeout)
+        forget_install(kubectl)

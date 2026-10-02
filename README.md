@@ -56,7 +56,7 @@ foretoken install
 
 For deployment on MetaX GPUs, follow the [MetaX deployment guide](docs/metax-deployment.md).
 
-See the [source deployment guide](docs/custom-deployment.md) for build tools and remote clusters.
+See the [source deployment guide](docs/custom-deployment.md) for cluster build storage, remote registries, and engine source updates.
 
 ### 3. Deploy the Quick Start
 

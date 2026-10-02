@@ -56,7 +56,7 @@ foretoken install
 
 沐曦 GPU 的部署请参照[沐曦部署指南](docs/metax-deployment_zh.md)。
 
-构建工具和远程集群部署见[源码部署指南](docs/custom-deployment_zh.md)。
+集群编译存储、远程镜像仓库和引擎源码更新见[源码部署指南](docs/custom-deployment_zh.md)。
 
 ### 3. 部署快速开始示例
 
