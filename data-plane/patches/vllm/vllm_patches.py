@@ -34,7 +34,7 @@ def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
             and "decode_context_parallel_size: int" in source
         )
         if series_name == "compatibility/v1-legacy/series" and modern_layout:
-            series_name = "compatibility/v1-current/series"
+            series_name = "compatibility/v1-default/series"
 
     selected = []
     for line in (patches / series_name).read_text().splitlines():
