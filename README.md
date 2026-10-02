@@ -31,7 +31,16 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-Start with a GPU-enabled Kubernetes cluster and Python 3.11+, `kubectl`, and Helm installed locally.
+Choose the deployment path before running the common steps:
+
+| Situation | Start here | Image distribution |
+|---|---|---|
+| Create a single-host GPU cluster | [k3d deployment](docs/k3d-deployment.md) | Node-local containerd; no registry |
+| Use an existing kind or k3d cluster | [source deployment](docs/custom-deployment.md#install-from-source) | Node-local containerd; no registry |
+| Use an existing K3s, RKE2, KubeSphere, cloud, or other Kubernetes cluster | [source deployment](docs/custom-deployment.md#remote-clusters) | Registry reachable by Build Pods and nodes |
+| Use MetaX GPUs | [MetaX deployment](docs/metax-deployment.md) | Follow the MetaX runtime requirements |
+
+K3s, RKE2, KubeSphere, and managed Kubernetes all use the existing-cluster path because Foretoken connects through the standard Kubernetes API. Install Python 3.11+, `kubectl`, and Helm locally, then continue with the selected guide.
 
 ### 1. Get the examples and install the command-line tool
 
@@ -54,9 +63,7 @@ foretoken install
 # foretoken install -e .
 ```
 
-For deployment on MetaX GPUs, follow the [MetaX deployment guide](docs/metax-deployment.md).
-
-See the [source deployment guide](docs/custom-deployment.md) for cluster build storage, remote registries, and engine source updates.
+If you are creating a k3d cluster, complete the [k3d deployment guide](docs/k3d-deployment.md) before this step. If you are using an existing cluster, follow the selected source deployment path above.
 
 ### 3. Deploy the Quick Start
 

@@ -33,14 +33,14 @@ foretoken install -e .
 
 ### 远程集群
 
-将 `REGISTRY` 设置为构建 Pod 和目标节点都能访问的镜像仓库。使用无认证的内网仓库时：
+将 `REGISTRY` 设置为构建 Pod 和目标节点都能访问的镜像仓库。服务器或内网中的无认证仓库即可：
 
 ```bash
 export REGISTRY=registry.example.com:5000/foretoken
 foretoken install -e . --registry "$REGISTRY"
 ```
 
-使用私有仓库时，安装前先登录并在 `foretoken-platform` 中创建名为 `registry-auth` 的镜像拉取 Secret；部署模型前，在各工作负载命名空间中创建同名 Secret。将引用保存到 `deploy/platform-values.yaml`：
+如果仓库需要认证，安装前先登录，并在 `foretoken-platform` 中创建名为 `registry-auth` 的镜像拉取 Secret；部署模型前，在各工作负载命名空间中创建同名 Secret。将引用保存到 `deploy/platform-values.yaml`：
 
 ```yaml
 imagePullSecrets:
@@ -56,7 +56,7 @@ workload:
 foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
 ```
 
-使用无认证的内网仓库且没有其他自定义设置时，省略 `--values`。私有仓库登录用于授权推送；镜像拉取 Secret 用于授权集群节点下载镜像。
+使用无认证的内网仓库且没有其他自定义设置时，省略 `--values`。需要认证的仓库使用上面的 Secret 配置。
 
 ## 部署与更新代码
 

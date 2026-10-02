@@ -81,14 +81,13 @@ foretoken install -e .
 
 修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
 
-当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要节点可访问的镜像仓库。私有仓库需在安装前按[源码部署指南](../docs/custom-deployment_zh.md#远程集群)准备拉取 Secret。镜像允许公开拉取时，将 `example/foretoken` 替换为有推送权限的仓库后执行：
+当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 
 ```bash
-docker login ghcr.io
-foretoken install -e . --registry ghcr.io/example/foretoken
+foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-仓库登录用于授权集群构建任务推送镜像。
+如果仓库需要认证，安装前按[源码部署指南](../docs/custom-deployment_zh.md#远程集群)配置拉取 Secret。
 
 ### 模型分发
 

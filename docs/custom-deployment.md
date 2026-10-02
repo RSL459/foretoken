@@ -33,14 +33,14 @@ Builds run in dedicated Pods, and images are loaded directly into the cluster no
 
 ### Remote clusters
 
-Set `REGISTRY` to a repository reachable by the Build Pods and target nodes. For an internal registry without authentication:
+Set `REGISTRY` to a repository reachable by the Build Pods and target nodes. An internal registry without authentication is enough for a cluster on your network:
 
 ```bash
 export REGISTRY=registry.example.com:5000/foretoken
 foretoken install -e . --registry "$REGISTRY"
 ```
 
-For a private registry, log in and create an image pull Secret named `registry-auth` in `foretoken-platform` before installation and in each workload namespace before deployment:
+If the registry requires authentication, log in and create an image pull Secret named `registry-auth` in `foretoken-platform` before installation and in each workload namespace before deployment:
 
 ```bash
 docker login registry.example.com:5000
@@ -66,7 +66,7 @@ Install using that file:
 foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
 ```
 
-For an internal no-auth registry, omit `--values` unless other overrides are needed. For a private registry, Registry login authorizes image pushes and the pull Secrets authorize cluster nodes to download images.
+For an internal registry without authentication, omit `--values` unless other overrides are needed. For an authenticated registry, use the Secret references above.
 
 ## Deploy and update code
 

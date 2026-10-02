@@ -31,7 +31,16 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-准备好支持 GPU 的 Kubernetes 集群，并在本机安装 Python 3.11+、`kubectl` 和 Helm。
+先根据集群情况选择部署路径：
+
+| 使用场景 | 从这里开始 | 镜像分发方式 |
+|---|---|---|
+| 创建单机 GPU 集群 | [k3d 部署指南](docs/k3d-deployment_zh.md) | 节点本地 containerd，无需镜像仓库 |
+| 使用已有 kind 或 k3d 集群 | [源码部署指南](docs/custom-deployment_zh.md#从源码安装) | 节点本地 containerd，无需镜像仓库 |
+| 使用已有 K3s、RKE2、KubeSphere、云上或其他 Kubernetes 集群 | [源码部署指南](docs/custom-deployment_zh.md#远程集群) | 构建 Pod 和节点都能访问的镜像仓库 |
+| 使用沐曦 GPU | [沐曦部署指南](docs/metax-deployment_zh.md) | 按沐曦运行时要求准备 |
+
+K3s、RKE2、KubeSphere 和托管 Kubernetes 都通过标准 Kubernetes API 接入，因此使用同一条已有集群路径。按所选指南准备 Python 3.11+、`kubectl` 和 Helm。
 
 ### 1. 获取示例并安装命令行工具
 
@@ -54,9 +63,7 @@ foretoken install
 # foretoken install -e .
 ```
 
-沐曦 GPU 的部署请参照[沐曦部署指南](docs/metax-deployment_zh.md)。
-
-集群编译存储、远程镜像仓库和引擎源码更新见[源码部署指南](docs/custom-deployment_zh.md)。
+如果要创建 k3d 集群，请先完成上面的 [k3d 部署指南](docs/k3d-deployment_zh.md)；使用已有集群时，按上表进入对应的源码部署路径。
 
 ### 3. 部署快速开始示例
 
