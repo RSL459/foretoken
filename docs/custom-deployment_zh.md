@@ -29,7 +29,7 @@ pip install -e .
 foretoken install -e .
 ```
 
-编译在专用 Pod 中执行，镜像直接载入集群节点。如果所需镜像和依赖已经缓存，可添加 `--offline` 跳过自动选源。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
+编译在专用 Pod 中执行，镜像直接载入集群节点。联网时自动选择镜像源。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
 
 ### 远程集群与私有镜像仓库
 
