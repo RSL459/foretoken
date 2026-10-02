@@ -271,10 +271,14 @@ def prepare_source_images(
     if command.oci_registry:
         environment["FORETOKEN_OCI_REGISTRY"] = command.oci_registry
     if saved_arguments is None:
-        selected, selections, _ = select_source_build_sources(environment)
-        environment.update(selected)
-        for selection in selections:
-            print(f"Source mirror selected: {selection}", flush=True)
+        # Local kind/k3d builds do not need a distribution registry. Keep their
+        # first build independent of mirror probes; explicit registries opt into
+        # selecting sources that the build Pods and nodes can both reach.
+        if command.registry or command.oci_registry:
+            selected, selections, _ = select_source_build_sources(environment)
+            environment.update(selected)
+            for selection in selections:
+                print(f"Source mirror selected: {selection}", flush=True)
         arguments = build_arguments(environment)
     else:
         environment.update(saved_arguments)

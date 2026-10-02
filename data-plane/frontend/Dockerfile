@@ -41,7 +41,7 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
     && if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
       export CARGO_NET_GIT_FETCH_WITH_CLI; \
     fi \
-    && if [ ! -f data-plane/third_party/vllm/rust/Cargo.toml ]; then \
+    && if [ ! -f data-plane/third_party/vllm/vllm/v1/engine/core.py ]; then \
       if [ ! -f /var/cache/vllm/rust/Cargo.toml ]; then \
         git -C /var/cache/vllm init -q \
         && git -C /var/cache/vllm fetch --depth=1 https://github.com/vllm-project/vllm.git "${VLLM_REVISION}" \

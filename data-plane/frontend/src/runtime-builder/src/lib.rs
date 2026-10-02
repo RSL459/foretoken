@@ -4,7 +4,7 @@
 //! Builds complete runtime generations from immutable serving snapshots.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use foretoken_backend_registry::{
@@ -33,6 +33,19 @@ pub struct RuntimeBuilder {
     router_pipeline: Result<Arc<RouterPipeline>, RouterPipelineConfigError>,
     kv_credential: KvIndexCredential,
     routing_load: foretoken_router::RoutingLoadState,
+    model_bundles: Mutex<
+        BTreeMap<
+            String,
+            (
+                ModelIdentity,
+                u32,
+                Option<i32>,
+                Option<String>,
+                Option<String>,
+                Arc<RuntimeBundle>,
+            ),
+        >,
+    >,
 }
 
 impl RuntimeBuilder {
@@ -45,6 +58,7 @@ impl RuntimeBuilder {
             router_pipeline: router_pipeline.build().map(Arc::new),
             kv_credential,
             routing_load: Default::default(),
+            model_bundles: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -118,6 +132,7 @@ impl RuntimeBuilder {
                     })
                     .collect(),
                 &registry,
+                &self.model_bundles,
             )
             .await?
         } else {
@@ -244,7 +259,24 @@ impl RuntimeControl for RegistryRuntimeControl {
 async fn model_runtimes(
     identities: BTreeMap<String, ModelIdentity>,
     registry: &BackendRegistry,
+    cached_bundles: &Mutex<
+        BTreeMap<
+            String,
+            (
+                ModelIdentity,
+                u32,
+                Option<i32>,
+                Option<String>,
+                Option<String>,
+                Arc<RuntimeBundle>,
+            ),
+        >,
+    >,
 ) -> Result<BTreeMap<String, ModelRuntime>, RuntimeBuildError> {
+    cached_bundles
+        .lock()
+        .expect("model runtime cache lock poisoned")
+        .retain(|model, _| identities.contains_key(model));
     let mut runtimes = BTreeMap::new();
     for (model, identity) in identities {
         let max_model_len = registry.effective_max_model_len(&model).ok_or_else(|| {
@@ -255,9 +287,42 @@ async fn model_runtimes(
         let model_dtype = registry
             .effective_model_dtype(&model)
             .map_err(RuntimeBuildError::ModelRuntime)?;
+        let max_logprobs = registry.effective_max_logprobs(
+            &model,
+            foretoken_text::backend::SamplingLimits::DEFAULT_MAX_LOGPROBS,
+        );
+        let dtype_key = model_dtype.map(|dtype| dtype.as_str().to_owned());
         let prepared_tokenizer = registry
             .prepared_tokenizer(&model)
             .map_err(RuntimeBuildError::ModelRuntime)?;
+        let prepared_key = prepared_tokenizer
+            .as_ref()
+            .map(|prepared| format!("{prepared:?}"));
+        if let Some(bundle) = cached_bundles
+            .lock()
+            .expect("model runtime cache lock poisoned")
+            .get(&model)
+            .filter(
+                |(
+                    cached_identity,
+                    cached_len,
+                    cached_logprobs,
+                    cached_dtype,
+                    cached_prepared,
+                    _,
+                )| {
+                    cached_identity == &identity
+                        && *cached_len == max_model_len
+                        && *cached_logprobs == max_logprobs
+                        && *cached_dtype == dtype_key
+                        && *cached_prepared == prepared_key
+                },
+            )
+            .map(|(_, _, _, _, _, bundle)| bundle.clone())
+        {
+            runtimes.insert(model, ModelRuntime::new(bundle));
+            continue;
+        }
         let SnapshotRuntime {
             text_processor,
             tokenizer,
@@ -268,10 +333,7 @@ async fn model_runtimes(
             &identity.tokenizer,
             &identity.tokenizer_revision,
             max_model_len,
-            registry.effective_max_logprobs(
-                &model,
-                foretoken_text::backend::SamplingLimits::DEFAULT_MAX_LOGPROBS,
-            ),
+            max_logprobs,
             model_dtype,
             prepared_tokenizer.as_ref(),
         )
@@ -294,14 +356,26 @@ async fn model_runtimes(
                 "model {model} declares multimodal routing capabilities but its frontend processor does not support image input"
             )));
         }
-        runtimes.insert(
-            model,
-            ModelRuntime::new(Arc::new(RuntimeBundle::new(
-                text_processor,
-                tokenizer,
-                chat_processor,
-            ))),
-        );
+        let bundle = Arc::new(RuntimeBundle::new(
+            text_processor,
+            tokenizer,
+            chat_processor,
+        ));
+        cached_bundles
+            .lock()
+            .expect("model runtime cache lock poisoned")
+            .insert(
+                model.clone(),
+                (
+                    identity,
+                    max_model_len,
+                    max_logprobs,
+                    dtype_key,
+                    prepared_key,
+                    bundle.clone(),
+                ),
+            );
+        runtimes.insert(model, ModelRuntime::new(bundle));
     }
     Ok(runtimes)
 }

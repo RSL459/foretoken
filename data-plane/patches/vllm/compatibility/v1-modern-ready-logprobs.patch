@@ -4,18 +4,18 @@
 diff --git a/vllm/v1/engine/__init__.py b/vllm/v1/engine/__init__.py
 --- a/vllm/v1/engine/__init__.py
 +++ b/vllm/v1/engine/__init__.py
-@@ -80,4 +80,5 @@ class EngineCoreReadyResponse:
-     vllm_version: str
-     world_size: int
-     data_parallel_size: int
+@@ -87,4 +87,5 @@ class EngineCoreReadyResponse:
+     max_num_seqs: int
+     max_num_batched_tokens: int
+     instance_id: str
 +    max_logprobs: int | None = None
      # KV cache capacity (None for encoder-only/attention-free models).
 diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
 --- a/vllm/v1/engine/core.py
 +++ b/vllm/v1/engine/core.py
-@@ -1630,4 +1630,5 @@
-                 vllm_version=VLLM_VERSION,
-                 world_size=self.vllm_config.parallel_config.world_size,
-                 data_parallel_size=self.vllm_config.parallel_config.data_parallel_size,
+@@ -1637,4 +1637,5 @@
+                 max_num_seqs=self.vllm_config.scheduler_config.max_num_seqs,
+                 max_num_batched_tokens=self.vllm_config.scheduler_config.max_num_batched_tokens,
+                 instance_id=self.vllm_config.instance_id,
 +                max_logprobs=self.vllm_config.model_config.max_logprobs,
                  kv_cache_size_tokens=(
