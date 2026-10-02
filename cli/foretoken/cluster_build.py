@@ -334,6 +334,23 @@ class ClusterBuilder(AbstractContextManager):
                 publisher_mounts.append(
                     {"name": "runtime", "mountPath": self.runtime_mount}
                 )
+                spec["initContainers"].append(
+                    {
+                        "name": "runtime-storage",
+                        "image": image,
+                        "command": [
+                            "sh",
+                            "-ec",
+                            'mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"',
+                            "prepare",
+                            self.runtime_mount,
+                        ],
+                        "securityContext": {"runAsUser": 0, "runAsGroup": 0},
+                        "volumeMounts": [
+                            {"name": "runtime", "mountPath": self.runtime_mount}
+                        ],
+                    }
+                )
             spec["containers"].append(
                 {
                     "name": "publisher",
@@ -341,6 +358,8 @@ class ClusterBuilder(AbstractContextManager):
                     "command": idle_command,
                     "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
                     "securityContext": {
+                        "runAsUser": 1000,
+                        "runAsGroup": 1000,
                         "allowPrivilegeEscalation": False,
                         "capabilities": {"drop": ["ALL"]},
                     },
