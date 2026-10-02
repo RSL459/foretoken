@@ -192,10 +192,19 @@ def main(argv: Sequence[str] | None = None) -> None:
             oci_registry = command.oci_registry or os.environ.get(
                 "FORETOKEN_OCI_REGISTRY"
             )
-            with source_operation(
-                Kubectl(), command.timeout, installing=command.editable is not None
-            ):
-                PlatformLifecycle(oci_registry).install(command)
+            previous_offline = os.environ.get("FORETOKEN_OFFLINE")
+            if command.offline:
+                os.environ["FORETOKEN_OFFLINE"] = "1"
+            try:
+                with source_operation(
+                    Kubectl(), command.timeout, installing=command.editable is not None
+                ):
+                    PlatformLifecycle(oci_registry).install(command)
+            finally:
+                if previous_offline is None:
+                    os.environ.pop("FORETOKEN_OFFLINE", None)
+                else:
+                    os.environ["FORETOKEN_OFFLINE"] = previous_offline
         elif isinstance(command, UninstallCommand):
             with source_operation(Kubectl(), command.timeout):
                 PlatformLifecycle().uninstall(command)

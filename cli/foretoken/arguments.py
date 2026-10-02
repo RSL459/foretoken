@@ -28,6 +28,7 @@ class InstallCommand:
     timeout: str
     grafana_auth: str | None = None
     engine_sources: tuple[str, ...] = ()
+    offline: bool = False
 
 
 @dataclass(frozen=True)
@@ -212,6 +213,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "defaults to FORETOKEN_OCI_REGISTRY (otherwise compares supported "
             "public sources automatically; explicit image choices are preserved)"
         ),
+    )
+    install.add_argument(
+        "--offline",
+        action="store_true",
+        help="skip automatic source selection and use cached or explicitly configured sources",
     )
     install.add_argument(
         "-f",
@@ -408,6 +414,7 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             parsed_args.timeout,
             parsed_args.grafana_auth,
             tuple(parsed_args.engine_source or ()),
+            parsed_args.offline,
         )
     if parsed_args.command == "uninstall":
         return UninstallCommand(parsed_args.timeout)

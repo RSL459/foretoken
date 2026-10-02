@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import re
 import ssl
 import time
@@ -206,8 +207,10 @@ def select_platform_oci_reference(reference: str) -> str:
 
     Callers retain explicit user overrides. Preserve the original registry path,
     tag or digest when selecting the public proxy, and reuse the decision within
-    this CLI invocation.
+    this CLI invocation. Offline installs retain the configured source unchanged.
     """
+    if os.environ.get("FORETOKEN_OFFLINE"):
+        return reference
     scheme = "oci://" if reference.startswith("oci://") else ""
     value = reference.removeprefix(scheme) if scheme else reference
     host, separator, path = value.partition("/")
@@ -241,7 +244,9 @@ def select_platform_oci_reference(reference: str) -> str:
 def select_source_build_sources(
     environment: Mapping[str, str],
 ) -> tuple[dict[str, str], tuple[str, ...], tuple[str, ...]]:
-    """Measure unconfigured official and anonymous sources and return faster build settings."""
+    """Measure unconfigured sources and return faster build settings when online."""
+    if environment.get("FORETOKEN_OFFLINE") or os.environ.get("FORETOKEN_OFFLINE"):
+        return {}, (), ()
     probes: list[_SourceProbe] = []
     if not environment.get("FORETOKEN_OCI_REGISTRY"):
         probes.extend(
