@@ -31,16 +31,16 @@ foretoken install -e .
 
 编译在专用 Pod 中执行，镜像直接载入集群节点。联网时自动选择镜像源。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
 
-### 远程集群与私有镜像仓库
+### 远程集群
 
-其他集群需要构建 Pod 和目标节点均可访问的镜像仓库。将 `example` 替换为有推送权限的命名空间，并通过 Docker CLI 登录，为构建提供推送凭据：
+将 `REGISTRY` 设置为构建 Pod 和目标节点都能访问的镜像仓库。使用无认证的内网仓库时：
 
 ```bash
-export REGISTRY=ghcr.io/example/foretoken
-docker login ghcr.io
+export REGISTRY=registry.example.com:5000/foretoken
+foretoken install -e . --registry "$REGISTRY"
 ```
 
-使用私有仓库时，安装前先在 `foretoken-platform` 中创建名为 `registry-auth` 的镜像拉取 Secret；部署模型前，在各工作负载命名空间中创建同名 Secret。将引用保存到 `deploy/platform-values.yaml`：
+使用私有仓库时，安装前先登录并在 `foretoken-platform` 中创建名为 `registry-auth` 的镜像拉取 Secret；部署模型前，在各工作负载命名空间中创建同名 Secret。将引用保存到 `deploy/platform-values.yaml`：
 
 ```yaml
 imagePullSecrets:
@@ -56,7 +56,7 @@ workload:
 foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
 ```
 
-镜像允许公开拉取且没有其他自定义设置时，省略 `--values`。仓库登录用于授权推送；镜像拉取 Secret 用于授权集群节点下载私有镜像。
+使用无认证的内网仓库且没有其他自定义设置时，省略 `--values`。私有仓库登录用于授权推送；镜像拉取 Secret 用于授权集群节点下载镜像。
 
 ## 部署与更新代码
 

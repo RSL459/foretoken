@@ -31,16 +31,26 @@ foretoken install -e .
 
 Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. Online source selection is automatic. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
 
-### Remote clusters and private registries
+### Remote clusters
 
-Other clusters need a registry reachable by the build Pods and target nodes. Replace `example` with a namespace you can push to, and authorize the build using a Docker CLI login:
+Set `REGISTRY` to a repository reachable by the Build Pods and target nodes. For an internal registry without authentication:
 
 ```bash
-export REGISTRY=ghcr.io/example/foretoken
-docker login ghcr.io
+export REGISTRY=registry.example.com:5000/foretoken
+foretoken install -e . --registry "$REGISTRY"
 ```
 
-For a private registry, create an image pull Secret named `registry-auth` in `foretoken-platform` before installation, and in each workload namespace before deployment. Save these references in `deploy/platform-values.yaml`:
+For a private registry, log in and create an image pull Secret named `registry-auth` in `foretoken-platform` before installation and in each workload namespace before deployment:
+
+```bash
+docker login registry.example.com:5000
+kubectl create secret generic registry-auth \
+  --namespace foretoken-platform \
+  --from-file=.dockerconfigjson="$HOME/.docker/config.json" \
+  --type=kubernetes.io/dockerconfigjson
+```
+
+Create the same Secret in each workload namespace, then save these references in `deploy/platform-values.yaml`:
 
 ```yaml
 imagePullSecrets:
@@ -56,7 +66,7 @@ Install using that file:
 foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
 ```
 
-For publicly readable images, omit `--values` unless other overrides are needed. Registry login authorizes image pushes; the pull Secrets authorize cluster nodes to download private images.
+For an internal no-auth registry, omit `--values` unless other overrides are needed. For a private registry, Registry login authorizes image pushes and the pull Secrets authorize cluster nodes to download images.
 
 ## Deploy and update code
 

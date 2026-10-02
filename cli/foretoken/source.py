@@ -271,11 +271,10 @@ def prepare_source_images(
     if command.oci_registry:
         environment["FORETOKEN_OCI_REGISTRY"] = command.oci_registry
     if saved_arguments is None:
-        if not command.offline:
-            selected, selections, _ = select_source_build_sources(environment)
-            environment.update(selected)
-            for selection in selections:
-                print(f"Source mirror selected: {selection}", flush=True)
+        selected, selections, _ = select_source_build_sources(environment)
+        environment.update(selected)
+        for selection in selections:
+            print(f"Source mirror selected: {selection}", flush=True)
         arguments = build_arguments(environment)
     else:
         environment.update(saved_arguments)
