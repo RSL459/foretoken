@@ -25,6 +25,7 @@ k3d 在 Docker 容器中运行轻量级 Kubernetes 发行版 k3s。它适合在�
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
+pip install -e .
 ```
 
 查看 GPU：
@@ -42,105 +43,20 @@ export CLUSTER=foretoken-qwen-test
 
 ## 2. 创建限定 GPU 的 k3d 集群
 
-下面的 Bash 代码读取 NVIDIA 运行时、配置和依赖库的位置，并为 k3d 生成挂载参数：
-
 ```bash
-declare -a K3D_VOLUME_ARGS=()
-declare -A K3D_MOUNTED_PATHS=()
-
-add_k3d_mount() {
-  local path="$1"
-  [ -e "$path" ] || return 0
-  [ -z "${K3D_MOUNTED_PATHS[$path]+x}" ] || return 0
-  K3D_MOUNTED_PATHS["$path"]=1
-  K3D_VOLUME_ARGS+=(--volume "$path:$path@server:0")
-}
-
-for NAME in \
-  nvidia-container-runtime \
-  nvidia-container-runtime-hook \
-  nvidia-container-cli \
-  nvidia-ctk; do
-  TOOL_PATH="$(command -v "$NAME")"
-  add_k3d_mount "$TOOL_PATH"
-
-  while read -r PATH_KIND LIBRARY_PATH; do
-    if [ "$PATH_KIND" = directory ]; then
-      add_k3d_mount "$(realpath -m "$(dirname "$LIBRARY_PATH")")"
-    else
-      add_k3d_mount "$LIBRARY_PATH"
-    fi
-  done < <(
-    ldd "$TOOL_PATH" |
-      awk '
-        $2 == "=>" && $3 ~ /^\// { print "directory", $3 }
-        $1 ~ /^\// { print "file", $1 }
-      '
-  )
-done
-
-for CONFIG_DIR in \
-  /etc/nvidia-container-runtime \
-  /usr/local/etc/nvidia-container-runtime; do
-  add_k3d_mount "$CONFIG_DIR"
-done
-
-for LDCONFIG_PATH in \
-  "$(command -v ldconfig)" \
-  /sbin/ldconfig.real \
-  /usr/sbin/ldconfig.real; do
-  add_k3d_mount "$LDCONFIG_PATH"
-done
-
-# 多个示例共用模型文件和运行时缓存。
-mkdir -p data
-add_k3d_mount "$(realpath data)"
-```
-
-为 frontend 和 model-server 的运行用户配置 `data` 写权限；数据目录需要允许工作负载写入。其他存储方式见[模型存储](model-storage_zh.md)。
-
-创建包含单个 server 节点的集群：
-
-```bash
-k3d cluster create "$CLUSTER" \
-  --config deploy/k3d/config.yaml \
-  --gpus "\"device=$GPU_INDICES\"" \
-  "${K3D_VOLUME_ARGS[@]}"
-```
-
-查看创建后的节点：
-
-```bash
+foretoken cluster create k3d --name "$CLUSTER" --gpus "$GPU_INDICES"
 kubectl get nodes
 ```
 
-## 3. 安装 NVIDIA 设备插件
-
-```bash
-kubectl apply -f \
-  https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.4/deployments/static/nvidia-device-plugin.yml
-```
-
-内层 NVIDIA 运行时使用与外层 k3d 相同的宿主机 GPU 列表：
-
-```bash
-kubectl set env daemonset/nvidia-device-plugin-daemonset \
-  --namespace kube-system \
-  NVIDIA_VISIBLE_DEVICES="$GPU_INDICES"
-
-kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
-  --namespace kube-system \
-  --timeout=3m
-```
+命令会挂载 NVIDIA 运行时和仓库中的 `data/` 目录，安装 NVIDIA 设备插件，并切换到新建集群的 kubeconfig context。
 
 ## 4. 安装并访问 Foretoken
 
 ### 4.1 选择部署方式
 
-先从当前源码安装 CLI，再构建并安装集群平台：
+从当前源码构建并安装集群平台：
 
 ```bash
-pip install -e .
 foretoken install -e .
 ```
 

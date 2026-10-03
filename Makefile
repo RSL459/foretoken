@@ -49,9 +49,6 @@ verify-data-plane: vllm-source
 dev-build:
 	./deploy/dev-build
 
-dev-deploy:
-	./deploy/dev-deploy
-
 image-control-plane:
 	docker build \
 		$(if $(OCI_REGISTRY),--build-arg GO_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \

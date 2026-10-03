@@ -54,73 +54,19 @@ pip install foretoken
 
 ### 2. Install the Kubernetes platform
 
-If you are using a Linux GPU host with Docker, NVIDIA Container Toolkit, and k3d installed, create the example cluster directly:
+Create the example k3d cluster and install Foretoken:
 
 ```bash
-export GPU_INDICES=0
-export CLUSTER=foretoken-dev
-mkdir -p data
+foretoken cluster create k3d --name foretoken-dev --gpus 0
 
-declare -a K3D_VOLUME_ARGS=()
-declare -A K3D_MOUNTED_PATHS=()
-add_k3d_mount() {
-  local path="$1"
-  [ -e "$path" ] || return 0
-  [ -z "${K3D_MOUNTED_PATHS[$path]+x}" ] || return 0
-  K3D_MOUNTED_PATHS["$path"]=1
-  K3D_VOLUME_ARGS+=(--volume "$path:$path@server:0")
-}
-for NAME in nvidia-container-runtime nvidia-container-runtime-hook nvidia-container-cli nvidia-ctk; do
-  TOOL_PATH="$(command -v "$NAME")"
-  add_k3d_mount "$TOOL_PATH"
-  while read -r PATH_KIND LIBRARY_PATH; do
-    if [ "$PATH_KIND" = directory ]; then
-      add_k3d_mount "$(realpath -m "$(dirname "$LIBRARY_PATH")")"
-    else
-      add_k3d_mount "$LIBRARY_PATH"
-    fi
-  done < <(
-    ldd "$TOOL_PATH" |
-      awk '$2 == "=>" && $3 ~ /^\// { print "directory", $3 } $1 ~ /^\// { print "file", $1 }'
-  )
-done
-for CONFIG_DIR in /etc/nvidia-container-runtime /usr/local/etc/nvidia-container-runtime; do
-  add_k3d_mount "$CONFIG_DIR"
-done
-for LDCONFIG_PATH in "$(command -v ldconfig)" /sbin/ldconfig.real /usr/sbin/ldconfig.real; do
-  add_k3d_mount "$LDCONFIG_PATH"
-done
-add_k3d_mount "$(realpath data)"
-
-k3d cluster create "$CLUSTER" \
-  --config deploy/k3d/config.yaml \
-  --gpus "\"device=$GPU_INDICES\"" \
-  "${K3D_VOLUME_ARGS[@]}"
-
-kubectl apply -f \
-  https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.4/deployments/static/nvidia-device-plugin.yml
-kubectl set env daemonset/nvidia-device-plugin-daemonset \
-  --namespace kube-system NVIDIA_VISIBLE_DEVICES="$GPU_INDICES"
-kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
-  --namespace kube-system --timeout=5m
-```
-
-For kind or an existing Kubernetes cluster, use the corresponding guide in the table above. Then verify the active context:
-
-```bash
-kubectl config current-context
-kubectl get nodes
-```
-
-When the nodes are Ready, install Foretoken:
-
-```bash
 # Use published images:
 foretoken install
 
 # Build from the current source checkout instead:
 # foretoken install -e .
 ```
+
+The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and Helm, and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
 
 ### 3. Deploy the Quick Start
 
