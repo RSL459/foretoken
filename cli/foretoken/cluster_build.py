@@ -173,6 +173,7 @@ class ClusterBuilder(AbstractContextManager):
         binding: str,
         timeout: str,
         *,
+        tools_image: str,
         node: str = "",
         containerd_socket: str = "",
         pull_secrets: tuple[str, ...] = (),
@@ -187,6 +188,7 @@ class ClusterBuilder(AbstractContextManager):
         self.claim = claim
         self.mount = mount.rstrip("/")
         self.image = image
+        self.tools_image = tools_image
         self.binding = binding
         self.timeout = timeout
         self.node = node
@@ -234,6 +236,14 @@ class ClusterBuilder(AbstractContextManager):
                 None,
             )
             if builder is None or builder.get("image") != self.image:
+                continue
+            images = next(
+                (container for container in containers if container.get("name") == "images"),
+                None,
+            )
+            if (images is not None) != bool(self.containerd_socket):
+                continue
+            if images is not None and images.get("image") != self.tools_image:
                 continue
             publisher = next(
                 (container for container in containers if container.get("name") == "publisher"),
@@ -390,6 +400,7 @@ class ClusterBuilder(AbstractContextManager):
         if self.containerd_socket:
             # Only local kind/k3d installation uses node image import. The compiler
             # never receives the runtime socket; archives remain on the cluster volume.
+            # GNU tar preserves PAX sizes for OCI layer blobs larger than 8 GiB.
             client = (
                 "/bin/k3s"
                 if "/k3s/" in self.containerd_socket
@@ -408,7 +419,7 @@ class ClusterBuilder(AbstractContextManager):
             spec["containers"].append(
                 {
                     "name": "images",
-                    "image": image,
+                    "image": self.tools_image,
                     "command": idle_command,
                     "env": [
                         {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
@@ -820,10 +831,11 @@ rm -rf "$incoming"
             [
                 "sh",
                 "-ec",
-                'tar -xf "$1/image.tar" -C "$1"; rm "$1/image.tar"',
+                'tar --no-same-owner -xf "$1/image.tar" -C "$1"; rm "$1/image.tar"',
                 "extract",
                 layout,
-            ]
+            ],
+            container="images",
         )
         digest = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
         self._save_layout(name, layout, digest)
@@ -933,7 +945,7 @@ rm -rf "$incoming"
                 import_command.append("--local")
             self.run(
                 [
-                    "sh",
+                    "bash",
                     "-ec",
                     'set -o pipefail; layout=$1; shift; tar -C "$layout" -cf - . | "$@"',
                     "import",
