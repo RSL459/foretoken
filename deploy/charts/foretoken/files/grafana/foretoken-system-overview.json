@@ -27,7 +27,7 @@
         "y": 0
       },
       "options": {
-        "content": "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window. **No data** means no observations, not zero. Scrape counts show reporting endpoints, not service readiness.",
+        "content": "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window.",
         "mode": "markdown"
       },
       "repeatDirection": "h",
@@ -53,7 +53,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prometheus targets currently reporting for the selected model groups and roles.",
+      "description": "Number of online model servers in the selected model groups and roles.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -121,12 +121,12 @@
           "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "Reporting model targets",
+          "legendFormat": "Online model servers",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Reporting model targets",
+      "title": "Online model servers",
       "transparent": false,
       "type": "stat"
     },
@@ -1181,7 +1181,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.",
+      "description": "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1540,7 +1540,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "TTFT and E2EL histogram observations per second for each whole model. No observations leave latency quantiles unavailable.",
+      "description": "TTFT and E2EL histogram observations per second for each whole model.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1612,7 +1612,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Output-token interval observations per second for each whole model. These count token intervals, not requests.",
+      "description": "Output-token interval observations per second for each whole model. These count token intervals.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1686,6 +1686,12 @@
         "uid": "${DS_PROMETHEUS}"
       },
       "description": "Distribution of prompt tokens per request across selected engines.",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
       "gridPos": {
         "h": 10,
         "w": 12,
@@ -1747,6 +1753,12 @@
         "uid": "${DS_PROMETHEUS}"
       },
       "description": "Distribution of generated tokens per request across selected engines.",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
       "gridPos": {
         "h": 10,
         "w": 12,
@@ -1820,7 +1832,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.",
+      "description": "Draft and accepted token rates for each whole model.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1923,7 +1935,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.",
+      "description": "Accepted draft tokens divided by proposed draft tokens across all engines.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2044,7 +2056,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.",
+      "description": "Accepted tokens at each zero-based draft position divided by draft iterations across all engines.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2105,7 +2117,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Only complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification but excludes sampling. The mean is stage duration sum divided by timed steps, not request latency.",
+      "description": "Complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification and excludes sampling. The mean is stage duration sum divided by timed steps.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2208,7 +2220,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.",
+      "description": "Draft and target-forward durations each divided by their sum over the same measured steps.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2445,7 +2457,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model cache hits divided by queried tokens. Local and external caches are separate; no queries produce no ratio.",
+      "description": "Whole-model cache hits divided by queried tokens. Local and external caches are separate.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3330,7 +3342,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prometheus targets currently reporting for the selected Frontend services.",
+      "description": "Number of online frontend services in the selected frontend services.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3398,12 +3410,12 @@
           "expr": "sum(foretoken:frontend_up:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "Reporting frontend targets",
+          "legendFormat": "Online frontend services",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Reporting frontend targets",
+      "title": "Online frontend services",
       "transparent": false,
       "type": "stat"
     },
@@ -3970,7 +3982,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Healthy KV event sources divided by configured sources; disabled or unavailable indexing reports zero.",
+      "description": "Healthy KV event sources divided by configured sources.",
       "fieldConfig": {
         "defaults": {
           "color": {
