@@ -35,7 +35,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 | 使用场景 | 指南 |
 |---|---|
-| 本地单机集群部署 | [kind 部署指南](docs/kind-deployment_zh.md) · [k3d 部署指南](docs/k3d-deployment_zh.md) |
+| 本地单机集群部署 | [k3d 部署指南](docs/k3d-deployment_zh.md) · [kind 部署指南](docs/kind-deployment_zh.md) |
 | 使用 K3s、RKE2、KubeSphere、云上或其他 Kubernetes 集群部署 | [Kubernetes 部署指南](docs/kubernetes-deployment_zh.md) |
 | 沐曦 GPU 集群部署 | [沐曦部署指南](docs/metax-deployment_zh.md) |
 

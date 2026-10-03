@@ -35,7 +35,7 @@ Choose the deployment path before running the common steps:
 
 | Situation | Guide |
 |---|---|
-| Single-host local deployment | [kind deployment](docs/kind-deployment.md) · [k3d deployment](docs/k3d-deployment.md) |
+| Single-host local deployment | [k3d deployment](docs/k3d-deployment.md) · [kind deployment](docs/kind-deployment.md) |
 | Kubernetes deployment with K3s, RKE2, KubeSphere, cloud, or another cluster | [Kubernetes deployment](docs/kubernetes-deployment.md) |
 | MetaX GPU deployment | [MetaX deployment](docs/metax-deployment.md) |
 
