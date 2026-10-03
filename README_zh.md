@@ -54,10 +54,10 @@ pip install -e .
 
 ### 2. 安装 Kubernetes 平台
 
-创建示例 k3d 集群并安装 Foretoken：
+创建名为 `foretoken-dev` 的本地 k3d 集群并安装 Foretoken：
 
 ```bash
-# 使用 nvidia-smi 中编号为 0 的 GPU；两张卡使用 0,1。
+# 使用 nvidia-smi 显示的 GPU 编号 0。若使用两张 GPU，传入 --gpus 0,1。
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 
 # 从当前源码构建：

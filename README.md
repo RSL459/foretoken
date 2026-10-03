@@ -54,10 +54,10 @@ pip install -e .
 
 ### 2. Install the Kubernetes platform
 
-Create the example k3d cluster and install Foretoken:
+Create a local k3d cluster named `foretoken-dev` and install Foretoken:
 
 ```bash
-# Use GPU 0 from nvidia-smi; use 0,1 to expose two GPUs.
+# Use GPU index 0 from nvidia-smi. To use two GPUs, pass --gpus 0,1.
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 
 # Build from the current source checkout:

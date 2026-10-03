@@ -39,7 +39,8 @@ uv pip install foretoken
 在已安装 Docker、NVIDIA Container Toolkit 和 k3d 的 Linux GPU 主机上执行：
 
 ```bash
-# 使用 nvidia-smi 中编号为 0 的 GPU；两张卡使用 0,1。
+# 为本地集群命名，并使用 nvidia-smi 显示的 GPU 编号 0。
+# 若使用两张 GPU，传入 --gpus 0,1。
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 ```
 

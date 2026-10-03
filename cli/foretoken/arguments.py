@@ -205,7 +205,12 @@ def _build_parser() -> argparse.ArgumentParser:
             ),
         )
         cluster_action.add_argument("kind", choices=("kind", "k3d"))
-        cluster_action.add_argument("--name", default="foretoken-dev", metavar="NAME")
+        cluster_action.add_argument(
+            "--name",
+            default="foretoken-dev",
+            metavar="NAME",
+            help="name of the local cluster",
+        )
         if action == "create":
             cluster_action.add_argument(
                 "--gpus",
