@@ -159,7 +159,7 @@ pub trait RuntimeControl: Send + Sync {
 
     /// Reports whether the current generation can admit requests.
     ///
-    /// Runtime admission and readiness probes consume this result until the next refresh or
+    /// Request admission and serving diagnostics consume this result until the next refresh or
     /// generation replacement.
     fn is_ready(&self) -> bool;
 
@@ -248,10 +248,10 @@ pub trait Generation: Send + Sync {
         Err(GenerationError::Internal)
     }
 
-    /// Reports whether this generation can currently admit public requests.
+    /// Reports whether the frontend is initialized and accepting HTTP traffic.
     ///
-    /// HTTP readiness and request admission consume the value until control state changes or the
-    /// generation is replaced.
+    /// Readiness probes use this independently of backend availability so unavailable models can
+    /// return HTTP errors without removing the frontend from its Service.
     fn ready(&self) -> bool;
 
     /// Returns the current serving and KV-index status for HTTP status consumers.
@@ -848,11 +848,7 @@ impl Generation for RuntimeGeneration {
     }
 
     fn ready(&self) -> bool {
-        self.accepting.load(Ordering::Acquire)
-            && self
-                .slot
-                .load_full()
-                .is_some_and(|slot| slot.control.is_ready())
+        self.accepting.load(Ordering::Acquire) && self.slot.load().is_some()
     }
 
     fn diagnostics(&self) -> RuntimeDiagnostics {

@@ -122,8 +122,10 @@ Use `foretoken status` to inspect a deployment and `foretoken delete` to remove 
 | Endpoint | Purpose |
 | --- | --- |
 | `/healthz` | Process liveness |
-| `/readyz` | Service readiness |
+| `/readyz` | HTTP readiness after a valid routing configuration is loaded |
 | `/statusz` | Serving and cache-index status |
 | `/metrics` | Prometheus metrics |
+
+The HTTP frontend stays reachable while models start or change. A valid configuration with no models is also HTTP-ready; inference requests then return HTTP 503. Check `serving_ready` in `/statusz` for serving readiness.
 
 For gateway configuration, see [Gateway mode](../../README.md#gateway-mode). Configure TLS and authentication at the cluster ingress; network policies govern access to operator endpoints.

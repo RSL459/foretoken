@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential));
 
     // Bind the HTTP listener before launching the refresh loops. The process can remain
-    // live while readiness stays false until a complete serving generation is available.
+    // live while readiness stays false until a valid routing snapshot is published.
     let listener = tokio::net::TcpListener::bind(config.listen_address).await?;
     tokio::spawn(refresh_active_generation(generation.clone()));
     tokio::spawn(watch_serving_snapshot(
