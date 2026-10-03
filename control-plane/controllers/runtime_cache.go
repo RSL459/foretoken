@@ -63,9 +63,12 @@ func runtimeCacheInitContainers(image string, cache *inferencev1alpha1.RuntimeCa
 		Image:   image,
 		Command: []string{"sh", "-ec", `mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"`, "prepare", cache.MountPath},
 		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:    &root,
-			RunAsGroup:   &root,
-			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			RunAsUser:  &root,
+			RunAsGroup: &root,
+			Capabilities: &corev1.Capabilities{
+				Add:  []corev1.Capability{"CHOWN", "FOWNER", "DAC_OVERRIDE"},
+				Drop: []corev1.Capability{"ALL"},
+			},
 		},
 		VolumeMounts: []corev1.VolumeMount{{Name: runtimeCacheVolumeName, MountPath: cache.MountPath}},
 	}}
