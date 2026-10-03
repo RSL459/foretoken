@@ -91,16 +91,20 @@ def _deploy(
     from foretoken.editable import EditableDeployment
 
     source = EditableDeployment.discover(kubectl)
+    storage_prepared = False
     if source is not None:
         source.prepare(timeout)
-        deployment = source.apply(deployment, timeout)
+        deployment, storage_prepared = source.apply(deployment, timeout)
         print(
             f"Source preparation completed in {time.monotonic() - started:.1f}s",
             flush=True,
         )
     namespace = deployment.namespace or "<current>"
     print(f"Applying {deployment.path} to namespace {namespace}")
-    DirectoryVolumes(kubectl).apply(deployment, timeout)
+    if storage_prepared:
+        kubectl.apply(deployment.rendered)
+    else:
+        DirectoryVolumes(kubectl).apply(deployment, timeout)
     print(f"Waiting up to {timeout} for Foretoken services")
     rollout_started = time.monotonic()
     with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:

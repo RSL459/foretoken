@@ -664,10 +664,11 @@ class EditableDeployment:
 
     def apply(
         self, deployment: ForetokenDeployment, timeout: str
-    ) -> ForetokenDeployment:
-        """Publish complete bundles to target caches and project their revisions into service intent."""
+    ) -> tuple[ForetokenDeployment, bool]:
+        """Publish complete bundles and report whether storage was prepared first."""
         objects = copy.deepcopy(deployment.objects)
         pending: dict[str, dict[str, dict[str, str]]] = {}
+        storage_prepared = False
         for obj in objects:
             component = _COMPONENTS.get(obj.get("kind"))
             if component is None:
@@ -702,20 +703,16 @@ class EditableDeployment:
             # Storage can be prepared without requiring the previous engine to start.
             from foretoken.storage import DirectoryVolumes
 
-            storage = tuple(
-                o
-                for o in deployment.objects
-                if o.get("kind") in {"Namespace", "RuntimeCache"}
+            deployment = DirectoryVolumes(self.kubectl).apply_storage(
+                replace(
+                    deployment,
+                    objects=tuple(objects),
+                    rendered=yaml.safe_dump_all(objects, sort_keys=False),
+                ),
+                timeout,
             )
-            if storage:
-                DirectoryVolumes(self.kubectl).apply(
-                    replace(
-                        deployment,
-                        objects=storage,
-                        rendered=yaml.safe_dump_all(storage, sort_keys=False),
-                    ),
-                    timeout,
-                )
+            objects = copy.deepcopy(deployment.objects)
+            storage_prepared = True
             for namespace, bundles in pending.items():
                 if not self._publish(namespace, bundles, timeout):
                     print(
@@ -724,8 +721,11 @@ class EditableDeployment:
                     )
                     self._rebuild(timeout)
                     return self.apply(deployment, timeout)
-        return parse_deployment(
-            deployment.path, yaml.safe_dump_all(objects, sort_keys=False)
+        return (
+            parse_deployment(
+                deployment.path, yaml.safe_dump_all(objects, sort_keys=False)
+            ),
+            storage_prepared,
         )
 
     def _publish(
