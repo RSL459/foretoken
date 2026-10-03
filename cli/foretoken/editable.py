@@ -1161,19 +1161,38 @@ for directory in root.iterdir():
         return bool(pods) and {pod["metadata"]["uid"] for pod in pods} <= endpoints
 
     def verify(
-        self, timeout: str, *, observe: Callable[[], None] | None = None
+        self,
+        deployment: ForetokenDeployment,
+        timeout: str,
+        *,
+        observe: Callable[[], None] | None = None,
     ) -> None:
-        """Wait for selected runtime code and for frontends to consume the matching routes."""
+        """Wait for changed runtime code and its frontend routing consumers to become active."""
         deadline = time.monotonic() + timeout_seconds(timeout)
         routes: dict[str, set[str]] = {}
+        consumers = dict(self.selected)
+        # Unchanged frontend code still needs to consume a new backend cohort.
+        if any(kind == "ModelService" for kind, _, _ in self.selected):
+            for obj in deployment.objects:
+                if obj.get("kind") == "FrontendService":
+                    metadata = obj["metadata"]
+                    key = (
+                        "FrontendService",
+                        deployment.namespace or "default",
+                        metadata["name"],
+                    )
+                    consumers.setdefault(
+                        key, metadata.get("annotations", {}).get(SOURCE_REVISION, "")
+                    )
         # Source annotations do not advance Service generation. Verify committed
         # backend code first, then the routing consumers of that exact cohort.
         selected = sorted(
-            self.selected.items(), key=lambda item: item[0][0] == "FrontendService"
+            consumers.items(), key=lambda item: item[0][0] == "FrontendService"
         )
         for (kind, namespace, service), revision in selected:
             component = _COMPONENTS[kind]
-            if component == "frontend":
+            code_changed = (kind, namespace, service) in self.selected
+            if component == "frontend" and code_changed:
                 from foretoken.manifest import ResourceRef
 
                 self.kubectl.rollout_status(
@@ -1206,6 +1225,8 @@ for directory in root.iterdir():
                 routes.setdefault(namespace, set()).update(
                     route for _, _, _, route in writers
                 )
+            if not code_changed:
+                continue
             for pod, container, directory, _ in writers:
                 expected = (
                     f"FORETOKEN_ACTIVE_SOURCE_DIRECTORY={directory}" if revision else ""

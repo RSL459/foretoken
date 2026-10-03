@@ -113,6 +113,7 @@ def _deploy(
         )
         if source is not None:
             source.verify(
+                deployment,
                 timeout,
                 observe=lambda: startup.poll(
                     deployment.service_refs(), time.monotonic() - rollout_started
