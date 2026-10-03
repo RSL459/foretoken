@@ -319,6 +319,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 					AutomountServiceAccountToken: &automountToken,
 					RestartPolicy:                corev1.RestartPolicyNever,
 					SecurityContext:              runtimeCachePodSecurityContext(cache),
+					InitContainers:               runtimeCacheInitContainers(group.Spec.Runtime.Image, cache),
 					ImagePullSecrets:             slices.Clone(imagePullSecrets),
 					NodeSelector:                 nodeSelector,
 					Tolerations:                  tolerations,
@@ -558,6 +559,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 					Tolerations:                   acceleratorTolerations(group.Spec.Accelerator.DeviceResourceName),
 					TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
 					SecurityContext:               runtimeCachePodSecurityContext(group.Spec.Artifacts.Cache),
+					InitContainers:                runtimeCacheInitContainers(group.Spec.Runtime.Image, group.Spec.Artifacts.Cache),
 					Volumes:                       volumes,
 					Containers: []corev1.Container{{
 						Name:            "model-server",
