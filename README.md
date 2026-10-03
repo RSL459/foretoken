@@ -54,7 +54,27 @@ pip install foretoken
 
 ### 2. Install the Kubernetes platform
 
-If you do not have a cluster yet, create one with the [k3d guide](docs/k3d-deployment.md), the [kind guide](docs/kind-deployment.md), or the [Kubernetes guide](docs/kubernetes-deployment.md). Then verify the active context:
+If you are using a Linux GPU host with Docker, NVIDIA Container Toolkit, and k3d installed, create the example cluster directly:
+
+```bash
+export GPU_INDICES=0
+export CLUSTER=foretoken-dev
+mkdir -p data
+
+k3d cluster create "$CLUSTER" \
+  --config deploy/k3d/config.yaml \
+  --gpus "\"device=$GPU_INDICES\"" \
+  --volume "$PWD/data:$PWD/data@server:0"
+
+kubectl apply -f \
+  https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.4/deployments/static/nvidia-device-plugin.yml
+kubectl set env daemonset/nvidia-device-plugin-daemonset \
+  --namespace kube-system NVIDIA_VISIBLE_DEVICES="$GPU_INDICES"
+kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
+  --namespace kube-system --timeout=5m
+```
+
+For kind or an existing Kubernetes cluster, use the corresponding guide in the table above. Then verify the active context:
 
 ```bash
 kubectl config current-context
