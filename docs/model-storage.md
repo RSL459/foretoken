@@ -25,8 +25,6 @@ Foretoken creates the directory-backed volume for this configuration. The direct
 
 For local k3d, relative paths resolve from the Kustomize root. Both Quick Start examples use `../../data` to reach the repository-root directory; bind that directory into the nodes when creating the cluster. See the [k3d guide](k3d-deployment.md).
 
-Keep this directory owned by the host user who manages its files. Preparation, serving, and source deployments use that directory's user and group, so its owner can clean up generated caches after the services stop. Deployment repairs root-owned entries left by earlier runs without following symbolic links. Custom runtime images must support running as this non-root user. A directory already owned by another user must have its ownership corrected separately; Foretoken does not guess its previous owner.
-
 Existing deployments can keep their current path. Changing the directory of an already bound cache requires a new RuntimeCache name; move or copy existing files separately if needed.
 
 For a remote cluster, the deploy command automatically converts a relative directory such as `../../data` into a dynamic PVC, so the Quick Start YAML does not need to change. Multi-node clusters keep `ReadWriteMany` for shared model and runtime data; a single-node cluster uses `ReadWriteOnce` automatically. To select a particular StorageClass, size, access mode, or maximum size, set those fields in `cache.yaml`; an absolute `directory` remains a host path that must already exist on the target node or shared filesystem.
