@@ -36,12 +36,17 @@ SOURCE_SELECTION_POLICY = _SourceSelectionPolicy(
 
 
 @dataclass(frozen=True)
+class _SourceMirror:
+    measure: Callable[[], float | None]
+    value: str
+
+
+@dataclass(frozen=True)
 class _SourceProbe:
     name: str
     environment_name: str
     official: Callable[[], float | None]
-    mirror: Callable[[], float | None] | None
-    environment_value: str | None = None
+    mirrors: tuple[_SourceMirror, ...]
 
 
 def _https_get(
@@ -186,6 +191,23 @@ def _prefer_mirror(official: float | None, mirror: float | None) -> bool:
     )
 
 
+def _select_mirror(
+    official: float | None,
+    mirrors: tuple[_SourceMirror, ...],
+    measurements: tuple[float | None, ...],
+) -> tuple[_SourceMirror, float] | None:
+    """Return the fastest usable mirror when it materially beats the official source."""
+    available = tuple(
+        (mirror, elapsed)
+        for mirror, elapsed in zip(mirrors, measurements, strict=True)
+        if elapsed is not None
+    )
+    if not available:
+        return None
+    mirror, elapsed = min(available, key=lambda item: item[1])
+    return (mirror, elapsed) if _prefer_mirror(official, elapsed) else None
+
+
 def platform_image_reference(reference: str, registry: str | None = None) -> str:
     """Resolve a platform-owned image default, preserving its tag or digest.
 
@@ -218,24 +240,39 @@ def select_platform_oci_reference(reference: str) -> str:
         return reference
     if "@" in path:
         repository, revision = path.rsplit("@", 1)
+        revision_separator = "@"
     elif ":" in path.rsplit("/", 1)[-1]:
         repository, revision = path.rsplit(":", 1)
+        revision_separator = ":"
     else:
         repository, revision = path, "latest"
+        revision_separator = ""
     official_host = "registry-1.docker.io" if host == "docker.io" else host
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    mirrors = [("m.daocloud.io", f"{host}/{repository}")]
+    if host == "docker.io":
+        mirrors.append(("dockerproxy.net", repository))
+    with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
         official = executor.submit(
             _measure_oci_manifest, official_host, repository, revision
         )
-        mirror = executor.submit(
-            _measure_oci_manifest, "m.daocloud.io", f"{host}/{repository}", revision
+        mirror_futures = tuple(
+            executor.submit(_measure_oci_manifest, mirror_host, mirror_path, revision)
+            for mirror_host, mirror_path in mirrors
         )
-        official_time, mirror_time = official.result(), mirror.result()
-    return (
-        f"{scheme}m.daocloud.io/{value}"
-        if _prefer_mirror(official_time, mirror_time)
-        else reference
+        official_time = official.result()
+        mirror_measurements = tuple(future.result() for future in mirror_futures)
+    available = tuple(
+        (mirror, elapsed)
+        for mirror, elapsed in zip(mirrors, mirror_measurements, strict=True)
+        if elapsed is not None
     )
+    if not available:
+        return reference
+    (mirror_host, mirror_path), mirror_time = min(available, key=lambda item: item[1])
+    if not _prefer_mirror(official_time, mirror_time):
+        return reference
+    suffix = f"{revision_separator}{revision}" if revision_separator else ""
+    return f"{scheme}{mirror_host}/{mirror_path}{suffix}"
 
 
 def select_source_build_sources(
@@ -254,12 +291,16 @@ def select_source_build_sources(
                         "library/rust",
                         "1.97.1-slim-bookworm",
                     ),
-                    lambda: _measure_oci_manifest(
-                        "m.daocloud.io",
-                        "docker.io/library/rust",
-                        "1.97.1-slim-bookworm",
+                    (
+                        _SourceMirror(
+                            lambda: _measure_oci_manifest(
+                                "m.daocloud.io",
+                                "docker.io/library/rust",
+                                "1.97.1-slim-bookworm",
+                            ),
+                            "m.daocloud.io/docker.io",
+                        ),
                     ),
-                    "m.daocloud.io/docker.io",
                 ),
                 _SourceProbe(
                     "GCR",
@@ -267,12 +308,16 @@ def select_source_build_sources(
                     lambda: _measure_oci_manifest(
                         "gcr.io", "distroless/static-debian13", "nonroot"
                     ),
-                    lambda: _measure_oci_manifest(
-                        "m.daocloud.io",
-                        "gcr.io/distroless/static-debian13",
-                        "nonroot",
+                    (
+                        _SourceMirror(
+                            lambda: _measure_oci_manifest(
+                                "m.daocloud.io",
+                                "gcr.io/distroless/static-debian13",
+                                "nonroot",
+                            ),
+                            "m.daocloud.io/gcr.io",
+                        ),
                     ),
-                    "m.daocloud.io/gcr.io",
                 ),
                 _SourceProbe(
                     "GHCR",
@@ -282,12 +327,16 @@ def select_source_build_sources(
                         "shiweijiezero/foretoken/model-server",
                         "latest",
                     ),
-                    lambda: _measure_oci_manifest(
-                        "m.daocloud.io",
-                        "ghcr.io/shiweijiezero/foretoken/model-server",
-                        "latest",
+                    (
+                        _SourceMirror(
+                            lambda: _measure_oci_manifest(
+                                "m.daocloud.io",
+                                "ghcr.io/shiweijiezero/foretoken/model-server",
+                                "latest",
+                            ),
+                            "m.daocloud.io/ghcr.io",
+                        ),
                     ),
-                    "m.daocloud.io/ghcr.io",
                 ),
             )
         )
@@ -297,10 +346,26 @@ def select_source_build_sources(
                 "PyPI",
                 "UV_DEFAULT_INDEX",
                 lambda: _measure_url("https://pypi.org/simple/modelscope/"),
-                lambda: _measure_url(
-                    "https://pypi.tuna.tsinghua.edu.cn/simple/modelscope/"
+                (
+                    _SourceMirror(
+                        lambda: _measure_url(
+                            "https://pypi.tuna.tsinghua.edu.cn/simple/modelscope/"
+                        ),
+                        "https://pypi.tuna.tsinghua.edu.cn/simple",
+                    ),
+                    _SourceMirror(
+                        lambda: _measure_url(
+                            "https://mirrors.ustc.edu.cn/pypi/simple/modelscope/"
+                        ),
+                        "https://mirrors.ustc.edu.cn/pypi/simple",
+                    ),
+                    _SourceMirror(
+                        lambda: _measure_url(
+                            "https://mirrors.aliyun.com/pypi/simple/modelscope/"
+                        ),
+                        "https://mirrors.aliyun.com/pypi/simple",
+                    ),
                 ),
-                "https://pypi.tuna.tsinghua.edu.cn/simple",
             ),
             _SourceProbe(
                 "Go module proxy",
@@ -308,10 +373,20 @@ def select_source_build_sources(
                 lambda: _measure_url(
                     "https://proxy.golang.org/golang.org/x/sync/@v/v0.20.0.info"
                 ),
-                lambda: _measure_url(
-                    "https://goproxy.cn/golang.org/x/sync/@v/v0.20.0.info"
+                (
+                    _SourceMirror(
+                        lambda: _measure_url(
+                            "https://goproxy.cn/golang.org/x/sync/@v/v0.20.0.info"
+                        ),
+                        "https://goproxy.cn",
+                    ),
+                    _SourceMirror(
+                        lambda: _measure_url(
+                            "https://mirrors.aliyun.com/goproxy/golang.org/x/sync/@v/v0.20.0.info"
+                        ),
+                        "https://mirrors.aliyun.com/goproxy",
+                    ),
                 ),
-                "https://goproxy.cn",
             ),
             _SourceProbe(
                 "Cargo registry",
@@ -319,10 +394,14 @@ def select_source_build_sources(
                 lambda: _measure_url(
                     "https://static.crates.io/crates/itoa/itoa-1.0.18.crate"
                 ),
-                lambda: _measure_url(
-                    "https://rsproxy.cn/api/v1/crates/itoa/1.0.18/download"
+                (
+                    _SourceMirror(
+                        lambda: _measure_url(
+                            "https://rsproxy.cn/api/v1/crates/itoa/1.0.18/download"
+                        ),
+                        "sparse+https://rsproxy.cn/index/",
+                    ),
                 ),
-                "sparse+https://rsproxy.cn/index/",
             ),
             _SourceProbe(
                 "GitHub",
@@ -331,11 +410,22 @@ def select_source_build_sources(
                     "https://github.com/shiweijiezero/foretoken/"
                     "archive/refs/heads/main.tar.gz"
                 ),
-                lambda: _measure_url(
-                    "https://gh-proxy.com/https://github.com/shiweijiezero/"
-                    "foretoken/archive/refs/heads/main.tar.gz"
+                (
+                    _SourceMirror(
+                        lambda: _measure_url(
+                            "https://gh-proxy.com/https://github.com/shiweijiezero/"
+                            "foretoken/archive/refs/heads/main.tar.gz"
+                        ),
+                        "https://gh-proxy.com/https://github.com",
+                    ),
+                    _SourceMirror(
+                        lambda: _measure_url(
+                            "https://ghproxy.net/https://github.com/shiweijiezero/"
+                            "foretoken/archive/refs/heads/main.tar.gz"
+                        ),
+                        "https://ghproxy.net/https://github.com",
+                    ),
                 ),
-                "https://gh-proxy.com/https://github.com",
             ),
         )
     )
@@ -343,12 +433,16 @@ def select_source_build_sources(
     if not probes:
         return {}, (), ()
 
-    with ThreadPoolExecutor(max_workers=len(probes) * 2) as executor:
+    with ThreadPoolExecutor(
+        max_workers=sum(1 + len(probe.mirrors) for probe in probes)
+    ) as executor:
         measurements = tuple(
             (
                 probe,
                 executor.submit(probe.official),
-                executor.submit(probe.mirror) if probe.mirror is not None else None,
+                tuple(
+                    executor.submit(mirror.measure) for mirror in probe.mirrors
+                ),
             )
             for probe in probes
         )
@@ -356,25 +450,31 @@ def select_source_build_sources(
             (
                 probe,
                 official.result(),
-                mirror.result() if mirror is not None else None,
+                tuple(mirror.result() for mirror in mirrors),
             )
-            for probe, official, mirror in measurements
+            for probe, official, mirrors in measurements
         )
 
     selected: dict[str, str] = {}
     messages: list[str] = []
     unavailable: list[str] = []
-    for probe, official, mirror in results:
-        if official is None and mirror is None:
+    for probe, official, mirror_measurements in results:
+        if official is None and not any(
+            measurement is not None for measurement in mirror_measurements
+        ):
             unavailable.append(probe.name)
             continue
-        if not _prefer_mirror(official, mirror):
+        selected_mirror = _select_mirror(
+            official, probe.mirrors, mirror_measurements
+        )
+        if selected_mirror is None:
             continue
-        assert mirror is not None
-        assert probe.environment_value is not None
-        selected[probe.environment_name] = probe.environment_value
+        mirror, mirror_time = selected_mirror
+        selected[probe.environment_name] = mirror.value
         official_time = "unavailable" if official is None else f"{official:.2f}s"
-        messages.append(f"{probe.name}: mirror {mirror:.2f}s, official {official_time}")
+        messages.append(
+            f"{probe.name}: mirror {mirror_time:.2f}s, official {official_time}"
+        )
 
     return selected, tuple(messages), tuple(unavailable)
 
@@ -388,17 +488,26 @@ def select_huggingface_endpoint(
         return explicit_endpoint.rstrip("/")
 
     encoded = urllib.parse.quote(repository, safe="/")
-    endpoints = ("https://huggingface.co", "https://hf-mirror.com")
+    official_endpoint = "https://huggingface.co"
+    mirror_endpoints = ("https://hf-mirror.com",)
+    endpoints = (official_endpoint, *mirror_endpoints)
     with ThreadPoolExecutor(max_workers=len(endpoints)) as executor:
         futures = tuple(
             executor.submit(_measure_url, f"{endpoint}/api/models/{encoded}")
             for endpoint in endpoints
         )
-        official, mirror = (future.result() for future in futures)
-    if _prefer_mirror(official, mirror):
-        return endpoints[1]
+        official, *mirror_measurements = (
+            future.result() for future in futures
+        )
+    available = tuple(
+        (endpoint, elapsed)
+        for endpoint, elapsed in zip(mirror_endpoints, mirror_measurements, strict=True)
+        if elapsed is not None
+    )
+    if available:
+        mirror, mirror_time = min(available, key=lambda item: item[1])
+        if _prefer_mirror(official, mirror_time):
+            return mirror
     if official is not None:
-        return endpoints[0]
-    if mirror is not None:
-        return endpoints[1]
-    return None
+        return official_endpoint
+    return available[0][0] if available else None
