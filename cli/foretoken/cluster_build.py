@@ -216,12 +216,28 @@ class ClusterBuilder(AbstractContextManager):
                 continue
             if self.node and pod.get("spec", {}).get("nodeName") != self.node:
                 continue
+            containers = pod.get("spec", {}).get("containers", [])
+            builder = next(
+                (container for container in containers if container.get("name") == "builder"),
+                None,
+            )
+            if builder is None or builder.get("image") != self.image:
+                continue
             has_publisher = any(
                 container.get("name") == "publisher"
-                for container in pod.get("spec", {}).get("containers", [])
+                for container in containers
             )
-            if has_publisher == expected_publisher:
-                candidates.append(pod)
+            if has_publisher != expected_publisher:
+                continue
+            claim_names = {
+                volume.get("persistentVolumeClaim", {}).get("claimName")
+                for volume in pod.get("spec", {}).get("volumes", [])
+            }
+            if self.claim not in claim_names:
+                continue
+            if self.runtime_claim and self.runtime_claim not in claim_names:
+                continue
+            candidates.append(pod)
         return min(
             candidates,
             key=lambda pod: pod.get("metadata", {}).get("creationTimestamp", ""),
