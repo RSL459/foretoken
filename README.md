@@ -35,10 +35,10 @@ Choose the deployment path before running the common steps:
 
 | Situation | Guide |
 |---|---|
-| Create and use a kind cluster | [kind deployment](docs/kind-deployment.md) |
-| Create and use a k3d cluster | [k3d deployment](docs/k3d-deployment.md) |
-| Create or use a K3s, RKE2, KubeSphere, cloud, or other Kubernetes cluster | [Kubernetes deployment](docs/kubernetes-deployment.md) |
-| Use MetaX GPUs | [MetaX deployment](docs/metax-deployment.md) |
+| Local development deployment with kind | [kind deployment](docs/kind-deployment.md) |
+| Single-host GPU deployment with k3d | [k3d deployment](docs/k3d-deployment.md) |
+| Kubernetes deployment with K3s, RKE2, KubeSphere, cloud, or another cluster | [Kubernetes deployment](docs/kubernetes-deployment.md) |
+| MetaX GPU deployment | [MetaX deployment](docs/metax-deployment.md) |
 
 K3s, RKE2, KubeSphere, and managed Kubernetes use the same path because Foretoken connects through the standard Kubernetes API. Install Python 3.11+, `kubectl`, and Helm locally, then continue with the selected guide.
 
