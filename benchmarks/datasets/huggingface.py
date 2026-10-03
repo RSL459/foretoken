@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any
 
 from datasets import (
     get_dataset_config_names,
@@ -66,7 +67,9 @@ def resolve_tokenizer_path(tokenizer_path: str, *, source: str = "hf") -> str:
         )
 
     if source == "modelscope":
-        from modelscope.hub.snapshot_download import snapshot_download as modelscope_download
+        from modelscope.hub.snapshot_download import (
+            snapshot_download as modelscope_download,
+        )
 
         return modelscope_download(tokenizer_path, allow_file_pattern=list(_TOKENIZER_ALLOW_PATTERNS))
     if source != "hf":
@@ -93,7 +96,7 @@ def is_hf_file_uri(source: str) -> bool:
     return source.startswith(_HF_DATASETS_PREFIX)
 
 
-def parse_hf_file_uri(uri: str) -> tuple[str, Optional[str], str]:
+def parse_hf_file_uri(uri: str) -> tuple[str, str | None, str]:
     """Parse a Hugging Face dataset file URI into repository, revision, and path."""
     if not is_hf_file_uri(uri):
         raise ValueError(

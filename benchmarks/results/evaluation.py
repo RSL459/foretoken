@@ -5,10 +5,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import csv
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote

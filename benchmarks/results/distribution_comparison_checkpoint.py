@@ -9,7 +9,7 @@ import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import numpy as np
 
@@ -45,7 +45,7 @@ class DistributionComparisonCheckpoint:
             self.connection.close()
             raise
 
-    def __enter__(self) -> DistributionComparisonCheckpoint:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:

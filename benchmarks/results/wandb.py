@@ -17,7 +17,10 @@ from benchmarks.results.plots.measurements import load_http_measurements
 
 if TYPE_CHECKING:
     from benchmarks.results.output import BenchmarkRun
-from benchmarks.results.replicas import gpu_allocation_history_rows, replica_history_rows
+from benchmarks.results.replicas import (
+    gpu_allocation_history_rows,
+    replica_history_rows,
+)
 from benchmarks.results.timeseries import (
     ELAPSED_TIME,
     REQUEST_INDEX,
@@ -25,7 +28,6 @@ from benchmarks.results.timeseries import (
     request_series,
     time_series,
 )
-
 
 _TIME_TAKEN = "Benchmark duration (s)"
 _CONCURRENCY = "Concurrency limit"

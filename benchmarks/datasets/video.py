@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 def _row_int(value: Any, name: str, line_number: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
             f"video dataset line {line_number} has invalid {name}: {value!r}"
         )
     return value
@@ -42,7 +42,7 @@ def _row_int(value: Any, name: str, line_number: int) -> int:
 
 def _row_float(value: Any, name: str, line_number: int) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
             f"video dataset line {line_number} has invalid {name}: {value!r}"
         )
     return float(value)
@@ -52,7 +52,9 @@ def _load_request(
     raw: Any, *, line_number: int, dataset_dir: Path
 ) -> VideoGenerationRequest:
     if not isinstance(raw, dict):
-        raise ValueError(f"video dataset line {line_number} must be a JSON object")
+        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
+            f"video dataset line {line_number} must be a JSON object"
+        )
     allowed = {
         "id",
         "task",
@@ -92,7 +94,7 @@ def _load_request(
         )
     for name in ("id", "task", "prompt"):
         if not isinstance(raw[name], str):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
                 f"video dataset line {line_number} has invalid {name}: {raw[name]!r}"
             )
     if raw.get("aspect_ratio") is not None and not isinstance(
@@ -105,7 +107,9 @@ def _load_request(
     files: list[VideoInputFile] = []
     file_rows = raw.get("files", [])
     if not isinstance(file_rows, list):
-        raise ValueError(f"video dataset line {line_number} files must be a list")
+        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
+            f"video dataset line {line_number} files must be a list"
+        )
     for item in file_rows:
         if not isinstance(item, dict) or not {"field", "path"} <= set(item):
             raise ValueError(
@@ -133,7 +137,7 @@ def _load_request(
         )
     frame_indices_raw = raw.get("frame_indices", [])
     if not isinstance(frame_indices_raw, list):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
             f"video dataset line {line_number} frame_indices must be a list"
         )
     num_frames = _row_int(raw["num_frames"], "num_frames", line_number)
@@ -184,7 +188,9 @@ def _videoargus_request(
 ) -> VideoGenerationRequest:
     """Convert one VideoArgusBench manifest row to a video request."""
     if not isinstance(raw, dict):
-        raise ValueError(f"VideoArgus line {line_number} must be a JSON object")
+        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
+            f"VideoArgus line {line_number} must be a JSON object"
+        )
     task_name = raw.get("task")
     if task_name not in _VIDEOARGUS_TASKS:
         raise ValueError(
@@ -194,7 +200,7 @@ def _videoargus_request(
     prompt = raw.get("text")
     media = raw.get("media", [])
     if not isinstance(sample_id, str) or not isinstance(prompt, str):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
             f"VideoArgus line {line_number} requires string id and text fields"
         )
     if not isinstance(media, list) or any(

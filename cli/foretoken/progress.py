@@ -10,7 +10,7 @@ import re
 import subprocess
 import time
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, Self
 
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError, ResourceRef
@@ -48,7 +48,7 @@ class StartupProgress:
         self._logs: dict[tuple[str, str, str], subprocess.Popen] = {}
         self._unavailable = ""
 
-    def __enter__(self) -> StartupProgress:
+    def __enter__(self) -> Self:
         """Scope all log readers to the calling deployment wait or status watch."""
         return self
 

@@ -7,17 +7,21 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import replace
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from benchmarks.config.evaluation import EvaluationConfig, deployment_labels
 from benchmarks.model_service import ModelService, resolve_model_service
-from benchmarks.results.evaluation import evaluation_sinks, evaluation_comparison_sinks, read_quality_metrics
+from benchmarks.results.evaluation import (
+    evaluation_comparison_sinks,
+    evaluation_sinks,
+    read_quality_metrics,
+)
 from benchmarks.results.output import BenchmarkRun, ResultOutputs, wandb_run_timestamp
 
 logger = logging.getLogger(__name__)
@@ -41,9 +45,10 @@ def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -
             **({"tokenizer_identity": service.tokenizer_identity} if config.evaluator == "lm-eval" else {}),
         },
     }
-    with (directory / "evaluator.log").open("w", encoding="utf-8") as log:
-        # Keep the caller's cwd: upstream config, cache and task paths remain relative to it.
-        with subprocess.Popen(
+    # Keep the caller's cwd: upstream config, cache and task paths remain relative to it.
+    with (
+        (directory / "evaluator.log").open("w", encoding="utf-8") as log,
+        subprocess.Popen(
             [sys.executable, "-u", "-m", "benchmarks.integrations.quality"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -52,27 +57,28 @@ def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -
             encoding="utf-8",
             errors="replace",
             bufsize=1,
-        ) as process:
-            try:
-                process.stdin.write(json.dumps(payload))
-                process.stdin.close()
-                for line in process.stdout:
-                    if service.api_key and service.api_key != "EMPTY":
-                        line = line.replace(service.api_key, "[redacted]")
-                    log.write(line)
-                    log.flush()
-                    if not config.outputs.includes("quiet"):
-                        print(line, end="", flush=True)
-                return process.wait()
-            except BaseException:
-                if process.poll() is None:
-                    process.send_signal(signal.SIGINT)
-                    try:
-                        process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-                raise
+        ) as process,
+    ):
+        try:
+            process.stdin.write(json.dumps(payload))
+            process.stdin.close()
+            for line in process.stdout:
+                if service.api_key and service.api_key != "EMPTY":
+                    line = line.replace(service.api_key, "[redacted]")
+                log.write(line)
+                log.flush()
+                if not config.outputs.includes("quiet"):
+                    print(line, end="", flush=True)
+            return process.wait()
+        except BaseException:
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            raise
 
 
 def run_evaluation(

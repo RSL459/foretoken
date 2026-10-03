@@ -26,7 +26,6 @@ from benchmarks.results.output import (
 from benchmarks.results.wandb import publish_slo_wandb
 from benchmarks.runs.dispatch import run_benchmark_point
 
-
 _SLO_ALIASES = {
     "latency.mean": "avg_latency",
     "ttft.mean": "avg_ttft",

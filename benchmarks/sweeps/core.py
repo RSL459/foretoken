@@ -13,10 +13,11 @@ import math
 import os
 import shutil
 from collections import Counter, defaultdict
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import mean, median, stdev
-from typing import Any, Callable, Generic, Mapping, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 
 from benchmarks.datasets.conversations import iter_jsonl_rows
 from benchmarks.results.output import (

@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Self
 
 from foretoken.manifest import DeploymentError
 from foretoken.profiling import ProfileRun
@@ -36,7 +37,7 @@ class BenchmarkProfile:
         self.successful_requests = 0
         self.failed_requests = 0
 
-    def __enter__(self) -> BenchmarkProfile:
+    def __enter__(self) -> Self:
         """Keep dataset preparation outside the capture window; start at first dispatch."""
         return self
 
@@ -47,7 +48,7 @@ class BenchmarkProfile:
         while time.monotonic() < deadline:
             status = await asyncio.to_thread(self.run.observe)
             if status.get("phase") == "Capturing":
-                self.capturing_observed_at = datetime.now(timezone.utc).isoformat()
+                self.capturing_observed_at = datetime.now(UTC).isoformat()
                 self._started = True
                 return
             if self.run.terminal or status.get("phase") == "Stopping":
@@ -67,7 +68,7 @@ class BenchmarkProfile:
         """Release each request after a single shared startup, outside HTTP timing."""
         if self._started:
             if self.first_request_at is None:
-                self.first_request_at = datetime.now(timezone.utc).isoformat()
+                self.first_request_at = datetime.now(UTC).isoformat()
             return
         if self._ready is None:
             self._ready = asyncio.create_task(self._start())
@@ -79,11 +80,11 @@ class BenchmarkProfile:
             # Cancellation stops the workload; its caller restores this control error.
             raise asyncio.CancelledError from error
         if self.first_request_at is None:
-            self.first_request_at = datetime.now(timezone.utc).isoformat()
+            self.first_request_at = datetime.now(UTC).isoformat()
 
     def response_received(self, succeeded: bool) -> None:
         """Record completed request evidence without treating HTTP success as GPU trace proof."""
-        self.last_response_at = datetime.now(timezone.utc).isoformat()
+        self.last_response_at = datetime.now(UTC).isoformat()
         self.successful_requests += int(succeeded)
         self.failed_requests += int(not succeeded)
 

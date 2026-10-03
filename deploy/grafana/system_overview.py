@@ -18,7 +18,16 @@ from __future__ import annotations
 import argparse
 import json
 
-from grafana_foundation_sdk.builders import common, dashboard, heatmap, prometheus, stat, table, text, timeseries
+from grafana_foundation_sdk.builders import (
+    common,
+    dashboard,
+    heatmap,
+    prometheus,
+    stat,
+    table,
+    text,
+    timeseries,
+)
 from grafana_foundation_sdk.cog.encoder import JSONEncoder
 from grafana_foundation_sdk.models import common as models
 from grafana_foundation_sdk.models import dashboard as dashboard_models
@@ -964,12 +973,13 @@ def build() -> dashboard_models.Dashboard:
             span=12,
         )
     )
+    model_role_filter = 'inference_foretoken_io_model_role=~"aggregate|decode"'
     board.with_panel(
         series(
             "Acceptance probability by position",
             "Accepted tokens at each zero-based draft position divided by draft iterations across all engines.",
             [foretoken_query(
-                f"sum by(model_name,position) ({model_metric('vllm:spec_decode_num_accepted_tokens_per_pos_total', rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~\"aggregate|decode\"')}) "
+                f"sum by(model_name,position) ({model_metric('vllm:spec_decode_num_accepted_tokens_per_pos_total', rate=True, whole_model=True, extra=model_role_filter)}) "
                 f"/ on(model_name) group_left() (({draft_iterations}) > 0)",
                 "Position {{position}} / {{model_name}}",
             )],

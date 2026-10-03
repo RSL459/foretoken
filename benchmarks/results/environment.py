@@ -8,14 +8,15 @@ from __future__ import annotations
 import logging
 import platform
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from benchmarks.model_service import ModelService
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
+
+from benchmarks.model_service import ModelService
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def serving_environment(service: ModelService) -> dict[str, Any]:
     No Secret data, pod environment variables, or unrelated workloads are exported.
     """
     snapshot: dict[str, Any] = {
-        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "observed_at": datetime.now(UTC).isoformat(),
         "model": service.model,
         "source": "kustomize" if service.model_service_refs else "url",
         "declared_gpu_count": service.gpu_count if service.model_service_refs else None,

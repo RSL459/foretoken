@@ -15,19 +15,18 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-
 from benchmarks.results.plots.data import Chart, Series, _method, _numeric, sweep_charts
 from benchmarks.results.plots.measurements import (
-    _http_charts,
-    gpu_allocation_charts,
-    _prometheus_charts,
-    _video_phase_charts,
-    phase_summary_charts,
-    _quality_charts,
     _distribution_charts,
-    _greedy_charts,
     _evaluation_comparison_charts,
+    _greedy_charts,
+    _http_charts,
+    _prometheus_charts,
+    _quality_charts,
     _slo_charts,
+    _video_phase_charts,
+    gpu_allocation_charts,
+    phase_summary_charts,
 )
 
 _PALETTE = (
@@ -139,15 +138,15 @@ def _charts(
                 index = method_index[identity]
                 slot = index % len(_PALETTE)
                 xs, ys = list(series.x), list(series.y)
-                style = dict(
-                    color=_PALETTE[slot],
-                    marker=_MARKERS[slot],
-                    linestyle=_STYLES[slot % len(_STYLES)],
-                    linewidth=1.5,
-                    markersize=6,
-                    markevery=1 if scatter else max(1, len(xs) // 12),
-                    label=series.name,
-                )
+                style = {
+                    "color": _PALETTE[slot],
+                    "marker": _MARKERS[slot],
+                    "linestyle": _STYLES[slot % len(_STYLES)],
+                    "linewidth": 1.5,
+                    "markersize": 6,
+                    "markevery": 1 if scatter else max(1, len(xs) // 12),
+                    "label": series.name,
+                }
                 if chart.kind == "step":
                     axis.step(
                         xs,

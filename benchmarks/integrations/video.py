@@ -364,7 +364,12 @@ class VideoGenerationClient:
             with ExitStack() as stack:
                 files = []
                 for item in request.files:
-                    stream = stack.enter_context(open(item.path, "rb"))
+                    # HTTPX multipart requires a request-scoped synchronous file object.
+                    stream = stack.enter_context(
+                        open(  # noqa: ASYNC230 - HTTPX consumes this sync stream.
+                            item.path, "rb"
+                        )
+                    )
                     files.append(
                         (
                             item.field,
@@ -394,7 +399,11 @@ class VideoGenerationClient:
                         else None
                     )
                     output_stream = (
-                        stack.enter_context(open(part_path, "wb"))
+                        stack.enter_context(
+                            open(  # noqa: ASYNC230 - request-scoped output stream.
+                                part_path, "wb"
+                            )
+                        )
                         if part_path is not None
                         else None
                     )
