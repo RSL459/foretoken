@@ -88,6 +88,16 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
+### Iterate on source
+
+After editing the checkout, run the same deploy command again:
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+Python, Triton, Rust, CUDA, C/C++, and vLLM source changes use the cluster build caches and reuse the runtime environment when dependencies and startup code are unchanged. See [Deploy Foretoken from Source](docs/custom-deployment.md) for engine checkouts and runtime changes.
+
 ### 5. Evaluate and profile the service
 
 The examples save results locally and to W&B. Run `wandb login` once before using W&B.
