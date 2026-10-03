@@ -73,7 +73,7 @@ rdma:
 frontend:
   enabled: false
   mode: local
-  image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.3
+  image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.4
   port: 8080
   gateway:
     # When enabled, the Chart creates an isolated GatewayClass and HTTP Gateway.
