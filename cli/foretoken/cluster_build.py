@@ -206,6 +206,7 @@ class ClusterBuilder(AbstractContextManager):
         self._created = False
         self._generated_layouts: dict[str, dict[str, str]] = {}
         self._used_images: set[str] = set()
+        self._built_images: set[str] = set()
 
     def _reuse_or_retire_pods(self) -> dict[str, Any] | None:
         """Select a compatible daemon and retire other builders sharing its compiler cache."""
@@ -738,6 +739,23 @@ rm -rf "$incoming"
             if len(columns := line.split()) >= 3
         }
 
+    def _node_image_matches(self, image: str, digest: str) -> bool:
+        """Compare a node image with BuildKit's output, including containerd's OCI index wrapper."""
+        node_digest = self._node_images().get(image)
+        if node_digest is None:
+            return False
+        if node_digest == digest:
+            return True
+        descriptor = json.loads(
+            self.run(
+                [*self._containerd(), "content", "get", node_digest],
+                capture=True,
+                container="images",
+            )
+        )
+        manifests = descriptor.get("manifests", [])
+        return len(manifests) == 1 and manifests[0]["digest"] == digest
+
     def _save_layout(self, image: str, layout: str, digest: str) -> None:
         """Retain the cluster-local OCI layout corresponding to an imported image reference."""
         path = self.root + "/images.json"
@@ -820,8 +838,9 @@ rm -rf "$incoming"
         image: str = "",
         push: bool = False,
         arguments: dict[str, str] | None = None,
+        reuse_image: str = "",
     ) -> dict[str, Any]:
-        """Run the owning Dockerfile with cache mounts and leave its output in the cluster."""
+        """Build cluster-local outputs, reusing identical installed images before OCI transfer."""
         metadata = self.root + "/result.json"
         args = [
             "buildctl",
@@ -877,6 +896,22 @@ rm -rf "$incoming"
                 ]
                 value = alias
             args += ["--opt", f"build-arg:{key}={value}"]
+        # Resolve the actual image through BuildKit without copying its layers to an
+        # OCI layout. Only a matching image still present on this node can skip import.
+        if self.containerd_socket and reuse_image and not destination:
+            self.run(
+                [
+                    *args,
+                    "--output",
+                    f"type=image,name={image},oci-mediatypes=true,store=false,push=false",
+                ]
+            )
+            result = self.read_json(metadata)
+            if self._node_image_matches(reuse_image, result["containerimage.digest"]):
+                self.reuse_image_reference(reuse_image, image)
+                self._built_images.add(image)
+                print(f"Reusing unchanged node image {reuse_image}", flush=True)
+                return result
         layout = ""
         if destination:
             args += ["--output", "type=local,dest=" + destination]
@@ -916,6 +951,7 @@ rm -rf "$incoming"
                 "digest": digest,
                 "nodeDigest": self._node_images()[image],
             }
+            self._built_images.add(image)
         return result
 
     def reuse_image_reference(self, image: str, reference: str) -> None:
@@ -928,7 +964,7 @@ rm -rf "$incoming"
     def discard_unselected_images(self, retained: set[str]) -> None:
         """Remove only this build's unselected local references after every node has been compared."""
         if self.containerd_socket:
-            unused = self._generated_layouts.keys() - retained
+            unused = self._built_images - retained
             if unused:
                 self.run(
                     [*self._containerd(), "images", "remove", *sorted(unused)],

@@ -420,6 +420,9 @@ def prepare_source_images(
                     image=image,
                     push=bool(registry),
                     arguments=component_arguments,
+                    reuse_image=installed.get(component, "")
+                    if image == references[component]
+                    else "",
                 )
                 final_dockerfile, final_target, final_arguments = (
                     dockerfile,
@@ -455,6 +458,7 @@ def prepare_source_images(
                         image=references[component],
                         push=bool(registry),
                         arguments=engine_arguments,
+                        reuse_image=installed.get(component, ""),
                     )
                     final_dockerfile, final_target, final_arguments = (
                         "deploy/inference-engines/source-build.Dockerfile",
