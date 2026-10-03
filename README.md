@@ -39,7 +39,7 @@ Choose the deployment path before running the common steps:
 | Kubernetes deployment with K3s, RKE2, KubeSphere, cloud, or another cluster | [Kubernetes deployment](docs/kubernetes-deployment.md) |
 | MetaX GPU deployment | [MetaX deployment](docs/metax-deployment.md) |
 
-K3s, RKE2, KubeSphere, and managed Kubernetes use the same path because Foretoken connects through the standard Kubernetes API. Install Python 3.11+, `kubectl`, and Helm locally, then continue with the selected guide.
+The steps below use k3d as the example.
 
 ### 1. Get the examples and install the command-line tool
 

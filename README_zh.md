@@ -39,7 +39,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 | 使用 K3s、RKE2、KubeSphere、云上或其他 Kubernetes 集群部署 | [Kubernetes 部署指南](docs/kubernetes-deployment_zh.md) |
 | 沐曦 GPU 集群部署 | [沐曦部署指南](docs/metax-deployment_zh.md) |
 
-K3s、RKE2、KubeSphere 和托管 Kubernetes 都通过标准 Kubernetes API 接入，因此使用同一条部署路径。按所选指南准备 Python 3.11+、`kubectl` 和 Helm。
+下面以 k3d 部署为例。
 
 ### 1. 获取示例并安装命令行工具
 
