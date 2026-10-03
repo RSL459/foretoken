@@ -508,13 +508,28 @@ class ClusterBuilder(AbstractContextManager):
             self.run(
                 ["rm", "-rf", "--", self.root + "/transfers", self.root + "/output"]
             )
-        except BaseException:
-            self.__exit__(None, None, None)
+        except BaseException as error:
+            self.__exit__(type(error), error, error.__traceback__)
             raise
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
-        """Retain the ready compiler daemon and clean only transient build outputs."""
+        """Retain successful builders and clean transient or failed build state."""
+        if exc_type is not None and self._created:
+            self.kubectl.run(
+                [
+                    "delete",
+                    "pod",
+                    self.name,
+                    "-n",
+                    self.namespace,
+                    "--ignore-not-found",
+                    "--wait=true",
+                    "--timeout=" + self.timeout,
+                ]
+            )
+            self._created = False
+            return
         if exc_type is None and self._used_images:
             path = self.root + "/images.json"
             layouts = self.read_json(path)
