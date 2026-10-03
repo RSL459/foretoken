@@ -677,9 +677,6 @@ class EditableDeployment:
             annotations.pop(SOURCE_REVISION, None)
             bundle = self.state["bundles"].get(component)
             namespace = metadata.get("namespace") or deployment.namespace or "default"
-            self.selected[(obj["kind"], namespace, metadata["name"])] = (
-                bundle["revision"] if bundle else ""
-            )
             if bundle is None:
                 continue
             if component == "model-server" and obj["spec"].get("backend") != "vllm":
@@ -696,6 +693,9 @@ class EditableDeployment:
                 .get(SOURCE_REVISION)
             )
             if active != bundle["revision"]:
+                self.selected[(obj["kind"], namespace, metadata["name"])] = bundle[
+                    "revision"
+                ]
                 pending.setdefault(namespace, {})[component] = bundle
             annotations[SOURCE_REVISION] = bundle["revision"]
         if pending:
