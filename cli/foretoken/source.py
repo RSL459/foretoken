@@ -115,7 +115,11 @@ def build_arguments(environment: dict[str, str]) -> dict[str, str]:
     ghcr = environment.get("FORETOKEN_GHCR_REGISTRY", registry).rstrip("/")
     gcr = environment.get("FORETOKEN_GCR_REGISTRY", registry).rstrip("/")
     if docker:
-        result.update(BASE_IMAGE_REGISTRY=docker, GO_IMAGE_REGISTRY=docker)
+        result.update(
+            BASE_IMAGE_REGISTRY=docker,
+            GO_IMAGE_REGISTRY=docker,
+            BUILDKIT_SYNTAX_IMAGE=f"{docker}/docker/dockerfile:1",
+        )
     if ghcr:
         result.update(UV_IMAGE_REGISTRY=ghcr, INFERENCE_ENGINE_IMAGE_REGISTRY=ghcr)
     if gcr:
