@@ -88,6 +88,16 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
+### 快速迭代源码
+
+修改源码后，再执行同一条部署命令即可应用改动，无需重新创建集群或手动导入运行时镜像：
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+Python、Triton、Rust、CUDA、C/C++ 和 vLLM 源码改动会复用集群编译缓存；依赖和启动代码未变化时继续复用运行时环境。引擎源码和运行环境设置见[从源码部署 Foretoken](docs/custom-deployment_zh.md)。
+
 ### 5. 评测与性能剖析
 
 以下示例将结果保存到本地和 W&B。首次使用 W&B 前，执行一次 `wandb login`。
