@@ -122,8 +122,10 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
 | 接口 | 用途 |
 | --- | --- |
 | `/healthz` | 进程存活状态 |
-| `/readyz` | 服务就绪状态 |
+| `/readyz` | 已加载有效路由配置、可以接收 HTTP 请求 |
 | `/statusz` | 服务和缓存索引状态 |
 | `/metrics` | Prometheus 指标 |
+
+模型启动或切换时，HTTP 前端保持可访问。合法的空模型配置也可接收 HTTP 请求，此时推理请求返回 HTTP 503。服务就绪状态见 `/statusz` 中的 `serving_ready`。
 
 网关配置见[网关模式](../../README_zh.md#网关模式)。TLS 和身份认证由集群入口配置，运维接口的访问范围由网络策略控制。
