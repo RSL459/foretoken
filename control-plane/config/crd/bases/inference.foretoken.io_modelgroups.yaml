@@ -102,6 +102,24 @@ spec:
                         maxLength: 253
                         minLength: 1
                         type: string
+                      directoryOwner:
+                        description: DirectoryOwner preserves a locally discovered
+                          directory identity across cache consumers.
+                        properties:
+                          gid:
+                            format: int64
+                            maximum: 4294967294
+                            minimum: 0
+                            type: integer
+                          uid:
+                            format: int64
+                            maximum: 4294967294
+                            minimum: 1
+                            type: integer
+                        required:
+                        - gid
+                        - uid
+                        type: object
                       mountPath:
                         maxLength: 1024
                         minLength: 2

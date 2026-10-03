@@ -57,6 +57,18 @@ type NormalizedKVCache struct {
 	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
 }
 
+// RuntimeCacheDirectoryOwner is the host identity discovered for a local directory mount.
+// Cache consumers use it so private runtime files remain manageable by the host owner.
+type RuntimeCacheDirectoryOwner struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967294
+	UID int64 `json:"uid"`
+
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4294967294
+	GID int64 `json:"gid"`
+}
+
 // RuntimeCacheBinding identifies the persistent runtime cache shared by serving workloads.
 type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MinLength=1
@@ -67,6 +79,10 @@ type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MaxLength=1024
 	// +kubebuilder:validation:Pattern="^/"
 	MountPath string `json:"mountPath"`
+
+	// DirectoryOwner preserves a locally discovered directory identity across cache consumers.
+	// +optional
+	DirectoryOwner *RuntimeCacheDirectoryOwner `json:"directoryOwner,omitempty"`
 }
 
 // HuggingFaceAccess contains platform-provided access settings for Hugging Face repositories.

@@ -175,6 +175,11 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			},
 		},
 	}
+	if cache := profile.RuntimeCache; cache != nil && cache.DirectoryOwner != nil {
+		securityContext := deployment.Spec.Template.Spec.SecurityContext
+		securityContext.RunAsUser = &cache.DirectoryOwner.UID
+		securityContext.RunAsGroup = &cache.DirectoryOwner.GID
+	}
 	serviceType := corev1.ServiceTypeClusterIP
 	if profile.Gateway == nil {
 		serviceType = corev1.ServiceTypeLoadBalancer

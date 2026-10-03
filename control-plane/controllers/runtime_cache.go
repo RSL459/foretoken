@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	runtimeCacheVolumeName       = "runtime-cache"
-	runtimeCacheClaimEnv         = "FORETOKEN_RUNTIME_CACHE_CLAIM"
-	runtimeCacheFSGroup    int64 = 1000
+	runtimeCacheVolumeName         = "runtime-cache"
+	runtimeCacheClaimEnv           = "FORETOKEN_RUNTIME_CACHE_CLAIM"
+	runtimeCacheFSGroup      int64 = 1000
+	directoryOwnerAnnotation       = "inference.foretoken.io/directory-owner"
 )
 
 func runtimeCacheObservationPort(runtimePort int32) int32 {
@@ -40,7 +41,7 @@ func runtimeCacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtim
 	}
 }
 
-// runtimeCachePodSecurityContext gives every cache consumer group write access without granting filesystem capabilities.
+// runtimeCachePodSecurityContext selects PVC group access or the discovered host directory identity.
 func runtimeCachePodSecurityContext(cache *inferencev1alpha1.RuntimeCacheBinding) *corev1.PodSecurityContext {
 	context := &corev1.PodSecurityContext{SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}
 	if cache != nil {
@@ -48,20 +49,32 @@ func runtimeCachePodSecurityContext(cache *inferencev1alpha1.RuntimeCacheBinding
 		policy := corev1.FSGroupChangeOnRootMismatch
 		context.FSGroup = &group
 		context.FSGroupChangePolicy = &policy
+		if owner := cache.DirectoryOwner; owner != nil {
+			context.RunAsUser = &owner.UID
+			context.RunAsGroup = &owner.GID
+			context.FSGroup = &owner.GID
+		}
 	}
 	return context
 }
 
-// runtimeCacheInitContainers prepares the mount root for images whose hostPath PV ignores fsGroup.
+// runtimeCacheInitContainers prepares writable storage and migrates legacy root-owned local cache entries.
 func runtimeCacheInitContainers(image string, cache *inferencev1alpha1.RuntimeCacheBinding) []corev1.Container {
 	if cache == nil {
 		return nil
+	}
+	command := []string{"sh", "-ec", `mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"`, "prepare", cache.MountPath}
+	if owner := cache.DirectoryOwner; owner != nil {
+		// Older root runtimes left private compiler directories behind. Transfer only
+		// root-owned entries without following symlinks or changing shared hardlink inodes.
+		command = []string{"sh", "-ec", `find "$1" -xdev -user 0 \( -type d -o -links 1 \) -exec chown -h "$2:$3" {} +; chmod u+rwx "$1"`, "prepare", cache.MountPath, strconv.FormatInt(owner.UID, 10), strconv.FormatInt(owner.GID, 10)}
 	}
 	root := int64(0)
 	return []corev1.Container{{
 		Name:    "runtime-cache-permissions",
 		Image:   image,
-		Command: []string{"sh", "-ec", `mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"`, "prepare", cache.MountPath},
+		Command: command,
+		Env:     []corev1.EnvVar{{Name: "NVIDIA_VISIBLE_DEVICES", Value: "void"}},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:  &root,
 			RunAsGroup: &root,
@@ -138,7 +151,17 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 	if cache.Status.ObservedGeneration != cache.Generation || cache.Status.ClaimName == "" {
 		return nil, false, nil
 	}
-	return &inferencev1alpha1.RuntimeCacheBinding{ClaimName: cache.Status.ClaimName, MountPath: profile.MountPath}, true, nil
+	binding := &inferencev1alpha1.RuntimeCacheBinding{ClaimName: cache.Status.ClaimName, MountPath: profile.MountPath}
+	if value := cache.Annotations[directoryOwnerAnnotation]; cache.Spec.Directory != "" && value != "" {
+		uidText, gidText, found := strings.Cut(value, ":")
+		uid, uidErr := strconv.ParseUint(uidText, 10, 32)
+		gid, gidErr := strconv.ParseUint(gidText, 10, 32)
+		if !found || uidErr != nil || gidErr != nil || uid == 0 || uid == 1<<32-1 || gid == 1<<32-1 {
+			return nil, false, fmt.Errorf("RuntimeCache %q has invalid directory owner %q", cache.Name, value)
+		}
+		binding.DirectoryOwner = &inferencev1alpha1.RuntimeCacheDirectoryOwner{UID: int64(uid), GID: int64(gid)}
+	}
+	return binding, true, nil
 }
 
 // Validate rejects an invalid runtime cache mount path.
