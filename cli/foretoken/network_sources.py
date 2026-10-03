@@ -241,7 +241,7 @@ def select_platform_oci_reference(reference: str) -> str:
 def select_source_build_sources(
     environment: Mapping[str, str],
 ) -> tuple[dict[str, str], tuple[str, ...], tuple[str, ...]]:
-    """Measure unconfigured official and anonymous sources and return faster build settings."""
+    """Measure unconfigured sources and return faster build settings."""
     probes: list[_SourceProbe] = []
     if not environment.get("FORETOKEN_OCI_REGISTRY"):
         probes.extend(

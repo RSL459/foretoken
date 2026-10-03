@@ -34,6 +34,28 @@ uv pip install foretoken
 
 运行 `foretoken --version` 查看已安装的 CLI 版本。
 
+## 创建本地集群
+
+在已安装 Docker、NVIDIA Container Toolkit 和 k3d 的 Linux GPU 主机上执行：
+
+```bash
+# 为本地集群命名，并使用 nvidia-smi 显示的 GPU 编号 0。
+# 若使用两张 GPU，传入 --gpus 0,1。
+foretoken cluster create k3d --name foretoken-dev --gpus 0
+```
+
+本地 kind 开发集群执行：
+
+```bash
+foretoken cluster create kind --name foretoken-dev
+```
+
+删除由 CLI 创建的集群：
+
+```bash
+foretoken cluster delete k3d --name foretoken-dev
+```
+
 ## 安装 Kubernetes 平台
 
 `foretoken install` 会在当前 Kubernetes context 中安装 Foretoken CRD 和控制器。平台资源固定使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。模型服务通过 `foretoken deploy` 单独部署。
@@ -81,14 +103,13 @@ foretoken install -e .
 
 修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
 
-当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要节点可访问的镜像仓库。私有仓库需在安装前按[源码部署指南](../docs/custom-deployment_zh.md#远程集群与私有镜像仓库)准备拉取 Secret。镜像允许公开拉取时，将 `example/foretoken` 替换为有推送权限的仓库后执行：
+当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 
 ```bash
-docker login ghcr.io
-foretoken install -e . --registry ghcr.io/example/foretoken
+foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-仓库登录用于授权集群构建任务推送镜像。
+如果仓库需要认证，安装前按[源码部署指南](../docs/kubernetes-deployment_zh.md)配置拉取 Secret。
 
 ### 模型分发
 

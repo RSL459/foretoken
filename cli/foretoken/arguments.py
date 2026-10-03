@@ -38,6 +38,17 @@ class UninstallCommand:
 
 
 @dataclass(frozen=True)
+class ClusterCommand:
+    """Create or remove a locally managed development cluster."""
+
+    action: str
+    kind: str
+    name: str
+    gpus: str | None = None
+    config: str | None = None
+
+
+@dataclass(frozen=True)
 class DeployCommand:
     """Apply one Kustomize deployment and wait for serving readiness."""
 
@@ -141,6 +152,7 @@ def validate_profile_arguments(
 ParsedCommand = (
     InstallCommand
     | UninstallCommand
+    | ClusterCommand
     | DeployCommand
     | DeleteCommand
     | StatusCommand
@@ -178,6 +190,38 @@ def _build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {package_version()}",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    cluster = subparsers.add_parser(
+        "cluster",
+        help="Create or remove a local kind or k3d cluster",
+    )
+    cluster_actions = cluster.add_subparsers(dest="cluster_action", required=True)
+    for action in ("create", "delete"):
+        cluster_action = cluster_actions.add_parser(
+            action,
+            help=(
+                "Create a local cluster" if action == "create"
+                else "Delete a local cluster"
+            ),
+        )
+        cluster_action.add_argument("kind", choices=("kind", "k3d"))
+        cluster_action.add_argument(
+            "--name",
+            default="foretoken-dev",
+            metavar="NAME",
+            help="name of the local cluster",
+        )
+        if action == "create":
+            cluster_action.add_argument(
+                "--gpus",
+                metavar="INDICES",
+                help="GPU indices for k3d, for example 0 or 0,1",
+            )
+            cluster_action.add_argument(
+                "--config",
+                metavar="PATH",
+                help="kind or k3d configuration file",
+            )
 
     install = subparsers.add_parser(
         "install",
@@ -372,6 +416,16 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
 
     parser = _build_parser()
     parsed_args = parser.parse_args(arguments)
+    if parsed_args.command == "cluster":
+        if parsed_args.cluster_action == "create" and parsed_args.kind == "k3d" and not parsed_args.gpus:
+            parser.error("cluster create k3d requires --gpus INDICES")
+        return ClusterCommand(
+            parsed_args.cluster_action,
+            parsed_args.kind,
+            parsed_args.name,
+            getattr(parsed_args, "gpus", None),
+            getattr(parsed_args, "config", None),
+        )
     if parsed_args.command == "install":
         reused_gateway_arguments = any(
             (

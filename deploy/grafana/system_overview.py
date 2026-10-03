@@ -43,17 +43,17 @@ ZH = {
     "Foretoken System Overview": "Foretoken 系统概览",
     "Overview": "概览",
     "Reading this dashboard": "看板读法",
-    "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window. **No data** means no observations, not zero. Scrape counts show reporting endpoints, not service readiness.":
-        "**模型总计**按命名空间和模型筛选；实例、角色和 rank 只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。**无数据**表示没有观测，不代表零。上报端点数反映指标采集情况，不代表服务就绪。",
+    "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window.":
+        "**模型总计**按命名空间和模型筛选；实例、角色和引擎编号只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。",
     "No data": "无数据",
     "Generation latency": "生成延迟",
     "Request lengths": "请求长度分布",
-    "Request latency samples / s": "请求延迟观测速率",
-    "Token interval samples / s": "Token 间隔观测速率",
-    "TTFT and E2EL histogram observations per second for each whole model. No observations leave latency quantiles unavailable.":
-        "每个模型每秒记录的 TTFT 与 E2EL 直方图样本数；没有观测时不显示延迟分位数。",
-    "Output-token interval observations per second for each whole model. These count token intervals, not requests.":
-        "每个模型每秒记录的输出 token 间隔样本数，计数单位是 token 间隔，不是请求。",
+    "Request latency samples / s": "请求采样数量",
+    "Token interval samples / s": "Token 间隔采样数量",
+    "TTFT and E2EL histogram observations per second for each whole model.":
+        "每个模型每秒记录的 TTFT 与 E2EL 直方图样本数。",
+    "Output-token interval observations per second for each whole model. These count token intervals.":
+        "每个模型每秒记录的输出 token 间隔样本数。",
     "{{model_name}} / local": "{{model_name}} / 本地",
     "{{model_name}} / external": "{{model_name}} / 外部",
     "{{model_name}} / mean": "{{model_name}} / 均值",
@@ -67,22 +67,22 @@ ZH = {
     "Routing decisions": "路由决策",
     "Control plane": "控制面",
     "Autoscaling decisions": "扩缩容决策",
-    "Reporting frontend targets": "前端上报端点数",
-    "Reporting model targets": "模型上报端点数",
-    "Frontend response starts / s": "前端响应开始速率",
+    "Online frontend services": "在线前端服务数",
+    "Online model servers": "在线模型服务数",
+    "Frontend response starts / s": "HTTP 响应速率",
     "Input throughput": "输入吞吐量",
     "Output throughput": "输出吞吐量",
     "Frontend queued requests": "前端排队请求",
-    "Frontend responses by HTTP status": "前端响应开始速率（按状态码）",
-    "Frontend responses by endpoint": "前端响应开始速率（按接口）",
-    "Frontend response-header latency": "前端响应头延迟",
+    "Frontend responses by HTTP status": "HTTP 响应速率（按状态码）",
+    "Frontend responses by endpoint": "HTTP 响应速率（按接口）",
+    "Frontend response-header latency": "HTTP 响应头延迟",
     "Frontend admission queue": "前端准入队列",
     "Completed request rate": "完成请求速率",
     "Total / {{model_name}}": "模型总计 / {{model_name}}",
     "Running total / {{model_name}}": "运行总数 / {{model_name}}",
     "Waiting total / {{model_name}}": "排队总数 / {{model_name}}",
     "Whole-model totals across every instance and rank, with selected backend details. Totals ignore instance, role and rank filters.":
-        "粗线展示每个模型全部实例和 rank 的总吞吐量，细线展示所选后端。模型总计不随实例、角色或 rank 筛选缩小。",
+        "粗线展示每个模型全部实例和引擎编号的总吞吐量，细线展示所选后端。模型总计不随实例、角色或引擎编号筛选缩小。",
     "Scheduler state": "调度器状态",
     "End-to-end latency (E2EL)": "端到端延迟 (E2EL)",
     "Time to first token (TTFT)": "首 token 延迟 (TTFT)",
@@ -91,13 +91,13 @@ ZH = {
     "Stage latency (p95)": "阶段耗时（P95）",
     "Preemption events / s": "抢占事件速率",
     "Speculative decoding": "推测解码",
-    "Draft and accepted tokens / s": "草稿与接受 token / s",
+    "Draft and accepted tokens / s": "草稿与接受 token 速率",
     "Draft acceptance ratio": "草稿 token 接受率",
     "Accepted tokens per draft iteration": "每次草稿迭代接受 token 数",
     "Acceptance probability by position": "各草稿位置接受概率",
     "Speculative stage GPU time": "推测解码阶段 GPU 时间",
     "Speculative GPU time shares": "推测解码 GPU 时间占比",
-    "Timed speculative steps / s": "推测解码计时步数 / s",
+    "Timed speculative steps / s": "推测解码计时步速率",
     "Prompt length": "输入长度",
     "Output length": "输出长度",
     "KV Cache utilization": "KV 缓存使用率",
@@ -119,7 +119,7 @@ ZH = {
     "Controller workqueues": "控制器工作队列",
     "Replica decisions": "副本决策",
     "Serving capacity": "服务容量",
-    "Observation and evaluation age": "观测与评估数据时效",
+    "Observation and evaluation age": "距最近观测与评估",
     "Latest autoscaling stage": "最新扩缩容阶段",
     "Data source": "数据源",
     "Namespace": "命名空间",
@@ -140,22 +140,22 @@ ZH = {
     "routable / {{modelservice}} / {{target_name}} / {{role}}": "可路由 / {{modelservice}} / {{target_name}} / {{role}}",
     "observation / {{modelservice}} / {{target_name}} / {{role}}": "观测 / {{modelservice}} / {{target_name}} / {{role}}",
     "evaluation / {{modelservice}} / {{target_name}} / {{role}}": "评估 / {{modelservice}} / {{target_name}} / {{role}}",
-    "Prometheus targets currently reporting for the selected Frontend services.":
-        "所选前端服务中，最近一次指标抓取成功的端点数量。",
-    "Prometheus targets currently reporting for the selected model groups and roles.":
-        "所选模型组和执行角色中，最近一次指标抓取成功的端点数量。",
-    "Frontend responses started per second over the selected rate window.": "选定速率窗口内每秒开始的 Frontend 响应数。",
-    "Input tokens per second for each whole model, across all instances and ranks.": "每个模型全部实例和 rank 每秒处理的输入 token 总数。",
-    "Output tokens per second for each whole model, across all instances and ranks.": "每个模型全部实例和 rank 每秒生成的输出 token 总数。",
+    "Number of online frontend services in the selected frontend services.":
+        "所选前端服务中的在线前端服务数。",
+    "Number of online model servers in the selected model groups and roles.":
+        "所选模型组和执行角色中的在线模型服务数。",
+    "Frontend responses started per second over the selected rate window.": "选定速率窗口内每秒开始的 HTTP 响应数。",
+    "Input tokens per second for each whole model, across all instances and ranks.": "每个模型全部实例和引擎编号每秒处理的输入 token 总数。",
+    "Output tokens per second for each whole model, across all instances and ranks.": "每个模型全部实例和引擎编号每秒生成的输出 token 总数。",
     "Requests waiting for frontend admission.": "等待前端准入的请求数。",
-    "Frontend response starts grouped by HTTP status class.": "按 HTTP 状态类别分组的 Frontend 响应开始速率。",
-    "Frontend response starts grouped by HTTP endpoint.": "按 HTTP 端点分组的 Frontend 响应开始速率。",
+    "Frontend response starts grouped by HTTP status class.": "按 HTTP 状态类别分组的响应速率。",
+    "Frontend response starts grouped by HTTP endpoint.": "按 HTTP 接口分组的响应速率。",
     "Time to HTTP response headers, in seconds; excludes SSE body delivery.":
         "到 HTTP 响应头的时间，单位为秒；不包含 SSE 正文传输。",
     "Requests waiting for runtime preparation or backend dispatch, grouped by scaling-target kind.":
         "按扩缩容目标类型分组，等待运行时准备或后端派发的请求数。",
     "Whole-model completion rate counts aggregate and decode executions once; backend lines retain execution stage and finish reason.":
-        "模型总计只统计一次聚合或 Decode 阶段的完成请求；后端曲线保留执行阶段和结束原因。",
+        "模型总计只统计一次聚合或解码阶段的完成请求；后端曲线保留执行阶段和结束原因。",
     "Whole-model running and queued execution totals across all roles, with selected backend details.":
         "每个模型全部执行角色的运行与排队总数，并展示所选后端明细。",
     "Whole-model latency from Frontend processing to generation completion, in seconds; aggregate and decode requests are combined.":
@@ -164,42 +164,42 @@ ZH = {
         "从前端开始处理请求到首个输出 token 的耗时，按模型统计，单位为秒。",
     "Whole-model time per output token, in milliseconds; each request contributes its average interval.":
         "每个请求的平均输出 token 间隔，按模型统计分位数和均值，单位为毫秒。",
-    "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.":
-        "聚合和 Decode 引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到；样本稀少时对照均值和观测速率。",
-    "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.":
-        "每个模型的草稿与接受 token 速率，表示推测解码工作量，不等同最终输出吞吐量。",
-    "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.":
-        "全部引擎接受的草稿 token 数除以提出的草稿 token 数；没有草稿时不显示比例，也不代表加速比。",
+    "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets.":
+        "聚合和解码引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到。",
+    "Draft and accepted token rates for each whole model.":
+        "每个模型的草稿与接受 token 速率。",
+    "Accepted draft tokens divided by proposed draft tokens across all engines.":
+        "全部引擎接受的草稿 token 数除以提出的草稿 token 数。",
     "Accepted draft tokens per draft iteration across all engines; excludes bonus tokens.":
-        "全部引擎每次草稿迭代接受的草稿 token 数，不包含额外 token。",
-    "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.":
-        "各草稿位置（从 0 开始）的接受数除以全部引擎草稿迭代数；没有草稿时不显示比例。",
+        "全部引擎每次草稿迭代接受的草稿 token 数。",
+    "Accepted tokens at each zero-based draft position divided by draft iterations across all engines.":
+        "各草稿位置（从 0 开始）的接受数除以全部引擎草稿迭代数。",
     "Draft / {{model_name}}": "草稿 / {{model_name}}",
     "Accepted / {{model_name}}": "接受 / {{model_name}}",
     "Position {{position}} / {{model_name}}": "位置 {{position}} / {{model_name}}",
-    "Target forward / {{model_name}}": "目标模型 forward / {{model_name}}",
+    "Target forward / {{model_name}}": "目标模型前向计算 / {{model_name}}",
     "Draft share / {{model_name}}": "草稿占比 / {{model_name}}",
-    "Target forward share / {{model_name}}": "目标模型 forward 占比 / {{model_name}}",
-    "Only complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification but excludes sampling. The mean is stage duration sum divided by timed steps, not request latency.":
-        "每个引擎仅在输出 rank 统计完整的推测解码 batch。GPU event 耗时包含内核间的主机间隙；目标模型 forward 包含验证但不含采样。均值是阶段耗时总和除以计时步数，不是请求延迟。",
-    "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.":
-        "同一批计时步中，草稿与目标模型 forward 耗时分别除以两者之和。这不是墙钟时间占比或模型加速比；没有计时步则不显示比例。",
+    "Target forward share / {{model_name}}": "目标模型前向计算占比 / {{model_name}}",
+    "Complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification and excludes sampling. The mean is stage duration sum divided by timed steps.":
+        "每个引擎在一个输出引擎编号上统计完整的推测解码批次。GPU 事件耗时包含排队内核之间的主机间隙；目标模型前向计算包含验证但不含采样。均值是阶段耗时总和除以计时步数。",
+    "Draft and target-forward durations each divided by their sum over the same measured steps.":
+        "同一批计时步中，草稿与目标模型前向计算耗时分别除以两者之和。",
     "Timed pure speculative decode batches per second, collected automatically for GPU drafting.":
-        "使用 GPU 起草时自动采集的纯推测解码 batch 计时样本数（每秒）。",
+        "使用 GPU 起草时自动采集的纯推测解码批次计时数量（每秒）。",
     "ITL / {{model_name}}": "ITL / {{model_name}}",
     "TTFT / {{model_name}}": "TTFT / {{model_name}}",
     "E2EL / {{model_name}}": "E2EL / {{model_name}}",
     "P95 time spent in queue, prefill and decode by requests finishing in this window, in seconds. Stage durations appear when a request completes.":
-        "本窗口内已完成请求在排队、Prefill 和 Decode 阶段的 P95 耗时，单位秒；请求完成时才记录各阶段耗时。",
+        "本窗口内已完成请求在排队、预填充和解码阶段的 P95 耗时，单位秒；请求完成时才记录各阶段耗时。",
     "Whole-model preemption events per second across every engine, with selected backend details.":
         "每个模型全部引擎每秒发生的抢占事件总数，并展示所选后端明细。",
     "Distribution of prompt tokens per request across selected engines.": "所选引擎每次请求的输入 token 数分布。",
     "Distribution of generated tokens per request across selected engines.": "所选引擎每次请求的输出 token 数分布。",
-    "KV-cache occupancy by model instance and engine rank.": "按模型实例和引擎 rank 展示 KV 缓存占用率。",
-    "Whole-model cache hits divided by queried tokens. Local and external caches are separate; no queries produce no ratio.":
-        "模型整体命中 token 数除以查询 token 数；本地和外部缓存分开统计，没有查询时不显示比例。",
-    "Healthy KV event sources divided by configured sources; disabled or unavailable indexing reports zero.":
-        "健康 KV 事件源数除以已配置源数；索引禁用或不可用时为 0。",
+    "KV-cache occupancy by model instance and engine rank.": "按模型实例和引擎编号展示 KV 缓存占用率。",
+    "Whole-model cache hits divided by queried tokens. Local and external caches are separate.":
+        "模型整体命中 token 数除以查询 token 数；本地和外部缓存分开统计。",
+    "Healthy KV event sources divided by configured sources.":
+        "健康 KV 事件源数除以已配置源数。",
     "Highest RuntimeCache filesystem usage by model instance.": "各模型实例缓存文件系统的最高使用率。",
     "Lowest available RuntimeCache filesystem space by model instance.": "各模型实例缓存文件系统的最少可用空间。",
     "Utilization of each GPU used by the selected model.": "所选模型所在 GPU 的使用率。",
@@ -213,9 +213,9 @@ ZH = {
     "Routing selection rate by stage and outcome within the selected time range.":
         "所选时间范围内每秒路由选择次数，按阶段和结果分组。",
     "P99 filter, scorer, and picker time across selected Frontend replicas.":
-        "所选 Frontend 副本的 Filter、Scorer 和 Picker P99 耗时。",
+        "所选前端副本的筛选、评分和选择阶段 P99 耗时。",
     "Mean available, filtered, and selectable candidate counts per routing selection; selectable includes data-parallel ranks.":
-        "每次路由选择中可用、筛选后和可选候选的平均数量；可选候选包含数据并行 rank。",
+        "每次路由选择中可用、筛选后和可选候选的平均数量；可选候选包含数据并行副本。",
     "Reconciliation errors per second by controller.": "各控制器每秒协调错误数。",
     "P99 reconciliation time by controller.": "各控制器协调耗时的 P99。",
     "Depth of each controller workqueue.": "各控制器工作队列深度。",
@@ -227,17 +227,17 @@ ZH = {
         "距最近一次观测和评估的秒数。",
     "Latest trigger, decision, and adjustment outcomes for the selected model service.":
         "所选模型服务最近一次扩缩容评估的触发、决策和调整结果。",
-    "Engine rank": "引擎 rank",
+    "Engine rank": "引擎编号",
     "Routing share by backend": "各后端路由占比",
     "Routing selections by backend within each model and execution role. Each backend is one model instance and data-parallel rank; the denominator is all backends.":
-        "每个模型及执行角色内各后端的路由选择比例。一个后端对应一个模型实例和数据并行 rank，分母为该模型该角色的全部后端。",
+        "每个模型及执行角色内各后端的路由选择比例。一个后端对应一个模型实例和数据并行副本，分母为该模型该角色的全部后端。",
     "Scheduler queued requests": "引擎排队请求",
     "Queued execution requests across all instances, roles and ranks of each model.":
-        "每个模型全部实例、角色和 rank 中等待调度的执行请求总数。",
+        "每个模型全部实例、角色和引擎编号中等待调度的执行请求总数。",
     "Running / {{model_group_display}} / rank {{engine}}":
-        "运行中 / {{model_group_display}} / rank {{engine}}",
+        "运行中 / {{model_group_display}} / 编号 {{engine}}",
     "Waiting / {{model_group_display}} / rank {{engine}}":
-        "等待中 / {{model_group_display}} / rank {{engine}}",
+        "等待中 / {{model_group_display}} / 编号 {{engine}}",
 }
 
 AUTOSCALING_COLUMNS_ZH = {
@@ -537,6 +537,7 @@ def distribution(title: str, description: str, metric: str) -> heatmap.Panel:
         .title(title)
         .description(description)
         .datasource(PROMETHEUS)
+        .no_value("No data")
         .with_target(
             prometheus.Dataquery()
             .datasource(PROMETHEUS)
@@ -707,8 +708,7 @@ def build() -> dashboard_models.Dashboard:
         .content(
             "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. "
             "**Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\n"
-            "Rates use a rolling window. **No data** means no observations, not zero. "
-            "Scrape counts show reporting endpoints, not service readiness."
+            "Rates use a rolling window."
         )
         .span(24)
         .height(4)
@@ -716,8 +716,8 @@ def build() -> dashboard_models.Dashboard:
     board.with_row(dashboard.Row("Overview"))
     board.with_panel(
         headline(
-            "Reporting model targets",
-            "Prometheus targets currently reporting for the selected model groups and roles.",
+            "Online model servers",
+            "Number of online model servers in the selected model groups and roles.",
             f"sum({scoped_group_metric(f'foretoken:model_server_up:sum{{{GROUP}}}')})",
             color=BLUE,
         )
@@ -844,7 +844,7 @@ def build() -> dashboard_models.Dashboard:
         latency(
             model_metric("vllm:inter_token_latency_seconds_bucket", rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~"aggregate|decode"'),
             "Inter-token latency (ITL)",
-            "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.",
+            "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets.",
             unit="suffix: ms",
             scale=1_000,
             mean_rates=(
@@ -888,12 +888,12 @@ def build() -> dashboard_models.Dashboard:
     for title, description, observations in (
         (
             "Request latency samples / s",
-            "TTFT and E2EL histogram observations per second for each whole model. No observations leave latency quantiles unavailable.",
+            "TTFT and E2EL histogram observations per second for each whole model.",
             (("TTFT", "vllm:time_to_first_token_seconds_count"), ("E2EL", "vllm:e2e_request_latency_seconds_count")),
         ),
         (
             "Token interval samples / s",
-            "Output-token interval observations per second for each whole model. These count token intervals, not requests.",
+            "Output-token interval observations per second for each whole model. These count token intervals.",
             (("ITL", "vllm:inter_token_latency_seconds_count"),),
         ),
     ):
@@ -933,7 +933,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Draft and accepted tokens / s",
-            "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.",
+            "Draft and accepted token rates for each whole model.",
             [
                 foretoken_query(draft_tokens, "Draft / {{model_name}}"),
                 foretoken_query(accepted_tokens, "Accepted / {{model_name}}"),
@@ -949,7 +949,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Draft acceptance ratio",
-            "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.",
+            "Accepted draft tokens divided by proposed draft tokens across all engines.",
             [foretoken_query(f"({accepted_tokens}) / (({draft_tokens}) > 0)", "{{model_name}}")],
             unit="percentunit",
             span=12,
@@ -967,7 +967,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Acceptance probability by position",
-            "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.",
+            "Accepted tokens at each zero-based draft position divided by draft iterations across all engines.",
             [foretoken_query(
                 f"sum by(model_name,position) ({model_metric('vllm:spec_decode_num_accepted_tokens_per_pos_total', rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~\"aggregate|decode\"')}) "
                 f"/ on(model_name) group_left() (({draft_iterations}) > 0)",
@@ -985,7 +985,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Speculative stage GPU time",
-            "Only complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification but excludes sampling. The mean is stage duration sum divided by timed steps, not request latency.",
+            "Complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification and excludes sampling. The mean is stage duration sum divided by timed steps.",
             [
                 foretoken_query(f"({target_time}) / (({timed_steps}) > 0)", "Target forward / {{model_name}}"),
                 foretoken_query(f"({draft_time}) / (({timed_steps}) > 0)", "Draft / {{model_name}}"),
@@ -1001,7 +1001,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Speculative GPU time shares",
-            "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.",
+            "Draft and target-forward durations each divided by their sum over the same measured steps.",
             [
                 foretoken_query(f"({target_time}) / (({stage_time}) > 0)", "Target forward share / {{model_name}}"),
                 foretoken_query(f"({draft_time}) / (({stage_time}) > 0)", "Draft share / {{model_name}}"),
@@ -1037,7 +1037,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Prefix Cache hit ratio",
-            "Whole-model cache hits divided by queried tokens. Local and external caches are separate; no queries produce no ratio.",
+            "Whole-model cache hits divided by queried tokens. Local and external caches are separate.",
             [
                 foretoken_query(
                     model_rate_ratio("vllm:prefix_cache_hits_total", "vllm:prefix_cache_queries_total"),
@@ -1238,8 +1238,8 @@ def build() -> dashboard_models.Dashboard:
     board.with_row(dashboard.Row("Shared frontend"))
     board.with_panel(
         headline(
-            "Reporting frontend targets",
-            "Prometheus targets currently reporting for the selected Frontend services.",
+            "Online frontend services",
+            "Number of online frontend services in the selected frontend services.",
             f"sum(foretoken:frontend_up:sum{{{FRONTEND}}})",
             color=BLUE,
         ).span(8)
@@ -1315,7 +1315,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Frontend cache-index health",
-            "Healthy KV event sources divided by configured sources; disabled or unavailable indexing reports zero.",
+            "Healthy KV event sources divided by configured sources.",
             [query(f"foretoken:frontend_kv_index_source_health_ratio:min{{{FRONTEND}}}", "{{frontend_service}}")],
             unit="percentunit",
             span=8,

@@ -201,7 +201,7 @@ class ClusterBuilder(AbstractContextManager):
                     "command": [
                         "sh",
                         "-ec",
-                        'mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"; configuration="${XDG_CONFIG_HOME:-$HOME/.config}/buildkit/buildkitd.toml"; if test -f "$configuration"; then cp "$configuration" "$1/buildkit.toml"; else printf "[worker.oci]\\nreservedSpace = %s\\nminFreeSpace = %s\\nmaxUsedSpace = %s\\n" "$2" "$3" "$4" > "$1/buildkit.toml"; fi; chown 1000:1000 "$1/buildkit.toml"; chmod 600 "$1/buildkit.toml"',
+                        'mount="$(dirname "$(dirname "$1")")"; mkdir -p "$mount" "$1"; chown 1000:1000 "$mount" "$mount/build" "$(dirname "$1")" "$1"; chmod 2775 "$mount" "$mount/build" "$(dirname "$1")" "$1"; configuration="${XDG_CONFIG_HOME:-$HOME/.config}/buildkit/buildkitd.toml"; if test -f "$configuration"; then cp "$configuration" "$1/buildkit.toml"; else printf "[worker.oci]\\nreservedSpace = %s\\nminFreeSpace = %s\\nmaxUsedSpace = %s\\n" "$2" "$3" "$4" > "$1/buildkit.toml"; fi; chown 1000:1000 "$1/buildkit.toml"; chmod 600 "$1/buildkit.toml"',
                         "prepare",
                         self.root,
                         *gc_limits,
@@ -334,6 +334,23 @@ class ClusterBuilder(AbstractContextManager):
                 publisher_mounts.append(
                     {"name": "runtime", "mountPath": self.runtime_mount}
                 )
+                spec["initContainers"].append(
+                    {
+                        "name": "runtime-storage",
+                        "image": image,
+                        "command": [
+                            "sh",
+                            "-ec",
+                            'mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"',
+                            "prepare",
+                            self.runtime_mount,
+                        ],
+                        "securityContext": {"runAsUser": 0, "runAsGroup": 0},
+                        "volumeMounts": [
+                            {"name": "runtime", "mountPath": self.runtime_mount}
+                        ],
+                    }
+                )
             spec["containers"].append(
                 {
                     "name": "publisher",
@@ -341,6 +358,8 @@ class ClusterBuilder(AbstractContextManager):
                     "command": idle_command,
                     "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
                     "securityContext": {
+                        "runAsUser": 1000,
+                        "runAsGroup": 1000,
                         "allowPrivilegeEscalation": False,
                         "capabilities": {"drop": ["ALL"]},
                     },

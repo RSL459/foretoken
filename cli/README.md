@@ -34,6 +34,28 @@ uv pip install foretoken
 
 Run `foretoken --version` to check the installed CLI version.
 
+## Create a local cluster
+
+On a Linux GPU host with Docker, NVIDIA Container Toolkit, and k3d installed:
+
+```bash
+# Name the local cluster and use GPU index 0 from nvidia-smi.
+# To use two GPUs, pass --gpus 0,1.
+foretoken cluster create k3d --name foretoken-dev --gpus 0
+```
+
+For a local kind development cluster:
+
+```bash
+foretoken cluster create kind --name foretoken-dev
+```
+
+Remove a cluster created by the CLI with:
+
+```bash
+foretoken cluster delete k3d --name foretoken-dev
+```
+
 ## Install the Kubernetes platform
 
 `foretoken install` installs the Foretoken CRDs and controller in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. Deploy model services separately with `foretoken deploy`.
@@ -81,14 +103,13 @@ This builds the platform in dedicated Pods and binds the checkout to the target 
 
 After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
 
-A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by their nodes. For a private repository, prepare pull Secrets before installation as described in [Deploy Foretoken from Source](../docs/custom-deployment.md#remote-clusters-and-private-registries). For publicly readable images, replace `example/foretoken` with a repository you can push to:
+A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 
 ```bash
-docker login ghcr.io
-foretoken install -e . --registry ghcr.io/example/foretoken
+foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-Registry login authorizes the cluster build to push images.
+If the registry requires authentication, follow the [source deployment guide](../docs/kubernetes-deployment.md) before installation.
 
 ### Model distribution
 

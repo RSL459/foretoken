@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Apply the Python engine backports shared by runtime images and source builds."""
+"""Apply the shared vLLM compatibility series in image and source builds."""
 
 from __future__ import annotations
 
@@ -10,49 +10,56 @@ import py_compile
 import subprocess
 from pathlib import Path
 
+import yaml
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
+
 
 def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
-    """Select the runtime's backports for image builds and editable engine workspaces."""
-    ready = (
-        "vllm-0.26-ready-logprobs.patch"
-        if version.startswith("0.26.")
-        else "vllm-0.30-ready-logprobs.patch"
-        if version.startswith("0.30.0")
-        else "vllm-ready-logprobs.patch"
-    )
+    """Select one source-compatible patch series for an installed or source vLLM tree."""
+    version_value = Version(version)
+    version_map = yaml.safe_load((patches / "version-map.yaml").read_text())
+    series_name = version_map["default_series"]
+    for profile in version_map["profiles"]:
+        if SpecifierSet(profile["versions"]).contains(version_value, prereleases=True):
+            series_name = profile["series"]
+            break
+
+    modern_layout = False
+    ready_source = directory / "vllm/v1/engine/__init__.py"
+    if ready_source.is_file():
+        source = ready_source.read_text()
+        modern_layout = (
+            "tensor_parallel_size: int" in source
+            and "decode_context_parallel_size: int" in source
+        )
+        if series_name == "compatibility/v1-legacy/series" and modern_layout:
+            series_name = "compatibility/v1-default/series"
+
+    selected = []
+    for line in (patches / series_name).read_text().splitlines():
+        name = line.split("#", 1)[0].strip()
+        if not name:
+            continue
+        if modern_layout and name == "common/ready-logprobs.patch":
+            name = "compatibility/v1-modern-ready-logprobs.patch"
+        optional = version_map["optional_patches"].get(name)
+        if optional is not None and (
+            not SpecifierSet(optional["versions"]).contains(
+                version_value, prereleases=True
+            )
+            or not (directory / optional["requires"]).is_file()
+        ):
+            continue
+        selected.append(patches / name)
+
     profiler_result = (
         "vllm-0.26-profiler-result.patch"
-        if version.startswith("0.26.")
+        if version_value < Version("0.30.0")
         else "vllm-0.30-profiler-result.patch"
     )
-    names = ["vllm-python-profiling.patch", ready]
-    if (
-        version.startswith("0.30.")
-        and (
-            directory
-            / "vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py"
-        ).is_file()
-    ):
-        names.append("vllm-offloading-event-identity.patch")
-    timing = (
-        "vllm-0.26-spec-decode-stage-timing.patch"
-        if version.startswith("0.26.")
-        else "vllm-0.30-spec-decode-stage-timing.patch"
-        if version.startswith("0.30.0")
-        else "vllm-spec-decode-stage-timing.patch"
-        if version.startswith("0.30.1")
-        else None
-    )
-    if timing is not None:
-        names.extend(
-            [
-                "vllm-spec-decode-timing-collector.patch",
-                "vllm-spec-decode-timing-hooks.patch",
-                timing,
-            ]
-        )
-    names.append(profiler_result)
-    return [patches / name for name in names]
+    selected.append(patches / profiler_result)
+    return selected
 
 
 def _patch_content_present(directory: Path, patch: Path) -> bool:
@@ -75,7 +82,7 @@ def _patch_content_present(directory: Path, patch: Path) -> bool:
 
 
 def apply_patch(directory: Path, patch: Path) -> None:
-    """Apply one build-time backport, preserving checkouts where it is already installed."""
+    """Apply one patch while recognizing a completed patch with changed context."""
     arguments = [
         "patch",
         "--fuzz=0",
@@ -101,16 +108,21 @@ def apply_patch(directory: Path, patch: Path) -> None:
 
 
 def main() -> None:
-    """Patch the installed engine and refresh its bytecode during runtime image construction."""
+    """Apply the selected installed-engine series and compile changed Python files."""
     distribution = importlib.metadata.distribution("vllm")
     directory = Path(distribution.locate_file(""))
-    for patch in engine_patches(directory, distribution.version, Path(__file__).parent):
+    patches = engine_patches(directory, distribution.version, Path(__file__).parent)
+    changed_files = {
+        Path(line[6:].split()[0])
+        for patch in patches
+        for line in patch.read_text().splitlines()
+        if line.startswith("+++ b/")
+    }
+    for patch in patches:
         apply_patch(directory, patch)
-        for line in patch.read_text().splitlines():
-            if line.startswith("+++ b/"):
-                name = line.split()[1].removeprefix("b/")
-                if name.endswith(".py"):
-                    py_compile.compile(str(directory / name), doraise=True)
+    for path in sorted(changed_files):
+        if path.suffix == ".py":
+            py_compile.compile(str(directory / path), doraise=True)
 
 
 if __name__ == "__main__":

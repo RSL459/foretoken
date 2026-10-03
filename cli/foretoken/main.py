@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from urllib.parse import urlsplit
 
 from foretoken.arguments import (
+    ClusterCommand,
     DeleteCommand,
     DeployCommand,
     EndpointCommand,
@@ -188,7 +189,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Dispatch Foretoken deployment, status, and benchmark commands."""
     command = parse_arguments(sys.argv[1:] if argv is None else argv)
     try:
-        if isinstance(command, InstallCommand):
+        if isinstance(command, ClusterCommand):
+            from foretoken.cluster import run as run_cluster
+
+            run_cluster(command)
+        elif isinstance(command, InstallCommand):
             oci_registry = command.oci_registry or os.environ.get(
                 "FORETOKEN_OCI_REGISTRY"
             )

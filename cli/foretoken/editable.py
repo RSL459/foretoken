@@ -231,14 +231,22 @@ def _inputs(root: Path, engines: dict[str, str] | None = None) -> dict[str, Path
 
 
 def _snapshot(
-    files: dict[str, Path], destination: Path, engines: dict[str, str] | None = None
+    files: dict[str, Path],
+    destination: Path,
+    engines: dict[str, str] | None = None,
+    previous: Path | None = None,
+    unchanged: set[str] | None = None,
 ) -> None:
-    """Save exact input bytes so timestamps and unchanged Git commits cannot hide edits."""
+    """Save exact input bytes, reusing already-compared snapshot files without copying them."""
     destination.mkdir(parents=True)
     for name, source in files.items():
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+        prior = previous / name if previous is not None else None
+        if prior is not None and unchanged is not None and name in unchanged:
+            os.link(prior, target)
+        else:
+            shutil.copy2(source, target)
     if engines:
         manifest = {}
         deleted = {}
@@ -617,7 +625,13 @@ class EditableDeployment:
             self._rebuild(timeout)
             return
         snapshot = self.directory / ("inputs-" + str(uuid.uuid4()))
-        _snapshot(current, snapshot, engines)
+        _snapshot(
+            current,
+            snapshot,
+            engines,
+            previous=old,
+            unchanged=set(current).difference(changed),
+        )
         validate_build_inputs(self.root, snapshot, engines)
         self.state["build"]["versions"] = snapshot_versions(
             snapshot, old, self.state["build"]["versions"]
