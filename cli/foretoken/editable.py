@@ -357,7 +357,10 @@ def validate_build_inputs(
 
 
 def snapshot_versions(
-    snapshot: Path, previous: Path | None, versions: dict[str, str]
+    snapshot: Path,
+    previous: Path | None,
+    versions: dict[str, str],
+    changed: set[str] | None = None,
 ) -> dict[str, str]:
     """Assign a new revision only to changed input paths for cluster-side delta transfer."""
     revision = snapshot.name.removeprefix("inputs-")
@@ -368,11 +371,15 @@ def snapshot_versions(
         name = str(path.relative_to(snapshot))
         old = previous / name if previous else None
         unchanged = (
-            name in versions
-            and old is not None
-            and old.is_file()
-            and old.stat().st_mode == path.stat().st_mode
-            and filecmp.cmp(old, path, shallow=False)
+            name not in changed
+            if changed is not None
+            else (
+                name in versions
+                and old is not None
+                and old.is_file()
+                and old.stat().st_mode == path.stat().st_mode
+                and filecmp.cmp(old, path, shallow=False)
+            )
         )
         result[name] = versions[name] if unchanged else revision
     return result
@@ -634,7 +641,7 @@ class EditableDeployment:
         )
         validate_build_inputs(self.root, snapshot, engines)
         self.state["build"]["versions"] = snapshot_versions(
-            snapshot, old, self.state["build"]["versions"]
+            snapshot, old, self.state["build"]["versions"], changed
         )
         bundles = dict(self.state["bundles"])
         for component in components:
