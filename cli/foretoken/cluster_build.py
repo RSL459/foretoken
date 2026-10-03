@@ -179,6 +179,7 @@ class ClusterBuilder(AbstractContextManager):
         publisher_image: str = "",
         runtime_claim: str = "",
         runtime_mount: str = "",
+        runtime_owner: tuple[int, int] | None = None,
         credentials: dict[str, Any] | None = None,
     ) -> None:
         self.kubectl = kubectl
@@ -195,6 +196,8 @@ class ClusterBuilder(AbstractContextManager):
         self.publisher_image = publisher_image
         self.runtime_claim = runtime_claim
         self.runtime_mount = runtime_mount
+        self.runtime_owner = runtime_owner
+        self.publisher_uid, self.publisher_gid = runtime_owner or (1000, 1000)
         self.credentials = credentials or {}
         self._secret_created = False
         self.name = "foretoken-build-" + uuid.uuid4().hex[:12]
@@ -231,12 +234,18 @@ class ClusterBuilder(AbstractContextManager):
             )
             if builder is None or builder.get("image") != self.image:
                 continue
-            has_publisher = any(
-                container.get("name") == "publisher"
-                for container in containers
+            publisher = next(
+                (container for container in containers if container.get("name") == "publisher"),
+                None,
             )
-            if has_publisher != expected_publisher:
+            if (publisher is not None) != expected_publisher:
                 continue
+            if publisher is not None:
+                identity = publisher.get("securityContext", {})
+                if (identity.get("runAsUser"), identity.get("runAsGroup")) != (
+                    self.publisher_uid, self.publisher_gid
+                ):
+                    continue
             claim_names = {
                 volume.get("persistentVolumeClaim", {}).get("claimName")
                 for volume in pod.get("spec", {}).get("volumes", [])
@@ -435,6 +444,16 @@ class ClusterBuilder(AbstractContextManager):
                 publisher_mounts.append(
                     {"name": "runtime", "mountPath": self.runtime_mount}
                 )
+                prepare_runtime = 'mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"'
+                if self.runtime_owner is not None:
+                    # Compiler leftovers were written by root; source bundles were
+                    # published by the previous publisher identity on its own subtree.
+                    prepare_runtime = (
+                        r'find "$1" -xdev -user 0 \( -type d -o -links 1 \) -exec chown -h "$2:$3" {} +; '
+                        'if test -d "$1/source" && ! test -L "$1/source"; then '
+                        r'find "$1/source" -xdev -user 1000 \( -type d -o -links 1 \) -exec chown -h "$2:$3" {} +; fi; '
+                        'chmod u+rwx "$1"'
+                    )
                 spec["initContainers"].append(
                     {
                         "name": "runtime-storage",
@@ -442,9 +461,11 @@ class ClusterBuilder(AbstractContextManager):
                         "command": [
                             "sh",
                             "-ec",
-                            'mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"',
+                            prepare_runtime,
                             "prepare",
                             self.runtime_mount,
+                            str(self.publisher_uid),
+                            str(self.publisher_gid),
                         ],
                         "securityContext": {"runAsUser": 0, "runAsGroup": 0},
                         "volumeMounts": [
@@ -459,8 +480,8 @@ class ClusterBuilder(AbstractContextManager):
                     "command": idle_command,
                     "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
                     "securityContext": {
-                        "runAsUser": 1000,
-                        "runAsGroup": 1000,
+                        "runAsUser": self.publisher_uid,
+                        "runAsGroup": self.publisher_gid,
                         "allowPrivilegeEscalation": False,
                         "capabilities": {"drop": ["ALL"]},
                     },

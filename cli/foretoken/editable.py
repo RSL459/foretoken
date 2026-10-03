@@ -742,10 +742,12 @@ class EditableDeployment:
     ) -> bool:
         """Compile on separate storage and publish to the workload cache before rollout."""
         from foretoken.source import ensure_build_cache, local_build_nodes
+        from foretoken.storage import DirectoryVolumes
 
         runtime = self.state["runtime"]
         build = self.state["build"]
         claim = runtime["claim"]
+        directory_owner = None
         if not claim:
             caches = self.kubectl.list_resources(("runtimecache",), namespace)
             if not caches:
@@ -765,9 +767,9 @@ class EditableDeployment:
                     f"--timeout={timeout}",
                 ]
             )
-            claim = self.kubectl.get("runtimecache", name, namespace)["status"][
-                "claimName"
-            ]
+            cache = self.kubectl.get("runtimecache", name, namespace)
+            claim = cache["status"]["claimName"]
+            directory_owner = DirectoryVolumes.read_directory_owner(cache)
         pvc = self.kubectl.get("pvc", claim, namespace)
         # Keep first GPU-node placement with the model preparation controller.
         if (
@@ -833,6 +835,7 @@ class EditableDeployment:
             publisher_image=runtime["model_image"],
             runtime_claim=claim,
             runtime_mount=runtime["mount"],
+            runtime_owner=directory_owner,
             credentials=registry_credentials(
                 [
                     runtime["model_image"],
