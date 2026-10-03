@@ -11,7 +11,6 @@ from pathlib import Path
 
 from foretoken.manifest import DeploymentError
 
-
 _TOOL_PATHS = {
     "kubectl": (
         "/var/lib/rancher/rke2/bin/kubectl",

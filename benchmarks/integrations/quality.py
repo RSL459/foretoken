@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def _restore_evaluation_progress(evaluator: str, model: str, source: str, native: Path) -> None:

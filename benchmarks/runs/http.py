@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Optional
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.integrations.evalscope.performance import run_evalscope_standard_load
@@ -29,8 +28,8 @@ class GeneratedLoadBenchmark:
         service: ModelService,
         *,
         label: str = "",
-        output_dir: Optional[str] = None,
-        wandb_group: Optional[str] = None,
+        output_dir: str | None = None,
+        wandb_group: str | None = None,
     ) -> None:
         self.benchmark = benchmark
         self.service = service

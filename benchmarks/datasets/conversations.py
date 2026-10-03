@@ -6,10 +6,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Iterator, Optional
+from typing import Any
 
 from benchmarks.config.benchmark import BenchmarkConfig, ChatRequestDataset
 from benchmarks.datasets.huggingface import (
@@ -18,6 +18,7 @@ from benchmarks.datasets.huggingface import (
     iter_hf_rows,
     resolve_hf_file_uri,
 )
+
 
 @dataclass(frozen=True)
 class Turn:
@@ -120,7 +121,7 @@ def _extract_row_content(
     if isinstance(row, list):
         return row, None
     if not isinstance(row, dict):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004 - dataset errors stay on the CLI ValueError boundary.
             f"Expected object or messages list at {dataset_path}:{line_number}"
         )
 
@@ -242,7 +243,7 @@ def _sharegpt_messages(
     messages: list[dict[str, Any]] = []
     for index, message in enumerate(conversations):
         if not isinstance(message, dict):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004 - dataset errors stay on the CLI ValueError boundary.
                 f"Invalid ShareGPT message {index} at "
                 f"{dataset_path}:{line_number}"
             )
@@ -453,8 +454,8 @@ def load_indexed_request_tasks(
 def load_request_tasks(
     benchmark: BenchmarkConfig,
     *,
-    dataset_selector: Optional[str] = None,
-    request_count: Optional[int] = None,
+    dataset_selector: str | None = None,
+    request_count: int | None = None,
 ) -> list[Task]:
     """Read the independent Chat Completions requests required by one HTTP workload."""
     workload: ChatRequestDataset = benchmark.resolved_workload

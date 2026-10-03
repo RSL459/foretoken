@@ -13,7 +13,7 @@ foretoken perf examples/quickstart \
   --max-concurrency 4 --num-prompts 20 --output local,wandb
 ```
 
-输入长度默认只计算正文。`--apply-chat-template` 计入所选 tokenizer 的模板开销，服务端可能使用不同模板。`--prefix-length` 增加共享前缀。tokenizer 默认从模型服务推导；服务使用模型别名或模型文件仅在服务器可见时，通过 `--tokenizer-path` 指定基础模型仓库或客户端本地目录。
+随机负载使用所选 tokenizer 生成指定长度的输入。`--prefix-length` 增加共享前缀，随机负载不支持 `--apply-chat-template`。tokenizer 默认从模型服务推导；服务使用模型别名或本地没有 tokenizer 文件时，通过 `--tokenizer-path` 指定 tokenizer。
 
 输出范围包含上下界，并覆盖 `--max-tokens`。服务需要支持 `min_tokens`、`ignore_eos` 并返回输出用量；未达到目标长度的请求记为失败。不传这两个参数时，普通生成允许提前结束。
 

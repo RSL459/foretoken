@@ -58,7 +58,7 @@ def cumulative_series(
     measurements: list[RequestMeasurement], *, stream: bool
 ) -> Iterator[dict[str, Any]]:
     """Yield running aggregates in request-completion order on the elapsed-time axis."""
-    completed = succeeded = 0
+    succeeded = 0
     input_tokens = output_tokens = 0
     input_tokens_complete = output_tokens_complete = True
     latency_total = ttft_total = tpot_total = itl_total = 0.0
@@ -67,8 +67,7 @@ def cumulative_series(
         enumerate(measurements),
         key=lambda item: (item[1].started_at + item[1].latency, item[0]),
     )
-    for _, item in ordered:
-        completed += 1
+    for completed, (_, item) in enumerate(ordered, 1):
         if item.succeeded:
             succeeded += 1
             if item.input_tokens is None:

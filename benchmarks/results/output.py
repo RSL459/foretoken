@@ -10,12 +10,13 @@ import json
 import logging
 import os
 import shutil
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Any, Callable, Optional, Protocol, cast
+from typing import Any, Protocol, Self, cast
 
 import wandb
 from foretoken.arguments import ProfileCommand
@@ -80,7 +81,7 @@ _SYSTEM_STATS_INTERVAL_S = 1.0
 
 def wandb_run_timestamp() -> str:
     """Return a local timestamp for W&B run names and generated groups."""
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+    return datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
 
 
 def wandb_group_name(config: BenchmarkConfig, service: ModelService) -> str:
@@ -318,13 +319,13 @@ class WandbSink:
 
 def result_directory_path(
     benchmark: _ResultConfiguration,
-    output_dir: Optional[str] = None,
+    output_dir: str | None = None,
     directory_prefix: str = "",
 ) -> str:
     """Return an explicit child path, or reserve a unique local directory under ``--output-dir``."""
     if output_dir is not None:
         return output_dir
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     if benchmark.outputs.saves_local:
         os.makedirs(benchmark.outputs.output_dir, exist_ok=True)
         return mkdtemp(
@@ -438,8 +439,8 @@ class ResultOutputs:
         service: ModelService | None,
         *,
         label: str = "",
-        output_dir: Optional[str] = None,
-        wandb_group: Optional[str] = None,
+        output_dir: str | None = None,
+        wandb_group: str | None = None,
         directory_prefix: str = "",
         sink_factory: _ResultSinkFactory | None = None,
     ) -> None:
@@ -490,7 +491,7 @@ class ResultOutputs:
             self.execution_dir,
         )
 
-    def __enter__(self) -> ResultOutputs:
+    def __enter__(self) -> Self:
         """Acquire the execution directory and capture preparation through publication."""
         if self._execution_dir is not None:
             raise RuntimeError("result outputs are already active")
@@ -505,7 +506,7 @@ class ResultOutputs:
             self._temporary_execution_dir = True
             if outputs.includes("wandb"):
                 os.makedirs(outputs.output_dir, exist_ok=True)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
                 self._execution_dir = mkdtemp(
                     prefix=f"{self.directory_prefix}{timestamp}-",
                     dir=outputs.output_dir,

@@ -12,7 +12,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmarks.datasets.conversations import Task, iter_dataset_rows, parse_message_turns, request_row_metadata
+from benchmarks.datasets.conversations import (
+    Task,
+    iter_dataset_rows,
+    parse_message_turns,
+    request_row_metadata,
+)
 
 # Each Mooncake hash ID identifies one fixed-size input-token block.
 MOONCAKE_BLOCK_TOKENS = 512
@@ -43,7 +48,9 @@ def _parse_studychat_event(
 ) -> ArrivalTraceEvent:
     """Parse one StudyChat row while preserving its complete message context."""
     if not isinstance(row, dict):
-        raise ValueError(f"Expected an object at {dataset_path}:{line_number}")
+        raise ValueError(  # noqa: TRY004 - dataset errors stay on the CLI ValueError boundary.
+            f"Expected an object at {dataset_path}:{line_number}"
+        )
 
     required = ("timestamp", "chatId", "messages")
     missing = [name for name in required if name not in row]
@@ -103,7 +110,9 @@ def _parse_mooncake_event(
 ) -> ArrivalTraceEvent:
     """Parse one Mooncake row without constructing request text at this stage."""
     if not isinstance(row, dict):
-        raise ValueError(f"Expected an object at {dataset_path}:{line_number}")
+        raise ValueError(  # noqa: TRY004 - dataset errors stay on the CLI ValueError boundary.
+            f"Expected an object at {dataset_path}:{line_number}"
+        )
     if "timestamp" not in row or "input_length" not in row:
         raise ValueError(
             "Mooncake trace needs timestamp and input_length at "
@@ -122,14 +131,15 @@ def _parse_mooncake_event(
         )
 
     hash_ids = row.get("hash_ids")
-    if hash_ids is not None:
-        if not isinstance(hash_ids, list) or any(
+    if hash_ids is not None and (
+        not isinstance(hash_ids, list) or any(
             isinstance(hash_id, bool)
             or not isinstance(hash_id, int)
             or hash_id < 0
             for hash_id in hash_ids
-        ):
-            raise ValueError(f"Invalid hash_ids at {dataset_path}:{line_number}")
+        )
+    ):
+        raise ValueError(f"Invalid hash_ids at {dataset_path}:{line_number}")
 
     conversation_id = row.get("chatId")
     return ArrivalTraceEvent(

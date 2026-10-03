@@ -10,11 +10,13 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any
 
-from benchmarks.results.timeseries import ELAPSED_TIME
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError, ResourceRef
+
+from benchmarks.results.timeseries import ELAPSED_TIME
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +339,7 @@ class KubernetesReplicaObserver:
         failures = sorted(self._gpu_failures)
         area: dict[str, float] = {}
         covered = 0.0
-        for previous, following in zip(samples, samples[1:]):
+        for previous, following in pairwise(samples):
             left = max(time_origin, previous.observed_at)
             right = min(end, following.observed_at)
             if right <= left:
@@ -451,8 +453,10 @@ def gpu_allocation_history_rows(
 
     last = next((sample for sample in reversed(samples) if sample["elapsed_time_s"] <= duration), None)
     bracketed = any(sample["elapsed_time_s"] >= duration for sample in samples)
-    if last is not None and bracketed and last["elapsed_time_s"] < duration:
-        if not any(last["elapsed_time_s"] < at <= duration for at in failures):
-            events.append((duration, 1, values(last, duration)))
+    if (
+        last is not None and bracketed and last["elapsed_time_s"] < duration
+        and not any(last["elapsed_time_s"] < at <= duration for at in failures)
+    ):
+        events.append((duration, 1, values(last, duration)))
     events.sort(key=lambda event: (event[0], event[1]))
     return [row for _, _, row in events]

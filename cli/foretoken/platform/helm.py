@@ -853,17 +853,21 @@ class Helm(HelmClient):
                 # Receivers beside the managed Alertmanager route workload alerts;
                 # configurations in other namespaces retain namespace isolation.
                 "--set-string",
-                "alertmanager.alertmanagerSpec.alertmanagerConfigMatcherStrategy.type="
-                "OnNamespaceExceptForAlertmanagerNamespace",
+                (
+                    "alertmanager.alertmanagerSpec.alertmanagerConfigMatcherStrategy.type="
+                    "OnNamespaceExceptForAlertmanagerNamespace"
+                ),
                 "--set-string",
                 "grafana.sidecar.datasources.defaultDatasourceScrapeInterval=5s",
                 "--set-json",
                 "kube-state-metrics.metricLabelsAllowlist="
                 + json.dumps(
                     [
-                        "pods=[inference.foretoken.io/model-group,"
-                        "inference.foretoken.io/model-role,"
-                        "inference.foretoken.io/pd-pipeline-scope]"
+                        (
+                            "pods=[inference.foretoken.io/model-group,"
+                            "inference.foretoken.io/model-role,"
+                            "inference.foretoken.io/pd-pipeline-scope]"
+                        )
                     ],
                     separators=(",", ":"),
                 ),

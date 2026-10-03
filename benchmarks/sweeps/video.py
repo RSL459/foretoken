@@ -6,23 +6,26 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
-from typing import Any, Callable
+from typing import Any, ClassVar
 
 from benchmarks.config.benchmark import parse_duration_seconds
 from benchmarks.config.video import VideoBenchmarkConfig, VideoParameterSweepConfig
 from benchmarks.results.output import wandb_run_timestamp
+from benchmarks.runs.video import run_video_benchmark
 from benchmarks.sweeps.core import (
+    _BENCHMARK_NAME,
+    _PARAMETER_GROUP,
     SweepAdapter,
     SweepDefinition,
     SweepPoint,
-    _BENCHMARK_NAME,
-    _PARAMETER_GROUP,
     expand_sweep_point,
-    load_sweep_points as load_core_sweep_points,
     run_sweep,
 )
-from benchmarks.runs.video import run_video_benchmark
+from benchmarks.sweeps.core import (
+    load_sweep_points as load_core_sweep_points,
+)
 
 _VIDEO_SWEEP_FIELDS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "width": ("width", int),
@@ -43,7 +46,9 @@ _VIDEO_SWEEP_FIELDS: dict[str, tuple[str, Callable[[Any], Any]]] = {
 class _VideoSweepAdapter(SweepAdapter[VideoBenchmarkConfig]):
     """Apply and execute video points without importing HTTP result semantics."""
 
-    axis_fields = {key: field[1] for key, field in _VIDEO_SWEEP_FIELDS.items()}
+    axis_fields: ClassVar[dict[str, Callable[[Any], Any]]] = {
+        key: field[1] for key, field in _VIDEO_SWEEP_FIELDS.items()
+    }
 
     def validate_record(self, record: SweepPoint, line_no: int) -> None:
         unknown = set(record) - set(_VIDEO_SWEEP_FIELDS) - {

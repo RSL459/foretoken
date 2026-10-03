@@ -14,8 +14,8 @@ from typing import Any, NoReturn
 
 from foretoken.manifest import DeploymentError
 from foretoken.platform.config import PlatformConfig
-from foretoken.tools import resolve_tool
 from foretoken.platform.types import ReleaseRef
+from foretoken.tools import resolve_tool
 
 
 class HelmClient:

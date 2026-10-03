@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from typing import Any, Optional
+from typing import Any, Self
 
 import httpx
 from openai import APIError, AsyncOpenAI, AsyncStream
@@ -15,10 +15,10 @@ from openai.types import Completion
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from benchmarks.config.benchmark import BenchmarkConfig
-from benchmarks.model_service import ModelService
-from benchmarks.integrations.streaming import ChatStreamTiming
-from benchmarks.results.metrics import compute_tpot
 from benchmarks.datasets.conversations import Task
+from benchmarks.integrations.streaming import ChatStreamTiming
+from benchmarks.model_service import ModelService
+from benchmarks.results.metrics import compute_tpot
 
 
 class OpenAILoadClient:
@@ -57,7 +57,7 @@ class OpenAILoadClient:
             else service.chat_completions_url
         )
 
-    async def __aenter__(self) -> OpenAILoadClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -124,8 +124,8 @@ class OpenAILoadClient:
         cached_input_tokens: int | None = None
         generated_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
-        status_code: Optional[int] = None
-        error_message: Optional[str] = None
+        status_code: int | None = None
+        error_message: str | None = None
         success = True
         try:
             response = await self._client.post(

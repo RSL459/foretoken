@@ -5,8 +5,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 import sys
+from collections.abc import Sequence
 
 from benchmarks.config.evaluation import native_arguments, parse_evaluation_arguments
 from benchmarks.model_service import resolve_model_service
@@ -23,8 +23,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         if config.evaluator is None:
             if help_requested:
                 return
-            from benchmarks.config.distribution_comparison import parse_distribution_comparison_arguments
-            from benchmarks.runs.distribution_comparison import run_distribution_comparison, run_greedy_comparison
+            from benchmarks.config.distribution_comparison import (
+                parse_distribution_comparison_arguments,
+            )
+            from benchmarks.runs.distribution_comparison import (
+                run_distribution_comparison,
+                run_greedy_comparison,
+            )
 
             comparison = parse_distribution_comparison_arguments(config.arguments, config.services)
             configure_logging(not config.outputs.includes("quiet"))

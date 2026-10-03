@@ -9,10 +9,11 @@ import asyncio
 import itertools
 import random
 import time
+from collections.abc import Iterable
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -30,7 +31,11 @@ from benchmarks.datasets.synthetic import (
 )
 from benchmarks.integrations.openai import OpenAILoadClient
 from benchmarks.model_service import ModelService
-from benchmarks.results.metrics import RequestMeasurement, summarize_measurement_groups, summarize_measurements
+from benchmarks.results.metrics import (
+    RequestMeasurement,
+    summarize_measurement_groups,
+    summarize_measurements,
+)
 from benchmarks.results.output import (
     BenchmarkRun,
     ResultOutputs,
@@ -212,7 +217,7 @@ class TaskLoadBenchmark:
                                 return
                             try:
                                 await asyncio.wait_for(semaphore.acquire(), remaining)
-                            except asyncio.TimeoutError:
+                            except TimeoutError:
                                 return
                             acquired = True
                     context: list[dict[str, Any]] = []

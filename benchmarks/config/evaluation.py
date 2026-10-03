@@ -161,7 +161,9 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
     )
     if options.help:
         if comparison:
-            from benchmarks.config.distribution_comparison import add_distribution_comparison_arguments
+            from benchmarks.config.distribution_comparison import (
+                add_distribution_comparison_arguments,
+            )
 
             add_distribution_comparison_arguments(parser)
         parser.print_help()

@@ -23,7 +23,8 @@ from evalscope.perf.arguments import Arguments
 from evalscope.perf.main import run_one_benchmark
 from evalscope.perf.plugin.api.default_api import StreamedResponseHandler
 from evalscope.perf.plugin.api.openai_api import OpenaiPlugin
-from evalscope.perf.plugin.datasets.base import DatasetPluginBase, Turn as EvalScopeTurn
+from evalscope.perf.plugin.datasets.base import DatasetPluginBase
+from evalscope.perf.plugin.datasets.base import Turn as EvalScopeTurn
 from evalscope.perf.plugin.registry import register_api, register_dataset
 from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
 from evalscope.perf.utils.perf_models import BenchmarkSummary
@@ -36,20 +37,19 @@ if TYPE_CHECKING:
     from benchmarks.profiling.capture import BenchmarkProfile
 
 from benchmarks.config.benchmark import BenchmarkConfig
-from benchmarks.model_service import ModelService
+from benchmarks.datasets.conversations import (
+    load_conversation_tasks,
+    split_chat_conversation,
+)
+from benchmarks.datasets.huggingface import resolve_tokenizer_path
 from benchmarks.integrations.streaming import ChatStreamTiming
+from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import (
     RequestMeasurement,
     compute_tpot,
     percentile_summary,
     summarize_measurements,
 )
-from benchmarks.datasets.conversations import (
-    load_conversation_tasks,
-    split_chat_conversation,
-)
-from benchmarks.datasets.huggingface import resolve_tokenizer_path
-
 
 # Registry identities and private message fields shared by this adapter's
 # dataset producer, API consumer, and argument mapping.
