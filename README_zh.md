@@ -46,10 +46,10 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install foretoken
+pip install -e .
 
-# 从源码目录安装：
-# pip install -e .
+# 使用发布的 CLI：
+# pip install foretoken
 ```
 
 ### 2. 安装 Kubernetes 平台
@@ -57,13 +57,14 @@ pip install foretoken
 创建示例 k3d 集群并安装 Foretoken：
 
 ```bash
+# 使用 nvidia-smi 中编号为 0 的 GPU；两张卡使用 0,1。
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 
-# 使用发布镜像：
-foretoken install
-
 # 从当前源码构建：
-# foretoken install -e .
+foretoken install -e .
+
+# 使用发布镜像：
+# foretoken install
 ```
 
 宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 Helm，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/k3d-deployment_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。

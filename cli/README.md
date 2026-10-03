@@ -39,6 +39,7 @@ Run `foretoken --version` to check the installed CLI version.
 On a Linux GPU host with Docker, NVIDIA Container Toolkit, and k3d installed:
 
 ```bash
+# Use GPU 0 shown by nvidia-smi; use 0,1 for two GPUs.
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 ```
 

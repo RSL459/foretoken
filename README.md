@@ -46,10 +46,10 @@ The steps below use k3d as the example.
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install foretoken
+pip install -e .
 
-# From a source checkout:
-# pip install -e .
+# For the published CLI instead:
+# pip install foretoken
 ```
 
 ### 2. Install the Kubernetes platform
@@ -57,13 +57,14 @@ pip install foretoken
 Create the example k3d cluster and install Foretoken:
 
 ```bash
+# Use GPU 0 from nvidia-smi; use 0,1 to expose two GPUs.
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 
-# Use published images:
-foretoken install
+# Build from the current source checkout:
+foretoken install -e .
 
-# Build from the current source checkout instead:
-# foretoken install -e .
+# Use published images instead:
+# foretoken install
 ```
 
 The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and Helm, and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
