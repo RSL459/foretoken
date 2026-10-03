@@ -18,7 +18,50 @@ k3d 在 Docker 容器中运行轻量级 Kubernetes 发行版 k3s。它适合在�
 - 可使用 NVIDIA 运行时的 Docker；
 - k3d、kubectl 和 Helm。
 
-## 1. 进入仓库并选择 GPU
+## 1. 准备 Linux GPU 主机
+
+下面命令适用于 Ubuntu 或 Debian 系统。宿主机依赖只需安装一次；不要使用 `sudo` 运行 `foretoken`。
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io curl ca-certificates gnupg
+sudo usermod -aG docker "$USER"
+newgrp docker
+```
+
+安装 NVIDIA Container Toolkit 并配置 Docker：
+
+```bash
+distribution=$(. /etc/os-release; echo "$ID$VERSION_ID")
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey |
+  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -fsSL "https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list" |
+  sed 's#^deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' |
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+安装 k3d、kubectl 和 Helm，然后检查主机：
+
+```bash
+curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+curl -fsSL https://dl.k8s.io/release/stable.txt -o /tmp/kubectl-version
+curl -fsSLO "https://dl.k8s.io/release/$(cat /tmp/kubectl-version)/bin/linux/amd64/kubectl"
+sudo install -m 0755 kubectl /usr/local/bin/kubectl
+rm kubectl /tmp/kubectl-version
+
+nvidia-smi
+docker info
+k3d version
+kubectl version --client
+helm version --short
+```
+
+## 3. 进入仓库并选择 GPU
 
 获取源码后，从仓库根目录执行后续命令：
 
@@ -41,7 +84,7 @@ export GPU_INDICES=6,7
 export CLUSTER=foretoken-qwen-test
 ```
 
-## 2. 创建限定 GPU 的 k3d 集群
+## 4. 创建限定 GPU 的 k3d 集群
 
 ```bash
 foretoken cluster create k3d --name "$CLUSTER" --gpus "$GPU_INDICES"
@@ -50,7 +93,7 @@ kubectl get nodes
 
 命令会挂载 NVIDIA 运行时和仓库中的 `data/` 目录，安装 NVIDIA 设备插件，并切换到新建集群的 kubeconfig context。
 
-## 4. 安装并访问 Foretoken
+## 5. 安装并访问 Foretoken
 
 ### 4.1 选择部署方式
 

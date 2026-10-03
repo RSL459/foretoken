@@ -42,7 +42,7 @@ On a Linux GPU host with Docker, NVIDIA Container Toolkit, and k3d installed:
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 ```
 
-For a CPU-oriented local development cluster:
+For a local kind development cluster:
 
 ```bash
 foretoken cluster create kind --name foretoken-dev

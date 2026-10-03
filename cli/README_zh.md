@@ -42,7 +42,7 @@ uv pip install foretoken
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 ```
 
-本地 CPU 开发集群执行：
+本地 kind 开发集群执行：
 
 ```bash
 foretoken cluster create kind --name foretoken-dev
