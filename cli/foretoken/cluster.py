@@ -85,6 +85,23 @@ def _mount_arguments() -> list[str]:
     return arguments
 
 
+def _refresh_kubeconfig(kind: str, name: str) -> None:
+    """Refresh and select the kubeconfig entry written by a local cluster tool."""
+    if kind == "kind":
+        _run(["kind", "export", "kubeconfig", "--name", name])
+    else:
+        _run(
+            [
+                "k3d",
+                "kubeconfig",
+                "merge",
+                name,
+                "--kubeconfig-merge-default",
+                "--kubeconfig-switch-context",
+            ]
+        )
+
+
 def _create_kind(command: ClusterCommand, root: Path) -> None:
     """Create a local CPU-oriented kind cluster and select its kubeconfig context."""
     _require_commands(("kind", "kubectl"))
@@ -92,6 +109,7 @@ def _create_kind(command: ClusterCommand, root: Path) -> None:
     if not config.is_file():
         raise DeploymentError(f"kind configuration not found: {config}")
     _run(["kind", "create", "cluster", "--name", command.name, "--config", str(config), "--wait", "5m"])
+    _refresh_kubeconfig("kind", command.name)
     _run(["kubectl", "cluster-info", "--context", f"kind-{command.name}"])
 
 
@@ -111,6 +129,7 @@ def _create_k3d(command: ClusterCommand, root: Path) -> None:
         *_mount_arguments(),
     ]
     _run(arguments)
+    _refresh_kubeconfig("k3d", command.name)
     _run(["kubectl", "apply", "-f", _DEVICE_PLUGIN])
     _run([
         "kubectl", "set", "env", "daemonset/nvidia-device-plugin-daemonset",
