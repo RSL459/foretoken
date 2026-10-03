@@ -13,7 +13,7 @@ foretoken perf examples/quickstart \
   --max-concurrency 4 --num-prompts 20 --output local,wandb
 ```
 
-The input range covers prompt content. `--apply-chat-template` accounts for the selected tokenizer's template overhead; the service may use a different template. `--prefix-length` adds a shared prefix. The tokenizer is inferred from the model service. For a serving alias or server-only model files, use `--tokenizer-path` with a base-model repository or client-local directory.
+Random prompts are generated as valid token IDs and sent directly to the OpenAI-compatible Completions endpoint, avoiding a token-ID-to-text-to-token-ID round trip. The input range covers the token IDs sent to the service; `--apply-chat-template` is not used for this token-native workload. `--prefix-length` adds a shared prefix. The tokenizer is used only to determine the valid vocabulary and is inferred from the model service. For a serving alias or server-only model files, use `--tokenizer-path` with a base-model repository or client-local directory.
 
 Both output bounds are inclusive and override `--max-tokens`. The service must support `min_tokens` and `ignore_eos` and report output usage. A request that misses its target counts as failed. Omit both bounds for ordinary generation that can end early.
 
