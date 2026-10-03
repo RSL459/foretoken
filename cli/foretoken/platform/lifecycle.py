@@ -528,6 +528,12 @@ class PlatformLifecycle:
                 managed_dcgm_exists,
                 command.timeout,
             )
+            # The chart permits one unavailable DaemonSet Pod during Helm's
+            # wait, while discovery requires Ready coverage on every GPU node.
+            # Complete the managed rollout before resolving it as existing.
+            kubectl.rollout_status(
+                helm.dcgm_resource(managed_dcgm), command.timeout
+            )
         if install_managed_metax:
             metax_exporter.install(
                 metax_metrics.node_names, observability_labels, command.timeout
