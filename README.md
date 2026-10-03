@@ -90,7 +90,7 @@ curl --fail-with-body --no-buffer \
 
 ### Iterate on source
 
-After editing the checkout, run the same deploy command again:
+After editing the checkout, run the same deploy command again to apply the change without recreating the cluster or manually importing the runtime image:
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m

@@ -90,7 +90,7 @@ curl --fail-with-body --no-buffer \
 
 ### 快速迭代源码
 
-修改源码后，再执行同一条部署命令：
+修改源码后，再执行同一条部署命令即可应用改动，无需重新创建集群或手动导入运行时镜像：
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
