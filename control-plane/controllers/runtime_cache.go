@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	runtimeCacheVolumeName = "runtime-cache"
-	runtimeCacheClaimEnv   = "FORETOKEN_RUNTIME_CACHE_CLAIM"
+	runtimeCacheVolumeName       = "runtime-cache"
+	runtimeCacheClaimEnv         = "FORETOKEN_RUNTIME_CACHE_CLAIM"
+	runtimeCacheFSGroup    int64 = 1000
 )
 
 func runtimeCacheObservationPort(runtimePort int32) int32 {
@@ -37,6 +38,18 @@ func runtimeCacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtim
 		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(runtimeCacheObservationPort(runtimePort)))},
 		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 	}
+}
+
+// runtimeCachePodSecurityContext gives every cache consumer group write access without granting filesystem capabilities.
+func runtimeCachePodSecurityContext(cache *inferencev1alpha1.RuntimeCacheBinding) *corev1.PodSecurityContext {
+	context := &corev1.PodSecurityContext{SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}
+	if cache != nil {
+		group := runtimeCacheFSGroup
+		policy := corev1.FSGroupChangeOnRootMismatch
+		context.FSGroup = &group
+		context.FSGroupChangePolicy = &policy
+	}
+	return context
 }
 
 // placeRuntimeCache keeps all consumers of a single-node writable claim together.

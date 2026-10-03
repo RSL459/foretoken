@@ -29,34 +29,7 @@ For a local kind or k3d cluster, build and install without a registry:
 foretoken install -e .
 ```
 
-Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
-
-### Remote clusters and private registries
-
-Other clusters need a registry reachable by the build Pods and target nodes. Replace `example` with a namespace you can push to, and authorize the build using a Docker CLI login:
-
-```bash
-export REGISTRY=ghcr.io/example/foretoken
-docker login ghcr.io
-```
-
-For a private registry, create an image pull Secret named `registry-auth` in `foretoken-platform` before installation, and in each workload namespace before deployment. Save these references in `deploy/platform-values.yaml`:
-
-```yaml
-imagePullSecrets:
-  - name: registry-auth
-workload:
-  imagePullSecrets:
-    - name: registry-auth
-```
-
-Install using that file:
-
-```bash
-foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
-```
-
-For publicly readable images, omit `--values` unless other overrides are needed. Registry login authorizes image pushes; the pull Secrets authorize cluster nodes to download private images.
+Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. Online source selection is automatic. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
 
 ## Deploy and update code
 
@@ -123,7 +96,7 @@ CLUSTER=foretoken-qwen-test
 k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
 ```
 
-For a remote cluster, use the registry login and `REGISTRY` configured [above](#remote-clusters-and-private-registries):
+For a remote cluster, use the `REGISTRY` configured in the [Kubernetes deployment guide](kubernetes-deployment.md). Log in first when that registry requires authentication:
 
 ```bash
 docker tag foretoken-omni-model-server:latest "$REGISTRY/omni-model-server:latest"

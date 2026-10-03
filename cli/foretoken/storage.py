@@ -21,9 +21,11 @@ from foretoken.manifest import (
     RuntimeCacheManifest,
 )
 
+REMOTE_RUNTIME_CACHE_SIZE = "10Gi"
+
 
 class DirectoryVolumes:
-    """Own static PV preparation and cleanup for CLI deployment operations.
+    """Own static and automatically provisioned RuntimeCache storage for deployments.
 
     The controller remains the single owner of PVC names, capacity and retention.
     The CLI supplies prepared filesystem locations and preserves their contents.
@@ -50,16 +52,48 @@ class DirectoryVolumes:
             raise DeploymentError("directory-backed storage requires a Kubernetes node")
         locations = []
         for cache in caches:
-            path, hostnames = _resolve_directory(cache, deployment.path, context, nodes)
-            locations.append((cache, path, hostnames))
-            for document in documents:
-                metadata = document.get("metadata") or {}
+            metadata_key = ("RuntimeCache", cache.namespace, cache.name)
+            matching = [
+                document
+                for document in documents
                 if (
                     document.get("kind"),
-                    metadata.get("namespace"),
-                    metadata.get("name"),
-                ) == ("RuntimeCache", cache.namespace, cache.name):
-                    document["spec"]["directory"] = path
+                    (document.get("metadata") or {}).get("namespace"),
+                    (document.get("metadata") or {}).get("name"),
+                ) == metadata_key
+            ]
+            if len(matching) != 1:
+                raise DeploymentError(
+                    f"could not find rendered RuntimeCache/{cache.name}"
+                )
+            spec = matching[0].setdefault("spec", {})
+            path = Path(cache.directory)
+            if not context.startswith("k3d-") and (
+                not path.is_absolute() or ".." in path.parts
+            ):
+                spec.pop("directory", None)
+                spec.setdefault("initialSize", REMOTE_RUNTIME_CACHE_SIZE)
+                schedulable_nodes = tuple(
+                    node
+                    for node in nodes
+                    if not (node.get("spec") or {}).get("unschedulable")
+                )
+                if len(schedulable_nodes) == 1 and spec.get("accessMode") == "ReadWriteMany":
+                    spec["accessMode"] = "ReadWriteOnce"
+                    print(
+                        f"RuntimeCache/{cache.name}: using ReadWriteOnce on the single-node cluster",
+                        flush=True,
+                    )
+                print(
+                    f"RuntimeCache/{cache.name}: using a dynamic PVC on the remote cluster",
+                    flush=True,
+                )
+                continue
+            resolved, hostnames = _resolve_directory(
+                cache, deployment.path, context, nodes
+            )
+            locations.append((cache, resolved, hostnames))
+            spec["directory"] = resolved
 
         # Let admission and the controller resolve the PVC contract before creating a PV.
         self.kubectl.apply(yaml.safe_dump_all(documents, sort_keys=False))
