@@ -672,7 +672,7 @@ class EditableDeployment:
     def apply(
         self, deployment: ForetokenDeployment, timeout: str
     ) -> ForetokenDeployment:
-        """Publish complete bundles to target caches and project their revisions into service intent."""
+        """Publish source bundles and return remaining intent for the final deployment apply."""
         objects = copy.deepcopy(deployment.objects)
         pending: dict[str, dict[str, dict[str, str]]] = {}
         for obj in objects:
@@ -709,10 +709,9 @@ class EditableDeployment:
             # Storage can be prepared without requiring the previous engine to start.
             from foretoken.storage import DirectoryVolumes
 
+            storage_kinds = {"Namespace", "RuntimeCache"}
             storage = tuple(
-                o
-                for o in deployment.objects
-                if o.get("kind") in {"Namespace", "RuntimeCache"}
+                o for o in deployment.objects if o.get("kind") in storage_kinds
             )
             if storage:
                 DirectoryVolumes(self.kubectl).apply(
@@ -731,6 +730,9 @@ class EditableDeployment:
                     )
                     self._rebuild(timeout)
                     return self.apply(deployment, timeout)
+            # Storage intent and directory bindings were applied before publication.
+            # Return only the remaining resources so the final apply does not repeat them.
+            objects = [o for o in objects if o.get("kind") not in storage_kinds]
         return parse_deployment(
             deployment.path, yaml.safe_dump_all(objects, sort_keys=False)
         )
