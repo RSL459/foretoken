@@ -332,10 +332,10 @@ def select_source_build_sources(
                     "archive/refs/heads/main.tar.gz"
                 ),
                 lambda: _measure_url(
-                    "https://ghproxy.net/https://github.com/shiweijiezero/"
+                    "https://gh-proxy.com/https://github.com/shiweijiezero/"
                     "foretoken/archive/refs/heads/main.tar.gz"
                 ),
-                "https://ghproxy.net/https://github.com",
+                "https://gh-proxy.com/https://github.com",
             ),
         )
     )
