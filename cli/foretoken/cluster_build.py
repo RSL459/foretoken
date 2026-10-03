@@ -29,23 +29,57 @@ _BUILD_POD_LABEL = "inference.foretoken.io/source-builder"
 _BUILD_BINDING_LABEL = "inference.foretoken.io/source-build-binding"
 
 
-def remove_build_pods(kubectl: Kubectl, timeout: str, *, binding: str = "") -> None:
-    """Retire interrupted builds under the source-operation lock, or all builds at uninstall."""
+def _pod_ready(pod: dict[str, Any]) -> bool:
+    """Return whether a source builder Pod can safely be reused."""
+    return pod.get("status", {}).get("phase") == "Running" and any(
+        condition.get("type") == "Ready" and condition.get("status") == "True"
+        for condition in pod.get("status", {}).get("conditions", [])
+    )
+
+
+def remove_build_pods(
+    kubectl: Kubectl,
+    timeout: str,
+    *,
+    binding: str = "",
+    preserve_ready: bool = False,
+) -> None:
+    """Retire abandoned builders, or all builders during source uninstall."""
     selector = _BUILD_POD_LABEL + "=true"
     if binding:
         selector += "," + _BUILD_BINDING_LABEL + "=" + binding
-    kubectl.run(
-        [
-            "delete",
-            "pods",
-            "--all-namespaces",
-            "--selector",
-            selector,
-            "--ignore-not-found",
-            "--wait=true",
-            "--timeout=" + timeout,
-        ]
-    )
+    if not preserve_ready:
+        kubectl.run(
+            [
+                "delete",
+                "pods",
+                "--all-namespaces",
+                "--selector",
+                selector,
+                "--ignore-not-found",
+                "--wait=true",
+                "--timeout=" + timeout,
+            ]
+        )
+        return
+    for pod in kubectl.list_all_resources(("pods",), label_selector=selector):
+        if _pod_ready(pod):
+            continue
+        metadata = pod.get("metadata", {})
+        name, namespace = metadata.get("name"), metadata.get("namespace")
+        if name and namespace:
+            kubectl.run(
+                [
+                    "delete",
+                    "pod",
+                    name,
+                    "--namespace",
+                    namespace,
+                    "--ignore-not-found",
+                    "--wait=true",
+                    "--timeout=" + timeout,
+                ]
+            )
 
 
 def registry_credentials(images: list[str]) -> dict[str, Any]:
@@ -170,8 +204,38 @@ class ClusterBuilder(AbstractContextManager):
         self._generated_layouts: dict[str, dict[str, str]] = {}
         self._used_images: set[str] = set()
 
+    def _reusable_pod(self) -> dict[str, Any] | None:
+        """Find a Ready builder with the same binding, node, and publisher role."""
+        selector = f"{_BUILD_POD_LABEL}=true,{_BUILD_BINDING_LABEL}={self.binding}"
+        expected_publisher = bool(self.publisher_image)
+        candidates = []
+        for pod in self.kubectl.list_resources(
+            ("pods",), self.namespace, label_selector=selector
+        ):
+            if not _pod_ready(pod) or pod.get("metadata", {}).get("deletionTimestamp"):
+                continue
+            if self.node and pod.get("spec", {}).get("nodeName") != self.node:
+                continue
+            has_publisher = any(
+                container.get("name") == "publisher"
+                for container in pod.get("spec", {}).get("containers", [])
+            )
+            if has_publisher == expected_publisher:
+                candidates.append(pod)
+        return min(
+            candidates,
+            key=lambda pod: pod.get("metadata", {}).get("creationTimestamp", ""),
+            default=None,
+        )
+
     def __enter__(self) -> Self:
-        """Start the isolated compiler daemon on the cache's node without using a serving Pod."""
+        """Reuse or start the compiler daemon on the cache's node."""
+        reusable = self._reusable_pod()
+        if reusable is not None:
+            self.name = reusable["metadata"]["name"]
+            print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
+            self.run(["rm", "-rf", "--", self.root + "/transfers", self.root + "/output"])
+            return self
         image = self.image
         pvc = self.kubectl.get("pvc", self.claim, self.namespace)
         capacity = (
@@ -434,64 +498,34 @@ class ClusterBuilder(AbstractContextManager):
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
-        """Remove only this operation's Pod, retaining compiled caches and published outputs."""
-        try:
-            if exc_type is None and self._used_images:
-                path = self.root + "/images.json"
-                layouts = self.read_json(path)
-                stale = [
-                    value["path"]
-                    for image, value in layouts.items()
-                    if image not in self._used_images
+        """Retain the ready compiler daemon and clean only transient build outputs."""
+        if exc_type is None and self._used_images:
+            path = self.root + "/images.json"
+            layouts = self.read_json(path)
+            stale = [
+                value["path"]
+                for image, value in layouts.items()
+                if image not in self._used_images
+            ]
+            retained = {
+                image: value
+                for image, value in layouts.items()
+                if image in self._used_images
+            }
+            encoded = shlex.quote(json.dumps(retained))
+            self.run(
+                [
+                    "sh",
+                    "-ec",
+                    f'printf %s {encoded} > "$1.next"; mv "$1.next" "$1"',
+                    "save",
+                    path,
                 ]
-                retained = {
-                    image: value
-                    for image, value in layouts.items()
-                    if image in self._used_images
-                }
-                encoded = shlex.quote(json.dumps(retained))
-                self.run(
-                    [
-                        "sh",
-                        "-ec",
-                        f'printf %s {encoded} > "$1.next"; mv "$1.next" "$1"',
-                        "save",
-                        path,
-                    ]
-                )
-                if stale:
-                    self.run(["rm", "-rf", "--", *stale])
-            if exc_type is None and self._generated_layouts:
-                self.run(["rm", "-rf", "--", self.root + "/transfers"])
-        finally:
-            try:
-                if self._created:
-                    self.kubectl.run(
-                        [
-                            "delete",
-                            "pod",
-                            self.name,
-                            "-n",
-                            self.namespace,
-                            "--ignore-not-found",
-                            "--wait=true",
-                            "--timeout=" + self.timeout,
-                        ]
-                    )
-                    self._created = False
-            finally:
-                if self._secret_created:
-                    self.kubectl.run(
-                        [
-                            "delete",
-                            "secret",
-                            self.name,
-                            "-n",
-                            self.namespace,
-                            "--ignore-not-found",
-                        ]
-                    )
-                    self._secret_created = False
+            )
+            if stale:
+                self.run(["rm", "-rf", "--", *stale])
+        if exc_type is None and self._generated_layouts:
+            self.run(["rm", "-rf", "--", self.root + "/transfers"])
 
     def command(self, args: list[str], *, container: str = "builder") -> list[str]:
         """Address the build Pod for both streamed input and ordinary commands."""

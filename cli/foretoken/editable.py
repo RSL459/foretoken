@@ -108,7 +108,7 @@ def source_operation(
                     if binding:
                         bindings.add(binding)
             for binding in bindings:
-                remove_build_pods(kubectl, timeout, binding=binding)
+                remove_build_pods(kubectl, timeout, binding=binding, preserve_ready=True)
             yield
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
