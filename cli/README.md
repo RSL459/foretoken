@@ -36,7 +36,7 @@ Run `foretoken --version` to check the installed CLI version.
 
 ## Create a local cluster
 
-On a Linux GPU host with Docker, NVIDIA Container Toolkit, and k3d installed:
+For a local GPU cluster on a Linux host with Docker, NVIDIA Container Toolkit, and k3d installed:
 
 ```bash
 # Name the local cluster and use GPU index 0 from nvidia-smi.
@@ -44,7 +44,7 @@ On a Linux GPU host with Docker, NVIDIA Container Toolkit, and k3d installed:
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 ```
 
-For a local kind development cluster:
+For a local kind development cluster, install Docker, kind, kubectl, and Helm:
 
 ```bash
 foretoken cluster create kind --name foretoken-dev
@@ -54,6 +54,7 @@ Remove a cluster created by the CLI with:
 
 ```bash
 foretoken cluster delete k3d --name foretoken-dev
+foretoken cluster delete kind --name foretoken-dev
 ```
 
 ## Install the Kubernetes platform
