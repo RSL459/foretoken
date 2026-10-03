@@ -204,14 +204,22 @@ class ClusterBuilder(AbstractContextManager):
         self._generated_layouts: dict[str, dict[str, str]] = {}
         self._used_images: set[str] = set()
 
-    def _reusable_pod(self) -> dict[str, Any] | None:
-        """Find a Ready builder with the same binding, node, and publisher role."""
+    def _reuse_or_retire_pods(self) -> dict[str, Any] | None:
+        """Select a compatible daemon and retire other builders sharing its compiler cache."""
         selector = f"{_BUILD_POD_LABEL}=true,{_BUILD_BINDING_LABEL}={self.binding}"
         expected_publisher = bool(self.publisher_image)
+        occupants = []
         candidates = []
         for pod in self.kubectl.list_resources(
             ("pods",), self.namespace, label_selector=selector
         ):
+            if not any(
+                volume["name"] == "cache"
+                and volume.get("persistentVolumeClaim", {}).get("claimName") == self.claim
+                for volume in pod["spec"].get("volumes", [])
+            ):
+                continue
+            occupants.append(pod)
             if not _pod_ready(pod) or pod.get("metadata", {}).get("deletionTimestamp"):
                 continue
             if self.node and pod.get("spec", {}).get("nodeName") != self.node:
@@ -233,20 +241,31 @@ class ClusterBuilder(AbstractContextManager):
                 volume.get("persistentVolumeClaim", {}).get("claimName")
                 for volume in pod.get("spec", {}).get("volumes", [])
             }
-            if self.claim not in claim_names:
-                continue
             if self.runtime_claim and self.runtime_claim not in claim_names:
                 continue
             candidates.append(pod)
-        return min(
+        reusable = min(
             candidates,
             key=lambda pod: pod.get("metadata", {}).get("creationTimestamp", ""),
             default=None,
         )
+        # Source operations hold the cluster lock. Stop the previous daemon before
+        # changing its image or placement: the retained PVC still holds its root lock.
+        for pod in occupants:
+            if pod is reusable:
+                continue
+            self.kubectl.run(
+                [
+                    "delete", "pod", pod["metadata"]["name"],
+                    "--namespace", self.namespace,
+                    "--ignore-not-found", "--wait=true", "--timeout=" + self.timeout,
+                ]
+            )
+        return reusable
 
     def __enter__(self) -> Self:
         """Reuse or start the compiler daemon on the cache's node."""
-        reusable = self._reusable_pod()
+        reusable = self._reuse_or_retire_pods()
         if reusable is not None:
             self.name = reusable["metadata"]["name"]
             print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
