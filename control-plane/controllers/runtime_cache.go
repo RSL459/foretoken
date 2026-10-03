@@ -52,6 +52,25 @@ func runtimeCachePodSecurityContext(cache *inferencev1alpha1.RuntimeCacheBinding
 	return context
 }
 
+// runtimeCacheInitContainers prepares the mount root for images whose hostPath PV ignores fsGroup.
+func runtimeCacheInitContainers(image string, cache *inferencev1alpha1.RuntimeCacheBinding) []corev1.Container {
+	if cache == nil {
+		return nil
+	}
+	root := int64(0)
+	return []corev1.Container{{
+		Name:    "runtime-cache-permissions",
+		Image:   image,
+		Command: []string{"sh", "-ec", `mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"`, "prepare", cache.MountPath},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:    &root,
+			RunAsGroup:   &root,
+			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+		VolumeMounts: []corev1.VolumeMount{{Name: runtimeCacheVolumeName, MountPath: cache.MountPath}},
+	}}
+}
+
 // placeRuntimeCache keeps all consumers of a single-node writable claim together.
 // Self-affinity lets the first consumer establish placement; later preparation, serving,
 // and frontend Pods follow that node without maintaining a second attachment inventory.
