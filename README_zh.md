@@ -61,10 +61,41 @@ export GPU_INDICES=0
 export CLUSTER=foretoken-dev
 mkdir -p data
 
+declare -a K3D_VOLUME_ARGS=()
+declare -A K3D_MOUNTED_PATHS=()
+add_k3d_mount() {
+  local path="$1"
+  [ -e "$path" ] || return 0
+  [ -z "${K3D_MOUNTED_PATHS[$path]+x}" ] || return 0
+  K3D_MOUNTED_PATHS["$path"]=1
+  K3D_VOLUME_ARGS+=(--volume "$path:$path@server:0")
+}
+for NAME in nvidia-container-runtime nvidia-container-runtime-hook nvidia-container-cli nvidia-ctk; do
+  TOOL_PATH="$(command -v "$NAME")"
+  add_k3d_mount "$TOOL_PATH"
+  while read -r PATH_KIND LIBRARY_PATH; do
+    if [ "$PATH_KIND" = directory ]; then
+      add_k3d_mount "$(realpath -m "$(dirname "$LIBRARY_PATH")")"
+    else
+      add_k3d_mount "$LIBRARY_PATH"
+    fi
+  done < <(
+    ldd "$TOOL_PATH" |
+      awk '$2 == "=>" && $3 ~ /^\// { print "directory", $3 } $1 ~ /^\// { print "file", $1 }'
+  )
+done
+for CONFIG_DIR in /etc/nvidia-container-runtime /usr/local/etc/nvidia-container-runtime; do
+  add_k3d_mount "$CONFIG_DIR"
+done
+for LDCONFIG_PATH in "$(command -v ldconfig)" /sbin/ldconfig.real /usr/sbin/ldconfig.real; do
+  add_k3d_mount "$LDCONFIG_PATH"
+done
+add_k3d_mount "$(realpath data)"
+
 k3d cluster create "$CLUSTER" \
   --config deploy/k3d/config.yaml \
   --gpus "\"device=$GPU_INDICES\"" \
-  --volume "$PWD/data:$PWD/data@server:0"
+  "${K3D_VOLUME_ARGS[@]}"
 
 kubectl apply -f \
   https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.4/deployments/static/nvidia-device-plugin.yml
