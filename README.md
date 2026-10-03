@@ -77,7 +77,7 @@ foretoken install
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB; the example also mounts a directory-backed RuntimeCache for model files and runtime artifacts. More deployments are available in [`examples/`](examples/).
+This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. The example uses the repository-root `./data` directory for model files and runtime cache. More deployments are available in [`examples/`](examples/).
 
 ### 4. Send a test request
 

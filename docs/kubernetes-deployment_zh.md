@@ -68,18 +68,11 @@ workload:
 
 使用认证仓库时，通过 `--values deploy/platform-values.yaml` 安装。
 
-## 3. 准备模型存储
+## 3. 部署与更新代码
 
-快速开始示例的 `cache.yaml` 使用仓库中的 `data/` 目录，适用于本地 k3d。远程集群需要将其中的 `spec` 替换为 PVC 缓存，并使用支持对应访问模式的 StorageClass：
+快速开始示例在本地 k3d 使用仓库中的 `data/` 目录；在远程集群上，Foretoken 会自动为这个相对目录创建动态 PVC，因此无需修改示例 YAML。多节点集群使用 `ReadWriteMany`，单节点集群会自动使用 `ReadWriteOnce`。集群需要其他存储策略时，在 `cache.yaml` 中设置 `initialSize`、`storageClassName`、`accessMode` 或 `maxSize`。
 
-```yaml
-spec:
-  initialSize: 10Gi
-  accessMode: ReadWriteMany
-  # storageClassName: YOUR_STORAGE_CLASS
-```
-
-然后部署并更新代码：
+部署并更新代码：
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m

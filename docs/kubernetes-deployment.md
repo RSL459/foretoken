@@ -68,18 +68,11 @@ workload:
 
 Install with `--values deploy/platform-values.yaml` when using the authenticated registry.
 
-## 3. Prepare model storage
+## 3. Deploy and update code
 
-The Quick Start's `cache.yaml` uses the repository's `data/` directory, which is intended for local k3d. On a remote cluster, replace its `spec` with a PVC-backed cache using a StorageClass that supports the requested access mode:
+The Quick Start uses the repository's `data/` directory on local k3d. On a remote cluster, Foretoken automatically provisions a dynamic PVC for this relative directory, so the example YAML does not need to change. Multi-node clusters use `ReadWriteMany`; a single-node cluster uses `ReadWriteOnce` automatically. Set `initialSize`, `storageClassName`, `accessMode`, or `maxSize` in `cache.yaml` when the cluster needs a different storage policy.
 
-```yaml
-spec:
-  initialSize: 10Gi
-  accessMode: ReadWriteMany
-  # storageClassName: YOUR_STORAGE_CLASS
-```
-
-Then deploy and update code:
+Deploy and update code:
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
