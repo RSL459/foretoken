@@ -54,15 +54,22 @@ pip install foretoken
 
 ### 2. Install the Kubernetes platform
 
-```bash
-# Use release images from GHCR:
-foretoken install
+If you do not have a cluster yet, open the guide in the table above and run its cluster creation steps first. Then verify the active context:
 
-# Build and install from a source checkout:
-# foretoken install -e .
+```bash
+kubectl config current-context
+kubectl get nodes
 ```
 
-If you are creating a k3d cluster, complete the [k3d deployment guide](docs/k3d-deployment.md) before this step. If you are using an existing cluster, follow the selected source deployment path above.
+When the nodes are Ready, install Foretoken:
+
+```bash
+# Use published images:
+foretoken install
+
+# Build from the current source checkout instead:
+# foretoken install -e .
+```
 
 ### 3. Deploy the Quick Start
 

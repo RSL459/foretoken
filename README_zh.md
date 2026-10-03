@@ -54,15 +54,22 @@ pip install foretoken
 
 ### 2. 安装 Kubernetes 平台
 
-```bash
-# 使用 GHCR 发布的镜像：
-foretoken install
+如果还没有集群，请先打开上表中对应的指南，执行其中的集群创建命令。然后检查当前 context：
 
-# 从源码目录构建并安装：
-# foretoken install -e .
+```bash
+kubectl config current-context
+kubectl get nodes
 ```
 
-如果要创建 k3d 集群，请先完成上面的 [k3d 部署指南](docs/k3d-deployment_zh.md)；使用已有集群时，按上表进入对应的源码部署路径。
+确认节点状态为 `Ready` 后，安装 Foretoken：
+
+```bash
+# 使用发布镜像：
+foretoken install
+
+# 从当前源码构建：
+# foretoken install -e .
+```
 
 ### 3. 部署快速开始示例
 
