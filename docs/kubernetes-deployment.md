@@ -68,7 +68,18 @@ workload:
 
 Install with `--values deploy/platform-values.yaml` when using the authenticated registry.
 
-## 3. Deploy and update code
+## 3. Prepare model storage
+
+The Quick Start's `cache.yaml` uses the repository's `data/` directory, which is intended for local k3d. On a remote cluster, replace its `spec` with a PVC-backed cache using a StorageClass that supports the requested access mode:
+
+```yaml
+spec:
+  initialSize: 10Gi
+  accessMode: ReadWriteMany
+  # storageClassName: YOUR_STORAGE_CLASS
+```
+
+Then deploy and update code:
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m

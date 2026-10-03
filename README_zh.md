@@ -54,7 +54,7 @@ pip install foretoken
 
 ### 2. 安装 Kubernetes 平台
 
-如果还没有集群，请先打开上表中对应的指南，执行其中的集群创建命令。然后检查当前 context：
+如果还没有集群，请按对应指南创建：[k3d 部署指南](docs/k3d-deployment_zh.md)、[kind 部署指南](docs/kind-deployment_zh.md)或 [Kubernetes 部署指南](docs/kubernetes-deployment_zh.md)。然后检查当前 context：
 
 ```bash
 kubectl config current-context
@@ -77,7 +77,7 @@ foretoken install
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本，请求 1 张 GPU、8 个 CPU 和 52 GiB 内存。更多部署配置见 [`examples/`](examples/)。
+该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB；示例还会挂载目录型 RuntimeCache，用于保存模型文件和运行时产物。更多部署配置见 [`examples/`](examples/)。
 
 ### 4. 发送测试请求
 

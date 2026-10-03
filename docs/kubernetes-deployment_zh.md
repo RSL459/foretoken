@@ -68,7 +68,18 @@ workload:
 
 使用认证仓库时，通过 `--values deploy/platform-values.yaml` 安装。
 
-## 3. 部署与更新代码
+## 3. 准备模型存储
+
+快速开始示例的 `cache.yaml` 使用仓库中的 `data/` 目录，适用于本地 k3d。远程集群需要将其中的 `spec` 替换为 PVC 缓存，并使用支持对应访问模式的 StorageClass：
+
+```yaml
+spec:
+  initialSize: 10Gi
+  accessMode: ReadWriteMany
+  # storageClassName: YOUR_STORAGE_CLASS
+```
+
+然后部署并更新代码：
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
