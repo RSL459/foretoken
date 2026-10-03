@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import shutil
+from pathlib import Path
 from typing import Any
 
 from benchmarks.config.evaluation import native_arguments, validate_model_transport

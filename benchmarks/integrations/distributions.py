@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 import math
-from typing import Iterable
+from collections.abc import Iterable
+from typing import Self
 
 import httpx
 import numpy as np
@@ -25,7 +26,7 @@ class CompletionComparisonClient:
             timeout=timeout,
         )
 
-    def __enter__(self) -> CompletionComparisonClient:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:

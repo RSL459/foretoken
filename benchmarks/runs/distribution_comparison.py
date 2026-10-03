@@ -7,24 +7,32 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import httpx
 import numpy as np
-
 from foretoken.manifest import DeploymentError
 
 from benchmarks.config.benchmark import ModelServiceSource
-from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.config.distribution_comparison import DistributionComparisonConfig
+from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.datasets.conversations import iter_jsonl_rows
 from benchmarks.datasets.huggingface import resolve_tokenizer_path
-from benchmarks.integrations.distributions import CompletionComparisonClient, compare_logprobs
+from benchmarks.integrations.distributions import (
+    CompletionComparisonClient,
+    compare_logprobs,
+)
 from benchmarks.model_service import ModelService, resolve_model_service
+from benchmarks.results.distribution_comparison import (
+    distribution_comparison_sinks,
+    greedy_comparison_sinks,
+)
+from benchmarks.results.distribution_comparison_checkpoint import (
+    DistributionComparisonCheckpoint,
+)
 from benchmarks.results.environment import serving_environment
-from benchmarks.results.distribution_comparison import distribution_comparison_sinks, greedy_comparison_sinks
-from benchmarks.results.distribution_comparison_checkpoint import DistributionComparisonCheckpoint
 from benchmarks.results.output import BenchmarkRun, ResultOutputs, write_json
 
 logger = logging.getLogger(__name__)
@@ -50,7 +58,9 @@ def _text_rows(config: DistributionComparisonConfig) -> Iterator[str]:
             raise ValueError(f"Comparison dataset rows require text column {config.text_column!r}")
         value = row[config.text_column]
         if not isinstance(value, str):
-            raise ValueError(f"Comparison text column {config.text_column!r} must contain strings")
+            raise ValueError(  # noqa: TRY004 - dataset errors stay on the CLI ValueError boundary.
+                f"Comparison text column {config.text_column!r} must contain strings"
+            )
         if value.strip():
             yield value + "\n"
 

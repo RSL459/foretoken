@@ -36,7 +36,7 @@ uv pip install foretoken
 
 ## 创建本地集群
 
-在已安装 Docker、NVIDIA Container Toolkit 和 k3d 的 Linux GPU 主机上执行：
+在已安装 Docker、NVIDIA Container Toolkit 和 k3d 的 Linux GPU 主机上创建本地 GPU 集群：
 
 ```bash
 # 为本地集群命名，并使用 nvidia-smi 显示的 GPU 编号 0。
@@ -44,7 +44,7 @@ uv pip install foretoken
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 ```
 
-本地 kind 开发集群执行：
+创建本地 kind 开发集群时，安装 Docker、kind、kubectl 和 Helm：
 
 ```bash
 foretoken cluster create kind --name foretoken-dev
@@ -54,6 +54,7 @@ foretoken cluster create kind --name foretoken-dev
 
 ```bash
 foretoken cluster delete k3d --name foretoken-dev
+foretoken cluster delete kind --name foretoken-dev
 ```
 
 ## 安装 Kubernetes 平台

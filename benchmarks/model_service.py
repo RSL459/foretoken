@@ -16,9 +16,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import yaml
-
-from benchmarks.config.benchmark import BenchmarkConfig, ModelServiceSource
-from benchmarks.profiling import CaptureCleanupError
 from foretoken.kubernetes import (
     Kubectl,
     load_deployment,
@@ -28,6 +25,9 @@ from foretoken.kubernetes import (
 )
 from foretoken.manifest import DeploymentError, ForetokenDeployment, ResourceRef
 from foretoken.storage import DirectoryVolumes
+
+from benchmarks.config.benchmark import BenchmarkConfig, ModelServiceSource
+from benchmarks.profiling import CaptureCleanupError
 
 logger = logging.getLogger(__name__)
 

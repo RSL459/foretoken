@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
-from contextlib import closing
 import json
 import sqlite3
+from collections import defaultdict, deque
+from contextlib import closing
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Self
 
 
 def restore_progress(source: Path, native: Path) -> None:
@@ -18,9 +18,11 @@ def restore_progress(source: Path, native: Path) -> None:
     database = source / LmEvalResponses.filename
     if not database.is_file():
         raise ValueError("The previous lm-eval run has no saved evaluation progress")
-    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as src:
-        with closing(sqlite3.connect(native.parent / LmEvalResponses.filename)) as dst:
-            src.backup(dst)
+    with (
+        closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as src,
+        closing(sqlite3.connect(native.parent / LmEvalResponses.filename)) as dst,
+    ):
+        src.backup(dst)
 
 
 class ResponseSlot(NamedTuple):
@@ -54,7 +56,7 @@ class LmEvalResponses:
             self.connection.close()
             raise
 
-    def __enter__(self) -> LmEvalResponses:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:

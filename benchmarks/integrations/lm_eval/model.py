@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from functools import cached_property, partial
-import json
 
-from lm_eval.models.api_models import JsonChatStr, LMEVAL_MODEL_NONE_ANSWER_PLACEHOLDER
+from lm_eval.models.api_models import LMEVAL_MODEL_NONE_ANSWER_PLACEHOLDER, JsonChatStr
 from lm_eval.models.openai_completions import LocalChatCompletion, LocalCompletionsAPI
 
 

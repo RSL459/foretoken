@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.results.metrics import RequestMeasurement
+from benchmarks.results.plots.data import Chart, Series, _numeric
 from benchmarks.results.replicas import gpu_allocation_history_rows
 from benchmarks.results.timeseries import (
     ELAPSED_TIME,
@@ -20,7 +21,6 @@ from benchmarks.results.timeseries import (
     request_series,
     time_series,
 )
-from benchmarks.results.plots.data import Chart, Series, _numeric
 
 
 def _rows_chart(
@@ -275,7 +275,7 @@ def _prometheus_charts(source: Path) -> list[Chart]:
                     )
     charts = []
     for name in dict.fromkeys(key[0] for key in grouped):
-        def display_label(label: str) -> str:
+        def display_label(label: str, *, name: str = name) -> str:
             """Show service, group, role and rank without printing raw JSON in figure titles."""
             if not name.startswith("spec_"):
                 return label
@@ -608,7 +608,7 @@ def _evaluation_comparison_charts(comparison: dict[str, Any]) -> list[Chart]:
     methods = [method["label"] for method in comparison["methods"]]
     charts = []
     for index, (identity, rows) in enumerate(grouped.items(), 1):
-        task, level, subset, filter_name, metric, unit = identity
+        task, _level, subset, filter_name, metric, unit = identity
         factor = float(rows[0].get("display_multiplier") or 1)
         series = tuple(Series(
             row["method"], (float(methods.index(row["method"])),),
@@ -683,11 +683,9 @@ def _slo_charts(search: dict[str, Any]) -> list[Chart]:
                 row
                 for row in rows
                 if _numeric(
-                    (
-                        row["average_values"].get(field)
-                        if field in fields
-                        else row.get(field)
-                    )
+                    row["average_values"].get(field)
+                    if field in fields
+                    else row.get(field)
                 )
                 is not None
             ]

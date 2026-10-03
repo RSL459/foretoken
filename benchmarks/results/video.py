@@ -190,7 +190,7 @@ class VideoArtifactSink:
 
     def close(self, *, exit_code: int = 0) -> None:
         """Release no resources because ResultOutputs owns the directory."""
-        return None
+        return
 
 
 class VideoConsoleSink:
@@ -201,7 +201,7 @@ class VideoConsoleSink:
 
     def open(self, record: dict[str, Any]) -> None:
         """Acquire no resources before console publication."""
-        return None
+        return
 
     def publish(self, run: BenchmarkRun) -> None:
         """Log the completed video summary."""
@@ -209,7 +209,7 @@ class VideoConsoleSink:
 
     def close(self, *, exit_code: int = 0) -> None:
         """Release no resources after console publication."""
-        return None
+        return
 
 
 class VideoLocalSink:
@@ -220,7 +220,7 @@ class VideoLocalSink:
 
     def open(self, record: dict[str, Any]) -> None:
         """Acquire no resources because ResultOutputs created the directory."""
-        return None
+        return
 
     def publish(self, run: BenchmarkRun) -> None:
         """Report where the completed video artifacts were retained."""
@@ -228,7 +228,7 @@ class VideoLocalSink:
 
     def close(self, *, exit_code: int = 0) -> None:
         """Release no resources because ResultOutputs owns the directory."""
-        return None
+        return
 
 
 def video_result_sinks(

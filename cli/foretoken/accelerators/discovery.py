@@ -8,9 +8,9 @@ from __future__ import annotations
 import json
 import re
 import time
-from math import ceil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from math import ceil
 from typing import Any
 
 from foretoken.accelerators._exporter import (
@@ -26,7 +26,6 @@ from foretoken.observability import (
     prometheus_query,
     prometheus_selects_service_monitor,
 )
-
 
 _METRIC_SAMPLE = re.compile(
     r"^(?P<name>[A-Za-z_:][A-Za-z0-9_:]*)(?:\{(?P<labels>[^}]*)\})?\s+"

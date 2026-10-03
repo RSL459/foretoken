@@ -53,7 +53,7 @@ async def _run_requests(
                 return None
             try:
                 await asyncio.wait_for(semaphore.acquire(), remaining)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return None
         else:
             await semaphore.acquire()

@@ -7,25 +7,23 @@
 
 Use kind for a local Kubernetes development cluster. kind runs Kubernetes nodes in containers and does not provide GPU devices; use [k3d deployment](k3d-deployment.md) for a single-host GPU cluster.
 
-## 1. Install the tools
+## 1. Install the tools and create a cluster
 
 Install Docker, kind, kubectl, Python 3.11+, and Helm. From the Foretoken repository root:
 
 ```bash
-kind create cluster \
-  --name foretoken-dev \
-  --config deploy/kind/multi-node.yaml \
-  --wait 5m
-
-kubectl cluster-info --context kind-foretoken-dev
+pip install -e .
+foretoken cluster create kind --name foretoken-dev
+kubectl get nodes
 ```
+
+The command creates the kind cluster, refreshes its kubeconfig context, and waits for the control plane.
 
 ## 2. Build and install Foretoken
 
 kind loads source-built images directly into its node containerd; no registry is needed:
 
 ```bash
-pip install -e .
 foretoken install -e .
 ```
 
@@ -36,7 +34,7 @@ The Quick Start model requires a GPU; use the [k3d deployment guide](k3d-deploym
 ```bash
 foretoken delete examples/quickstart
 foretoken uninstall
-kind delete cluster --name foretoken-dev
+foretoken cluster delete kind --name foretoken-dev
 ```
 
 For an existing K3s, RKE2, KubeSphere, cloud, or other Kubernetes cluster, use the [Kubernetes deployment guide](kubernetes-deployment.md).

@@ -587,9 +587,14 @@ class PlatformLifecycle:
             stored_values=stored_values[0] if platform_exists else None,
             timeout=command.timeout,
         )
-        if not dragonfly_plan.config.enabled or dragonfly_plan.release != helm.dragonfly_release():
-            if helm.release_exists(helm.dragonfly_release()):
-                _print_plan("Model file distribution", *self._model_distribution.finish_uninstall(command.timeout))
+        if (
+            not dragonfly_plan.config.enabled
+            or dragonfly_plan.release != helm.dragonfly_release()
+        ) and helm.release_exists(helm.dragonfly_release()):
+            _print_plan(
+                "Model file distribution",
+                *self._model_distribution.finish_uninstall(command.timeout),
+            )
         if rdma.managed:
             live_discovery = ExporterDiscovery(kubectl, command.timeout)
             live_runtime = _select_runtime(live_discovery.nodes, runtime_scope)

@@ -6,10 +6,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, ClassVar
 
 from benchmarks.config.benchmark import (
     BenchmarkConfig,
@@ -24,13 +25,15 @@ from benchmarks.results.output import BenchmarkRun, wandb_run_timestamp
 from benchmarks.runs.dispatch import run_benchmark_point
 from benchmarks.runs.slo import SloAutoTuneBenchmark
 from benchmarks.sweeps.core import (
+    _BENCHMARK_NAME,
+    _PARAMETER_GROUP,
     SweepAdapter,
     SweepDefinition,
     SweepPoint,
-    _BENCHMARK_NAME,
-    _PARAMETER_GROUP,
-    load_sweep_points as load_core_sweep_points,
     run_sweep,
+)
+from benchmarks.sweeps.core import (
+    load_sweep_points as load_core_sweep_points,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,7 +103,9 @@ def _service_choice(value: Any) -> dict[str, str]:
             raise ValueError("sweep service paths cannot be empty")
         return {"name": Path(path).name, "path": path}
     if not isinstance(value, dict):
-        raise ValueError("sweep service must be a path or an object with name and path or url")
+        raise ValueError(  # noqa: TRY004 - CLI callers render sweep input errors.
+            "sweep service must be a path or an object with name and path or url"
+        )
     unknown = set(value) - {"name", "path", "url", "model", "health_url"}
     if unknown:
         raise ValueError("Unsupported sweep service fields: " + ", ".join(sorted(unknown)))
@@ -114,7 +119,10 @@ def _service_choice(value: Any) -> dict[str, str]:
 class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
     """Apply and execute HTTP points while the core owns sweep orchestration."""
 
-    axis_fields = {"service": _service_choice, **{key: field[2] for key, field in _SWEEP_FIELDS.items()}}
+    axis_fields: ClassVar[dict[str, Callable[[Any], Any]]] = {
+        "service": _service_choice,
+        **{key: field[2] for key, field in _SWEEP_FIELDS.items()},
+    }
 
     def __init__(self, resources: ExitStack) -> None:
         self.resources = resources

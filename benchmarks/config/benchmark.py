@@ -9,12 +9,12 @@ import math
 import random
 import re
 from dataclasses import dataclass, field, replace
-from typing import Any, Optional
+from typing import Any
 
 OutputTokenLimit = int | list[int]
 
 
-def parse_duration_seconds(value: str | int | float) -> float:
+def parse_duration_seconds(value: str | float) -> float:
     """Convert CLI and sweep time values to seconds; unitless values are seconds."""
     if not isinstance(value, str):
         return float(value)
@@ -139,13 +139,13 @@ class ChatCompletionsGeneration:
     min_output_length: int | None = None
     max_output_length: int | None = None
     stream: bool = True
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    min_p: Optional[float] = None
-    temperature: Optional[float] = None
-    frequency_penalty: Optional[float] = None
-    presence_penalty: Optional[float] = None
-    repetition_penalty: Optional[float] = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    temperature: float | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    repetition_penalty: float | None = None
     extra_body: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -222,7 +222,7 @@ class ChatRequestDataset:
     apply_chat_template: bool = False
     fixed_prompt: str = ""
     # -1 means the complete conversation; positive values truncate turns.
-    max_turns: Optional[int] = -1
+    max_turns: int | None = -1
     conversation_history: str = "dataset"
     dataset_weights: list[float] = field(default_factory=list)
 
@@ -278,7 +278,7 @@ class ArrivalTraceSchedule:
 
     trace_selector: str = ""
     start_offset_seconds: float = 0.0
-    duration_seconds: Optional[float] = None
+    duration_seconds: float | None = None
     synthetic_prefix_reuse: bool = False
 
     def validate(self) -> None:
@@ -353,7 +353,7 @@ class SloTuneConfig:
     params: list[dict[str, str]] | None = None
     search: bool = False
     num_runs: int = 1
-    upper_bound: Optional[int] = None
+    upper_bound: int | None = None
     lower_bound: int = 1
 
     def validate(self) -> None:
@@ -503,13 +503,12 @@ class BenchmarkConfig:
         has_trace = bool(trace.trace_selector)
         if not has_trace and self.load.request_count is None and self.load.duration_seconds is None:
             raise ValueError("--num-prompts is required unless --duration is set")
-        if not has_trace:
-            if not workload.fixed_prompt and not workload.dataset_selectors:
-                raise ValueError(
-                    "No workload source. Pass --prompt or --dataset "
-                    "(random | local JSONL | org/name[:split] | "
-                    "hf://datasets/...)."
-                )
+        if not has_trace and not workload.fixed_prompt and not workload.dataset_selectors:
+            raise ValueError(
+                "No workload source. Pass --prompt or --dataset "
+                "(random | local JSONL | org/name[:split] | "
+                "hf://datasets/...)."
+            )
         if has_trace:
             if workload.max_turns not in (None, -1):
                 raise ValueError(

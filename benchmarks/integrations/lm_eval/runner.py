@@ -5,18 +5,22 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-from functools import partial
 import json
 import logging
 import os
+from contextlib import nullcontext
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from lm_eval import simple_evaluate
 from lm_eval.config.evaluate_config import EvaluatorConfig
 from lm_eval.loggers import EvaluationTracker, TrackioLogger
-from lm_eval.utils import handle_non_serializable, setup_logging, simple_parse_args_string
+from lm_eval.utils import (
+    handle_non_serializable,
+    setup_logging,
+    simple_parse_args_string,
+)
 
 from benchmarks.config.evaluation import native_arguments, validate_model_transport
 from benchmarks.integrations.lm_eval.model import ServiceEvaluation
@@ -111,8 +115,8 @@ def _execute(config, model, manager) -> None:
                 trackio.log_eval_result()
                 if config.log_samples:
                     trackio.log_eval_samples(samples)
-            except Exception as error:
-                logger.info("Logging to Trackio failed: %s", error)
+            except Exception:
+                logger.warning("Logging to Trackio failed", exc_info=True)
     finally:
         if trackio is not None:
             trackio.finish()

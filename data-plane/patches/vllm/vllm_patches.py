@@ -25,15 +25,15 @@ def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
             series_name = profile["series"]
             break
 
-    modern_layout = False
+    legacy_ready_backport = False
     ready_source = directory / "vllm/v1/engine/__init__.py"
-    if ready_source.is_file():
+    if series_name == "compatibility/v1-legacy/series" and ready_source.is_file():
         source = ready_source.read_text()
-        modern_layout = (
+        legacy_ready_backport = (
             "tensor_parallel_size: int" in source
             and "decode_context_parallel_size: int" in source
         )
-        if series_name == "compatibility/v1-legacy/series" and modern_layout:
+        if legacy_ready_backport:
             series_name = "compatibility/v1-default/series"
 
     selected = []
@@ -41,7 +41,7 @@ def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
         name = line.split("#", 1)[0].strip()
         if not name:
             continue
-        if modern_layout and name == "common/ready-logprobs.patch":
+        if legacy_ready_backport and name == "common/ready-logprobs.patch":
             name = "compatibility/v1-modern-ready-logprobs.patch"
         optional = version_map["optional_patches"].get(name)
         if optional is not None and (
@@ -55,7 +55,7 @@ def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
 
     profiler_result = (
         "vllm-0.26-profiler-result.patch"
-        if version_value < Version("0.30.0")
+        if version_value < Version("0.30.0.dev0")
         else "vllm-0.30-profiler-result.patch"
     )
     selected.append(patches / profiler_result)

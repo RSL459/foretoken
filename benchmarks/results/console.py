@@ -255,8 +255,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
         lines.extend(
             [
                 f"  Requests   : {metrics['request_num']}",
-                "  Multi-turn conversations attempted: "
-                f"{conversation['attempted_num']}",
+                f"  Multi-turn conversations attempted: {conversation['attempted_num']}",
                 f"  Multi-turn requests: {conversation['request_num']}",
                 f"  {concurrency_label}: {concurrency_value}",
             ]
@@ -306,12 +305,15 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
     success_label = "Successful requests" if multi_turn else "Success"
     lines.extend(
         [
-            f"  {success_label}: {metrics['success_num']}/"
-            f"{metrics['request_num']} "
-            f"({float(metrics['success_rate']) * 100:.2f}%)",
-            "  Observed in-flight requests: "
-            f"peak={metrics['request_concurrency']['peak']} "
-            f"mean={_format_metric(metrics['request_concurrency']['mean'], 2)}",
+            (
+                f"  {success_label}: {metrics['success_num']}/{metrics['request_num']} "
+                f"({float(metrics['success_rate']) * 100:.2f}%)"
+            ),
+            (
+                "  Observed in-flight requests: "
+                f"peak={metrics['request_concurrency']['peak']} "
+                f"mean={_format_metric(metrics['request_concurrency']['mean'], 2)}"
+            ),
             *metric_lines,
         ]
     )
@@ -319,12 +321,9 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
     if isinstance(slo, dict) and slo.get("slo_attainment") is not None:
         lines.extend(
             [
-                "  SLO attainment (%): "
-                f"{_format_metric(float(slo['slo_attainment']) * 100)}",
-                "  SLO request goodput (req/s): "
-                f"{_format_metric(slo.get('request_goodput'))}",
-                "  SLO token goodput (tokens/s): "
-                f"{_format_metric(slo.get('token_goodput'))}",
+                f"  SLO attainment (%): {_format_metric(float(slo['slo_attainment']) * 100)}",
+                f"  SLO request goodput (req/s): {_format_metric(slo.get('request_goodput'))}",
+                f"  SLO token goodput (tokens/s): {_format_metric(slo.get('token_goodput'))}",
             ]
         )
     speculative = metrics.get("speculative_decoding")
@@ -390,10 +389,8 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
     lines.extend(
         [
             f"  Request throughput (req/s): {_format_metric(throughput['requests_per_second'])}",
-            f"  Input token throughput (tokens/s): "
-            f"{_format_metric(throughput['prompt_tokens_per_second'])}",
-            f"  Output token throughput (tokens/s): "
-            f"{_format_metric(generation_tokens_per_second)}",
+            f"  Input token throughput (tokens/s): {_format_metric(throughput['prompt_tokens_per_second'])}",
+            f"  Output token throughput (tokens/s): {_format_metric(generation_tokens_per_second)}",
         ]
     )
     normalized = throughput.get(
@@ -460,12 +457,16 @@ def log_slo_results(slo: dict[str, Any]) -> None:
         )
     for group in slo["groups"]:
         lines.extend([
-            f"  Group {group['group']}: best passing request peak="
-            f"{_format_metric(group['best_peak_request_concurrency'], 0)} "
-            f"at {unit} limit={_format_metric(group['best_max_concurrency'], 0)}",
-            f"  Stopped: {reasons[group['stop_reason']]}; "
-            f"last request peak={group['last_peak_request_concurrency']} "
-            f"at {unit} limit={group['last_max_concurrency']}",
+            (
+                f"  Group {group['group']}: best passing request peak="
+                f"{_format_metric(group['best_peak_request_concurrency'], 0)} "
+                f"at {unit} limit={_format_metric(group['best_max_concurrency'], 0)}"
+            ),
+            (
+                f"  Stopped: {reasons[group['stop_reason']]}; "
+                f"last request peak={group['last_peak_request_concurrency']} "
+                f"at {unit} limit={group['last_max_concurrency']}"
+            ),
         ])
     lines.append("===================================================")
     logger.info("\n%s", "\n".join(lines))

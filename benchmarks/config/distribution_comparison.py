@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import argparse
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from benchmarks.config.benchmark import ModelServiceSource
 from benchmarks.config.evaluation import deployment_labels
@@ -124,7 +125,9 @@ def _positive_coordinate(value: Any, name: str) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool):
-        raise ValueError(f"{name} must be a positive number")
+        raise ValueError(  # noqa: TRY004 - CLI callers convert ValueError to user errors.
+            f"{name} must be a positive number"
+        )
     number = float(value)
     if not math.isfinite(number) or number <= 0:
         raise ValueError(f"{name} must be a positive number")
