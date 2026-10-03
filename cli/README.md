@@ -34,6 +34,26 @@ uv pip install foretoken
 
 Run `foretoken --version` to check the installed CLI version.
 
+## Create a local cluster
+
+On a Linux GPU host with Docker, NVIDIA Container Toolkit, and k3d installed:
+
+```bash
+foretoken cluster create k3d --name foretoken-dev --gpus 0
+```
+
+For a CPU-oriented local development cluster:
+
+```bash
+foretoken cluster create kind --name foretoken-dev
+```
+
+Remove a cluster created by the CLI with:
+
+```bash
+foretoken cluster delete k3d --name foretoken-dev
+```
+
 ## Install the Kubernetes platform
 
 `foretoken install` installs the Foretoken CRDs and controller in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. Deploy model services separately with `foretoken deploy`.

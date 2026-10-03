@@ -34,6 +34,26 @@ uv pip install foretoken
 
 运行 `foretoken --version` 查看已安装的 CLI 版本。
 
+## 创建本地集群
+
+在已安装 Docker、NVIDIA Container Toolkit 和 k3d 的 Linux GPU 主机上执行：
+
+```bash
+foretoken cluster create k3d --name foretoken-dev --gpus 0
+```
+
+本地 CPU 开发集群执行：
+
+```bash
+foretoken cluster create kind --name foretoken-dev
+```
+
+删除由 CLI 创建的集群：
+
+```bash
+foretoken cluster delete k3d --name foretoken-dev
+```
+
 ## 安装 Kubernetes 平台
 
 `foretoken install` 会在当前 Kubernetes context 中安装 Foretoken CRD 和控制器。平台资源固定使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。模型服务通过 `foretoken deploy` 单独部署。
