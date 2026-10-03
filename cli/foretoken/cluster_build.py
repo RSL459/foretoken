@@ -281,6 +281,8 @@ class ClusterBuilder(AbstractContextManager):
         gc_limits = _cache_gc_limits(capacity)
         spec: dict[str, Any] = {
             "restartPolicy": "Never",
+            "hostNetwork": True,
+            "dnsPolicy": "Default",
             "automountServiceAccountToken": False,
             "tolerations": [
                 {"key": key, "operator": "Exists", "effect": "NoSchedule"}
@@ -818,6 +820,25 @@ rm -rf "$incoming"
         ]
         if target:
             args += ["--opt", "target=" + target]
+        syntax_image = (arguments or {}).get("BUILDKIT_SYNTAX_IMAGE")
+        if syntax_image:
+            source = self.workspace + "/" + dockerfile
+            generated = f"{self.workspace}/.foretoken-build/{uuid.uuid4().hex}/Dockerfile"
+            self.run(
+                [
+                    "sh",
+                    "-ec",
+                    'mkdir -p "$(dirname "$3")"; first=$(head -n 1 "$2"); '
+                    'if case "$first" in "# syntax="*) true;; *) false;; esac; then '
+                    'tail -n +2 "$2" > "$3"; else cp "$2" "$3"; fi',
+                    "rewrite",
+                    syntax_image,
+                    source,
+                    generated,
+                ],
+            )
+            dockerfile = generated.removeprefix(self.workspace + "/")
+            args[args.index("--opt") + 1] = "filename=" + dockerfile
         for key, value in (arguments or {}).items():
             local = self._local_image(value) if key.endswith("_IMAGE") else None
             if local:
