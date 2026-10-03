@@ -19,7 +19,6 @@ from foretoken.manifest import (
     DeploymentError,
     ForetokenDeployment,
     RuntimeCacheManifest,
-    parse_deployment,
 )
 
 REMOTE_RUNTIME_CACHE_SIZE = "10Gi"
@@ -42,28 +41,11 @@ class DirectoryVolumes:
 
     def apply(self, deployment: ForetokenDeployment, timeout: str) -> None:
         """Apply user intent, then bind directory PVs to the controller-created claims."""
-        if not any(cache.directory for cache in deployment.runtime_caches):
-            self.kubectl.apply(deployment.rendered)
-            return
-        prepared = self.apply_storage(deployment, timeout)
-        self.kubectl.apply(prepared.rendered)
-
-    def apply_storage(
-        self, deployment: ForetokenDeployment, timeout: str
-    ) -> ForetokenDeployment:
-        """Apply only storage resources and return the deployment with resolved storage fields."""
-        documents = copy.deepcopy(deployment.objects)
-        storage = tuple(
-            document
-            for document in documents
-            if document.get("kind") in {"Namespace", "RuntimeCache"}
-        )
-        if not storage:
-            return deployment
         caches = tuple(cache for cache in deployment.runtime_caches if cache.directory)
         if not caches:
-            self.kubectl.apply(yaml.safe_dump_all(storage, sort_keys=False))
-            return _prepared_deployment(deployment, documents)
+            self.kubectl.apply(deployment.rendered)
+            return
+        documents = copy.deepcopy(deployment.objects)
         context = self.kubectl.current_context()
         nodes = self.kubectl.list_cluster_resources(["nodes"])
         if not nodes:
@@ -114,12 +96,7 @@ class DirectoryVolumes:
             spec["directory"] = resolved
 
         # Let admission and the controller resolve the PVC contract before creating a PV.
-        storage = tuple(
-            document
-            for document in documents
-            if document.get("kind") in {"Namespace", "RuntimeCache"}
-        )
-        self.kubectl.apply(yaml.safe_dump_all(storage, sort_keys=False))
+        self.kubectl.apply(yaml.safe_dump_all(documents, sort_keys=False))
         for cache, path, hostnames in locations:
             self.kubectl.run(
                 [
@@ -144,7 +121,6 @@ class DirectoryVolumes:
                     f"PVC/{claim['metadata']['name']} is not owned by RuntimeCache/{cache.name}"
                 )
             self._bind(claim, path, hostnames, timeout)
-        return _prepared_deployment(deployment, documents)
 
     def _bind(
         self,
@@ -259,15 +235,6 @@ class DirectoryVolumes:
         """Recognize this lifecycle's persistent marker before checking claim and path."""
         key, owner = self.owner_annotation
         return (volume.get("metadata", {}).get("annotations") or {}).get(key) == owner
-
-
-def _prepared_deployment(
-    deployment: ForetokenDeployment, documents: list[dict[str, Any]]
-) -> ForetokenDeployment:
-    """Return the full deployment using the storage fields resolved for the cluster."""
-    return parse_deployment(
-        deployment.path, yaml.safe_dump_all(documents, sort_keys=False)
-    )
 
 
 def _resolve_directory(

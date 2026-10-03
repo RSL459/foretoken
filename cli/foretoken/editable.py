@@ -671,11 +671,10 @@ class EditableDeployment:
 
     def apply(
         self, deployment: ForetokenDeployment, timeout: str
-    ) -> tuple[ForetokenDeployment, bool]:
-        """Publish complete bundles and report whether storage was prepared first."""
+    ) -> ForetokenDeployment:
+        """Publish source bundles and return remaining intent for the final deployment apply."""
         objects = copy.deepcopy(deployment.objects)
         pending: dict[str, dict[str, dict[str, str]]] = {}
-        storage_prepared = False
         for obj in objects:
             component = _COMPONENTS.get(obj.get("kind"))
             if component is None:
@@ -710,16 +709,19 @@ class EditableDeployment:
             # Storage can be prepared without requiring the previous engine to start.
             from foretoken.storage import DirectoryVolumes
 
-            deployment = DirectoryVolumes(self.kubectl).apply_storage(
-                replace(
-                    deployment,
-                    objects=tuple(objects),
-                    rendered=yaml.safe_dump_all(objects, sort_keys=False),
-                ),
-                timeout,
+            storage_kinds = {"Namespace", "RuntimeCache"}
+            storage = tuple(
+                o for o in deployment.objects if o.get("kind") in storage_kinds
             )
-            objects = copy.deepcopy(deployment.objects)
-            storage_prepared = True
+            if storage:
+                DirectoryVolumes(self.kubectl).apply(
+                    replace(
+                        deployment,
+                        objects=storage,
+                        rendered=yaml.safe_dump_all(storage, sort_keys=False),
+                    ),
+                    timeout,
+                )
             for namespace, bundles in pending.items():
                 if not self._publish(namespace, bundles, timeout):
                     print(
@@ -728,11 +730,11 @@ class EditableDeployment:
                     )
                     self._rebuild(timeout)
                     return self.apply(deployment, timeout)
-        return (
-            parse_deployment(
-                deployment.path, yaml.safe_dump_all(objects, sort_keys=False)
-            ),
-            storage_prepared,
+            # Storage intent and directory bindings were applied before publication.
+            # Return only the remaining resources so the final apply does not repeat them.
+            objects = [o for o in objects if o.get("kind") not in storage_kinds]
+        return parse_deployment(
+            deployment.path, yaml.safe_dump_all(objects, sort_keys=False)
         )
 
     def _publish(
