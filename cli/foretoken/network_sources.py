@@ -14,7 +14,7 @@ import urllib.parse
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from functools import cache
+from functools import cache, partial
 
 
 @dataclass(frozen=True)
@@ -122,6 +122,48 @@ def _measure_url(url: str) -> float | None:
     return time.monotonic() - started
 
 
+def _measure_github(base: str) -> float | None:
+    """Probe archive and Git access because build consumers use both transports."""
+    started = time.monotonic()
+    deadline = started + SOURCE_SELECTION_POLICY.probe_timeout_seconds
+    repository = f"{base}/shiweijiezero/foretoken"
+    try:
+        refs = _read_url(f"{repository}.git/info/refs?service=git-upload-pack", deadline)
+        if b"# service=git-upload-pack" not in refs:
+            return None
+        archive = _read_url(f"{repository}/archive/refs/heads/main.tar.gz", deadline)
+        if not archive.startswith(b"\x1f\x8b"):
+            return None
+    except (OSError, TimeoutError, http.client.HTTPException, ssl.SSLError, ValueError):
+        return None
+    return time.monotonic() - started
+
+
+def _measure_cargo(index: str) -> float | None:
+    """Probe a sparse index and its advertised crate download under one deadline."""
+    started = time.monotonic()
+    deadline = started + SOURCE_SELECTION_POLICY.probe_timeout_seconds
+    try:
+        configuration = json.loads(_read_url(f"{index}/config.json", deadline))
+        download = configuration.get("dl")
+        if not isinstance(download, str):
+            return None
+        entry = _read_url(f"{index}/it/oa/itoa", deadline)
+        if not any(json.loads(line).get("vers") == "1.0.18" for line in entry.splitlines()):
+            return None
+        if "{" in download:
+            download = download.format(
+                crate="itoa", version="1.0.18", prefix="it/oa", lowerprefix="it/oa"
+            )
+        else:
+            download = f"{download.rstrip('/')}/itoa/1.0.18/download"
+        if not _read_url(download, deadline).startswith(b"\x1f\x8b"):
+            return None
+    except (OSError, TimeoutError, http.client.HTTPException, ssl.SSLError, ValueError, KeyError):
+        return None
+    return time.monotonic() - started
+
+
 def _bearer_parameters(header: str) -> dict[str, str]:
     """Decode the standard registry Bearer challenge fields used for anonymous pulls."""
     if not header.startswith("Bearer "):
@@ -208,11 +250,29 @@ def _select_mirror(
     return (mirror, elapsed) if _prefer_mirror(official, elapsed) else None
 
 
+def _oci_mirrors(host: str, repository: str, revision: str) -> tuple[_SourceMirror, ...]:
+    """Build shared registry candidates for platform pulls and source-image builds."""
+    prefixes = (f"m.daocloud.io/{host}",)
+    if host == "docker.io":
+        prefixes += ("docker.1ms.run",)
+    candidates = []
+    for prefix in prefixes:
+        mirror_host, _, namespace = prefix.partition("/")
+        mirror_repository = f"{namespace}/{repository}" if namespace else repository
+        candidates.append(
+            _SourceMirror(
+                partial(_measure_oci_manifest, mirror_host, mirror_repository, revision),
+                prefix,
+            )
+        )
+    return tuple(candidates)
+
+
 def platform_image_reference(reference: str, registry: str | None = None) -> str:
     """Resolve a platform-owned image default, preserving its tag or digest.
 
     An explicit registry replaces the original host. Automatic public proxies
-    retain that host as a path segment. Callers omit user-selected images.
+    use their upstream-specific repository paths. Callers omit user-selected images.
     """
     first, separator, path = reference.partition("/")
     if registry is not None:
@@ -240,39 +300,21 @@ def select_platform_oci_reference(reference: str) -> str:
         return reference
     if "@" in path:
         repository, revision = path.rsplit("@", 1)
-        revision_separator = "@"
     elif ":" in path.rsplit("/", 1)[-1]:
         repository, revision = path.rsplit(":", 1)
-        revision_separator = ":"
     else:
         repository, revision = path, "latest"
-        revision_separator = ""
     official_host = "registry-1.docker.io" if host == "docker.io" else host
-    mirrors = [("m.daocloud.io", f"{host}/{repository}")]
-    if host == "docker.io":
-        mirrors.append(("dockerproxy.net", repository))
+    mirrors = _oci_mirrors(host, repository, revision)
     with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
         official = executor.submit(
             _measure_oci_manifest, official_host, repository, revision
         )
-        mirror_futures = tuple(
-            executor.submit(_measure_oci_manifest, mirror_host, mirror_path, revision)
-            for mirror_host, mirror_path in mirrors
+        futures = tuple(executor.submit(mirror.measure) for mirror in mirrors)
+        selected = _select_mirror(
+            official.result(), mirrors, tuple(future.result() for future in futures)
         )
-        official_time = official.result()
-        mirror_measurements = tuple(future.result() for future in mirror_futures)
-    available = tuple(
-        (mirror, elapsed)
-        for mirror, elapsed in zip(mirrors, mirror_measurements, strict=True)
-        if elapsed is not None
-    )
-    if not available:
-        return reference
-    (mirror_host, mirror_path), mirror_time = min(available, key=lambda item: item[1])
-    if not _prefer_mirror(official_time, mirror_time):
-        return reference
-    suffix = f"{revision_separator}{revision}" if revision_separator else ""
-    return f"{scheme}{mirror_host}/{mirror_path}{suffix}"
+    return f"{scheme}{selected[0].value}/{path}" if selected else reference
 
 
 def select_source_build_sources(
@@ -291,16 +333,7 @@ def select_source_build_sources(
                         "library/rust",
                         "1.97.1-slim-bookworm",
                     ),
-                    (
-                        _SourceMirror(
-                            lambda: _measure_oci_manifest(
-                                "m.daocloud.io",
-                                "docker.io/library/rust",
-                                "1.97.1-slim-bookworm",
-                            ),
-                            "m.daocloud.io/docker.io",
-                        ),
-                    ),
+                    _oci_mirrors("docker.io", "library/rust", "1.97.1-slim-bookworm"),
                 ),
                 _SourceProbe(
                     "GCR",
@@ -308,16 +341,7 @@ def select_source_build_sources(
                     lambda: _measure_oci_manifest(
                         "gcr.io", "distroless/static-debian13", "nonroot"
                     ),
-                    (
-                        _SourceMirror(
-                            lambda: _measure_oci_manifest(
-                                "m.daocloud.io",
-                                "gcr.io/distroless/static-debian13",
-                                "nonroot",
-                            ),
-                            "m.daocloud.io/gcr.io",
-                        ),
-                    ),
+                    _oci_mirrors("gcr.io", "distroless/static-debian13", "nonroot"),
                 ),
                 _SourceProbe(
                     "GHCR",
@@ -327,15 +351,8 @@ def select_source_build_sources(
                         "shiweijiezero/foretoken/model-server",
                         "latest",
                     ),
-                    (
-                        _SourceMirror(
-                            lambda: _measure_oci_manifest(
-                                "m.daocloud.io",
-                                "ghcr.io/shiweijiezero/foretoken/model-server",
-                                "latest",
-                            ),
-                            "m.daocloud.io/ghcr.io",
-                        ),
+                    _oci_mirrors(
+                        "ghcr.io", "shiweijiezero/foretoken/model-server", "latest"
                     ),
                 ),
             )
@@ -346,25 +363,13 @@ def select_source_build_sources(
                 "PyPI",
                 "UV_DEFAULT_INDEX",
                 lambda: _measure_url("https://pypi.org/simple/modelscope/"),
-                (
-                    _SourceMirror(
-                        lambda: _measure_url(
-                            "https://pypi.tuna.tsinghua.edu.cn/simple/modelscope/"
-                        ),
+                tuple(
+                    _SourceMirror(partial(_measure_url, f"{index}/modelscope/"), index)
+                    for index in (
                         "https://pypi.tuna.tsinghua.edu.cn/simple",
-                    ),
-                    _SourceMirror(
-                        lambda: _measure_url(
-                            "https://mirrors.ustc.edu.cn/pypi/simple/modelscope/"
-                        ),
                         "https://mirrors.ustc.edu.cn/pypi/simple",
-                    ),
-                    _SourceMirror(
-                        lambda: _measure_url(
-                            "https://mirrors.aliyun.com/pypi/simple/modelscope/"
-                        ),
                         "https://mirrors.aliyun.com/pypi/simple",
-                    ),
+                    )
                 ),
             ),
             _SourceProbe(
@@ -373,58 +378,40 @@ def select_source_build_sources(
                 lambda: _measure_url(
                     "https://proxy.golang.org/golang.org/x/sync/@v/v0.20.0.info"
                 ),
-                (
+                tuple(
                     _SourceMirror(
-                        lambda: _measure_url(
-                            "https://goproxy.cn/golang.org/x/sync/@v/v0.20.0.info"
-                        ),
+                        partial(_measure_url, f"{proxy}/golang.org/x/sync/@v/v0.20.0.info"),
+                        proxy,
+                    )
+                    for proxy in (
                         "https://goproxy.cn",
-                    ),
-                    _SourceMirror(
-                        lambda: _measure_url(
-                            "https://mirrors.aliyun.com/goproxy/golang.org/x/sync/@v/v0.20.0.info"
-                        ),
                         "https://mirrors.aliyun.com/goproxy",
-                    ),
+                        "https://goproxy.io",
+                    )
                 ),
             ),
             _SourceProbe(
                 "Cargo registry",
                 "FORETOKEN_CARGO_REGISTRY",
-                lambda: _measure_url(
-                    "https://static.crates.io/crates/itoa/itoa-1.0.18.crate"
-                ),
-                (
-                    _SourceMirror(
-                        lambda: _measure_url(
-                            "https://rsproxy.cn/api/v1/crates/itoa/1.0.18/download"
-                        ),
-                        "sparse+https://rsproxy.cn/index/",
-                    ),
+                partial(_measure_cargo, "https://index.crates.io"),
+                tuple(
+                    _SourceMirror(partial(_measure_cargo, index), f"sparse+{index}/")
+                    for index in (
+                        "https://rsproxy.cn/index",
+                        "https://mirrors.sjtug.sjtu.edu.cn/crates.io-index",
+                    )
                 ),
             ),
             _SourceProbe(
                 "GitHub",
                 "FORETOKEN_GITHUB_MIRROR",
-                lambda: _measure_url(
-                    "https://github.com/shiweijiezero/foretoken/"
-                    "archive/refs/heads/main.tar.gz"
-                ),
-                (
-                    _SourceMirror(
-                        lambda: _measure_url(
-                            "https://gh-proxy.com/https://github.com/shiweijiezero/"
-                            "foretoken/archive/refs/heads/main.tar.gz"
-                        ),
+                partial(_measure_github, "https://github.com"),
+                tuple(
+                    _SourceMirror(partial(_measure_github, base), base)
+                    for base in (
                         "https://gh-proxy.com/https://github.com",
-                    ),
-                    _SourceMirror(
-                        lambda: _measure_url(
-                            "https://ghproxy.net/https://github.com/shiweijiezero/"
-                            "foretoken/archive/refs/heads/main.tar.gz"
-                        ),
                         "https://ghproxy.net/https://github.com",
-                    ),
+                    )
                 ),
             ),
         )
@@ -473,7 +460,7 @@ def select_source_build_sources(
         selected[probe.environment_name] = mirror.value
         official_time = "unavailable" if official is None else f"{official:.2f}s"
         messages.append(
-            f"{probe.name}: mirror {mirror_time:.2f}s, official {official_time}"
+            f"{probe.name}: {mirror.value} {mirror_time:.2f}s, official {official_time}"
         )
 
     return selected, tuple(messages), tuple(unavailable)
@@ -489,25 +476,17 @@ def select_huggingface_endpoint(
 
     encoded = urllib.parse.quote(repository, safe="/")
     official_endpoint = "https://huggingface.co"
-    mirror_endpoints = ("https://hf-mirror.com",)
-    endpoints = (official_endpoint, *mirror_endpoints)
-    with ThreadPoolExecutor(max_workers=len(endpoints)) as executor:
-        futures = tuple(
-            executor.submit(_measure_url, f"{endpoint}/api/models/{encoded}")
-            for endpoint in endpoints
-        )
-        official, *mirror_measurements = (
-            future.result() for future in futures
-        )
-    available = tuple(
-        (endpoint, elapsed)
-        for endpoint, elapsed in zip(mirror_endpoints, mirror_measurements, strict=True)
-        if elapsed is not None
+    mirrors = tuple(
+        _SourceMirror(partial(_measure_url, f"{endpoint}/api/models/{encoded}"), endpoint)
+        for endpoint in ("https://hf-mirror.com",)
     )
-    if available:
-        mirror, mirror_time = min(available, key=lambda item: item[1])
-        if _prefer_mirror(official, mirror_time):
-            return mirror
-    if official is not None:
-        return official_endpoint
-    return available[0][0] if available else None
+    with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
+        official = executor.submit(_measure_url, f"{official_endpoint}/api/models/{encoded}")
+        futures = tuple(executor.submit(mirror.measure) for mirror in mirrors)
+        official_time = official.result()
+        selected = _select_mirror(
+            official_time, mirrors, tuple(future.result() for future in futures)
+        )
+    if selected:
+        return selected[0].value
+    return official_endpoint if official_time is not None else None
