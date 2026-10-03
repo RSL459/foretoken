@@ -124,8 +124,14 @@ def _create_k3d(command: ClusterCommand, root: Path) -> None:
 
 def _delete(command: ClusterCommand) -> None:
     """Delete one explicitly named local kind or k3d cluster."""
-    _require_commands((command.kind,))
-    _run([command.kind, "cluster", "delete", command.name])
+    tool = "kind" if command.kind == "kind" else "k3d"
+    _require_commands((tool,))
+    arguments = (
+        [tool, "delete", "cluster", command.name]
+        if command.kind == "kind"
+        else [tool, "cluster", "delete", command.name]
+    )
+    _run(arguments)
 
 
 def run(command: ClusterCommand, root: Path | None = None) -> None:

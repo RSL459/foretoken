@@ -19,7 +19,7 @@ VLLM_METAX_IMAGE ?= foretoken-vllm-metax:dev
 
 GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GITHUB_MIRROR))/.insteadOf=https://github.com/,)
 
-.PHONY: vllm-source build-data-plane format verify-data-plane dev-build dev-deploy \
+.PHONY: vllm-source build-data-plane format verify-data-plane dev-build \
 	image-control-plane image-frontend image-vllm-metax image-model-server image-model-server-omni \
 	image-model-server-metax image-vllm-omni image-benchmark dashboard alert-receivers
 

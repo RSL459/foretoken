@@ -164,7 +164,7 @@ printf '\n'
 删除集群：
 
 ```bash
-k3d cluster delete "$CLUSTER"
+foretoken cluster delete k3d --name "$CLUSTER"
 ```
 
 删除集群会停止其中的 Pod 并释放 GPU。保留 `data`，创建新集群时恢复相同 bind mount，即可复用已下载的模型。

@@ -54,73 +54,19 @@ pip install foretoken
 
 ### 2. 安装 Kubernetes 平台
 
-如果是在已安装 Docker、NVIDIA Container Toolkit 和 k3d 的 Linux GPU 主机上，可以直接创建示例集群：
+创建示例 k3d 集群并安装 Foretoken：
 
 ```bash
-export GPU_INDICES=0
-export CLUSTER=foretoken-dev
-mkdir -p data
+foretoken cluster create k3d --name foretoken-dev --gpus 0
 
-declare -a K3D_VOLUME_ARGS=()
-declare -A K3D_MOUNTED_PATHS=()
-add_k3d_mount() {
-  local path="$1"
-  [ -e "$path" ] || return 0
-  [ -z "${K3D_MOUNTED_PATHS[$path]+x}" ] || return 0
-  K3D_MOUNTED_PATHS["$path"]=1
-  K3D_VOLUME_ARGS+=(--volume "$path:$path@server:0")
-}
-for NAME in nvidia-container-runtime nvidia-container-runtime-hook nvidia-container-cli nvidia-ctk; do
-  TOOL_PATH="$(command -v "$NAME")"
-  add_k3d_mount "$TOOL_PATH"
-  while read -r PATH_KIND LIBRARY_PATH; do
-    if [ "$PATH_KIND" = directory ]; then
-      add_k3d_mount "$(realpath -m "$(dirname "$LIBRARY_PATH")")"
-    else
-      add_k3d_mount "$LIBRARY_PATH"
-    fi
-  done < <(
-    ldd "$TOOL_PATH" |
-      awk '$2 == "=>" && $3 ~ /^\// { print "directory", $3 } $1 ~ /^\// { print "file", $1 }'
-  )
-done
-for CONFIG_DIR in /etc/nvidia-container-runtime /usr/local/etc/nvidia-container-runtime; do
-  add_k3d_mount "$CONFIG_DIR"
-done
-for LDCONFIG_PATH in "$(command -v ldconfig)" /sbin/ldconfig.real /usr/sbin/ldconfig.real; do
-  add_k3d_mount "$LDCONFIG_PATH"
-done
-add_k3d_mount "$(realpath data)"
-
-k3d cluster create "$CLUSTER" \
-  --config deploy/k3d/config.yaml \
-  --gpus "\"device=$GPU_INDICES\"" \
-  "${K3D_VOLUME_ARGS[@]}"
-
-kubectl apply -f \
-  https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.4/deployments/static/nvidia-device-plugin.yml
-kubectl set env daemonset/nvidia-device-plugin-daemonset \
-  --namespace kube-system NVIDIA_VISIBLE_DEVICES="$GPU_INDICES"
-kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
-  --namespace kube-system --timeout=5m
-```
-
-使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。然后检查当前 context：
-
-```bash
-kubectl config current-context
-kubectl get nodes
-```
-
-确认节点状态为 `Ready` 后，安装 Foretoken：
-
-```bash
 # 使用发布镜像：
 foretoken install
 
 # 从当前源码构建：
 # foretoken install -e .
 ```
+
+宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 Helm，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/k3d-deployment_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
 
 ### 3. 部署快速开始示例
 

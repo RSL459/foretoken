@@ -164,7 +164,7 @@ printf '\n'
 Delete the cluster:
 
 ```bash
-k3d cluster delete "$CLUSTER"
+foretoken cluster delete k3d --name "$CLUSTER"
 ```
 
 Deleting the cluster stops its Pods and releases the GPUs. Keep `data`; restore its bind mount when creating another cluster to reuse the downloaded models.
