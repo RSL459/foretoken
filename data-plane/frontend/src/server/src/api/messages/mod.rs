@@ -8,7 +8,7 @@
 //! Foretoken's Generation interface; this module does not own model processes.
 
 mod convert;
-mod error;
+pub(super) mod error;
 mod output;
 mod types;
 
@@ -17,7 +17,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde_json::json;
 
 use self::convert::{prepare_count_tokens_request, prepare_messages_request};
@@ -35,9 +35,10 @@ pub(super) fn router() -> Router<ApiState> {
 /// Lowers an Anthropic request and dispatches through the shared generation service.
 async fn messages(
     State(state): State<ApiState>,
+    timing: Option<Extension<RequestTiming>>,
     request: Result<Json<AnthropicMessagesRequest>, JsonRejection>,
 ) -> Response {
-    let timing = RequestTiming::now();
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let Json(request) = match request {
         Ok(request) => request,
         Err(error) => return json_error(error).into_response(),

@@ -9,6 +9,8 @@ use crate::{RouteFilter, RoutePicker, RouteScorer, RouterRequest};
 
 /// Filter, Scorer, Picker, and per-request customized context factory.
 pub struct RouterPipeline<C: Send + 'static = ()> {
+    /// Admission shared by every routing generation using this pipeline.
+    pub admission: Option<Arc<crate::Admission>>,
     /// Candidate-list filter.
     pub(super) filter: Arc<dyn RouteFilter<C>>,
     /// Filtered-candidate scorer.
@@ -39,6 +41,7 @@ impl<C: Send + 'static> RouterPipeline<C> {
         customized_context_factory: impl Fn(&RouterRequest) -> C + Send + Sync + 'static,
     ) -> Self {
         Self {
+            admission: None,
             filter,
             scorer,
             picker,

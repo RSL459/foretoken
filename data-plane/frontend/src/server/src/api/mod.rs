@@ -39,6 +39,7 @@ impl ApiState {
         timing: RequestTiming,
     ) -> Result<GeneratedChat, GenerationError> {
         let request = GenerationRequest {
+            admission: None,
             model,
             request_id: chat.request_id.clone(),
             prompt: Prompt::Text(String::new()),
@@ -65,13 +66,14 @@ impl ApiState {
 }
 
 /// The common timing origin captured before protocol conversion or completion fan-out.
-struct RequestTiming {
-    started_at: Instant,
+#[derive(Clone, Copy)]
+pub(crate) struct RequestTiming {
+    pub(crate) started_at: Instant,
     arrival_time: Option<f64>,
 }
 
 impl RequestTiming {
-    fn now() -> Self {
+    pub(crate) fn now() -> Self {
         Self {
             started_at: Instant::now(),
             arrival_time: Some(vllm_llm::current_unix_timestamp_secs()),
@@ -84,6 +86,18 @@ pub(crate) fn router() -> Router<ApiState> {
     openai::router()
         .merge(messages::router())
         .merge(responses::router())
+}
+
+/// Maps intake errors through the same protocol adapters as generation failures.
+pub(crate) fn generation_error(path: &str, error: GenerationError) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if path.starts_with("/v1/messages") {
+        messages::error::AnthropicApiError::from(error).into_response()
+    } else if path == "/v1/responses" {
+        responses::error::ApiError::generation(error).into_response()
+    } else {
+        openai::openai_error(error)
+    }
 }
 
 /// Creates the request identity used by the backend and the corresponding API response.

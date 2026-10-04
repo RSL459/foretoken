@@ -91,6 +91,11 @@ impl<'de> Deserialize<'de> for AlgorithmName {
     }
 }
 
+/// Configured admission selection before preprocessing and target selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AdmissionAlgorithm(AlgorithmName);
+
 /// Configured Filter selection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -137,6 +142,7 @@ macro_rules! algorithm_name_wrapper {
     };
 }
 
+algorithm_name_wrapper!(AdmissionAlgorithm, "concurrency");
 algorithm_name_wrapper!(FilterAlgorithm, "allow_all");
 algorithm_name_wrapper!(ScorerAlgorithm, "kv_least_loaded");
 algorithm_name_wrapper!(PickerAlgorithm, "gamble_sampling");
@@ -161,6 +167,7 @@ impl<A: Default> Default for AlgorithmStage<A> {
     }
 }
 
+pub type AdmissionStage = AlgorithmStage<AdmissionAlgorithm>;
 pub type FilterStage = AlgorithmStage<FilterAlgorithm>;
 pub type ScorerStage = AlgorithmStage<ScorerAlgorithm>;
 pub type PickerStage = AlgorithmStage<PickerAlgorithm>;
@@ -168,6 +175,9 @@ pub type PickerStage = AlgorithmStage<PickerAlgorithm>;
 /// Configured algorithms selected for each Router pipeline stage.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RouterPipelineConfig {
+    /// Optional process-local admission; omission retains unrestricted routing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<AdmissionStage>,
     /// Filter used before scoring.
     #[serde(default)]
     pub filter: FilterStage,
@@ -219,6 +229,25 @@ impl RouterPipelineConfig {
         let mut pipeline =
             RouterPipeline::new(configured_filter, configured_scorer, configured_picker);
         pipeline.algorithm_names = [filter.name, scorer.name, picker.name];
+        pipeline.admission = self
+            .admission
+            .as_ref()
+            .map(|stage| {
+                if stage.algorithm.as_str() != "concurrency" {
+                    return Err(RouterPipelineConfigError::UnknownAlgorithm {
+                        category: "admission",
+                        name: stage.algorithm.to_string(),
+                    });
+                }
+                crate::Admission::from_parameters(serde_json::Value::Object(
+                    stage.parameters.clone(),
+                ))
+                .map_err(|message| RouterPipelineConfigError::InvalidParameters {
+                    name: "admission.concurrency".into(),
+                    message,
+                })
+            })
+            .transpose()?;
         Ok(pipeline)
     }
 
@@ -303,8 +332,8 @@ fn validate_descriptor_names<'a>(
 /// A pipeline configuration or compiled registry is invalid.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RouterPipelineConfigError {
-    /// The selected scorer rejected its parameters.
-    #[error("invalid parameters for scorer {name:?}: {message}")]
+    /// The selected router algorithm rejected its parameters.
+    #[error("invalid parameters for router algorithm {name:?}: {message}")]
     InvalidParameters { name: String, message: String },
     /// A configured name was empty.
     #[error("router algorithm name must not be empty")]

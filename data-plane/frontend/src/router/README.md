@@ -5,6 +5,8 @@
 
 The Router chooses a healthy target that supports the requested model, input length, and capabilities. It also keeps the stages of separate prefill/decode or encoder/prefill/decode services compatible.
 
+## Select a routing strategy
+
 To route toward targets with fewer queued requests, add this to a `FrontendService`:
 
 ```yaml
@@ -14,7 +16,7 @@ spec:
       algorithm: queue_depth
 ```
 
-Set `spec.routerPipeline` only when you want to change the routing strategy. By default, all compatible targets are considered (`allow_all`), ranked with `kv_least_loaded`, then selected with `gamble_sampling`. Each stage accepts an `algorithm`; scorer-specific options belong under `scorer.parameters`.
+Omit `filter`, `scorer`, and `picker` to use the default routing strategy. By default, all compatible targets are considered (`allow_all`), ranked with `kv_least_loaded`, then selected with `gamble_sampling`. Each stage accepts an `algorithm`; scorer-specific options belong under `scorer.parameters`.
 
 | Stage | Algorithm | Selection behavior |
 | --- | --- | --- |
@@ -32,3 +34,29 @@ Set `spec.routerPipeline` only when you want to change the routing strategy. By 
 | Picker | `max` · `power_of_two_choices` | Choose the highest score · sample two distinct targets and choose the higher score (random on ties). |
 
 When the KV index is unavailable, targets remain eligible without KV-prefix preference. See the [KV prefix index](../kv-indexer/README.md) for cache-locality behavior.
+
+## Limit concurrent requests
+
+To bound work accepted by each frontend replica, add an Admission stage:
+
+```yaml
+spec:
+  routerPipeline:
+    admission:
+      parameters:
+        maxConcurrentRequests: 64
+```
+
+This example allows 64 simultaneous generations and rejects excess requests with HTTP 503. Choose the limit from measurements of your workload; 64 is an example, not a default. Omit `admission` to leave this protection disabled. The stage's algorithm defaults to `concurrency`.
+
+For short bursts, set `maxQueuedRequests: 128` and `queueTimeout: 2s` under the same `parameters` block. Queued requests receive capacity in FIFO order before preprocessing and target selection.
+
+| Parameter | Purpose | Default |
+| --- | --- | --- |
+| `maxConcurrentRequests` | Maximum concurrent generations per frontend replica | Required |
+| `maxQueuedRequests` | Maximum generations waiting for capacity | `0`, no queue |
+| `queueTimeout` | Maximum time waiting for admission | Remaining request timeout |
+
+A batched completion counts each output candidate separately: four prompts with `n: 2` need eight slots. A batch larger than the concurrency limit returns HTTP 400. Queue exhaustion and queue timeout return HTTP 503; the overall request timeout still applies. Text generation and tokenization share this protection; video requests and background video tasks do not.
+
+Each frontend replica shares these limits across its models; they are not cluster-wide quotas. Health probes remain available when capacity is full. Admission does not change how targets are filtered, scored, or selected.

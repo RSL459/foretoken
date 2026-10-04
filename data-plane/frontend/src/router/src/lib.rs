@@ -3,6 +3,8 @@
 
 //! Composable selection of one routable ModelGroup per routing round.
 
+mod admission;
+pub use admission::{Admission, AdmissionError, AdmissionPermit};
 pub mod algorithm;
 mod cache;
 mod inventory;
@@ -25,8 +27,9 @@ pub use metrics::render_metrics;
 pub use request::RouterRequest;
 pub use route_target_stats::{RouteTargetLatencyStats, RouteTargetStats, RouteTargetStatsReader};
 pub use selection::{
-    AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, FilterStage, PickerAlgorithm,
-    PickerDescriptor, PickerStage, PipelineRouter, RouteCandidate, RouteError, RouteScore,
-    RouteSession, Router, RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError,
-    RoutingProgress, RoutingStage, ScoredCandidate, ScorerAlgorithm, ScorerDescriptor, ScorerStage,
+    AdmissionAlgorithm, AdmissionStage, AlgorithmName, CandidateIndex, FilterAlgorithm,
+    FilterDescriptor, FilterStage, PickerAlgorithm, PickerDescriptor, PickerStage, PipelineRouter,
+    RouteCandidate, RouteError, RouteScore, RouteSession, Router, RouterPipeline,
+    RouterPipelineConfig, RouterPipelineConfigError, RoutingProgress, RoutingStage,
+    ScoredCandidate, ScorerAlgorithm, ScorerDescriptor, ScorerStage,
 };

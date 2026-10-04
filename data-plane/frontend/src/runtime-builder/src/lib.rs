@@ -61,6 +61,14 @@ impl RuntimeBuilder {
         }
     }
 
+    /// Shares the process-wide Router admission owner with HTTP intake and generation.
+    pub fn admission(&self) -> Result<Option<Arc<foretoken_router::Admission>>, RuntimeBuildError> {
+        self.router_pipeline
+            .as_ref()
+            .map(|pipeline| pipeline.admission.clone())
+            .map_err(|error| RuntimeBuildError::RouterPipeline(error.to_string()))
+    }
+
     /// Decodes controller-provided bytes into a serving snapshot candidate for [`Self::build`].
     pub fn parse(&self, bytes: &[u8]) -> Result<ServingSnapshot, RuntimeBuildError> {
         Ok(serde_json::from_slice(bytes)?)

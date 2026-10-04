@@ -164,6 +164,43 @@ spec:
                 description: RouterPipeline selects each independently composable
                   routing algorithm stage.
                 properties:
+                  admission:
+                    description: Admission is omitted to retain unrestricted routing.
+                    properties:
+                      algorithm:
+                        default: concurrency
+                        description: RouterAlgorithm names one compiled routing algorithm.
+                        minLength: 1
+                        type: string
+                      parameters:
+                        description: AdmissionParameters sets process-local concurrency
+                          and queue limits for the frontend.
+                        properties:
+                          maxConcurrentRequests:
+                            format: int64
+                            maximum: 4294967295
+                            minimum: 1
+                            type: integer
+                          maxQueuedRequests:
+                            format: int64
+                            maximum: 4294967295
+                            minimum: 0
+                            type: integer
+                          queueTimeout:
+                            description: QueueTimeout limits queueing within the remaining
+                              request budget.
+                            minLength: 2
+                            pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                            type: string
+                            x-kubernetes-validations:
+                            - message: must be a positive duration
+                              rule: duration(self) > duration('0s')
+                        required:
+                        - maxConcurrentRequests
+                        type: object
+                    required:
+                    - parameters
+                    type: object
                   filter:
                     default:
                       algorithm: allow_all

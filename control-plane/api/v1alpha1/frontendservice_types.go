@@ -43,8 +43,40 @@ type RouterStage struct {
 	Parameters *runtime.RawExtension `json:"parameters,omitempty"`
 }
 
+// AdmissionParameters sets process-local concurrency and queue limits for the frontend.
+type AdmissionParameters struct {
+	// +kubebuilder:validation:Format=int64
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	MaxConcurrentRequests uint32 `json:"maxConcurrentRequests"`
+
+	// +optional
+	// +kubebuilder:validation:Format=int64
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4294967295
+	MaxQueuedRequests uint32 `json:"maxQueuedRequests,omitempty"`
+
+	// QueueTimeout limits queueing within the remaining request budget.
+	// +optional
+	QueueTimeout Duration `json:"queueTimeout,omitempty"`
+}
+
+// AdmissionStage selects the optional request admission algorithm and its parameters.
+type AdmissionStage struct {
+	// +optional
+	// +kubebuilder:default=concurrency
+	// +kubebuilder:validation:MinLength=1
+	Algorithm RouterAlgorithm `json:"algorithm,omitempty"`
+
+	Parameters AdmissionParameters `json:"parameters"`
+}
+
 // RouterPipeline selects each independently composable routing algorithm stage.
 type RouterPipeline struct {
+	// Admission is omitted to retain unrestricted routing.
+	// +optional
+	Admission *AdmissionStage `json:"admission,omitempty"`
+
 	// +kubebuilder:default={algorithm:allow_all,parameters:{}}
 	Filter RouterStage `json:"filter"`
 
