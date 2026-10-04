@@ -26,10 +26,12 @@ COPY data-plane/ ./data-plane/
 
 # Key the target cache by the builder image: artifacts built on different
 # Debian releases are not interchangeable even with the same Rust version.
+# Retain prepared Rust inputs with their outputs, isolated from legacy builders.
+# Copy changed trees afresh so patch removals also receive mtimes Cargo can observe.
 RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
     --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=foretoken-cargo-target-bookworm,target=/workspace/data-plane/target,sharing=locked \
+    --mount=type=cache,id=foretoken-cargo-target-bookworm-prepared-source,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
       git config --global url."${FORETOKEN_GITHUB_MIRROR%/}/".insteadOf https://github.com/; \
     fi \
@@ -51,6 +53,17 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
       && git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
     fi \
     && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
+    && mkdir -p data-plane/target/vllm-rust \
+    && if git diff --no-index --quiet data-plane/target/vllm-rust data-plane/third_party/vllm/rust; then \
+      :; \
+    else \
+      result=$?; \
+      test "$result" -eq 1 \
+      && rm -rf data-plane/target/vllm-rust \
+      && cp -R data-plane/third_party/vllm/rust data-plane/target/vllm-rust; \
+    fi \
+    && rm -rf data-plane/third_party/vllm/rust \
+    && cp -a data-plane/target/vllm-rust data-plane/third_party/vllm/rust \
     && cargo build --locked --release \
       --manifest-path data-plane/Cargo.toml \
       --package foretoken-frontend \
