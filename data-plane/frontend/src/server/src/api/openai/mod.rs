@@ -32,6 +32,10 @@ use self::output::{
 };
 use super::{ApiState, RequestTiming, server_request_id};
 use crate::runtime::{GenerationError, GenerationRequest};
+use crate::{AdmissionOrigin, admission};
+use foretoken_router::algorithm::admission::{
+    AdmissionApi, AdmissionOperation, AdmissionOutput, AdmissionRequest,
+};
 
 const MAX_COMPLETION_FAN_OUT: usize = 64;
 
@@ -104,8 +108,14 @@ fn resolve_model(state: &ApiState, requested: Option<String>) -> Result<String, 
 
 async fn tokenize(
     State(state): State<ApiState>,
+    timing: Option<Extension<RequestTiming>>,
     request: Result<Json<TokenizeRequest>, JsonRejection>,
 ) -> Response {
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
+    let origin = AdmissionOrigin {
+        api: Some(AdmissionApi::OpenAi),
+        received_at: timing.started_at,
+    };
     let Json(request) = match request {
         Ok(request) => request,
         Err(_) => return client_error(),
@@ -123,6 +133,7 @@ async fn tokenize(
                     Prompt::Text(request.prompt),
                     request.add_special_tokens,
                     request.return_token_strs,
+                    origin,
                 )
                 .await
         }
@@ -190,7 +201,7 @@ async fn tokenize(
             };
             state
                 .generation
-                .tokenize_chat(&model, chat, request.return_token_strs)
+                .tokenize_chat(&model, chat, request.return_token_strs, origin)
                 .await
         }
     };
@@ -208,8 +219,14 @@ async fn tokenize(
 
 async fn detokenize(
     State(state): State<ApiState>,
+    timing: Option<Extension<RequestTiming>>,
     request: Result<Json<DetokenizeRequest>, JsonRejection>,
 ) -> Response {
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
+    let origin = AdmissionOrigin {
+        api: Some(AdmissionApi::OpenAi),
+        received_at: timing.started_at,
+    };
     let Json(request) = match request {
         Ok(request) => request,
         Err(_) => return client_error(),
@@ -218,7 +235,11 @@ async fn detokenize(
         Ok(model) => model,
         Err(error) => return openai_error(error),
     };
-    match state.generation.detokenize(&model, &request.tokens).await {
+    match state
+        .generation
+        .detokenize(&model, &request.tokens, origin)
+        .await
+    {
         Ok(prompt) => Json(DetokenizeResponse { prompt }).into_response(),
         Err(error) => openai_error(error),
     }
@@ -750,11 +771,24 @@ async fn completions(
         sampling_params.logprobs = Some(0);
     }
     let units = prompts.len() * best_of as usize;
-    let mut admission = match state
-        .generation
-        .admit(&request.model, units as u32, timing.started_at)
-        .await
-    {
+    let request_id = server_request_id("cmpl");
+    let admission_request = AdmissionRequest {
+        model: request.model.clone(),
+        operation: AdmissionOperation::Completion,
+        api: Some(AdmissionApi::OpenAi),
+        request_id: Some(request_id.clone()),
+        inputs: prompts.iter().map(admission::prompt_input).collect(),
+        candidates_per_input: best_of,
+        output: AdmissionOutput {
+            requested_max_tokens: request.max_tokens,
+            execution_max_tokens: sampling_params.max_tokens,
+            expected_tokens: None,
+        },
+        requested_priority: request.priority,
+        stream,
+        received_at: timing.started_at,
+    };
+    let mut admission = match state.generation.admit(&admission_request).await {
         Ok(permit) => permit,
         Err(error) => return openai_error(error),
     };
@@ -765,8 +799,14 @@ async fn completions(
                 .generation
                 .generate(GenerationRequest {
                     admission: Some(admission.split_one()),
+                    api: Some(AdmissionApi::OpenAi),
+                    requested_max_tokens: request.max_tokens,
                     model: request.model.clone(),
-                    request_id: server_request_id("cmpl"),
+                    request_id: if generated.is_empty() {
+                        request_id.clone()
+                    } else {
+                        server_request_id("cmpl")
+                    },
                     prompt: prompt.clone(),
                     sampling_params: sampling_params.clone(),
                     decode_options: decode_options(request.stop.clone()),
@@ -916,7 +956,13 @@ async fn chat_completions(
         return client_error();
     }
     let generated = match state
-        .generate_chat(request.model, chat, include_reasoning, timing)
+        .generate_chat(
+            request.model,
+            chat,
+            include_reasoning,
+            timing,
+            AdmissionApi::OpenAi,
+        )
         .await
     {
         Ok(generated) => generated,

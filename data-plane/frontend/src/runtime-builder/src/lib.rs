@@ -12,8 +12,10 @@ use foretoken_backend_registry::{
 };
 use foretoken_kv_indexer::{KvIndexDegradedReason, KvIndexer};
 use foretoken_llm_facade::LlmFacadeResolver;
+use foretoken_router::algorithm::admission::AdmissionTargetState;
 use foretoken_router::{
-    PipelineRouter, Router, RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError,
+    PipelineRouter, RouteInventory, RouteTargetStatsReader, Router, RouterPipeline,
+    RouterPipelineConfig, RouterPipelineConfigError,
 };
 use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
@@ -62,7 +64,9 @@ impl RuntimeBuilder {
     }
 
     /// Shares the process-wide Router admission owner with HTTP intake and generation.
-    pub fn admission(&self) -> Result<Option<Arc<foretoken_router::Admission>>, RuntimeBuildError> {
+    pub fn admission(
+        &self,
+    ) -> Result<Arc<dyn foretoken_router::RouteAdmission>, RuntimeBuildError> {
         self.router_pipeline
             .as_ref()
             .map(|pipeline| pipeline.admission.clone())
@@ -114,6 +118,7 @@ impl RuntimeBuilder {
         let control = Arc::new(RegistryRuntimeControl {
             registry: registry.clone(),
             kv_indexer: kv_indexer.clone(),
+            routing_load: self.routing_load.clone(),
         });
         control.refresh_backend_readiness().await;
         if has_physical_backends && !registry.is_ready() {
@@ -229,6 +234,7 @@ pub enum RuntimeBuildError {
 struct RegistryRuntimeControl {
     registry: Arc<BackendRegistry>,
     kv_indexer: Arc<KvIndexer>,
+    routing_load: foretoken_router::RoutingLoadState,
 }
 
 #[async_trait]
@@ -250,6 +256,40 @@ impl RuntimeControl for RegistryRuntimeControl {
 
     fn model_ready(&self, model: &str) -> bool {
         self.registry.is_model_ready(model)
+    }
+
+    fn route_target_states(
+        &self,
+        model: &str,
+        window: std::time::Duration,
+    ) -> Vec<AdmissionTargetState> {
+        self.registry
+            .model_routes()
+            .routes()
+            .iter()
+            .filter(|target| target.model == model)
+            .map(|target| {
+                let mut target = target.clone();
+                target.capabilities = self
+                    .registry
+                    .effective_capabilities(&target.route_target_id);
+                AdmissionTargetState {
+                    healthy: self
+                        .registry
+                        .is_route_target_healthy(&target.route_target_id),
+                    statistics: self.registry.stats(&target.route_target_id, window),
+                    frontend_load: (0..target.data_parallel_size)
+                        .map(|rank| {
+                            (
+                                rank,
+                                self.routing_load.snapshot(&target.route_target_id, rank),
+                            )
+                        })
+                        .collect(),
+                    target,
+                }
+            })
+            .collect()
     }
 
     fn kv_index_diagnostics(&self) -> KvIndexDiagnostics {

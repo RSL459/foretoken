@@ -7,11 +7,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use tokio::sync::{Semaphore, TryAcquireError};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 use crate::metrics::{AdmissionRejectionLabels, METRICS};
 
-use super::{AdmissionError, AdmissionPermit, PermitKind};
+use super::{AdmissionContext, AdmissionError, AdmissionPermit, AdmissionRequest, AdmissionReservation, RouteAdmission};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -24,7 +24,7 @@ struct Parameters {
 
 /// Runtime state for one frontend's concurrency admission rule.
 /// The pipeline retains this owner across serving-snapshot replacements.
-pub struct Admission {
+pub struct ConcurrencyAdmission {
     capacity: u32,
     active: Arc<Semaphore>,
     queued: Arc<Semaphore>,
@@ -32,9 +32,9 @@ pub struct Admission {
     queue_timeout: Option<Duration>,
 }
 
-impl Admission {
+impl ConcurrencyAdmission {
     /// Resolves the concurrency stage once at process startup, without guessing capacity.
-    pub fn from_parameters(parameters: serde_json::Value) -> Result<Arc<Self>, String> {
+    pub fn from_parameters(parameters: serde_json::Value) -> Result<Self, String> {
         let parameters: Parameters = serde_json::from_value(parameters)
             .map_err(|error| format!("routerPipeline.admission.parameters: {error}"))?;
         let capacity = parameters.max_concurrent_requests;
@@ -66,34 +66,41 @@ impl Admission {
                     })
             })
             .transpose()?;
-        Ok(Arc::new(Self {
+        Ok(Self {
             capacity,
             active: Arc::new(Semaphore::new(capacity as usize)),
             queued: Arc::new(Semaphore::new(parameters.max_queued_requests as usize)),
             resident: Arc::new(Semaphore::new(resident)),
             queue_timeout,
-        }))
+        })
     }
 
-    /// Reserves an HTTP request before body extraction; the response retains the permit.
-    pub fn try_reserve_request(&self) -> Result<AdmissionPermit, AdmissionError> {
+}
+
+#[async_trait::async_trait]
+impl RouteAdmission for ConcurrencyAdmission {
+    fn requires_ready_runtime(&self) -> bool {
+        true
+    }
+
+    fn try_reserve_request(&self) -> Result<AdmissionPermit, AdmissionError> {
         self.resident
             .clone()
             .try_acquire_owned()
-            .map(|permit| AdmissionPermit::counted(permit, PermitKind::Resident))
+            .map(|permit| Reservation::counted(permit, PermitKind::Resident))
             .map_err(|error| match error {
                 TryAcquireError::Closed => AdmissionError::Closed,
                 TryAcquireError::NoPermits => rejected("resident_full", AdmissionError::Overloaded),
             })
     }
 
-    /// Admits a complete generation batch or waits within both queue and request budgets.
-    /// Canceling this future drops its semaphore waiter and queue observation.
-    pub async fn acquire(
+    async fn admit(
         &self,
-        units: u32,
-        deadline: tokio::time::Instant,
+        request: &AdmissionRequest,
+        context: &AdmissionContext<'_>,
     ) -> Result<AdmissionPermit, AdmissionError> {
+        let units = request.units().ok_or_else(|| rejected("batch_too_large", AdmissionError::BatchTooLarge))?;
+        let deadline = context.deadline;
         if units == 0 || units > self.capacity {
             return Err(rejected("batch_too_large", AdmissionError::BatchTooLarge));
         }
@@ -101,7 +108,7 @@ impl Admission {
             return Err(AdmissionError::DeadlineExceeded);
         }
         match self.active.clone().try_acquire_many_owned(units) {
-            Ok(permit) => return Ok(AdmissionPermit::counted(permit, PermitKind::Active)),
+            Ok(permit) => return Ok(Reservation::counted(permit, PermitKind::Active)),
             Err(TryAcquireError::Closed) => return Err(AdmissionError::Closed),
             Err(TryAcquireError::NoPermits) => {}
         }
@@ -117,7 +124,7 @@ impl Admission {
                 })?;
         let started = tokio::time::Instant::now();
         let _waiting = QueueWait {
-            _permit: AdmissionPermit::counted(queued, PermitKind::Queued),
+            _permit: Reservation::counted(queued, PermitKind::Queued),
             started: started.into_std(),
         };
         let expires = self
@@ -134,18 +141,61 @@ impl Admission {
         // A ready semaphore can win before the timer driver observes an elapsed deadline.
         match permit {
             Some(permit) if tokio::time::Instant::now() < expires => {
-                Ok(AdmissionPermit::counted(permit, PermitKind::Active))
+                Ok(Reservation::counted(permit, PermitKind::Active))
             }
             _ if expires == deadline => Err(AdmissionError::DeadlineExceeded),
             _ => Err(rejected("queue_timeout", AdmissionError::QueueTimeout)),
         }
     }
 
-    /// Wakes pending requests on process shutdown while accepted work keeps its permits.
-    pub fn close(&self) {
+    fn close(&self) {
         self.resident.close();
         self.queued.close();
         self.active.close();
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PermitKind {
+    Active,
+    Queued,
+    Resident,
+}
+
+// Each guard accounts only for its remaining units; split transfers already-counted ownership.
+struct Reservation {
+    permit: OwnedSemaphorePermit,
+    kind: PermitKind,
+}
+
+impl Reservation {
+    fn counted(permit: OwnedSemaphorePermit, kind: PermitKind) -> AdmissionPermit {
+        let reservation = Self { permit, kind };
+        reservation.gauge().inc_by(reservation.permit.num_permits() as i64);
+        AdmissionPermit::new(reservation)
+    }
+
+    fn gauge(&self) -> &prometheus_client::metrics::gauge::Gauge {
+        match self.kind {
+            PermitKind::Active => &METRICS.admission_active,
+            PermitKind::Queued => &METRICS.admission_queued,
+            PermitKind::Resident => &METRICS.admission_resident,
+        }
+    }
+}
+
+impl AdmissionReservation for Reservation {
+    fn split_one(&mut self) -> Box<dyn AdmissionReservation> {
+        Box::new(Self {
+            permit: self.permit.split(1).expect("generation batch has a reserved unit for each child"),
+            kind: self.kind,
+        })
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        self.gauge().dec_by(self.permit.num_permits() as i64);
     }
 }
 

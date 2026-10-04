@@ -3,18 +3,33 @@
 
 //! Unrestricted admission without runtime accounting.
 
-use std::sync::Arc;
+use super::{AdmissionContext, AdmissionError, AdmissionPermit, AdmissionRequest, RouteAdmission};
 
-use super::Admission;
+/// Accepts requests without allocating capacity or queue state.
+#[derive(Default)]
+pub struct AllowAllAdmission;
 
-/// Resolves the parameter-free rule without allocating admission state.
-pub(super) fn build(parameters: serde_json::Value) -> Result<Option<Arc<Admission>>, String> {
-    if parameters
-        .as_object()
-        .is_some_and(|parameters| parameters.is_empty())
-    {
-        Ok(None)
-    } else {
-        Err("allow_all admission accepts no parameters".into())
+impl AllowAllAdmission {
+    /// Builds the parameter-free rule selected by the pipeline configuration.
+    pub fn from_parameters(parameters: serde_json::Value) -> Result<Self, String> {
+        if parameters
+            .as_object()
+            .is_some_and(|parameters| parameters.is_empty())
+        {
+            Ok(Self)
+        } else {
+            Err("allow_all admission accepts no parameters".into())
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RouteAdmission for AllowAllAdmission {
+    async fn admit(
+        &self,
+        _request: &AdmissionRequest,
+        _context: &AdmissionContext<'_>,
+    ) -> Result<AdmissionPermit, AdmissionError> {
+        Ok(AdmissionPermit::default())
     }
 }

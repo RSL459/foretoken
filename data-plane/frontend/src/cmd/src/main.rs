@@ -42,9 +42,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential));
-    let generation = Arc::new(
-        RuntimeGeneration::new(config.request_timeout).with_admission(builder.admission()?),
-    );
+    let generation = Arc::new(RuntimeGeneration::new(
+        config.request_timeout,
+        builder.admission()?,
+    ));
 
     // Bind the HTTP listener before launching the refresh loops. The process can remain
     // live while readiness stays false until a valid routing snapshot is published.

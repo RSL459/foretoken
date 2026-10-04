@@ -76,6 +76,9 @@ async fn protect_intake(
         Ok(permit) => permit,
         Err(error) => return api::generation_error(&path, GenerationError::from(error)),
     };
+    if !permit.is_reserved() {
+        return next.run(request).await;
+    }
     let timing = api::RequestTiming::now();
     request.extensions_mut().insert(timing);
     let response = if let Some(timeout) = generation.request_timeout() {

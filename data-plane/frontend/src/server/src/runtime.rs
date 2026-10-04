@@ -15,9 +15,13 @@ use foretoken_chat::{
     ParserSelection,
 };
 use foretoken_llm_facade::{LlmFacadeError, LlmFacadeResolver, TokenStream};
+use foretoken_router::algorithm::admission::{
+    AdmissionApi, AdmissionContext, AdmissionModelState, AdmissionModelStatus, AdmissionService,
+    AdmissionStateReader, AdmissionTargetState,
+};
 use foretoken_router::{
-    Admission, AdmissionError, AdmissionPermit, RouteDecision, RouteInventory, RouteTargetSet,
-    Router, RouterRequest,
+    AdmissionError, AdmissionPermit, AdmissionRequest, RouteAdmission, RouteDecision,
+    RouteInventory, RouteTargetSet, Router, RouterRequest,
 };
 use foretoken_text::{
     Prompt, SamplingParams, TextDecodeOptions, TextRequest, TextRequestProcessor,
@@ -29,6 +33,7 @@ use thiserror::Error;
 
 pub(crate) mod workflow;
 
+use crate::{AdmissionOrigin, admission};
 use workflow::execute_workflow;
 
 /// The tokenizer and chat renderer from one immutable model snapshot.
@@ -60,6 +65,9 @@ impl RuntimeBundle {
 pub struct GenerationRequest {
     /// A batch child may already own its atomically reserved admission unit.
     pub admission: Option<AdmissionPermit>,
+    /// API origin and requested budget remain distinct from lowered execution parameters.
+    pub api: Option<AdmissionApi>,
+    pub requested_max_tokens: Option<u32>,
     pub model: String,
     pub request_id: String,
     pub prompt: Prompt,
@@ -195,6 +203,11 @@ pub trait RuntimeControl: Send + Sync {
         self.is_ready()
     }
 
+    /// Reads locally cached route metadata and load for admission without opening backend connections.
+    fn route_target_states(&self, _model: &str, _window: Duration) -> Vec<AdmissionTargetState> {
+        Vec::new()
+    }
+
     /// Returns an owned snapshot of the latest KV-index health for status and metrics consumers.
     fn kv_index_diagnostics(&self) -> KvIndexDiagnostics {
         KvIndexDiagnostics {
@@ -208,8 +221,8 @@ pub trait RuntimeControl: Send + Sync {
 
 #[async_trait]
 pub trait Generation: Send + Sync {
-    /// Returns the Router-owned intake budget shared by HTTP and generation consumers.
-    fn admission(&self) -> Option<Arc<Admission>> {
+    /// Returns the Router admission rule shared by HTTP and generation consumers, when supplied.
+    fn admission(&self) -> Option<Arc<dyn RouteAdmission>> {
         None
     }
 
@@ -219,12 +232,7 @@ pub trait Generation: Send + Sync {
     }
 
     /// Reserves a complete candidate batch before any child is submitted.
-    async fn admit(
-        &self,
-        _model: &str,
-        _units: u32,
-        _started_at: Instant,
-    ) -> Result<AdmissionPermit, GenerationError> {
+    async fn admit(&self, _request: &AdmissionRequest) -> Result<AdmissionPermit, GenerationError> {
         Ok(AdmissionPermit::default())
     }
 
@@ -263,6 +271,7 @@ pub trait Generation: Send + Sync {
         _prompt: Prompt,
         _add_special_tokens: bool,
         _return_token_strs: bool,
+        _origin: AdmissionOrigin,
     ) -> Result<Tokenization, GenerationError> {
         Err(GenerationError::Internal)
     }
@@ -275,6 +284,7 @@ pub trait Generation: Send + Sync {
         _model: &str,
         _chat: ChatRequest,
         _return_token_strs: bool,
+        _origin: AdmissionOrigin,
     ) -> Result<Tokenization, GenerationError> {
         Err(GenerationError::Internal)
     }
@@ -287,6 +297,7 @@ pub trait Generation: Send + Sync {
         &self,
         _model: &str,
         _token_ids: &[u32],
+        _origin: AdmissionOrigin,
     ) -> Result<String, GenerationError> {
         Err(GenerationError::Internal)
     }
@@ -448,7 +459,7 @@ pub struct RuntimeGeneration {
     publication_updates: tokio::sync::watch::Sender<u64>,
     accepting: AtomicBool,
     request_timeout: Duration,
-    admission: Option<Arc<Admission>>,
+    admission: Arc<dyn RouteAdmission>,
 }
 
 impl RuntimeGeneration {
@@ -456,7 +467,7 @@ impl RuntimeGeneration {
     ///
     /// The frontend process retains the returned owner for its full lifetime; snapshot watchers
     /// publish into it and HTTP handlers load its current immutable state per request.
-    pub fn new(request_timeout: Duration) -> Self {
+    pub fn new(request_timeout: Duration, admission: Arc<dyn RouteAdmission>) -> Self {
         let (publication_updates, _) = tokio::sync::watch::channel(0);
         Self {
             slot: ArcSwapOption::empty(),
@@ -464,14 +475,8 @@ impl RuntimeGeneration {
             publication_updates,
             accepting: AtomicBool::new(true),
             request_timeout,
-            admission: None,
+            admission,
         }
-    }
-
-    /// Shares the configured pipeline's admission owner across HTTP and runtime generations.
-    pub fn with_admission(mut self, admission: Option<Arc<Admission>>) -> Self {
-        self.admission = admission;
-        self
     }
 
     /// Publishes a newer serving generation without allowing concurrent stale writers to win.
@@ -507,9 +512,7 @@ impl RuntimeGeneration {
     /// then return unavailable while requests already holding a runtime can finish.
     pub fn close_admission(&self) {
         self.accepting.store(false, Ordering::Release);
-        if let Some(admission) = &self.admission {
-            admission.close();
-        }
+        self.admission.close();
         self.publication_updates
             .send_replace(self.slot.load_full().map_or(0, |slot| slot.version));
     }
@@ -538,15 +541,24 @@ impl RuntimeGeneration {
             .unwrap_or_default()
     }
 
-    // CPU-only endpoints share the execution bound without inventing GPU scaling demand.
-    async fn admit_preprocessing(&self) -> Result<AdmissionPermit, GenerationError> {
-        match &self.admission {
-            Some(admission) => admission
-                .acquire(1, tokio::time::Instant::now() + self.request_timeout)
+    /// Enforces the request budget for every rule, including waits without HTTP intake reservations.
+    /// Live observations are provided here; unavailable service claims stay absent.
+    async fn acquire_admission(
+        &self,
+        request: &AdmissionRequest,
+    ) -> Result<AdmissionPermit, GenerationError> {
+        let context = AdmissionContext {
+            deadline: tokio::time::Instant::from_std(request.received_at + self.request_timeout),
+            service: AdmissionService::default(),
+            state: self,
+        };
+        before_deadline(context.deadline, async {
+            self.admission
+                .admit(request, &context)
                 .await
-                .map_err(GenerationError::from),
-            None => Ok(AdmissionPermit::default()),
-        }
+                .map_err(GenerationError::from)
+        })
+        .await
     }
 
     fn ready_state(&self) -> Result<Arc<RuntimeSlot>, GenerationError> {
@@ -673,15 +685,15 @@ impl RuntimeGeneration {
 /// Upstream image processing awaits blocking work that cannot be canceled once started;
 /// a protected task retains the permit until that work finishes, without dispatching inference.
 async fn prepare_with_permit<T: Send + 'static>(
-    protected: bool,
     admission: AdmissionPermit,
     work: impl std::future::Future<Output = Result<T, GenerationError>> + Send + 'static,
 ) -> Result<(T, AdmissionPermit), GenerationError> {
+    let reserved = admission.is_reserved();
     let preparation = async move {
         let result = work.await?;
         Ok((result, admission))
     };
-    if protected {
+    if reserved {
         tokio::spawn(preparation)
             .await
             .map_err(|_| GenerationError::Internal)?
@@ -750,44 +762,65 @@ fn deadline_stream(mut stream: TokenStream, deadline: tokio::time::Instant) -> T
     })
 }
 
+impl AdmissionStateReader for RuntimeGeneration {
+    fn model_state(&self, model: &str, window: Duration) -> Option<AdmissionModelState> {
+        let slot = self.slot.load_full()?;
+        let runtime = slot.state.models.get(model);
+        let has_runtime = runtime.is_some()
+            || slot
+                .state
+                .video
+                .as_ref()
+                .is_some_and(|video| video.models.contains(model));
+        let status = if !slot
+            .control
+            .configured_models()
+            .iter()
+            .any(|name| name == model)
+        {
+            AdmissionModelStatus::Unknown
+        } else if !has_runtime {
+            AdmissionModelStatus::Preparing
+        } else if slot.control.is_ready() && slot.control.model_ready(model) {
+            AdmissionModelStatus::Ready
+        } else {
+            AdmissionModelStatus::Unavailable
+        };
+        Some(AdmissionModelState {
+            status,
+            max_model_len: runtime.map(|runtime| runtime.bundle.text_processor.max_model_len()),
+            targets: slot.control.route_target_states(model, window),
+            observed_at: Instant::now(),
+        })
+    }
+}
+
 #[async_trait]
 impl Generation for RuntimeGeneration {
-    fn admission(&self) -> Option<Arc<Admission>> {
-        self.admission.clone()
+    fn admission(&self) -> Option<Arc<dyn RouteAdmission>> {
+        Some(self.admission.clone())
     }
 
     fn request_timeout(&self) -> Option<Duration> {
         Some(self.request_timeout)
     }
 
-    async fn admit(
-        &self,
-        model: &str,
-        units: u32,
-        started_at: Instant,
-    ) -> Result<AdmissionPermit, GenerationError> {
-        let Some(admission) = &self.admission else {
-            return Ok(AdmissionPermit::default());
-        };
+    async fn admit(&self, request: &AdmissionRequest) -> Result<AdmissionPermit, GenerationError> {
         // Validate the model without retaining its runtime while waiting. Router-local
         // limits are frontend pressure, not additional ModelPool scheduler demand.
-        {
+        if self.admission.requires_ready_runtime() {
             let slot = self.ready_state()?;
-            if !slot.state.models.contains_key(model) {
-                return Err(if slot.state.admission_targets.contains_key(model) {
-                    GenerationError::Unavailable
-                } else {
-                    GenerationError::ModelNotFound
-                });
+            if !slot.state.models.contains_key(&request.model) {
+                return Err(
+                    if slot.state.admission_targets.contains_key(&request.model) {
+                        GenerationError::Unavailable
+                    } else {
+                        GenerationError::ModelNotFound
+                    },
+                );
             }
         }
-        admission
-            .acquire(
-                units,
-                tokio::time::Instant::from_std(started_at + self.request_timeout),
-            )
-            .await
-            .map_err(GenerationError::from)
+        self.acquire_admission(request).await
     }
 
     async fn generate_video(
@@ -832,10 +865,10 @@ impl Generation for RuntimeGeneration {
         let mut generated = before_deadline(deadline, async {
             let admission = match request.admission.take() {
                 Some(permit) => permit,
-                None => self.admit(&request.model, 1, request.started_at).await?,
+                None => self.admit(&admission::generation(&request, None)).await?,
             };
             let slot = self
-                .generation_slot(&request.model, self.admission.is_none())
+                .generation_slot(&request.model, !self.admission.requires_ready_runtime())
                 .await?;
             let runtime = slot.state.model(&request.model)?;
             let text_request = TextRequest {
@@ -872,17 +905,20 @@ impl Generation for RuntimeGeneration {
         let mut chat = before_deadline(deadline, async {
             let admission = match request.admission.take() {
                 Some(permit) => permit,
-                None => self.admit(&request.model, 1, request.started_at).await?,
+                None => {
+                    self.admit(&admission::generation(&request, Some(&chat)))
+                        .await?
+                }
             };
             let slot = self
-                .generation_slot(&request.model, self.admission.is_none())
+                .generation_slot(&request.model, !self.admission.requires_ready_runtime())
                 .await?;
             let runtime = slot.state.model(&request.model)?;
             let bundle = runtime.bundle.clone();
             let tool_parser = request.tool_call_parser.clone();
             let reasoning_parser = request.reasoning_parser.clone();
             let ((mut text_request, output_processor), admission) =
-                prepare_with_permit(self.admission.is_some(), admission, async move {
+                prepare_with_permit(admission, async move {
                     bundle
                         .chat_processor
                         .prepare_with_options(
@@ -925,8 +961,11 @@ impl Generation for RuntimeGeneration {
         prompt: Prompt,
         add_special_tokens: bool,
         return_token_strs: bool,
+        origin: AdmissionOrigin,
     ) -> Result<Tokenization, GenerationError> {
-        let _admission = self.admit_preprocessing().await?;
+        let _admission = self
+            .acquire_admission(&admission::tokenize(model, &prompt, origin))
+            .await?;
         let slot = self.ready_state()?;
         let runtime = slot.state.model(model)?;
         let tokenizer = &runtime.bundle.tokenizer;
@@ -959,45 +998,54 @@ impl Generation for RuntimeGeneration {
         model: &str,
         chat: ChatRequest,
         return_token_strs: bool,
+        origin: AdmissionOrigin,
     ) -> Result<Tokenization, GenerationError> {
-        let admission = self.admit_preprocessing().await?;
-        let bundle = self.ready_state()?.state.model(model)?.bundle.clone();
-        let (tokens, _admission) =
-            prepare_with_permit(self.admission.is_some(), admission, async move {
-                let text_request = bundle
-                    .chat_processor
-                    .prepare_for_tokenization(chat)
-                    .await
-                    .map_err(|_| GenerationError::InvalidRequest)?;
-                let prepared = bundle
-                    .text_processor
-                    .prepare(text_request)
-                    .map_err(|_| GenerationError::InvalidRequest)?;
-                let token_ids = prepared.generate_request.prompt_token_ids;
-                let tokenizer = &bundle.tokenizer;
-                let token_strs = if return_token_strs {
-                    Some(
-                        token_ids
-                            .iter()
-                            .map(|token_id| tokenizer.id_to_token(*token_id))
-                            .collect::<Option<Vec<_>>>()
-                            .ok_or(GenerationError::InvalidRequest)?,
-                    )
-                } else {
-                    None
-                };
-                Ok(Tokenization {
-                    token_ids,
-                    token_strs,
-                    max_model_len: bundle.text_processor.max_model_len(),
-                })
-            })
+        let admission = self
+            .acquire_admission(&admission::tokenize_chat(model, &chat, origin))
             .await?;
+        let bundle = self.ready_state()?.state.model(model)?.bundle.clone();
+        let (tokens, _admission) = prepare_with_permit(admission, async move {
+            let text_request = bundle
+                .chat_processor
+                .prepare_for_tokenization(chat)
+                .await
+                .map_err(|_| GenerationError::InvalidRequest)?;
+            let prepared = bundle
+                .text_processor
+                .prepare(text_request)
+                .map_err(|_| GenerationError::InvalidRequest)?;
+            let token_ids = prepared.generate_request.prompt_token_ids;
+            let tokenizer = &bundle.tokenizer;
+            let token_strs = if return_token_strs {
+                Some(
+                    token_ids
+                        .iter()
+                        .map(|token_id| tokenizer.id_to_token(*token_id))
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or(GenerationError::InvalidRequest)?,
+                )
+            } else {
+                None
+            };
+            Ok(Tokenization {
+                token_ids,
+                token_strs,
+                max_model_len: bundle.text_processor.max_model_len(),
+            })
+        })
+        .await?;
         Ok(tokens)
     }
 
-    async fn detokenize(&self, model: &str, token_ids: &[u32]) -> Result<String, GenerationError> {
-        let _admission = self.admit_preprocessing().await?;
+    async fn detokenize(
+        &self,
+        model: &str,
+        token_ids: &[u32],
+        origin: AdmissionOrigin,
+    ) -> Result<String, GenerationError> {
+        let _admission = self
+            .acquire_admission(&admission::detokenize(model, token_ids.len(), origin))
+            .await?;
         let slot = self.ready_state()?;
         let runtime = slot.state.model(model)?;
         runtime
