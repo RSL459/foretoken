@@ -512,8 +512,6 @@ def prepare_source_images(
                         engine_output = builder.root + "/applications/engine"
                         builder.build("deploy/inference-engines/source-build.Dockerfile", target="source-export", destination=engine_output, arguments=engine_arguments)
                         builder.run(["sh", "-ec", 'cp -R "$1/." "$2/"', "assemble", engine_output, payload])
-                    if component != "control-plane":
-                        builder.run(["sh", "-ec", 'printf %s "$1" > "$2/complete.json"', "describe", json.dumps({"component": component}), payload])
                     origin.publish(builder, payload, component, suffix, "", None, timeout=command.timeout)
             if node == origin.node:
                 builder.run(["rm", "-rf", "--", builder.root + "/applications"])

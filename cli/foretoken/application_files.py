@@ -9,14 +9,64 @@ import json
 import math
 import time
 import uuid
+from collections.abc import Iterable
 from importlib.resources import files
+from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from foretoken.cluster_build import ClusterBuilder
 from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import DeploymentError, ResourceRef
 
+SOURCE_REVISION = "inference.foretoken.io/source-revision"
 _BINDING_LABEL = "inference.foretoken.io/application-publisher-binding"
+
+
+def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
+    """Read retained application identities from service state and workload projections."""
+    references: set[str] = set()
+    for obj in objects:
+        spec = obj.get("spec", {})
+        template = spec.get("template", {})
+        metadata = obj["metadata"]
+        template_metadata = template.get("metadata", {})
+        references.update(
+            selection["applicationURL"]
+            for selection in obj.get("status", {}).get("poolApplications", {}).values()
+            if selection.get("applicationURL")
+        )
+        references.update(
+            filter(
+                None,
+                (
+                    metadata.get("annotations", {}).get(SOURCE_REVISION),
+                    template_metadata.get("annotations", {}).get(SOURCE_REVISION),
+                    metadata.get("annotations", {}).get(
+                        "inference.foretoken.io/application-url"
+                    ),
+                    template_metadata.get("annotations", {}).get(
+                        "inference.foretoken.io/application-url"
+                    ),
+                    template.get("sourceRevision"),
+                    template.get("application", {}).get("applicationURL"),
+                    spec.get("runtime", {}).get("applicationURL"),
+                    obj.get("status", {}).get("application", {}).get("applicationURL"),
+                    spec.get("runtime", {}).get("sourceRevision"),
+                    obj.get("status", {}).get("plan", {}).get("workerApplicationURL"),
+                ),
+            )
+        )
+        # Platform defaults remain consumers even before a model service uses them.
+        for container in template.get("spec", spec).get("containers", []):
+            for argument in container.get("args", []):
+                for prefix in (
+                    "--frontend-application-url=",
+                    "--model-server-application-url=",
+                    "--video-worker-application-url=",
+                ):
+                    if argument.startswith(prefix):
+                        references.add(argument.removeprefix(prefix))
+    return references
 
 
 def remove_application_jobs(kubectl: Kubectl, binding: str, timeout: str) -> None:
@@ -95,6 +145,39 @@ class ApplicationFiles:
         """Return the immutable HTTP directory selected by an application consumer."""
         return f"{self.endpoint}/{component}/{revision}"
 
+    def references(self, history: set[str] | None) -> set[str] | None:
+        """Retain Helm history, service intent and all current or terminating file consumers."""
+        if history is None:
+            return None
+        references = history.copy()
+        available = self.kubectl.api_resource_names("inference.foretoken.io")
+        kinds = tuple(
+            kind
+            for kind in (
+                "modelservices",
+                "frontendservices",
+                "modelpools",
+                "modelgroups",
+                "videotasks",
+            )
+            if kind + ".inference.foretoken.io" in available
+        )
+        objects = list(self.kubectl.list_all_resources(kinds)) if kinds else []
+        for label in (
+            "inference.foretoken.io/model-group",
+            "inference.foretoken.io/frontend-service",
+            "inference.foretoken.io/model-preparation-group",
+            "foretoken.io/application-files=consumer",
+        ):
+            objects.extend(
+                self.kubectl.list_all_resources(
+                    ("pods", "jobs", "replicasets", "deployments"),
+                    label_selector=label,
+                )
+            )
+        references.update(application_references(objects))
+        return references
+
     def publish(
         self,
         builder: ClusterBuilder | None,
@@ -113,30 +196,11 @@ class ApplicationFiles:
         Source callers hold their binding lock and stop abandoned writers before reusing output.
         """
         script = files("foretoken").joinpath("application_publish.py").read_text()
-        binding = builder.binding if builder is not None else "release-" + uuid.uuid4().hex
+        binding = (
+            builder.binding if builder is not None else "release-" + uuid.uuid4().hex
+        )
         destination = f"{self.mount}/{component}/{revision}"
         if builder is None:
-            script = f"namespace = {{'__name__': 'application_publish'}}\nexec({script!r}, namespace)\npublish = namespace['publish']\n" + '''
-import os
-import shutil
-import sys
-import tarfile
-import tempfile
-from pathlib import Path
-from urllib.request import Request, urlopen
-with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
-    archive = Path(temporary) / "applications.tar.gz"
-    headers = {}
-    if credential := os.environ.get("FORETOKEN_RELEASE_AUTHORIZATION"):
-        headers["Authorization"] = credential
-    with urlopen(Request(sys.argv[1], headers=headers)) as response, archive.open("wb") as output:
-        shutil.copyfileobj(response, output)
-    payload = Path(temporary) / "payload"
-    with tarfile.open(archive) as package:
-        package.extractall(payload, filter="data")
-    for component in ("control-plane", "frontend", "model-server"):
-        publish(payload / component, Path(sys.argv[2]) / component / sys.argv[3], sys.argv[4], None)
-'''
             destination = self.mount
         keep = (
             None
@@ -156,12 +220,34 @@ with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
             _BINDING_LABEL: binding,
         }
         mounts = [{"name": "applications", "mountPath": self.mount}]
-        volumes = [{"name": "applications", "persistentVolumeClaim": {"claimName": self.claim}}]
-        command = ["python", "-c", script, source, destination]
+        volumes = [
+            {"name": "applications", "persistentVolumeClaim": {"claimName": self.claim}}
+        ]
+        command = ["python", "-c", script]
+        if builder is None:
+            command.append("--release")
+        command.extend([source, destination])
         if builder is not None:
-            mounts.insert(0, {"name": "compiler", "mountPath": builder.mount, "readOnly": True})
-            volumes.insert(0, {"name": "compiler", "persistentVolumeClaim": {"claimName": builder.claim, "readOnly": True}})
-            command.extend([binding, f"{self.mount}/{component}/{previous}" if previous else "", json.dumps(keep)])
+            mounts.insert(
+                0, {"name": "compiler", "mountPath": builder.mount, "readOnly": True}
+            )
+            volumes.insert(
+                0,
+                {
+                    "name": "compiler",
+                    "persistentVolumeClaim": {
+                        "claimName": builder.claim,
+                        "readOnly": True,
+                    },
+                },
+            )
+            command.extend(
+                [
+                    binding,
+                    f"{self.mount}/{component}/{previous}" if previous else "",
+                    json.dumps(keep),
+                ]
+            )
         else:
             mounts.append({"name": "temporary", "mountPath": "/tmp"})
             volumes.append({"name": "temporary", "emptyDir": {}})
@@ -239,10 +325,17 @@ with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
             },
         }
         if credentials_secret:
-            job["spec"]["template"]["spec"]["containers"][0]["env"] = [{
-                "name": "FORETOKEN_RELEASE_AUTHORIZATION",
-                "valueFrom": {"secretKeyRef": {"name": credentials_secret, "key": "authorization"}},
-            }]
+            job["spec"]["template"]["spec"]["containers"][0]["env"] = [
+                {
+                    "name": "FORETOKEN_RELEASE_AUTHORIZATION",
+                    "valueFrom": {
+                        "secretKeyRef": {
+                            "name": credentials_secret,
+                            "key": "authorization",
+                        }
+                    },
+                }
+            ]
         self.kubectl.run(["create", "-f", "-"], input_text=json.dumps(job))
         deadline = time.monotonic() + seconds
         while True:

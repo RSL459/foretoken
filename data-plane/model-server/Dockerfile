@@ -101,6 +101,9 @@ FROM scratch AS source-export
 COPY --from=builder /out/model-server /bin/foretoken-model-server
 COPY data-plane/model-server/python/ /python/
 COPY LICENSE /LICENSE
+COPY <<EOF /complete.json
+{"component":"model-server"}
+EOF
 
 # vLLM-Omni images already contain their Python runtime and model plugins. This
 # target only adds the thin Foretoken lifecycle/proxy adapter and deliberately

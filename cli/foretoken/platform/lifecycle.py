@@ -674,6 +674,7 @@ class PlatformLifecycle:
         from foretoken.editable import has_source_state
 
         source_builds = (platform_exists and helm.release_install_source(platform) == "source") or has_source_state(kubectl)
+        unadopted_origin = () if platform_exists else helm.application_origin_resources()
         dcgm_exists = helm.release_exists(managed_dcgm)
         dcgm_managed = dcgm_exists and helm.is_cleanup_managed(managed_dcgm)
         prometheus_exists = helm.release_exists(managed_prometheus)
@@ -691,6 +692,7 @@ class PlatformLifecycle:
         )
         if (
             platform_exists
+            or unadopted_origin
             or dcgm_managed
             or prometheus_managed
             or metax_managed
@@ -714,6 +716,8 @@ class PlatformLifecycle:
             _print_plan("Foretoken platform", "Remove", platform.display_name)
         else:
             _print_plan("Foretoken platform", "Skip", "not installed")
+            if unadopted_origin:
+                _print_plan("Application file storage", "Remove", platform.display_name)
         if dcgm_managed:
             _print_plan("NVIDIA DCGM Exporter", "Remove", managed_dcgm.display_name)
         elif dcgm_exists:
@@ -743,6 +747,9 @@ class PlatformLifecycle:
         if platform_exists:
             helm.uninstall(platform, command.timeout)
             _print_plan("Foretoken platform", "Removed", platform.display_name)
+        elif unadopted_origin:
+            helm.remove_application_origin(unadopted_origin, command.timeout)
+            _print_plan("Application file storage", "Removed", platform.display_name)
         if dcgm_managed:
             helm.uninstall(managed_dcgm, command.timeout)
             _print_plan("NVIDIA DCGM Exporter", "Removed", managed_dcgm.display_name)

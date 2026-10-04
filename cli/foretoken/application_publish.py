@@ -11,8 +11,48 @@ import os
 import shutil
 import stat
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+class _ReleaseRedirectHandler(HTTPRedirectHandler):
+    """Keep release credentials on the configured scheme and authority."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Follow normal HTTP redirects without forwarding credentials to another source."""
+        redirect = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if urlsplit(req.full_url)[:2] != urlsplit(newurl)[:2]:
+            redirect.remove_header("Authorization")
+        return redirect
+
+
+def import_release(source: str, destination: Path, revision: str, binding: str) -> None:
+    """Import missing release components, reusing a complete version without downloading it."""
+    missing = [
+        component
+        for component in ("control-plane", "frontend", "model-server")
+        if not (destination / component / revision / "manifest.json").is_file()
+    ]
+    if not missing:
+        return
+    request = Request(source)
+    if credential := os.environ.get("FORETOKEN_RELEASE_AUTHORIZATION"):
+        request.add_header("Authorization", credential)
+    opener = build_opener(_ReleaseRedirectHandler())
+    with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+        archive = Path(temporary) / "applications.tar.gz"
+        with opener.open(request) as response, archive.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        payload = Path(temporary) / "payload"
+        with tarfile.open(archive) as package:
+            package.extractall(payload, filter="data")
+        for component in missing:
+            publish(
+                payload / component, destination / component / revision, binding, None
+            )
 
 
 def publish(
@@ -84,14 +124,17 @@ def retire(directory: Path, binding: str, keep: set[str]) -> None:
 
 
 if __name__ == "__main__":
-    destination = Path(sys.argv[2])
-    binding = sys.argv[3]
-    publish(
-        Path(sys.argv[1]),
-        destination,
-        binding,
-        Path(sys.argv[4]) if sys.argv[4] else None,
-    )
-    retained = json.loads(sys.argv[5])
-    if retained is not None:
-        retire(destination.parent, binding, set(retained) | {destination.name})
+    if sys.argv[1] == "--release":
+        import_release(sys.argv[2], Path(sys.argv[3]), sys.argv[4], sys.argv[5])
+    else:
+        destination = Path(sys.argv[2])
+        binding = sys.argv[3]
+        publish(
+            Path(sys.argv[1]),
+            destination,
+            binding,
+            Path(sys.argv[4]) if sys.argv[4] else None,
+        )
+        retained = json.loads(sys.argv[5])
+        if retained is not None:
+            retire(destination.parent, binding, set(retained) | {destination.name})

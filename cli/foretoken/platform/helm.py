@@ -566,49 +566,150 @@ class Helm(HelmClient):
                 )
             args.extend(["--set-string", f"{path}={selected}"])
 
-    def prepare_source_origin(self, root: Path, values: tuple[dict[str, Any], ...], timeout: str) -> None:
+    def prepare_source_origin(
+        self, root: Path, values: tuple[dict[str, Any], ...], timeout: str
+    ) -> None:
         """Prepare chart-owned file storage before source builds or controller startup."""
         release = self.platform_release()
-        args = self._upgrade_install_args(release, str(root / "deploy/charts/foretoken"), None)
+        args = self._upgrade_install_args(
+            release, str(root / "deploy/charts/foretoken"), None
+        )
         merged: dict[str, Any] = {}
         for value in values:
             merged = _merge_values(merged, value)
-        args.extend([
-            "--values", "-", "--set", "development.enabled=true",
-            "--set-string", "observability.mode=disabled",
-            "--set-string", "applicationFiles.releaseURL=",
-        ])
+        args.extend(
+            [
+                "--values",
+                "-",
+                "--set",
+                "development.enabled=true",
+                "--set-string",
+                "observability.mode=disabled",
+                "--set-string",
+                "applicationFiles.releaseURL=",
+            ]
+        )
         input_text = yaml.safe_dump(merged)
         self._add_platform_image_sources(args, merged, None, input_text)
         self._prepare_application_origin(args, input_text, timeout)
 
-    def _prepare_application_origin(self, args: list[str], input_text: str | None, timeout: str) -> None:
+    def _prepare_application_origin(
+        self, args: list[str], input_text: str | None, timeout: str
+    ) -> None:
         """Bootstrap only native origin resources, then import ordinary HTTP release files."""
         from foretoken.application_files import ApplicationFiles
         from foretoken.kubernetes import Kubectl
 
         release = self.platform_release()
-        documents = [document for document in self._render_chart(args, input_text=input_text)
-                     if document["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "foretoken-application-files"]
+        documents = [
+            document
+            for document in self._render_chart(args, input_text=input_text)
+            if document["metadata"].get("labels", {}).get("app.kubernetes.io/name")
+            == "foretoken-application-files"
+        ]
         if not documents:
             return
         kubectl = Kubectl()
         if not kubectl.exists("namespace", release.namespace):
             kubectl.run(["create", "namespace", release.namespace])
+        operations = []
         for document in documents:
             metadata = document["metadata"]
-            metadata.setdefault("annotations", {}).update({
-                "meta.helm.sh/release-name": release.name,
-                "meta.helm.sh/release-namespace": release.namespace,
-            })
-        kubectl.run(["apply", "-f", "-"], input_text=yaml.safe_dump_all(documents))
+            current = kubectl.get_if_exists(
+                document["kind"], metadata["name"], release.namespace
+            )
+            if current is not None:
+                if not _owned_by_release(current, release):
+                    raise DeploymentError(
+                        f"{document['kind']}/{metadata['name']} is not owned by Helm release "
+                        f"{release.display_name}"
+                    )
+                metadata["resourceVersion"] = current["metadata"]["resourceVersion"]
+            metadata.setdefault("annotations", {}).update(
+                {
+                    "meta.helm.sh/release-name": release.name,
+                    "meta.helm.sh/release-namespace": release.namespace,
+                }
+            )
+            operations.append(("create" if current is None else "apply", document))
+        # Check every existing resource before writing; create and resourceVersion
+        # preconditions prevent taking over a concurrently replaced object.
+        for operation, document in operations:
+            kubectl.run([operation, "-f", "-"], input_text=yaml.safe_dump(document))
         origin = ApplicationFiles(kubectl, release.namespace)
         origin.prepare(timeout)
-        configuration = next(document["data"] for document in documents
-                             if document["kind"] == "ConfigMap")
+        configuration = next(
+            document["data"]
+            for document in documents
+            if document["kind"] == "ConfigMap"
+        )
         if configuration.get("releaseURL"):
-            origin.publish(None, configuration["releaseURL"], "", configuration["revision"], "", None,
-                           timeout=timeout, credentials_secret=configuration["credentialsSecret"])
+            origin.publish(
+                None,
+                configuration["releaseURL"],
+                "",
+                configuration["revision"],
+                "",
+                None,
+                timeout=timeout,
+                credentials_secret=configuration["credentialsSecret"],
+            )
+
+    def application_origin_resources(self) -> tuple[dict[str, Any], ...]:
+        """Find native file-origin resources owned by this release, including failed bootstraps."""
+        from foretoken.kubernetes import Kubectl
+
+        release = self.platform_release()
+        kubectl = Kubectl()
+        if not kubectl.exists("namespace", release.namespace):
+            return ()
+        return tuple(
+            document
+            for document in kubectl.list_resources(
+                ("persistentvolumeclaims", "configmaps", "deployments", "services"),
+                release.namespace,
+                label_selector="app.kubernetes.io/name=foretoken-application-files",
+            )
+            if _owned_by_release(document, release)
+        )
+
+    def remove_application_origin(
+        self, resources: tuple[dict[str, Any], ...], timeout: str
+    ) -> None:
+        """Remove an unadopted file origin and its PVC-owned writers during explicit uninstall."""
+        from foretoken.kubernetes import Kubectl
+
+        if not resources:
+            return
+        kubectl = Kubectl()
+        release = self.platform_release()
+        claims = {
+            document["metadata"]["uid"]
+            for document in resources
+            if document["kind"] == "PersistentVolumeClaim"
+        }
+        for job in kubectl.list_resources(
+            ("jobs",),
+            release.namespace,
+            label_selector="foretoken.io/application-files=publisher",
+        ):
+            if any(
+                owner["kind"] == "PersistentVolumeClaim" and owner["uid"] in claims
+                for owner in job["metadata"].get("ownerReferences", [])
+            ):
+                kubectl.run(
+                    [
+                        "delete",
+                        "job",
+                        job["metadata"]["name"],
+                        "-n",
+                        release.namespace,
+                        "--cascade=foreground",
+                        "--wait=true",
+                        "--timeout=" + timeout,
+                    ]
+                )
+        kubectl.delete(yaml.safe_dump_all(resources), timeout)
 
     def install_platform(
         self,
@@ -765,24 +866,62 @@ class Helm(HelmClient):
         self._finish_upgrade(args, timeout)
         self.run(args)
 
-    def control_plane_application_history(self) -> set[str] | None:
-        """Read retained application references, deferring cleanup if release history advances."""
+    def application_history(self) -> set[str] | None:
+        """Retain all rendered application defaults and defer cleanup if Helm history advances."""
+        from foretoken.application_files import application_references
+
         release = self.platform_release()
-        status = json.loads(self.run([
-            "status", release.name, "--namespace", release.namespace, "--output", "json",
-        ]).stdout)
+        if not self.release_exists(release):
+            return set()
+        status = json.loads(
+            self.run(
+                [
+                    "status",
+                    release.name,
+                    "--namespace",
+                    release.namespace,
+                    "--output",
+                    "json",
+                ]
+            ).stdout
+        )
         revision = int(status["version"])
-        history = json.loads(self.run([
-            "history", release.name, "--namespace", release.namespace,
-            "--max", str(revision), "--output", "json",
-        ]).stdout)
+        history = json.loads(
+            self.run(
+                [
+                    "history",
+                    release.name,
+                    "--namespace",
+                    release.namespace,
+                    "--max",
+                    str(revision),
+                    "--output",
+                    "json",
+                ]
+            ).stdout
+        )
         if any(int(item["revision"]) > revision for item in history):
             return None
         references = set()
         for item in history:
-            values = self.release_user_values(release, revision=int(item["revision"]))
-            if reference := values.get("controller", {}).get("applicationURL"):
-                references.add(reference)
+            manifest = self.run(
+                [
+                    "get",
+                    "manifest",
+                    release.name,
+                    "--namespace",
+                    release.namespace,
+                    "--revision",
+                    str(item["revision"]),
+                ]
+            ).stdout
+            references.update(
+                application_references(
+                    document
+                    for document in yaml.safe_load_all(manifest)
+                    if document is not None
+                )
+            )
         return references
 
     def install_metallb(
@@ -1055,6 +1194,17 @@ class Helm(HelmClient):
             ]
         )
         self.run(args)
+
+
+def _owned_by_release(document: dict[str, Any], release: ReleaseRef) -> bool:
+    """Match Helm ownership before bootstrapping or removing native file-origin resources."""
+    metadata = document["metadata"]
+    annotations = metadata.get("annotations", {})
+    return (
+        metadata.get("labels", {}).get("app.kubernetes.io/managed-by") == "Helm"
+        and annotations.get("meta.helm.sh/release-name") == release.name
+        and annotations.get("meta.helm.sh/release-namespace") == release.namespace
+    )
 
 
 def _value_at(values: dict[str, Any], path: str) -> Any:

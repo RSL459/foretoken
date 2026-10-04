@@ -73,6 +73,9 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
 
 FROM scratch AS source-export
 COPY --from=builder /out/foretoken-frontend /bin/foretoken-frontend
+COPY <<EOF /complete.json
+{"component":"frontend"}
+EOF
 
 FROM ${RUNTIME_IMAGE} AS environment
 

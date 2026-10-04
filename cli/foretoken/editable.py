@@ -22,6 +22,7 @@ from typing import Any
 
 import yaml
 
+from foretoken.application_files import SOURCE_REVISION
 from foretoken.arguments import InstallCommand
 from foretoken.cluster_build import (
     ClusterBuilder,
@@ -31,7 +32,6 @@ from foretoken.cluster_build import (
 from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import DeploymentError, ForetokenDeployment, parse_deployment
 
-SOURCE_REVISION = "inference.foretoken.io/source-revision"
 _INSTALL_SOURCE = "foretoken.io/install-source"
 _COMPONENTS = {"ModelService": "model-server", "FrontendService": "frontend"}
 
@@ -460,7 +460,7 @@ def record_install(
                 "base_image": base_image,
                 "runtime": _runtime_settings(managed[0]),
                 "command": settings,
-                "bundles": (build_state or {}).get("applications", {}),
+                "bundles": {},
             },
         )
         (directory / "build.json").unlink(missing_ok=True)
@@ -621,7 +621,9 @@ class EditableDeployment:
         )
         bundles = dict(self.state["bundles"])
         for component in components:
-            prior = bundles.get(component, {})
+            prior = bundles.get(
+                component, self.state["build"].get("applications", {}).get(component, {})
+            )
             bundles[component] = {
                 "revision": str(uuid.uuid4()),
                 "previous": prior.get("revision", ""),
@@ -775,7 +777,9 @@ class EditableDeployment:
             if path.is_file()
         }
         helm = Helm(default_platform_config(self.state["command"]["oci_registry"]))
-        references = self._application_references(helm)
+        references = origin.references(helm.application_history())
+        if references is not None:
+            references.update(bundle["revision"] for bundle in self.state["bundles"].values())
         print("Preparing application files: " + ", ".join(sorted(pending)), flush=True)
         with ClusterBuilder(
             self.kubectl,
@@ -823,44 +827,31 @@ class EditableDeployment:
                     destination=payload,
                     arguments=build["arguments"],
                 )
-                if component == "model-server":
-                    if self.state.get("engines"):
-                        builder.build(
-                            "deploy/inference-engines/source-build.Dockerfile",
-                            target="source-export",
-                            destination=staging + "/engine",
-                            arguments={
-                                **build["arguments"],
-                                "RUNTIME_IMAGE": self.state["runtime"]["model_image"],
-                                "CACHE_ID": build["binding"]
-                                + "-"
-                                + build["environment"],
-                                "BUILD_NATIVE": str(
-                                    build.get("engine_native", False)
-                                ).lower(),
-                            },
-                        )
-                        builder.run(
-                            [
-                                "sh",
-                                "-ec",
-                                'cp -R "$1/." "$2/"',
-                                "assemble",
-                                staging + "/engine",
-                                payload,
-                            ]
-                        )
-                if component != "control-plane":
-                    descriptor = json.dumps({"component": component})
+                if component == "model-server" and self.state.get("engines"):
+                    builder.build(
+                        "deploy/inference-engines/source-build.Dockerfile",
+                        target="source-export",
+                        destination=staging + "/engine",
+                        arguments={
+                            **build["arguments"],
+                            "RUNTIME_IMAGE": self.state["runtime"]["model_image"],
+                            "CACHE_ID": build["binding"]
+                            + "-"
+                            + build["environment"],
+                            "BUILD_NATIVE": str(
+                                build.get("engine_native", False)
+                            ).lower(),
+                        },
+                    )
                     builder.run(
                         [
                             "sh",
                             "-ec",
-                            'printf %s "$1" > "$2/complete.json"',
-                            "describe",
-                            descriptor,
+                            'cp -R "$1/." "$2/"',
+                            "assemble",
+                            staging + "/engine",
                             payload,
-                        ],
+                        ]
                     )
                 validate_build_inputs(
                     self.root, snapshot, self.state.get("engines", {})
@@ -881,71 +872,6 @@ class EditableDeployment:
                 ResourceRef("Deployment", platform["metadata"]["name"], namespace),
                 timeout,
             )
-
-    def _application_references(self, helm: Any) -> set[str] | None:
-        """Retain source intent, immutable cohorts, rollback history and pending file consumers."""
-        references = helm.control_plane_application_history()
-        if references is None:
-            return None
-        references.update(
-            bundle["revision"] for bundle in self.state["bundles"].values()
-        )
-        objects = list(
-            self.kubectl.list_all_resources(
-                (
-                    "modelservice",
-                    "frontendservice",
-                    "modelpool",
-                    "modelgroup",
-                    "videotask",
-                )
-            )
-        )
-        for label in (
-            "inference.foretoken.io/model-group",
-            "inference.foretoken.io/frontend-service",
-            "inference.foretoken.io/model-preparation-group",
-            "foretoken.io/application-files=consumer",
-        ):
-            objects.extend(
-                self.kubectl.list_all_resources(
-                    ("pods", "jobs", "replicasets", "deployments"), label_selector=label
-                )
-            )
-        for obj in objects:
-            spec = obj.get("spec", {})
-            template = spec.get("template", {})
-            metadata = obj["metadata"]
-            template_metadata = template.get("metadata", {})
-            references.update(
-                selection["applicationURL"]
-                for selection in obj.get("status", {}).get("poolApplications", {}).values()
-                if selection.get("applicationURL")
-            )
-            references.update(
-                filter(
-                    None,
-                    (
-                        metadata.get("annotations", {}).get(SOURCE_REVISION),
-                        template_metadata.get("annotations", {}).get(SOURCE_REVISION),
-                        metadata.get("annotations", {}).get(
-                            "inference.foretoken.io/application-url"
-                        ),
-                        template_metadata.get("annotations", {}).get(
-                            "inference.foretoken.io/application-url"
-                        ),
-                        template.get("sourceRevision"),
-                        template.get("application", {}).get("applicationURL"),
-                        spec.get("runtime", {}).get("applicationURL"),
-                        obj.get("status", {}).get("application", {}).get("applicationURL"),
-                        spec.get("runtime", {}).get("sourceRevision"),
-                        obj.get("status", {})
-                        .get("plan", {})
-                        .get("workerApplicationURL"),
-                    ),
-                )
-            )
-        return references
 
     def _ready_containers(
         self, namespace: str, component: str, service: str, revision: str

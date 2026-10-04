@@ -871,7 +871,8 @@ rm -rf "$incoming"
                 return result
         layout = ""
         if destination:
-            args += ["--output", "type=local,dest=" + destination]
+            # BuildKit mirrors each owned export directory so retries cannot revive removed files.
+            args += ["--output", "type=local,mode=delete,dest=" + destination]
         elif self.containerd_socket:
             layout = self.root + "/transfers/" + uuid.uuid4().hex
             args += ["--output", f"type=oci,name={image},dest={layout},tar=false"]
