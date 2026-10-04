@@ -101,7 +101,7 @@ func main() {
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "Health probe bind address.")
 	flag.BoolVar(&leaderElection, "leader-elect", false, "Enable leader election.")
-	flag.BoolVar(&sourceMode, "source-mode", false, "Enable service source bundles from persistent runtime caches.")
+	flag.BoolVar(&sourceMode, "source-mode", false, "Enable service source bundles from the platform application origin.")
 	flag.StringVar(&observabilityPrometheus, "observability-prometheus", "", "Prometheus NAMESPACE/NAME selected for service alert rules.")
 	flag.StringVar(&observabilityLabelsJSON, "observability-labels", "{}", "JSON labels used to select controller-owned alert rules.")
 	flag.StringVar(&logStorageStatefulSet, "log-storage-statefulset", "", "Managed Loki StatefulSet in the platform namespace; empty disables log volume expansion.")
@@ -176,8 +176,8 @@ func main() {
 		ctrl.Log.Error(err, "invalid application file configuration")
 		os.Exit(1)
 	}
-	if videoWorkerApplicationURL != "" && (applicationFiles.Image == "" || applicationFiles.Script == "" || applicationFiles.MountPath == "") {
-		ctrl.Log.Error(errors.New("video-worker-application-url requires application-files"), "invalid application file configuration")
+	if (sourceMode || videoWorkerApplicationURL != "") && (applicationFiles.Image == "" || applicationFiles.Script == "" || applicationFiles.MountPath == "" || (sourceMode && applicationFiles.Origin == "")) {
+		ctrl.Log.Error(errors.New("source-mode and video-worker-application-url require application-files; source-mode also requires its origin"), "invalid application file configuration")
 		os.Exit(1)
 	}
 	if inferenceEngineImage == "" {
@@ -379,6 +379,7 @@ func main() {
 			Alerts:       serviceAlerts,
 			RuntimeProfile: controllers.FrontendRuntimeProfile{
 				SourceMode:        sourceMode,
+				ApplicationFiles:  applicationFiles,
 				Image:             frontendImage,
 				WorkerImage:       videoWorkerImage,
 				Port:              int32(frontendPort),
@@ -441,7 +442,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ModelPool controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile, SourceMode: sourceMode}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile, SourceMode: sourceMode, ApplicationFiles: applicationFiles}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}

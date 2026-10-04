@@ -6,21 +6,38 @@ package runtimeconfig
 
 import (
 	"maps"
+	"net/url"
 	"path"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 )
 
-// ApplicationFiles contains the platform's download tools and application mount layout.
+// ApplicationFiles contains the platform's file origin, download tools and mount layout.
 // Controllers use it to prepare immutable application versions before starting a workload.
 type ApplicationFiles struct {
+	Origin    string `json:"origin"`
 	Image     string `json:"image"`
 	Script    string `json:"script"`
 	MountPath string `json:"mountPath"`
 }
 
+// Ref resolves a service's selected component version at the trusted platform origin.
+// An absent revision leaves the workload on its image runtime.
+func (files ApplicationFiles) Ref(component, revision string) string {
+	if revision == "" {
+		return ""
+	}
+	return strings.TrimRight(files.Origin, "/") + "/" + url.PathEscape(component) + "/" + url.PathEscape(revision)
+}
+
+// Directory returns the completed Pod-local application directory consumed at startup.
+func (files ApplicationFiles) Directory() string {
+	return path.Join(files.MountPath, "current")
+}
+
 // Configure prepares the selected files in a Pod-local volume and starts its executable.
-// The Pod owns the volume; application storage and compiler caches remain independent.
+// The Pod owns the application volume; persistent model storage remains independent.
 func (files ApplicationFiles) Configure(template *corev1.PodTemplateSpec, container *corev1.Container, reference, executable string) {
 	if reference == "" {
 		return
@@ -36,7 +53,20 @@ func (files ApplicationFiles) Configure(template *corev1.PodTemplateSpec, contai
 	}
 	template.Annotations["inference.foretoken.io/application-url"] = reference
 	pod := &template.Spec
-	identity := int64(65532)
+	// Match the workload's filesystem identity without changing model-volume ownership.
+	// Image-default model runtimes run as root; non-root Pods already select their group.
+	user, group := int64(0), int64(0)
+	if context := pod.SecurityContext; context != nil {
+		if context.FSGroup != nil {
+			user, group = *context.FSGroup, *context.FSGroup
+		}
+		if context.RunAsUser != nil {
+			user = *context.RunAsUser
+		}
+		if context.RunAsGroup != nil {
+			group = *context.RunAsGroup
+		}
+	}
 	noEscalation, readOnly := false, true
 	pod.Volumes = append(pod.Volumes, corev1.Volume{
 		Name: "application", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
@@ -46,7 +76,7 @@ func (files ApplicationFiles) Configure(template *corev1.PodTemplateSpec, contai
 		Command:      []string{"python", "-c", files.Script, reference, files.MountPath},
 		VolumeMounts: []corev1.VolumeMount{{Name: "application", MountPath: files.MountPath}},
 		SecurityContext: &corev1.SecurityContext{
-			RunAsUser: &identity, RunAsGroup: &identity,
+			RunAsUser: &user, RunAsGroup: &group,
 			AllowPrivilegeEscalation: &noEscalation, ReadOnlyRootFilesystem: &readOnly,
 			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
@@ -54,5 +84,10 @@ func (files ApplicationFiles) Configure(template *corev1.PodTemplateSpec, contai
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name: "application", MountPath: files.MountPath, ReadOnly: true,
 	})
-	container.Command[0] = path.Join(files.MountPath, "current", "bin", executable)
+	command := path.Join(files.Directory(), "bin", executable)
+	if len(container.Command) == 0 {
+		container.Command = []string{command}
+	} else {
+		container.Command[0] = command
+	}
 }

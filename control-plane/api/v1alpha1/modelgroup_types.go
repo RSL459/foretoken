@@ -193,7 +193,7 @@ type ModelGroupRuntime struct {
 	// +kubebuilder:validation:Maximum=1
 	PreparationVersion int32 `json:"preparationVersion,omitempty"`
 
-	// SourceRevision pins the source bundle in this Group's persistent runtime cache.
+	// SourceRevision selects the immutable source bundle at the platform application origin.
 	// +optional
 	SourceRevision string `json:"sourceRevision,omitempty"`
 
