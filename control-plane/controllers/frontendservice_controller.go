@@ -378,15 +378,21 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	// An old admission-only Pod may be available while the cache-backed replacement starts.
 	// Deployment submission completes only when the requested frontend template is ready.
-	available := frontendDeploymentAvailable(currentDeployment) &&
-		currentDeployment.Status.UpdatedReplicas == *currentDeployment.Spec.Replicas &&
-		currentDeployment.Status.Replicas == *currentDeployment.Spec.Replicas
+	available := frontendDeploymentAvailable(currentDeployment)
+	targetReplicas := *deployment.Spec.Replicas
+	executionReady := applyDeployment && cacheReady && available &&
+		currentDeployment.Spec.Replicas != nil && *currentDeployment.Spec.Replicas == targetReplicas &&
+		currentDeployment.Status.UpdatedReplicas == targetReplicas &&
+		currentDeployment.Status.Replicas == targetReplicas &&
+		currentDeployment.Spec.Template.Spec.Containers[0].Image == selection.Image &&
+		currentDeployment.Spec.Template.Annotations["inference.foretoken.io/application-url"] == selection.ApplicationURL
 	state := frontendState{
-		Materialized:  true,
-		Available:     available,
-		RouteRequired: routeRequired,
-		RouteReady:    routeReady,
-		RoutingReady:  available && servingSnapshotInstalled,
+		Materialized:   applyDeployment,
+		Available:      available,
+		ExecutionReady: executionReady,
+		RouteRequired:  routeRequired,
+		RouteReady:     routeReady,
+		RoutingReady:   available && servingSnapshotInstalled,
 	}
 	return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, state)
 }
@@ -466,6 +472,9 @@ func (reconciler *FrontendServiceReconciler) deleteOwnedVideoTaskAccess(ctx cont
 }
 
 type frontendState struct {
+	// ExecutionReady concerns the selected application and target capacity; Available
+	// still reports a previous Deployment that is serving during deferred replacement.
+	ExecutionReady bool
 	Materialized   bool
 	Available      bool
 	RouteRequired  bool
@@ -538,6 +547,8 @@ func frontendReadyFailure(state frontendState) (string, string) {
 		return "NotMaterialized", "Frontend resources are not materialized"
 	case !state.Available:
 		return "WorkloadUnavailable", "The frontend Deployment is not available"
+	case !state.ExecutionReady:
+		return "ExecutionPending", "The selected frontend application and target replicas are not ready"
 	case state.RouteRequired && !state.RouteReady:
 		return "RouteNotAccepted", "The HTTPRoute is not accepted and resolved by its Gateway"
 	case !state.RoutingReady:

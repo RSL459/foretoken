@@ -279,17 +279,22 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 	for index := range compiledPools {
 		template := &compiledPools[index].Template
 		previous := byPoolName[compiledPools[index].Name]
-		selection, err := reconciler.selectPoolApplication(ctx, service, compiledPools[index].Name, previous, *template)
+		selection, err := reconciler.selectPoolApplication(ctx, service, compiledPools[index].Name, compiledPools[index].DesiredGroups, previous, *template)
 		if err != nil {
 			return err
 		}
 		template.Application = selection
-		applications[compiledPools[index].Name] = *selection
+		if selection != nil {
+			applications[compiledPools[index].Name] = *selection
+		}
 		if compiledPools[index].Template.ECProfile != "" {
 			compiledPools[index].Template.EncoderCacheGeneration = cacheGeneration
 		}
 	}
 
+	if len(applications) == 0 {
+		applications = nil
+	}
 	if !reflect.DeepEqual(service.Status.PoolApplications, applications) {
 		service.Status.PoolApplications = applications
 		if err := reconciler.Status().Patch(ctx, service, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -352,7 +357,7 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 
 // selectPoolApplication retains execution choices independently of changing platform defaults.
 // Existing image-only Pools adopt their actual cohort, never a newly configured file publication.
-func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Context, service *inferencev1alpha1.ModelService, poolName string, previous *inferencev1alpha1.ModelPool, template inferencev1alpha1.NormalizedPoolTemplate) (*inferencev1alpha1.ApplicationSelection, error) {
+func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Context, service *inferencev1alpha1.ModelService, poolName string, desiredGroups int32, previous *inferencev1alpha1.ModelPool, template inferencev1alpha1.NormalizedPoolTemplate) (*inferencev1alpha1.ApplicationSelection, error) {
 	deployment := service.Spec.DeploymentRevision
 	image := reconciler.RuntimeProfile.Image
 	imageProfile := template.Backend
@@ -411,7 +416,11 @@ func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Cont
 					return selection, nil
 				}
 			}
-			return nil, fmt.Errorf("ModelPool %q has no retained application selection; run foretoken deploy to select the current platform application", previous.Name)
+			// An idle legacy Pool with no execution history has nothing to recover.
+			// Keep it unselected until its first demand for capacity chooses the current pair.
+			if desiredGroups == 0 {
+				return nil, nil
+			}
 		}
 	}
 	if template.Backend == "vllm" {
