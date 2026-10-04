@@ -175,8 +175,7 @@ spec:
             httpGet:
               path: /readyz
               port: healthz
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 2
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
