@@ -638,8 +638,8 @@ spec:
                     - engine
                     type: object
                   sourceRevision:
-                    description: SourceRevision pins the source bundle in this Group's
-                      persistent runtime cache.
+                    description: SourceRevision selects the immutable source bundle
+                      at the platform application origin.
                     type: string
                   tritonCacheDirectory:
                     description: TritonCacheDirectory is the initial worker cache

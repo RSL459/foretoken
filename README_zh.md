@@ -96,7 +96,7 @@ curl --fail-with-body --no-buffer \
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-Go、Python、Triton、Rust、CUDA、C/C++ 和 vLLM 源码改动会复用集群编译缓存；依赖和启动代码未变化时继续复用运行时环境。引擎源码和运行环境设置见[从源码部署 Foretoken](docs/custom-deployment_zh.md)。
+Go、Python、Triton、Rust、CUDA、C/C++ 和 vLLM 源码改动会复用集群编译缓存；运行环境依赖未变化时继续复用原环境。引擎源码和运行环境设置见[从源码部署 Foretoken](docs/custom-deployment_zh.md)。
 
 ### 5. 评测与性能剖析
 

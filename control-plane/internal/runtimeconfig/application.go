@@ -53,13 +53,9 @@ func (files ApplicationFiles) Configure(template *corev1.PodTemplateSpec, contai
 	}
 	template.Annotations["inference.foretoken.io/application-url"] = reference
 	pod := &template.Spec
-	// Match the workload's filesystem identity without changing model-volume ownership.
-	// Image-default model runtimes run as root; non-root Pods already select their group.
-	user, group := int64(0), int64(0)
+	// Download under an explicit workload identity without changing persistent-volume ownership.
+	user, group := int64(65532), int64(65532)
 	if context := pod.SecurityContext; context != nil {
-		if context.FSGroup != nil {
-			user, group = *context.FSGroup, *context.FSGroup
-		}
 		if context.RunAsUser != nil {
 			user = *context.RunAsUser
 		}

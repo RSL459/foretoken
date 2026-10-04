@@ -96,7 +96,7 @@ After editing the checkout, run the same deploy command again to apply the chang
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-Go, Python, Triton, Rust, CUDA, C/C++, and vLLM source changes use the cluster build caches and reuse the runtime environment when dependencies and startup code are unchanged. See [Deploy Foretoken from Source](docs/custom-deployment.md) for engine checkouts and runtime changes.
+Go, Python, Triton, Rust, CUDA, C/C++, and vLLM source changes use the cluster build caches and reuse the runtime environment when its dependencies are unchanged. See [Deploy Foretoken from Source](docs/custom-deployment.md) for engine checkouts and runtime changes.
 
 ### 5. Evaluate and profile the service
 
