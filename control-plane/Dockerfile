@@ -13,12 +13,16 @@ ARG GOPROXY
 ARG GOSUMDB
 WORKDIR /workspace/control-plane
 COPY control-plane/go.mod control-plane/go.sum ./
-RUN if [ -n "${GOPROXY}" ]; then go env -w GOPROXY="${GOPROXY}"; fi \
+RUN --mount=type=cache,id=foretoken-go-modules,target=/go/pkg/mod \
+    if [ -n "${GOPROXY}" ]; then go env -w GOPROXY="${GOPROXY}"; fi \
     && if [ -n "${GOSUMDB}" ]; then go env -w GOSUMDB="${GOSUMDB}"; fi \
     && go mod download
 COPY control-plane/ ./
-# Build the long-running manager and the one-shot CRD bootstrapper from the same source tree.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/manager ./cmd && \
+# Build all platform executables together, retaining dependency and compiler
+# caches when application sources invalidate this stage.
+RUN --mount=type=cache,id=foretoken-go-modules,target=/go/pkg/mod \
+    --mount=type=cache,id=foretoken-go-build,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/manager ./cmd && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/crd-apply ./cmd/crd-apply && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/video-worker ./cmd/video-worker
 
