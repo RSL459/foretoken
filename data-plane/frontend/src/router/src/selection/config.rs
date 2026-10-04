@@ -142,7 +142,7 @@ macro_rules! algorithm_name_wrapper {
     };
 }
 
-algorithm_name_wrapper!(AdmissionAlgorithm, "concurrency");
+algorithm_name_wrapper!(AdmissionAlgorithm, "allow_all");
 algorithm_name_wrapper!(FilterAlgorithm, "allow_all");
 algorithm_name_wrapper!(ScorerAlgorithm, "kv_least_loaded");
 algorithm_name_wrapper!(PickerAlgorithm, "gamble_sampling");
@@ -232,22 +232,9 @@ impl RouterPipelineConfig {
         pipeline.admission = self
             .admission
             .as_ref()
-            .map(|stage| {
-                if stage.algorithm.as_str() != "concurrency" {
-                    return Err(RouterPipelineConfigError::UnknownAlgorithm {
-                        category: "admission",
-                        name: stage.algorithm.to_string(),
-                    });
-                }
-                crate::Admission::from_parameters(serde_json::Value::Object(
-                    stage.parameters.clone(),
-                ))
-                .map_err(|message| RouterPipelineConfigError::InvalidParameters {
-                    name: "admission.concurrency".into(),
-                    message,
-                })
-            })
-            .transpose()?;
+            .map(crate::algorithm::admission::build)
+            .transpose()?
+            .flatten();
         Ok(pipeline)
     }
 

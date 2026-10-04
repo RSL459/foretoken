@@ -168,7 +168,7 @@ spec:
                     description: Admission is omitted to retain unrestricted routing.
                     properties:
                       algorithm:
-                        default: concurrency
+                        default: allow_all
                         description: RouterAlgorithm names one compiled routing algorithm.
                         minLength: 1
                         type: string
@@ -198,9 +198,12 @@ spec:
                         required:
                         - maxConcurrentRequests
                         type: object
-                    required:
-                    - parameters
                     type: object
+                    x-kubernetes-validations:
+                    - message: concurrency admission requires parameters
+                      rule: self.algorithm != 'concurrency' || has(self.parameters)
+                    - message: allow_all admission accepts no parameters
+                      rule: self.algorithm != 'allow_all' || !has(self.parameters)
                   filter:
                     default:
                       algorithm: allow_all

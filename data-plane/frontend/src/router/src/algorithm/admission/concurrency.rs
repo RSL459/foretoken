@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Process-local admission shared by successive routing generations.
+//! Bounded concurrency and FIFO waiting shared by successive routing generations.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use thiserror::Error;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
+use tokio::sync::{Semaphore, TryAcquireError};
 
 use crate::metrics::{AdmissionRejectionLabels, METRICS};
+
+use super::{AdmissionError, AdmissionPermit, PermitKind};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -21,7 +22,7 @@ struct Parameters {
     queue_timeout: Option<String>,
 }
 
-/// One frontend's execution, waiting, and resident-request budgets.
+/// Runtime state for one frontend's concurrency admission rule.
 /// The pipeline retains this owner across serving-snapshot replacements.
 pub struct Admission {
     capacity: u32,
@@ -145,82 +146,6 @@ impl Admission {
         self.resident.close();
         self.queued.close();
         self.active.close();
-    }
-}
-
-/// Admission outcomes translated by protocol adapters before response headers.
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
-pub enum AdmissionError {
-    #[error("generation service is overloaded")]
-    Overloaded,
-    #[error("admission queue timeout exceeded")]
-    QueueTimeout,
-    #[error("request deadline exceeded")]
-    DeadlineExceeded,
-    #[error("request fan-out exceeds configured admission concurrency")]
-    BatchTooLarge,
-    #[error("generation admission is closed")]
-    Closed,
-}
-
-#[derive(Default)]
-enum PermitKind {
-    #[default]
-    Active,
-    Queued,
-    Resident,
-}
-
-/// Ownership of admitted work, queued units, or a resident HTTP request.
-/// Default permits preserve the disabled stage's existing behavior.
-#[derive(Default)]
-pub struct AdmissionPermit {
-    permit: Option<OwnedSemaphorePermit>,
-    kind: PermitKind,
-}
-
-impl AdmissionPermit {
-    fn counted(permit: OwnedSemaphorePermit, kind: PermitKind) -> Self {
-        let value = Self {
-            permit: Some(permit),
-            kind,
-        };
-        value.gauge().inc_by(value.units());
-        value
-    }
-
-    /// Transfers one already-reserved batch unit to its generation child without reacquiring.
-    pub fn split_one(&mut self) -> Self {
-        Self {
-            permit: self.permit.as_mut().map(|permit| {
-                permit
-                    .split(1)
-                    .expect("generation batch has a reserved unit for each child")
-            }),
-            kind: PermitKind::Active,
-        }
-    }
-
-    fn units(&self) -> i64 {
-        self.permit
-            .as_ref()
-            .map_or(0, |permit| permit.num_permits() as i64)
-    }
-
-    fn gauge(&self) -> &prometheus_client::metrics::gauge::Gauge {
-        match self.kind {
-            PermitKind::Active => &METRICS.admission_active,
-            PermitKind::Queued => &METRICS.admission_queued,
-            PermitKind::Resident => &METRICS.admission_resident,
-        }
-    }
-}
-
-impl Drop for AdmissionPermit {
-    fn drop(&mut self) {
-        if self.permit.is_some() {
-            self.gauge().dec_by(self.units());
-        }
     }
 }
 

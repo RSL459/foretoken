@@ -35,28 +35,21 @@ Omit `filter`, `scorer`, and `picker` to use the default routing strategy. By de
 
 When the KV index is unavailable, targets remain eligible without KV-prefix preference. See the [KV prefix index](../kv-indexer/README.md) for cache-locality behavior.
 
-## Limit concurrent requests
+## Configure admission rules
 
-To bound work accepted by each frontend replica, add an Admission stage:
+Admission rules determine whether requests proceed, wait, or are rejected. The default, `allow_all`, adds no admission limit. Select `concurrency` to enable concurrency-based flow control:
 
 ```yaml
 spec:
   routerPipeline:
     admission:
+      algorithm: concurrency
       parameters:
         maxConcurrentRequests: 64
 ```
 
-This example allows 64 simultaneous generations and rejects excess requests with HTTP 503. Choose the limit from measurements of your workload; 64 is an example, not a default. Omit `admission` to leave this protection disabled. The stage's algorithm defaults to `concurrency`.
+This example allows 64 concurrent output candidates per frontend replica; choose the limit from measurements of your workload. Batched completions count each candidate separately: four prompts with `n: 2` use eight slots.
 
-For short bursts, set `maxQueuedRequests: 128` and `queueTimeout: 2s` under the same `parameters` block. Queued requests receive capacity in FIFO order before preprocessing and target selection.
+For short bursts, add `maxQueuedRequests: 128` and `queueTimeout: 2s` under `parameters`. By default, requests do not queue; when queueing is enabled without a timeout, the remaining request budget applies. Full capacity without queue space and queue expiry return HTTP 503. A batch larger than the concurrency limit returns HTTP 400.
 
-| Parameter | Purpose | Default |
-| --- | --- | --- |
-| `maxConcurrentRequests` | Maximum concurrent generations per frontend replica | Required |
-| `maxQueuedRequests` | Maximum generations waiting for capacity | `0`, no queue |
-| `queueTimeout` | Maximum time waiting for admission | Remaining request timeout |
-
-A batched completion counts each output candidate separately: four prompts with `n: 2` need eight slots. A batch larger than the concurrency limit returns HTTP 400. Queue exhaustion and queue timeout return HTTP 503; the overall request timeout still applies. Text generation and tokenization share this protection; video requests and background video tasks do not.
-
-Each frontend replica shares these limits across its models; they are not cluster-wide quotas. Health probes remain available when capacity is full. Admission does not change how targets are filtered, scored, or selected.
+Limits are shared across models on each frontend replica, not across the cluster. Text generation and tokenization use these rules; video requests do not. Health probes remain available.

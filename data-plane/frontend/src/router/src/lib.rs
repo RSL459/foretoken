@@ -3,9 +3,8 @@
 
 //! Composable selection of one routable ModelGroup per routing round.
 
-mod admission;
-pub use admission::{Admission, AdmissionError, AdmissionPermit};
 pub mod algorithm;
+pub use algorithm::admission::{Admission, AdmissionError, AdmissionPermit};
 mod cache;
 mod inventory;
 mod metrics;

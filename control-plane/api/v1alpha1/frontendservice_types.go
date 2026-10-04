@@ -61,14 +61,17 @@ type AdmissionParameters struct {
 	QueueTimeout Duration `json:"queueTimeout,omitempty"`
 }
 
-// AdmissionStage selects the optional request admission algorithm and its parameters.
+// AdmissionStage selects a request admission rule and its parameters.
+// +kubebuilder:validation:XValidation:rule="self.algorithm != 'concurrency' || has(self.parameters)",message="concurrency admission requires parameters"
+// +kubebuilder:validation:XValidation:rule="self.algorithm != 'allow_all' || !has(self.parameters)",message="allow_all admission accepts no parameters"
 type AdmissionStage struct {
 	// +optional
-	// +kubebuilder:default=concurrency
+	// +kubebuilder:default=allow_all
 	// +kubebuilder:validation:MinLength=1
 	Algorithm RouterAlgorithm `json:"algorithm,omitempty"`
 
-	Parameters AdmissionParameters `json:"parameters"`
+	// +optional
+	Parameters *AdmissionParameters `json:"parameters,omitempty"`
 }
 
 // RouterPipeline selects each independently composable routing algorithm stage.

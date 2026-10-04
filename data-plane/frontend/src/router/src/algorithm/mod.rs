@@ -23,6 +23,7 @@ macro_rules! declare_router_algorithms {
     };
 }
 
+pub mod admission;
 pub mod filter;
 pub mod picker;
 pub mod scorer;
