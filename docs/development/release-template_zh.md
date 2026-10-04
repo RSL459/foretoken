@@ -54,9 +54,12 @@
 | 产物 | 版本或 tag | 安装或访问方式 |
 | --- | --- | --- |
 | Python package | `foretoken==X.Y.Z` | `pip install foretoken==X.Y.Z` |
-| OCI 镜像 | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/<name>:X.Y.Z` |
-| 沐曦 model-server | `X.Y.Z-metax` | `ghcr.io/shiweijiezero/foretoken/model-server:X.Y.Z-metax` |
-| Helm Chart | `X.Y.Z` | `oci://ghcr.io/shiweijiezero/foretoken/charts` |
+| 控制面运行环境 | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/control-plane-environment:X.Y.Z` |
+| 前端运行环境 | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/frontend-environment:X.Y.Z` |
+| NVIDIA 模型服务运行环境 | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:X.Y.Z` |
+| 沐曦模型服务运行环境 | `X.Y.Z-metax` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:X.Y.Z-metax` |
+| 应用压缩包 | `X.Y.Z` | `https://github.com/shiweijiezero/foretoken/releases/download/vX.Y.Z/foretoken-applications-X.Y.Z-linux-amd64.tar.gz` |
+| Helm Chart | `X.Y.Z` | `oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken` |
 | 示例 | `vX.Y.Z` | [Release tag 中的 examples](https://github.com/shiweijiezero/foretoken/tree/vX.Y.Z/examples) |
 
 ## 已知限制
@@ -78,7 +81,7 @@
 - “主要亮点”写三到五项结果，不写提交记录列表。
 - “变更内容”按用户能理解的领域归类，把同一能力的多个 PR 合并成一条说明。
 - 如果读者需要选择运行时、修改配置或在使用前执行动作，保留“兼容性”和“升级说明”。
-- 发布 Python package、各 OCI 镜像变体、Helm Chart 和带版本 tag 的示例时，逐项列出对应产物。
+- 逐项列出本次发布的 Python package、各运行环境镜像变体、应用压缩包、Helm Chart 和带版本 tag 的示例，并填写实际访问地址。
 - “已知限制”只保留会改变用户操作的当前限制；没有此类限制时删除整节。
 - 只根据已确认的贡献或支持记录署名，并写明具体帮助内容。
 - 完整提交历史放在 compare 链接中，正文不展开每个内部提交。

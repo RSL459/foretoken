@@ -54,9 +54,12 @@ Copy this template into the GitHub Release description, then remove unused secti
 | Artifact | Version or tag | Install or access path |
 | --- | --- | --- |
 | Python package | `foretoken==X.Y.Z` | `pip install foretoken==X.Y.Z` |
-| OCI images | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/<name>:X.Y.Z` |
-| MetaX model-server | `X.Y.Z-metax` | `ghcr.io/shiweijiezero/foretoken/model-server:X.Y.Z-metax` |
-| Helm Chart | `X.Y.Z` | `oci://ghcr.io/shiweijiezero/foretoken/charts` |
+| Control-plane environment | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/control-plane-environment:X.Y.Z` |
+| Frontend environment | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/frontend-environment:X.Y.Z` |
+| NVIDIA model-server environment | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:X.Y.Z` |
+| MetaX model-server environment | `X.Y.Z-metax` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:X.Y.Z-metax` |
+| Application archive | `X.Y.Z` | `https://github.com/shiweijiezero/foretoken/releases/download/vX.Y.Z/foretoken-applications-X.Y.Z-linux-amd64.tar.gz` |
+| Helm Chart | `X.Y.Z` | `oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken` |
 | Examples | `vX.Y.Z` | [examples at the release tag](https://github.com/shiweijiezero/foretoken/tree/vX.Y.Z/examples) |
 
 ## Known Limitations
@@ -78,7 +81,7 @@ Copy this template into the GitHub Release description, then remove unused secti
 - Use `Highlights` for three to five outcomes, not a commit list.
 - Keep `Changes` grouped by user-facing area. Combine related pull requests into one explanation.
 - Keep `Compatibility` and `Upgrade Notes` when a reader may need to choose a runtime, change configuration, or take an action before using the release.
-- List the package, each published OCI image variant, the Chart, and the tagged examples when they are part of the release.
+- List the Python package, each runtime environment image variant, the application archive, the Chart, and the tagged examples published for the release, with their actual access paths.
 - Keep `Known Limitations` short and actionable. Omit it when there is nothing that changes user action.
 - Name contributors only from confirmed contribution or support records, and describe the concrete help provided.
 - Put the complete commit history in the compare link rather than expanding every internal commit in the release body.

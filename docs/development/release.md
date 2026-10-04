@@ -78,7 +78,7 @@ Use the [Release Description Template](release-template.md) when creating a GitH
 - three to five highlights and grouped changes for users;
 - compatibility across Python, Kubernetes, NVIDIA, MetaX, APIs, and configuration;
 - breaking changes, deprecations, and the exact upgrade action;
-- every published package, OCI image variant, Helm Chart, and tagged example;
+- every published package, runtime environment image variant, application archive, Helm Chart, and tagged example;
 - actionable known limitations, factual thanks, and a compare link to the full history.
 
 Remove sections that do not apply. Link related pull requests when they help readers trace a change, and do not claim support that was not confirmed for this release.
@@ -120,8 +120,8 @@ Existing tags are not overwritten, so the same command can retry an incomplete p
 ## Release sequence
 
 1. Choose the release stage and update `pyproject.toml` and `Chart.yaml` using the mapping above.
-2. Build and verify the Python distribution, Helm Chart, and affected OCI images.
+2. Build and verify the Python distribution, application archive, Helm Chart, and affected OCI images.
 3. Push the matching OCI image and Helm Chart tags.
-4. Tag the commit used to build and validate the artifacts, then publish the GitHub Release with concise highlights and named acknowledgements of contributors and their support.
+4. Tag the commit used to build and validate the artifacts, then publish the GitHub Release with the application archive attached, concise highlights, and named acknowledgements of contributors and their support.
 5. Let the release workflow publish the Python distribution to PyPI.
-6. Verify the published package, images, Chart, and a clean installation path.
+6. Verify the published package, images, application archive, Chart, and a clean installation path.

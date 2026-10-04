@@ -76,7 +76,7 @@ runtime:
     image: ghcr.io/example/custom-vllm:latest
 ```
 
-Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base and adds the model-server. Then deploy the workload again.
+Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base. Then deploy the workload again.
 
 MetaX base-image builds are covered by [Prepare Foretoken for MetaX GPUs](development/metax-platform.md#install-from-source).
 
@@ -119,4 +119,6 @@ Apply the runtime setting:
 foretoken install -e . --values deploy/platform-values.yaml
 ```
 
-Retain `--registry "$REGISTRY"` for remote platform builds and any other installation options. Rebuild and distribute the Omni image after changing its code; the editable vLLM source path above targets the standard vLLM backend.
+Retain `--registry "$REGISTRY"` for remote platform builds and any other installation options. The editable vLLM source path above targets the standard vLLM backend.
+
+After installation, run `foretoken deploy` with the Kustomize directory for your Omni service. For code updates, rebuild and distribute the Omni image, then set `runtime.vllmOmni.image` to a new tag or digest reference. Reapply the installation command and deploy the same Kustomize directory again.

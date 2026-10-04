@@ -76,7 +76,7 @@ runtime:
     image: ghcr.io/example/custom-vllm:latest
 ```
 
-重新执行安装命令，传入 `--values deploy/platform-values.yaml`，并保留镜像仓库和引擎源码选项。使用 `-e` 时，Foretoken 以此镜像为构建基础，加入 model-server；安装完成后重新部署工作负载。
+重新执行安装命令，传入 `--values deploy/platform-values.yaml`，并保留镜像仓库和引擎源码选项。使用 `-e` 时，Foretoken 以此镜像为构建基础；安装完成后重新部署工作负载。
 
 沐曦基础镜像构建见[准备沐曦 Foretoken 平台](development/metax-platform_zh.md#从源码安装)。
 
@@ -119,4 +119,6 @@ runtime:
 foretoken install -e . --values deploy/platform-values.yaml
 ```
 
-远程平台构建保留 `--registry "$REGISTRY"`，以及原有的其他安装选项。修改 Omni 代码后重新构建并分发该镜像；前面的 vLLM editable 源码更新针对标准 vLLM 后端。
+远程平台构建保留 `--registry "$REGISTRY"`，以及原有的其他安装选项。前面的 vLLM editable 源码更新针对标准 vLLM 后端。
+
+安装完成后，用 `foretoken deploy` 部署 Omni 服务的 Kustomize 目录。修改代码后，重新构建并分发 Omni 镜像，将 `runtime.vllmOmni.image` 改为新的 tag 或 digest 引用，再执行安装命令并重新部署同一 Kustomize 目录。

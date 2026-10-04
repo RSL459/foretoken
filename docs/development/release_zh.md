@@ -78,7 +78,7 @@ v0.0.1.post1
 - 三到五项主要亮点，以及按用户领域归类的变更；
 - Python、Kubernetes、NVIDIA、沐曦、API 和配置的兼容性；
 - 破坏性变更、弃用项和明确的升级动作；
-- 本次发布的 package、各 OCI 镜像变体、Helm Chart 和带版本 tag 的示例；
+- 本次发布的 package、各运行环境镜像变体、应用压缩包、Helm Chart 和带版本 tag 的示例；
 - 会改变用户操作的已知限制、事实性致谢，以及指向完整历史的 compare 链接。
 
 删除不适用的章节。相关 PR 能帮助读者追溯变更时再添加链接；没有实际确认的支持范围不得写入 Release 描述。
@@ -120,8 +120,8 @@ deploy/release-artifacts push --registry "$REGISTRY"
 ## 发布顺序
 
 1. 确定发布阶段，并按上表更新 `pyproject.toml` 和 `Chart.yaml`。
-2. 构建并验证 Python distribution、Helm Chart 和受影响的 OCI 镜像。
+2. 构建并验证 Python distribution、应用压缩包、Helm Chart 和受影响的 OCI 镜像。
 3. 推送对应的 OCI 镜像和 Helm Chart tag。
-4. 在实际构建并验证产物的提交上打 tag，发布 GitHub Release，简述重要改动，并具名感谢贡献者及其提供的支持。
+4. 在实际构建并验证产物的提交上打 tag，发布 GitHub Release 并附上应用压缩包，简述重要改动，并具名感谢贡献者及其提供的支持。
 5. 由发布 workflow 将 Python distribution 上传到 PyPI。
-6. 验证已发布的 package、镜像、Chart 和全新安装路径。
+6. 验证已发布的 package、镜像、应用压缩包、Chart 和全新安装路径。
