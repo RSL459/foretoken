@@ -993,6 +993,8 @@ class Helm(HelmClient):
         node_selector: tuple[str, str] | None,
         reuse_values: bool,
         timeout: str,
+        *,
+        visible_devices: str | None,
     ) -> None:
         """Install or upgrade the CLI-managed NVIDIA DCGM Exporter release."""
         args = self._managed_chart_args(
@@ -1023,6 +1025,17 @@ class Helm(HelmClient):
         )
         if not reuse_values:
             self._add_chart_image_sources(args, ("image",))
+        if visible_devices is not None:
+            stored = self.release_user_values(release) if reuse_values else {}
+            environment = [
+                entry
+                for entry in stored.get("extraEnv") or []
+                if entry["name"] != "NVIDIA_VISIBLE_DEVICES"
+            ]
+            environment.append(
+                {"name": "NVIDIA_VISIBLE_DEVICES", "value": visible_devices}
+            )
+            args.extend(["--set-json", "extraEnv=" + json.dumps(environment)])
         if observability_labels:
             args.extend(
                 [
