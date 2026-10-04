@@ -274,7 +274,13 @@ class ApplicationFiles:
                 self.namespace,
                 label_selector="batch.kubernetes.io/controller-uid=" + job["uid"],
             ):
-                self._delete_owned("pods", pod["metadata"], timeout)
+                if any(
+                    owner.get("kind") == "Job"
+                    and owner.get("uid") == job["uid"]
+                    and owner.get("controller") is True
+                    for owner in pod["metadata"].get("ownerReferences", [])
+                ):
+                    self._delete_owned("pods", pod["metadata"], timeout)
             current = self.kubectl.get_if_exists("job", job["name"], self.namespace)
             if current is None or current["metadata"]["uid"] != job["uid"]:
                 raise DeploymentError(

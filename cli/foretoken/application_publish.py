@@ -17,6 +17,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+_RELEASE_STAGING_PREFIX = ".release.staging-"
+
 
 class _ReleaseRedirectHandler(HTTPRedirectHandler):
     """Keep release credentials on the configured scheme and authority."""
@@ -37,7 +39,11 @@ def import_release(
     previous: dict[str, str],
     keep: set[str] | None,
 ) -> None:
-    """Import release files and retire unreferenced release-owned versions, including on reuse."""
+    """Import or reuse release files while the caller holds the origin's unique release Job."""
+    # Exclusive release ownership makes interrupted staging recoverable even on reuse.
+    for component in ("control-plane", "frontend", "model-server"):
+        for abandoned in (destination / component).glob(_RELEASE_STAGING_PREFIX + "*"):
+            shutil.rmtree(abandoned)
     missing = [
         component
         for component in ("control-plane", "frontend", "model-server")
@@ -85,9 +91,10 @@ def publish(
     if not source.is_dir():
         raise FileNotFoundError(f"application export is missing: {source}")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    prefix = f".{binding}.staging-"
-    for abandoned in destination.parent.glob(prefix + "*"):
-        shutil.rmtree(abandoned)
+    prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
+    if not release_owned:
+        for abandoned in destination.parent.glob(prefix + "*"):
+            shutil.rmtree(abandoned)
     with tempfile.TemporaryDirectory(
         prefix=prefix, dir=destination.parent
     ) as temporary:
