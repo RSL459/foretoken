@@ -835,12 +835,10 @@ class EditableDeployment:
                         arguments={
                             **build["arguments"],
                             "RUNTIME_IMAGE": self.state["runtime"]["model_image"],
-                            "CACHE_ID": build["binding"]
-                            + "-"
-                            + build["environment"],
-                            "BUILD_NATIVE": str(
-                                build.get("engine_native", False)
-                            ).lower(),
+                            "CACHE_ID": build["engine_caches"][
+                                "" if build["registry"] else origin.node
+                            ],
+                            "BUILD_NATIVE": str(build["engine_native"]).lower(),
                         },
                     )
                     builder.run(

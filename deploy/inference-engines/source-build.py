@@ -206,7 +206,7 @@ def export_overlay(
             path.unlink()
 
 
-def runtime_constraints() -> dict[str, str]:
+def runtime_constraints(source_packages: set[str]) -> dict[str, str]:
     """Retain the installed accelerator ABI packages while allowing ordinary dependency updates."""
     protected = {
         "torch",
@@ -216,11 +216,12 @@ def runtime_constraints() -> dict[str, str]:
         "triton",
         "mcoplib",
         "maca-python",
+        "vllm-metax",
     }
     constraints = {}
     for distribution in importlib.metadata.distributions():
         name = canonicalize_name(distribution.metadata["Name"])
-        if name in {"vllm", "vllm-metax"}:
+        if name in source_packages:
             continue
         local = distribution.version.partition("+")[2].lower()
         if (
@@ -253,7 +254,11 @@ def prepare_metadata(
     core: Path, plugin: Path | None, output: Path, metax: bool
 ) -> None:
     """Export upstream distribution metadata and dependency inputs without packaging engine code."""
-    constraints = runtime_constraints()
+    projects = [(core, "vllm")]
+    if plugin is not None:
+        projects.append((plugin, "vllm_metax"))
+    engine_names = {canonicalize_name(package) for _, package in projects}
+    constraints = runtime_constraints(engine_names)
     dependencies = output / "dependencies"
     dependencies.mkdir(parents=True, exist_ok=True)
     (dependencies / "runtime-native-constraints.txt").write_text(
@@ -262,10 +267,6 @@ def prepare_metadata(
         )
     )
     requirements = set()
-    engine_names = {"vllm", "vllm-metax"}
-    projects = [(core, "vllm")]
-    if plugin is not None:
-        projects.append((plugin, "vllm_metax"))
     for source, package in projects:
         with tempfile.TemporaryDirectory(
             prefix="foretoken-engine-metadata-"

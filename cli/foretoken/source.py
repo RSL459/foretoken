@@ -377,6 +377,10 @@ def prepare_source_images(
             if path.is_file()
         }
         digests: dict[str, dict[str, str]] = {}
+        engine_caches: dict[str, str] = {}
+        engine_native = bool(engines) and (
+            runtime_backend != "metax" or "vllm-metax" in engines
+        )
         installed = dict(zip(references, installed_images or (), strict=False))
         reusable = {
             component: build.get("registry") == registry
@@ -451,17 +455,21 @@ def prepare_source_images(
                     component_arguments,
                 )
                 if component == "model-server" and engines:
+                    cache_prefix = "-".join(
+                        (
+                            binding,
+                            versions[
+                                "deploy/inference-engines/source-build.Dockerfile"
+                            ],
+                            *sorted(engines),
+                        )
+                    )
                     engine_arguments = {
                         **arguments,
                         "RUNTIME_IMAGE": image,
-                        "CACHE_ID": binding
+                        "CACHE_ID": cache_prefix
                         + "-"
-                        + metadata["containerimage.digest"]
-                        + "-"
-                        + versions["deploy/inference-engines/source-build.Dockerfile"],
-                        "BUILD_NATIVE": str(
-                            runtime_backend != "metax" or "vllm-metax" in engines
-                        ).lower(),
+                        + metadata["containerimage.digest"],
                     }
                     user_output = builder.root + "/runtime-user"
                     builder.build(
@@ -475,7 +483,7 @@ def prepare_source_images(
                     ).strip()
                     metadata = builder.build(
                         "deploy/inference-engines/source-build.Dockerfile",
-                        target="runtime",
+                        target="environment",
                         image=references[component],
                         push=bool(registry),
                         arguments=engine_arguments,
@@ -483,9 +491,21 @@ def prepare_source_images(
                     )
                     final_dockerfile, final_target, final_arguments = (
                         "deploy/inference-engines/source-build.Dockerfile",
-                        "runtime",
+                        "environment",
                         engine_arguments,
                     )
+                    # Native exports use the selected dependency environment, and their
+                    # cache identity survives Python-only updates and origin relocation.
+                    engine_cache = (
+                        cache_prefix + "-" + metadata["containerimage.digest"]
+                    )
+                    engine_caches["" if registry else node] = engine_cache
+                    engine_export_arguments = {
+                        **engine_arguments,
+                        "RUNTIME_IMAGE": references[component],
+                        "CACHE_ID": engine_cache,
+                        "BUILD_NATIVE": str(engine_native).lower(),
+                    }
                 node_digests[component] = metadata["containerimage.digest"]
                 reusable[component] = reusable[component] and node_digests[
                     component
@@ -507,12 +527,39 @@ def prepare_source_images(
                         )
                 if node == origin.node:
                     payload = builder.root + "/applications/" + component
-                    builder.build(dockerfile, target="source-export", destination=payload, arguments=component_arguments)
+                    builder.build(
+                        dockerfile,
+                        target="source-export",
+                        destination=payload,
+                        arguments=component_arguments,
+                    )
                     if component == "model-server" and engines:
                         engine_output = builder.root + "/applications/engine"
-                        builder.build("deploy/inference-engines/source-build.Dockerfile", target="source-export", destination=engine_output, arguments=engine_arguments)
-                        builder.run(["sh", "-ec", 'cp -R "$1/." "$2/"', "assemble", engine_output, payload])
-                    origin.publish(builder, payload, component, suffix, "", None, timeout=command.timeout)
+                        builder.build(
+                            "deploy/inference-engines/source-build.Dockerfile",
+                            target="source-export",
+                            destination=engine_output,
+                            arguments=engine_export_arguments,
+                        )
+                        builder.run(
+                            [
+                                "sh",
+                                "-ec",
+                                'cp -R "$1/." "$2/"',
+                                "assemble",
+                                engine_output,
+                                payload,
+                            ]
+                        )
+                    origin.publish(
+                        builder,
+                        payload,
+                        component,
+                        suffix,
+                        "",
+                        None,
+                        timeout=command.timeout,
+                    )
             if node == origin.node:
                 builder.run(["rm", "-rf", "--", builder.root + "/applications"])
             digests[node] = node_digests
@@ -541,11 +588,12 @@ def prepare_source_images(
                 "arguments": arguments,
                 "registry": registry,
                 "containerd_socket": nodes[0][1],
-                "environment": build["environment"]
-                if reusable["model-server"]
-                else suffix,
+                "engine_caches": engine_caches,
+                "engine_native": engine_native,
                 "backend": runtime_backend,
-                "applications": {component: {"revision": suffix} for component in references},
+                "applications": {
+                    component: {"revision": suffix} for component in references
+                },
             },
             applications,
         )

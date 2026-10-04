@@ -110,7 +110,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
 USER ${RUNTIME_USER}
 
 # Check the complete environment against source metadata without adding it to the image.
-FROM environment AS engine-validation
+FROM ${RUNTIME_IMAGE} AS engine-validation
 USER root
 COPY --from=engine-build /out/ /out/
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv bash <<'EOF'
