@@ -557,17 +557,6 @@ class EditableDeployment:
                 if Path(name).suffix in {".md", ".png", ".svg"}:
                     continue
                 parts = Path(name).parts
-                native_source = (
-                    "vllm-metax"
-                    if self.state["build"]["backend"] == "metax"
-                    else "vllm"
-                )
-                if parts[1] == native_source and (
-                    parts[2] in {"csrc", "cmake", "CMakeLists.txt"}
-                    or Path(name).suffix
-                    in {".cu", ".cuh", ".cpp", ".cc", ".c", ".h", ".hpp", ".cmake"}
-                ):
-                    self.state["build"]["engine_native"] = True
                 if len(parts) > 2 and (
                     parts[2]
                     in {
@@ -770,6 +759,15 @@ class EditableDeployment:
                 "uid": origin.claim_uid,
             },
         )
+        if (
+            "model-server" in pending
+            and self.state.get("engines")
+            and not build["registry"]
+            and origin.node not in build["engine_caches"]
+        ):
+            # A newly prepared origin node needs a cold cache, not another node's native outputs.
+            build["engine_caches"][origin.node] = build["binding"] + "-" + uuid.uuid4().hex
+            _write_json(self.directory / "install.json", self.state)
         snapshot = self.directory / self.state["inputs"]
         inputs = {
             str(path.relative_to(snapshot)): path

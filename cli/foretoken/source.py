@@ -590,7 +590,6 @@ def prepare_source_images(
                 "containerd_socket": nodes[0][1],
                 "engine_caches": engine_caches,
                 "engine_native": engine_native,
-                "backend": runtime_backend,
                 "applications": {
                     component: {"revision": suffix} for component in references
                 },
