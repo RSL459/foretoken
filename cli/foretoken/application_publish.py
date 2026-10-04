@@ -29,34 +29,55 @@ class _ReleaseRedirectHandler(HTTPRedirectHandler):
         return redirect
 
 
-def import_release(source: str, destination: Path, revision: str, binding: str) -> None:
-    """Import missing release components, reusing a complete version without downloading it."""
+def import_release(
+    source: str,
+    destination: Path,
+    revision: str,
+    binding: str,
+    previous: dict[str, str],
+    keep: set[str] | None,
+) -> None:
+    """Import release files and retire unreferenced release-owned versions, including on reuse."""
     missing = [
         component
         for component in ("control-plane", "frontend", "model-server")
         if not (destination / component / revision / "manifest.json").is_file()
     ]
-    if not missing:
-        return
-    request = Request(source)
-    if credential := os.environ.get("FORETOKEN_RELEASE_AUTHORIZATION"):
-        request.add_header("Authorization", credential)
-    opener = build_opener(_ReleaseRedirectHandler())
-    with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
-        archive = Path(temporary) / "applications.tar.gz"
-        with opener.open(request) as response, archive.open("wb") as output:
-            shutil.copyfileobj(response, output)
-        payload = Path(temporary) / "payload"
-        with tarfile.open(archive) as package:
-            package.extractall(payload, filter="data")
-        for component in missing:
-            publish(
-                payload / component, destination / component / revision, binding, None
+    if missing:
+        request = Request(source)
+        if credential := os.environ.get("FORETOKEN_RELEASE_AUTHORIZATION"):
+            request.add_header("Authorization", credential)
+        opener = build_opener(_ReleaseRedirectHandler())
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            archive = Path(temporary) / "applications.tar.gz"
+            with opener.open(request) as response, archive.open("wb") as output:
+                shutil.copyfileobj(response, output)
+            payload = Path(temporary) / "payload"
+            with tarfile.open(archive) as package:
+                package.extractall(payload, filter="data")
+            for component in missing:
+                prior = previous.get(component)
+                publish(
+                    payload / component,
+                    destination / component / revision,
+                    binding,
+                    destination / component / prior if prior else None,
+                    release_owned=True,
+                )
+    if keep is not None:
+        for component in ("control-plane", "frontend", "model-server"):
+            retire(
+                destination / component, binding, keep | {revision}, release_owned=True
             )
 
 
 def publish(
-    source: Path, destination: Path, binding: str, previous: Path | None
+    source: Path,
+    destination: Path,
+    binding: str,
+    previous: Path | None,
+    *,
+    release_owned: bool = False,
 ) -> None:
     """Expose an immutable directory, sharing unchanged files with its previous version."""
     if (destination / "manifest.json").is_file():
@@ -107,25 +128,44 @@ def publish(
                 }
             )
         (staging / "manifest.json").write_text(
-            json.dumps({"binding": binding, "files": files}) + "\n"
+            json.dumps(
+                {"binding": binding, "releaseOwned": release_owned, "files": files}
+            )
+            + "\n"
         )
         staging.rename(destination)
 
 
-def retire(directory: Path, binding: str, keep: set[str]) -> None:
-    """Remove this publisher's completed versions after their consumers and history retire."""
+def retire(
+    directory: Path, binding: str, keep: set[str], *, release_owned: bool = False
+) -> None:
+    """Remove completed versions belonging to the release or the source publisher binding."""
     for version in directory.iterdir():
         manifest = version / "manifest.json"
         if version.name in keep or not manifest.is_file():
             continue
         metadata = json.loads(manifest.read_text())
-        if metadata.get("binding") == binding:
+        owned = (
+            metadata.get("releaseOwned") is True
+            if release_owned
+            else metadata.get("binding") == binding
+        )
+        if owned:
             shutil.rmtree(version)
 
 
 if __name__ == "__main__":
     if sys.argv[1] == "--release":
-        import_release(sys.argv[2], Path(sys.argv[3]), sys.argv[4], sys.argv[5])
+        selection = json.loads(Path(sys.argv[6]).read_text())
+        retained = selection["keep"]
+        import_release(
+            sys.argv[2],
+            Path(sys.argv[3]),
+            sys.argv[4],
+            sys.argv[5],
+            selection["previous"],
+            set(retained) if retained is not None else None,
+        )
     else:
         destination = Path(sys.argv[2])
         binding = sys.argv[3]

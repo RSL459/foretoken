@@ -9,7 +9,8 @@ import json
 import math
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from importlib.resources import files
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -180,7 +181,7 @@ class ApplicationFiles:
 
     def publish(
         self,
-        builder: ClusterBuilder | None,
+        builder: ClusterBuilder,
         source: str,
         component: str,
         revision: str,
@@ -188,21 +189,103 @@ class ApplicationFiles:
         references: set[str] | None,
         *,
         timeout: str,
-        credentials_secret: str = "",
     ) -> None:
-        """Publish a compiler export or import an HTTP release archive before workload rollout.
+        """Publish a compiler export while the source caller holds its binding lock."""
+        command = [
+            "python",
+            "-c",
+            files("foretoken").joinpath("application_publish.py").read_text(),
+            source,
+            f"{self.mount}/{component}/{revision}",
+            builder.binding,
+            f"{self.mount}/{component}/{previous}" if previous else "",
+            json.dumps(self._retained_versions(references)),
+        ]
+        with self._publisher(command, builder.binding, timeout, builder=builder) as job:
+            self._wait(job, timeout)
 
-        A builder supplies source files; without one, the Job imports all release components.
-        Source callers hold their binding lock and stop abandoned writers before reusing output.
+    @contextmanager
+    def import_release(
+        self,
+        source: str,
+        revision: str,
+        references: Callable[[], set[str] | None],
+        previous: Callable[[], dict[str, str]],
+        *,
+        timeout: str,
+        credentials_secret: str = "",
+    ) -> Iterator[None]:
+        """Serialize release import and GC through the caller's Helm selection commit.
+
+        The input ConfigMap is created only after unique Job ownership, so a Pending
+        Pod cannot collect files using a snapshot taken before another installer commits.
         """
-        script = files("foretoken").joinpath("application_publish.py").read_text()
-        binding = (
-            builder.binding if builder is not None else "release-" + uuid.uuid4().hex
-        )
-        destination = f"{self.mount}/{component}/{revision}"
-        if builder is None:
-            destination = self.mount
-        keep = (
+        binding = "release-" + uuid.uuid4().hex
+        input_name = "foretoken-publish-input-" + uuid.uuid4().hex[:12]
+        command = [
+            "python",
+            "-c",
+            files("foretoken").joinpath("application_publish.py").read_text(),
+            "--release",
+            source,
+            self.mount,
+            revision,
+            binding,
+            "/selection/input.json",
+        ]
+        with self._publisher(
+            command,
+            binding,
+            timeout,
+            name="foretoken-release-" + self.claim_uid,
+            input_name=input_name,
+            credentials_secret=credentials_secret,
+        ) as job:
+            selection = {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": input_name,
+                    "namespace": self.namespace,
+                    "ownerReferences": [
+                        {
+                            "apiVersion": "batch/v1",
+                            "kind": "Job",
+                            "name": job["name"],
+                            "uid": job["uid"],
+                        }
+                    ],
+                },
+                "immutable": True,
+                "data": {
+                    "input.json": json.dumps(
+                        {
+                            "keep": self._retained_versions(references()),
+                            "previous": previous(),
+                        }
+                    )
+                },
+            }
+            self.kubectl.run(["create", "-f", "-"], input_text=json.dumps(selection))
+            self._wait(job, timeout)
+            # Release the RWO mount without releasing this installer's operation name.
+            for pod in self.kubectl.list_resources(
+                ("pods",),
+                self.namespace,
+                label_selector="batch.kubernetes.io/controller-uid=" + job["uid"],
+            ):
+                self._delete_owned("pods", pod["metadata"], timeout)
+            current = self.kubectl.get_if_exists("job", job["name"], self.namespace)
+            if current is None or current["metadata"]["uid"] != job["uid"]:
+                raise DeploymentError(
+                    "application release operation expired before Helm selection"
+                )
+            yield
+
+    @staticmethod
+    def _retained_versions(references: set[str] | None) -> list[str] | None:
+        """Translate retained URLs or source revisions into immutable directory names."""
+        return (
             None
             if references is None
             else sorted(
@@ -213,7 +296,21 @@ class ApplicationFiles:
                 }
             )
         )
-        name = "foretoken-publish-" + uuid.uuid4().hex[:12]
+
+    @contextmanager
+    def _publisher(
+        self,
+        command: list[str],
+        binding: str,
+        timeout: str,
+        *,
+        builder: ClusterBuilder | None = None,
+        name: str = "",
+        input_name: str = "",
+        credentials_secret: str = "",
+    ) -> Iterator[dict[str, Any]]:
+        """Own one native publisher Job, waiting for an occupied release operation name."""
+        name = name or "foretoken-publish-" + uuid.uuid4().hex[:12]
         seconds = math.ceil(timeout_seconds(timeout))
         labels = {
             "foretoken.io/application-files": "publisher",
@@ -223,10 +320,6 @@ class ApplicationFiles:
         volumes = [
             {"name": "applications", "persistentVolumeClaim": {"claimName": self.claim}}
         ]
-        command = ["python", "-c", script]
-        if builder is None:
-            command.append("--release")
-        command.extend([source, destination])
         if builder is not None:
             mounts.insert(
                 0, {"name": "compiler", "mountPath": builder.mount, "readOnly": True}
@@ -241,17 +334,19 @@ class ApplicationFiles:
                     },
                 },
             )
-            command.extend(
+        if input_name:
+            mounts.extend(
                 [
-                    binding,
-                    f"{self.mount}/{component}/{previous}" if previous else "",
-                    json.dumps(keep),
+                    {"name": "temporary", "mountPath": "/tmp"},
+                    {"name": "selection", "mountPath": "/selection", "readOnly": True},
                 ]
             )
-        else:
-            mounts.append({"name": "temporary", "mountPath": "/tmp"})
-            volumes.append({"name": "temporary", "emptyDir": {}})
-            command.extend([revision, binding])
+            volumes.extend(
+                [
+                    {"name": "temporary", "emptyDir": {}},
+                    {"name": "selection", "configMap": {"name": input_name}},
+                ]
+            )
         job = {
             "apiVersion": "batch/v1",
             "kind": "Job",
@@ -336,26 +431,85 @@ class ApplicationFiles:
                     },
                 }
             ]
-        self.kubectl.run(["create", "-f", "-"], input_text=json.dumps(job))
         deadline = time.monotonic() + seconds
         while True:
-            current = self.kubectl.get("job", name, self.namespace)
+            try:
+                created = self.kubectl.run(
+                    ["create", "-f", "-", "-o", "json"], input_text=json.dumps(job)
+                )
+                break
+            except DeploymentError as exc:
+                # Only an occupied operation name is recoverable; never stop its owner.
+                if not input_name or "AlreadyExists" not in str(exc):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise DeploymentError(
+                        f"application release operation {self.namespace}/{name} is occupied after {timeout}"
+                    ) from None
+                time.sleep(1)
+        metadata = json.loads(created.stdout)["metadata"]
+        try:
+            yield metadata
+        finally:
+            self._delete_owned("jobs", metadata, timeout)
+
+    def _delete_owned(
+        self, resource: str, metadata: dict[str, Any], timeout: str
+    ) -> None:
+        """Delete and await only the created UID, even after TTL cleanup and name reuse."""
+        name, uid = metadata["name"], metadata["uid"]
+        current = self.kubectl.get_if_exists(resource, name, self.namespace)
+        if current is None or current["metadata"]["uid"] != uid:
+            return
+        prefix = "/apis/batch/v1" if resource == "jobs" else "/api/v1"
+        try:
+            self.kubectl.run(
+                [
+                    "delete",
+                    "--raw",
+                    f"{prefix}/namespaces/{self.namespace}/{resource}/{name}",
+                    "-f",
+                    "-",
+                ],
+                input_text=json.dumps(
+                    {
+                        "apiVersion": "v1",
+                        "kind": "DeleteOptions",
+                        "preconditions": {"uid": uid},
+                        "propagationPolicy": "Foreground",
+                    }
+                ),
+            )
+        except DeploymentError:
+            current = self.kubectl.get_if_exists(resource, name, self.namespace)
+            if current is not None and current["metadata"]["uid"] == uid:
+                raise
+            return
+        deadline = time.monotonic() + timeout_seconds(timeout)
+        while True:
+            current = self.kubectl.get_if_exists(resource, name, self.namespace)
+            if current is None or current["metadata"]["uid"] != uid:
+                return
+            if time.monotonic() >= deadline:
+                raise DeploymentError(
+                    f"application publisher {resource}/{name} did not terminate within {timeout}"
+                )
+            time.sleep(1)
+
+    def _wait(self, job: dict[str, Any], timeout: str) -> None:
+        """Wait for the owned Job's publication and surface native failure diagnostics."""
+        name = job["name"]
+        deadline = time.monotonic() + timeout_seconds(timeout)
+        while True:
+            current = self.kubectl.get_if_exists("job", name, self.namespace)
+            if current is None or current["metadata"]["uid"] != job["uid"]:
+                raise DeploymentError(
+                    f"application publication {self.namespace}/{name} lost Job ownership"
+                )
             conditions = current.get("status", {}).get("conditions", [])
             if any(
                 c["type"] == "Complete" and c["status"] == "True" for c in conditions
             ):
-                self.kubectl.run(
-                    [
-                        "delete",
-                        "job",
-                        name,
-                        "-n",
-                        self.namespace,
-                        "--cascade=foreground",
-                        "--wait=true",
-                        "--timeout=" + timeout,
-                    ]
-                )
                 return
             failed = next(
                 (
@@ -370,7 +524,7 @@ class ApplicationFiles:
                 for pod in self.kubectl.list_resources(
                     ("pods",),
                     self.namespace,
-                    label_selector="batch.kubernetes.io/job-name=" + name,
+                    label_selector="batch.kubernetes.io/controller-uid=" + job["uid"],
                 ):
                     for container in pod.get("status", {}).get("containerStatuses", []):
                         if (

@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import tarfile
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -591,23 +593,27 @@ class Helm(HelmClient):
         )
         input_text = yaml.safe_dump(merged)
         self._add_platform_image_sources(args, merged, None, input_text)
-        self._prepare_application_origin(args, input_text, timeout)
+        with self._prepare_application_origin(args, input_text, timeout):
+            pass
 
+    @contextmanager
     def _prepare_application_origin(
         self, args: list[str], input_text: str | None, timeout: str
-    ) -> None:
-        """Bootstrap only native origin resources, then import ordinary HTTP release files."""
-        from foretoken.application_files import ApplicationFiles
+    ) -> Iterator[None]:
+        """Bootstrap native storage and hold release publication ownership through Helm selection."""
+        from foretoken.application_files import ApplicationFiles, application_references
         from foretoken.kubernetes import Kubectl
 
         release = self.platform_release()
+        rendered = self._render_chart(args, input_text=input_text)
         documents = [
             document
-            for document in self._render_chart(args, input_text=input_text)
+            for document in rendered
             if document["metadata"].get("labels", {}).get("app.kubernetes.io/name")
             == "foretoken-application-files"
         ]
         if not documents:
+            yield
             return
         kubectl = Kubectl()
         if not kubectl.exists("namespace", release.namespace):
@@ -643,17 +649,55 @@ class Helm(HelmClient):
             for document in documents
             if document["kind"] == "ConfigMap"
         )
-        if configuration.get("releaseURL"):
-            origin.publish(
-                None,
-                configuration["releaseURL"],
-                "",
-                configuration["revision"],
-                "",
-                None,
-                timeout=timeout,
-                credentials_secret=configuration["credentialsSecret"],
+        if not configuration.get("releaseURL"):
+            yield
+            return
+
+        def retained() -> set[str] | None:
+            """Read live consumers and Helm history only after release Job ownership."""
+            references = origin.references(self.application_history())
+            if references is not None:
+                references.update(application_references(rendered))
+                references.add(configuration["revision"])
+            return references
+
+        def previous() -> dict[str, str]:
+            """Find installed component directories for immutable-file reuse."""
+            if not self.release_exists(release):
+                return {}
+            manifest = self.run(
+                [
+                    "get",
+                    "manifest",
+                    release.name,
+                    "--namespace",
+                    release.namespace,
+                ]
+            ).stdout
+            references = application_references(
+                document
+                for document in yaml.safe_load_all(manifest)
+                if document is not None
             )
+            prefix = origin.endpoint.rstrip("/") + "/"
+            return {
+                component: revision
+                for reference in sorted(references)
+                if reference.startswith(prefix)
+                for component, revision in [
+                    reference.removeprefix(prefix).rstrip("/").split("/", 1)
+                ]
+            }
+
+        with origin.import_release(
+            configuration["releaseURL"],
+            configuration["revision"],
+            retained,
+            previous,
+            timeout=timeout,
+            credentials_secret=configuration["credentialsSecret"],
+        ):
+            yield
 
     def application_origin_resources(self) -> tuple[dict[str, Any], ...]:
         """Find native file-origin resources owned by this release, including failed bootstraps."""
@@ -841,9 +885,9 @@ class Helm(HelmClient):
         for value in load_platform_values(values):
             overrides = _merge_values(overrides, value)
         self._add_platform_image_sources(args, overrides, source_images, input_text)
-        self._prepare_application_origin(args, input_text, timeout)
-        self._finish_upgrade(args, timeout)
-        self.run(args, input_text=input_text)
+        with self._prepare_application_origin(args, input_text, timeout):
+            self._finish_upgrade(args, timeout)
+            self.run(args, input_text=input_text)
 
     def update_control_plane_application(
         self, root: Path, reference: str, timeout: str
