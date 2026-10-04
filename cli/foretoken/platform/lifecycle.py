@@ -483,6 +483,10 @@ class PlatformLifecycle:
             _print_plan("Model file distribution", dragonfly_plan.action, dragonfly_plan.release.display_name)
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
+        if command.editable is not None:
+            from pathlib import Path
+
+            helm.prepare_source_origin(Path(command.editable).expanduser().resolve(), (*stored_values, *values), command.timeout)
         source_images = (
             artifacts.enter_context(prepare_source_images(
                 command,

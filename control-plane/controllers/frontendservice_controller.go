@@ -67,6 +67,7 @@ type GatewayParent struct {
 // FrontendRuntimeProfile contains platform-owned frontend settings and an optional production Gateway.
 type FrontendRuntimeProfile struct {
 	ApplicationFiles  runtimeconfig.ApplicationFiles
+	ApplicationURL    string
 	SourceMode        bool
 	SourceRevision    string
 	Image             string
@@ -210,6 +211,30 @@ func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, requ
 	return result, errors.Join(err, reconciler.reconcileAlerts(ctx, frontend))
 }
 
+// sourceSelectionAllowed preserves an already-selected source publication without
+// reopening source admission when the platform disables new source selections.
+func (reconciler *FrontendServiceReconciler) sourceSelectionAllowed(ctx context.Context, frontend *inferencev1alpha1.FrontendService) (bool, error) {
+	profile := reconciler.RuntimeProfile
+	if profile.SourceMode {
+		return true, nil
+	}
+	revision := frontend.Annotations[runtimeconfig.SourceRevisionAnnotation]
+	if revision == "" {
+		return false, nil
+	}
+	if selected := frontend.Status.Application; selected != nil {
+		return selected.DeploymentRevision == frontend.Spec.DeploymentRevision && (selected.SourceRevision == revision || (selected.SourceRevision == "" && selected.ApplicationURL == profile.ApplicationFiles.Ref("frontend", revision))), nil
+	}
+	if frontend.Spec.DeploymentRevision != "" {
+		return false, nil
+	}
+	deployment := new(appsv1.Deployment)
+	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), deployment); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	return metav1.IsControlledBy(deployment, frontend) && deployment.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation] == revision && deployment.Spec.Template.Annotations["inference.foretoken.io/application-url"] == profile.ApplicationFiles.Ref("frontend", revision), nil
+}
+
 // reconcileFrontend keeps serving state independent of optional alert configuration failures.
 func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Context, frontend *inferencev1alpha1.FrontendService) (ctrl.Result, error) {
 	if !frontend.DeletionTimestamp.IsZero() {
@@ -218,7 +243,11 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	if err := reconciler.RuntimeProfile.validate(); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeProfileIncomplete", FailureMessage: err.Error()})
 	}
-	sourceRevision, err := runtimeconfig.SourceRevision(frontend.Annotations, reconciler.RuntimeProfile.SourceMode)
+	sourceAllowed, err := reconciler.sourceSelectionAllowed(ctx, frontend)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	sourceRevision, err := runtimeconfig.SourceRevision(frontend.Annotations, sourceAllowed)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
 	}
@@ -244,6 +273,35 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	profile := reconciler.RuntimeProfile
 	profile.RuntimeCache = runtimeCache
 	profile.SourceRevision = sourceRevision
+	deploymentRevision := frontend.Spec.DeploymentRevision
+	selection := frontend.Status.Application
+	retained := selection != nil && selection.DeploymentRevision == deploymentRevision && (selection.SourceRevision == sourceRevision || (selection.SourceRevision == "" && sourceRevision != "" && selection.ApplicationURL == profile.ApplicationFiles.Ref("frontend", sourceRevision)))
+	if !retained {
+		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision}
+		if sourceRevision != "" {
+			selection.ApplicationURL = profile.ApplicationFiles.Ref("frontend", sourceRevision)
+		}
+		if frontend.Status.Application == nil && deploymentRevision == "" {
+			current := new(appsv1.Deployment)
+			if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), current); err == nil {
+				selection.Image = current.Spec.Template.Spec.Containers[0].Image
+				selection.ApplicationURL = current.Spec.Template.Annotations["inference.foretoken.io/application-url"]
+			} else if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		selection = selection.DeepCopy()
+		selection.SourceRevision = sourceRevision
+	}
+	if !reflect.DeepEqual(frontend.Status.Application, selection) {
+		base := frontend.DeepCopy()
+		frontend.Status.Application = selection
+		if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return ctrl.Result{}, fmt.Errorf("persist frontend application selection: %w", err)
+		}
+	}
+	profile.Image, profile.ApplicationURL = selection.Image, selection.ApplicationURL
 	applyDeployment := true
 	if !cacheReady {
 		current := new(appsv1.Deployment)

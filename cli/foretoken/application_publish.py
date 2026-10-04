@@ -21,6 +21,8 @@ def publish(
     """Expose an immutable directory, sharing unchanged files with its previous version."""
     if (destination / "manifest.json").is_file():
         return
+    if not source.is_dir():
+        raise FileNotFoundError(f"application export is missing: {source}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     prefix = f".{binding}.staging-"
     for abandoned in destination.parent.glob(prefix + "*"):

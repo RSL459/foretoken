@@ -26,6 +26,10 @@ development:
 
 # Persistent file delivery for source-built applications, independent of model caches.
 applicationFiles:
+  # Ordinary HTTP tar.gz asset; published charts supply their version's URL.
+  releaseURL: ""
+  revision: "" # Defaults to Chart.appVersion; private replacement assets use a new version.
+  credentialsSecret: "" # Namespace-local Secret with an authorization header value.
   serverImage: docker.io/nginxinc/nginx-unprivileged:1.28-alpine
   clientImage: docker.io/library/python:3.12-slim
   storageClassName: ""
@@ -82,6 +86,7 @@ frontend:
   enabled: false
   mode: local
   image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.4
+  applicationURL: ""
   port: 8080
   gateway:
     # When enabled, the Chart creates an isolated GatewayClass and HTTP Gateway.
@@ -127,6 +132,11 @@ runtime:
     image: ""
   vllm:
     image: auto # Selects the release image for the configured GPU resource.
+    applicationURL: ""
+    # Published charts select dependency environments for automatic hardware selection.
+    environmentImages:
+      nvidia: ""
+      metax: ""
     # Optional source-built diagnostic image with Nsight Systems; used only by opted-in models.
     nsightImage: ""
     profileRevision: default # Mooncake P/D compatibility revision.

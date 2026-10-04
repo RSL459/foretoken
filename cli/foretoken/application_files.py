@@ -97,20 +97,47 @@ class ApplicationFiles:
 
     def publish(
         self,
-        builder: ClusterBuilder,
+        builder: ClusterBuilder | None,
         source: str,
         component: str,
         revision: str,
         previous: str,
         references: set[str] | None,
+        *,
+        timeout: str,
+        credentials_secret: str = "",
     ) -> None:
-        """Run publication to completion in a Job, releasing the RWO volume before rollout.
+        """Publish a compiler export or import an HTTP release archive before workload rollout.
 
-        The source operation lock excludes another writer from this binding. On retry,
-        it stops abandoned Jobs before the compiler workspace can be reused.
+        A builder supplies source files; without one, the Job imports all release components.
+        Source callers hold their binding lock and stop abandoned writers before reusing output.
         """
         script = files("foretoken").joinpath("application_publish.py").read_text()
+        binding = builder.binding if builder is not None else "release-" + uuid.uuid4().hex
         destination = f"{self.mount}/{component}/{revision}"
+        if builder is None:
+            script = f"namespace = {{'__name__': 'application_publish'}}\nexec({script!r}, namespace)\npublish = namespace['publish']\n" + '''
+import os
+import shutil
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+from urllib.request import Request, urlopen
+with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+    archive = Path(temporary) / "applications.tar.gz"
+    headers = {}
+    if credential := os.environ.get("FORETOKEN_RELEASE_AUTHORIZATION"):
+        headers["Authorization"] = credential
+    with urlopen(Request(sys.argv[1], headers=headers)) as response, archive.open("wb") as output:
+        shutil.copyfileobj(response, output)
+    payload = Path(temporary) / "payload"
+    with tarfile.open(archive) as package:
+        package.extractall(payload, filter="data")
+    for component in ("control-plane", "frontend", "model-server"):
+        publish(payload / component, Path(sys.argv[2]) / component / sys.argv[3], sys.argv[4], None)
+'''
+            destination = self.mount
         keep = (
             None
             if references is None
@@ -123,11 +150,22 @@ class ApplicationFiles:
             )
         )
         name = "foretoken-publish-" + uuid.uuid4().hex[:12]
-        seconds = math.ceil(timeout_seconds(builder.timeout))
+        seconds = math.ceil(timeout_seconds(timeout))
         labels = {
             "foretoken.io/application-files": "publisher",
-            _BINDING_LABEL: builder.binding,
+            _BINDING_LABEL: binding,
         }
+        mounts = [{"name": "applications", "mountPath": self.mount}]
+        volumes = [{"name": "applications", "persistentVolumeClaim": {"claimName": self.claim}}]
+        command = ["python", "-c", script, source, destination]
+        if builder is not None:
+            mounts.insert(0, {"name": "compiler", "mountPath": builder.mount, "readOnly": True})
+            volumes.insert(0, {"name": "compiler", "persistentVolumeClaim": {"claimName": builder.claim, "readOnly": True}})
+            command.extend([binding, f"{self.mount}/{component}/{previous}" if previous else "", json.dumps(keep)])
+        else:
+            mounts.append({"name": "temporary", "mountPath": "/tmp"})
+            volumes.append({"name": "temporary", "emptyDir": {}})
+            command.extend([revision, binding])
         job = {
             "apiVersion": "batch/v1",
             "kind": "Job",
@@ -185,51 +223,26 @@ class ApplicationFiles:
                             {
                                 "name": "publish",
                                 "image": self.client_image,
-                                "command": [
-                                    "python",
-                                    "-c",
-                                    script,
-                                    source,
-                                    destination,
-                                    builder.binding,
-                                    f"{self.mount}/{component}/{previous}"
-                                    if previous
-                                    else "",
-                                    json.dumps(keep),
-                                ],
+                                "command": command,
                                 "terminationMessagePolicy": "FallbackToLogsOnError",
                                 "securityContext": {
                                     "allowPrivilegeEscalation": False,
                                     "readOnlyRootFilesystem": True,
                                     "capabilities": {"drop": ["ALL"]},
                                 },
-                                "volumeMounts": [
-                                    {
-                                        "name": "compiler",
-                                        "mountPath": builder.mount,
-                                        "readOnly": True,
-                                    },
-                                    {"name": "applications", "mountPath": self.mount},
-                                ],
+                                "volumeMounts": mounts,
                             }
                         ],
-                        "volumes": [
-                            {
-                                "name": "compiler",
-                                "persistentVolumeClaim": {
-                                    "claimName": builder.claim,
-                                    "readOnly": True,
-                                },
-                            },
-                            {
-                                "name": "applications",
-                                "persistentVolumeClaim": {"claimName": self.claim},
-                            },
-                        ],
+                        "volumes": volumes,
                     },
                 },
             },
         }
+        if credentials_secret:
+            job["spec"]["template"]["spec"]["containers"][0]["env"] = [{
+                "name": "FORETOKEN_RELEASE_AUTHORIZATION",
+                "valueFrom": {"secretKeyRef": {"name": credentials_secret, "key": "authorization"}},
+            }]
         self.kubectl.run(["create", "-f", "-"], input_text=json.dumps(job))
         deadline = time.monotonic() + seconds
         while True:
@@ -247,7 +260,7 @@ class ApplicationFiles:
                         self.namespace,
                         "--cascade=foreground",
                         "--wait=true",
-                        "--timeout=" + builder.timeout,
+                        "--timeout=" + timeout,
                     ]
                 )
                 return
@@ -279,6 +292,6 @@ class ApplicationFiles:
                 )
             if time.monotonic() >= deadline:
                 raise DeploymentError(
-                    f"application publication {self.namespace}/{name} did not finish within {builder.timeout}"
+                    f"application publication {self.namespace}/{name} did not finish within {timeout}"
                 )
             time.sleep(1)

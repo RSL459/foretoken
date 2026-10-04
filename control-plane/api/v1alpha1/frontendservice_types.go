@@ -67,6 +67,10 @@ type VideoTaskStorage struct {
 
 // FrontendServiceSpec defines the desired state of a frontend service.
 type FrontendServiceSpec struct {
+	// DeploymentRevision requests current platform applications on an explicit deployment.
+	// +optional
+	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
@@ -96,6 +100,10 @@ type FrontendServiceSpec struct {
 
 // FrontendServiceStatus defines the observed state of a frontend service.
 type FrontendServiceStatus struct {
+	// Application retains the selected frontend environment and files across workload recovery.
+	// +optional
+	Application *ApplicationSelection `json:"application,omitempty"`
+
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

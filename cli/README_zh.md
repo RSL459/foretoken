@@ -63,7 +63,7 @@ foretoken cluster delete kind --name foretoken-dev
 
 ### 默认安装
 
-默认使用发布镜像，并通过 `LoadBalancer` Service 提供本地访问入口：
+默认安装已发布的平台，并通过 `LoadBalancer` Service 提供本地访问入口：
 
 ```bash
 foretoken install
@@ -100,7 +100,9 @@ foretoken install \
 foretoken install -e .
 ```
 
-命令在集群专用 Pod 中构建平台，并将源码目录绑定到目标集群。
+命令在集群专用 Pod 中准备运行环境和应用文件，并将源码目录绑定到目标集群。
+
+平台更新会保留已有模型和前端的应用选择。需要使用新平台的服务，重新执行其配置对应的 `foretoken deploy`。
 
 修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
 

@@ -6,6 +6,15 @@
 {{- include "foretoken.validateValues" . }}
 {{- $sourceMode := and .Values.development .Values.development.enabled | default false }}
 {{- $application := .Values.controller.applicationURL }}
+{{- $frontendApplication := .Values.frontend.applicationURL }}
+{{- $modelApplication := .Values.runtime.vllm.applicationURL }}
+{{- if .Values.applicationFiles.releaseURL }}
+{{- $origin := include "foretoken.applicationFilesOrigin" . }}
+{{- $revision := default .Chart.AppVersion .Values.applicationFiles.revision }}
+{{- $application = default (printf "%s/control-plane/%s" $origin $revision) $application }}
+{{- $frontendApplication = default (printf "%s/frontend/%s" $origin $revision) $frontendApplication }}
+{{- $modelApplication = default (printf "%s/model-server/%s" $origin $revision) $modelApplication }}
+{{- end }}
 {{- $applicationMount := include "foretoken.applicationMount" . }}
 {{- $applicationClient := include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage) }}
 apiVersion: apps/v1
@@ -102,11 +111,17 @@ spec:
               readOnly: true
           {{- end }}
           args:
-            {{- if or $sourceMode $application }}
+            {{- if or $sourceMode $application $frontendApplication $modelApplication }}
             - {{ printf "--application-files=%s" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "image" $applicationClient "mountPath" $applicationMount "script" (.Files.Get "files/application-download.py") | toJson) | quote }}
             {{- end }}
             {{- with $application }}
             - {{ printf "--video-worker-application-url=%s" . | quote }}
+            {{- end }}
+            {{- with $frontendApplication }}
+            - {{ printf "--frontend-application-url=%s" . | quote }}
+            {{- end }}
+            {{- with $modelApplication }}
+            - {{ printf "--model-server-application-url=%s" . | quote }}
             {{- end }}
             - --leader-elect=true
             - {{ printf "--source-mode=%t" $sourceMode | quote }}

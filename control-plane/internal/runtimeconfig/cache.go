@@ -35,22 +35,15 @@ func SourceRevision(annotations map[string]string, sourceMode bool) (string, err
 	if revision == "" {
 		return "", fmt.Errorf("source revision annotation must be nonempty")
 	}
-	return revision, validateSourceRevision(revision, sourceMode)
-}
-
-// ValidateSourceRuntime checks the persisted Pool or Group source contract before workload creation.
-// Source execution requires an enabled platform and an opaque directory segment.
-func ValidateSourceRuntime(revision string, sourceMode bool) error {
-	if revision == "" {
-		return nil
-	}
-	return validateSourceRevision(revision, sourceMode)
-}
-
-func validateSourceRevision(revision string, sourceMode bool) error {
 	if !sourceMode {
-		return fmt.Errorf("source revision requires a source-installed platform (--source-mode)")
+		return "", fmt.Errorf("new source selection requires a source-installed platform (--source-mode)")
 	}
+	return revision, ValidateSourceRevision(revision)
+}
+
+// ValidateSourceRevision checks directory identity in controller-owned Pool and Group contracts.
+// Execution of a persisted selection is independent of whether new source selections are enabled.
+func ValidateSourceRevision(revision string) error {
 	if revision == "." || revision == ".." || strings.ContainsAny(revision, "/\\\x00") {
 		return fmt.Errorf("source revision must be a single directory segment")
 	}

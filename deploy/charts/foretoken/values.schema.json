@@ -36,6 +36,9 @@
       "type": "object",
       "required": ["serverImage", "clientImage", "storageClassName", "storageSize"],
       "properties": {
+        "releaseURL": {"type": "string"},
+        "revision": {"type": "string"},
+        "credentialsSecret": {"type": "string"},
         "serverImage": {"type": "string", "minLength": 1},
         "clientImage": {"type": "string", "minLength": 1},
         "storageClassName": {"type": "string"},
@@ -281,6 +284,7 @@
         "image": {
           "type": "string"
         },
+        "applicationURL": {"type": "string"},
         "port": {
           "type": "integer",
           "minimum": 1,
@@ -432,6 +436,12 @@
           "properties": {
             "image": {
               "type": "string"
+            },
+            "applicationURL": {"type": "string"},
+            "environmentImages": {
+              "type": "object",
+              "properties": {"nvidia": {"type": "string"}, "metax": {"type": "string"}},
+              "additionalProperties": false
             },
             "nsightImage": {
               "type": "string"

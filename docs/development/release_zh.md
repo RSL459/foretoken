@@ -5,7 +5,7 @@
 
 [English](release.md) | 简体中文
 
-Foretoken 会发布 Python distribution、OCI 镜像和 Helm Chart。Python package 遵循 PEP 440，OCI 镜像与 Helm Chart 使用 SemVer。两种格式的具体写法不同，但同一次发布的阶段和序号必须一致。
+Foretoken 发布 Python distribution、运行环境镜像、应用 `.tar.gz` 文件和 Helm Chart。Python package 遵循 PEP 440，OCI 镜像与 Helm Chart 使用 SemVer。两种格式的具体写法不同，但同一次发布的阶段和序号必须一致。
 
 ## 版本阶段
 
@@ -97,7 +97,15 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-control-plane、frontend、model-server 镜像和 Helm Chart 使用同一个版本。沐曦 model-server 镜像带有 `-metax` 后缀。
+命令构建 `control-plane-environment`、`frontend-environment` 以及 NVIDIA/沐曦 `model-server-environment` 镜像。应用程序、CRD 和 Python 适配代码单独导出为 `foretoken-applications-<version>-linux-amd64.tar.gz`；修改 model-server Python 不会重新编译 Rust 程序。生成的 Chart 选择对应的运行环境和普通 HTTP 文件。所有产物使用同一发布版本，沐曦环境使用 `-metax` 后缀。
+
+只导出应用文件、不重建运行环境时，执行：
+
+```bash
+deploy/release-artifacts export --output-dir /tmp/foretoken-release
+```
+
+验证后将压缩文件作为普通 GitHub Release asset 上传。`push` 仅发布环境镜像和 Helm Chart，应用文件不使用 OCI artifact。安装会先在集群中导入文件，再启动控制器，不需要源码目录或编译。`0.0.4` 等已有纯镜像版本继续使用实际已发布的产物。
 
 完成产物验证后，登录仓库并推送：
 

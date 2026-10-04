@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Serve immutable application files without depending on the Foretoken controller.
-{{- if or .Values.development.enabled .Values.controller.applicationURL }}
+{{- if or .Values.development.enabled .Values.controller.applicationURL .Values.applicationFiles.releaseURL }}
 {{- $name := include "foretoken.applicationFilesName" . }}
 {{- $storageMount := "/srv/applications" }}
 apiVersion: v1
@@ -35,6 +35,9 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     foretoken.io/application-files: configuration
 data:
+  releaseURL: {{ .Values.applicationFiles.releaseURL | quote }}
+  revision: {{ default .Chart.AppVersion .Values.applicationFiles.revision | quote }}
+  credentialsSecret: {{ .Values.applicationFiles.credentialsSecret | quote }}
   storageMount: {{ $storageMount | quote }}
   claim: {{ $name | quote }}
   endpoint: {{ include "foretoken.applicationFilesOrigin" . | quote }}

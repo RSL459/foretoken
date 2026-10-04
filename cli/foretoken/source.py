@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Cluster-side image preparation for source-installed Foretoken platforms."""
+"""Prepare dependency environments and application files for source-installed platforms."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ _BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 
 @dataclass(frozen=True)
 class SourceImages:
-    """Image references and the cluster build state committed after successful installation."""
+    """Environment images, application references and source inputs committed after installation."""
 
     source_root: Path
     image_mode: str
@@ -41,6 +41,7 @@ class SourceImages:
     model_server: str
     inputs: Path
     build_state: dict[str, Any]
+    applications: dict[str, str]
 
 
 def pinned_rust_revision(root: Path) -> str:
@@ -339,9 +340,21 @@ def prepare_source_images(
             *(value for key, value in arguments.items() if key.endswith("REGISTRY")),
         ]
     )
+    from foretoken.application_files import ApplicationFiles, remove_application_jobs
+
+    remove_application_jobs(kubectl, binding, command.timeout)
+    origin = ApplicationFiles(kubectl, namespace)
+    origin.prepare(command.timeout)
     nodes = local_build_nodes(
         kubectl, command.registry, build.get("containerd_socket", "")
     )
+    if registry:
+        from foretoken.cluster_build import find_build_cache
+
+        claim = find_build_cache(kubectl, namespace, binding, origin.node, "/var/cache/foretoken")
+        node_uid = kubectl.get("node", origin.node)["metadata"]["uid"][:8]
+        nodes = [(origin.node, "", claim or "foretoken-application-build-" + node_uid)]
+    applications = {component: origin.reference(component, suffix) for component in references}
     # Keep a failed first installation's compiler cache addressable for retry and
     # uninstall, without replacing an existing successful installation binding.
     state_directory.mkdir(parents=True, exist_ok=True)
@@ -424,6 +437,7 @@ def prepare_source_images(
                 )
                 metadata = builder.build(
                     dockerfile,
+                    target="environment",
                     image=image,
                     push=bool(registry),
                     arguments=component_arguments,
@@ -433,7 +447,7 @@ def prepare_source_images(
                 )
                 final_dockerfile, final_target, final_arguments = (
                     dockerfile,
-                    "",
+                    "environment",
                     component_arguments,
                 )
                 if component == "model-server" and engines:
@@ -491,6 +505,18 @@ def prepare_source_images(
                             push=True,
                             arguments=final_arguments,
                         )
+                if node == origin.node:
+                    payload = builder.root + "/applications/" + component
+                    builder.build(dockerfile, target="source-export", destination=payload, arguments=component_arguments)
+                    if component == "model-server" and engines:
+                        engine_output = builder.root + "/applications/engine"
+                        builder.build("deploy/inference-engines/source-build.Dockerfile", target="source-export", destination=engine_output, arguments=engine_arguments)
+                        builder.run(["sh", "-ec", 'cp -R "$1/." "$2/"', "assemble", engine_output, payload])
+                    if component != "control-plane":
+                        builder.run(["sh", "-ec", 'printf %s "$1" > "$2/complete.json"', "describe", json.dumps({"component": component}), payload])
+                    origin.publish(builder, payload, component, suffix, "", None, timeout=command.timeout)
+            if node == origin.node:
+                builder.run(["rm", "-rf", "--", builder.root + "/applications"])
             digests[node] = node_digests
         for component in references:
             if reusable[component]:
@@ -521,5 +547,7 @@ def prepare_source_images(
                 if reusable["model-server"]
                 else suffix,
                 "backend": runtime_backend,
+                "applications": {component: {"revision": suffix} for component in references},
             },
+            applications,
         )

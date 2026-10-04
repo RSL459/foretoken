@@ -566,6 +566,50 @@ class Helm(HelmClient):
                 )
             args.extend(["--set-string", f"{path}={selected}"])
 
+    def prepare_source_origin(self, root: Path, values: tuple[dict[str, Any], ...], timeout: str) -> None:
+        """Prepare chart-owned file storage before source builds or controller startup."""
+        release = self.platform_release()
+        args = self._upgrade_install_args(release, str(root / "deploy/charts/foretoken"), None)
+        merged: dict[str, Any] = {}
+        for value in values:
+            merged = _merge_values(merged, value)
+        args.extend([
+            "--values", "-", "--set", "development.enabled=true",
+            "--set-string", "observability.mode=disabled",
+            "--set-string", "applicationFiles.releaseURL=",
+        ])
+        input_text = yaml.safe_dump(merged)
+        self._add_platform_image_sources(args, merged, None, input_text)
+        self._prepare_application_origin(args, input_text, timeout)
+
+    def _prepare_application_origin(self, args: list[str], input_text: str | None, timeout: str) -> None:
+        """Bootstrap only native origin resources, then import ordinary HTTP release files."""
+        from foretoken.application_files import ApplicationFiles
+        from foretoken.kubernetes import Kubectl
+
+        release = self.platform_release()
+        documents = [document for document in self._render_chart(args, input_text=input_text)
+                     if document["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "foretoken-application-files"]
+        if not documents:
+            return
+        kubectl = Kubectl()
+        if not kubectl.exists("namespace", release.namespace):
+            kubectl.run(["create", "namespace", release.namespace])
+        for document in documents:
+            metadata = document["metadata"]
+            metadata.setdefault("annotations", {}).update({
+                "meta.helm.sh/release-name": release.name,
+                "meta.helm.sh/release-namespace": release.namespace,
+            })
+        kubectl.run(["apply", "-f", "-"], input_text=yaml.safe_dump_all(documents))
+        origin = ApplicationFiles(kubectl, release.namespace)
+        origin.prepare(timeout)
+        configuration = next(document["data"] for document in documents
+                             if document["kind"] == "ConfigMap")
+        if configuration.get("releaseURL"):
+            origin.publish(None, configuration["releaseURL"], "", configuration["revision"], "", None,
+                           timeout=timeout, credentials_secret=configuration["credentialsSecret"])
+
     def install_platform(
         self,
         *,
@@ -665,7 +709,13 @@ class Helm(HelmClient):
             args.extend(
                 [
                     "--set-string",
-                    "controller.applicationURL=",
+                    "controller.applicationURL=" + source_images.applications["control-plane"],
+                    "--set-string",
+                    "frontend.applicationURL=" + source_images.applications["frontend"],
+                    "--set-string",
+                    "runtime.vllm.applicationURL=" + source_images.applications["model-server"],
+                    "--set-string",
+                    "applicationFiles.releaseURL=",
                     "--set-string",
                     f"image.repository={repository}",
                     "--set-string",
@@ -690,6 +740,7 @@ class Helm(HelmClient):
         for value in load_platform_values(values):
             overrides = _merge_values(overrides, value)
         self._add_platform_image_sources(args, overrides, source_images, input_text)
+        self._prepare_application_origin(args, input_text, timeout)
         self._finish_upgrade(args, timeout)
         self.run(args, input_text=input_text)
 

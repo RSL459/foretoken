@@ -86,8 +86,10 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_ROUTER_PIPELINE", Value: string(routerPipeline)},
 	}
 	var annotations map[string]string
-	if profile.SourceRevision != "" {
+	if profile.ApplicationURL != "" {
 		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: profile.ApplicationFiles.Directory()})
+	}
+	if profile.SourceRevision != "" {
 		annotations = map[string]string{runtimeconfig.SourceRevisionAnnotation: profile.SourceRevision}
 	}
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
@@ -180,7 +182,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		securityContext.RunAsUser = &cache.DirectoryOwner.UID
 		securityContext.RunAsGroup = &cache.DirectoryOwner.GID
 	}
-	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationFiles.Ref("frontend", profile.SourceRevision), "foretoken-frontend")
+	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationURL, "foretoken-frontend")
 	serviceType := corev1.ServiceTypeClusterIP
 	if profile.Gateway == nil {
 		serviceType = corev1.ServiceTypeLoadBalancer

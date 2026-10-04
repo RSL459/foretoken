@@ -63,7 +63,7 @@ foretoken cluster delete kind --name foretoken-dev
 
 ### Default installation
 
-The default uses release images and local access through a `LoadBalancer` Service:
+The default installs the published platform and provides local access through a `LoadBalancer` Service:
 
 ```bash
 foretoken install
@@ -100,7 +100,9 @@ Build and install from the repository root. The cluster needs a default StorageC
 foretoken install -e .
 ```
 
-This builds the platform in dedicated Pods and binds the checkout to the target cluster.
+This prepares runtime environments and application files in dedicated Pods and binds the checkout to the target cluster.
+
+Installing a platform update retains existing model and frontend application selections. Run `foretoken deploy` for the configurations that should use the updated platform.
 
 After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
 

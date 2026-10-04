@@ -445,35 +445,6 @@ def record_install(
     ]
     if len(managed) != 1:
         raise DeploymentError("expected one source-installed Foretoken platform")
-    # A full image build already includes source changes. Retire overlays for every service,
-    # not only the deployment which happened to trigger the environment update.
-    for service in kubectl.list_all_resources(("modelservice", "frontendservice")):
-        metadata = service["metadata"]
-        if SOURCE_REVISION in metadata.get("annotations", {}):
-            kubectl.run(
-                [
-                    "patch",
-                    service["kind"],
-                    metadata["name"],
-                    "-n",
-                    metadata["namespace"],
-                    "--type=json",
-                    "-p",
-                    json.dumps(
-                        [
-                            {
-                                "op": "test",
-                                "path": "/metadata/resourceVersion",
-                                "value": metadata["resourceVersion"],
-                            },
-                            {
-                                "op": "remove",
-                                "path": "/metadata/annotations/inference.foretoken.io~1source-revision",
-                            },
-                        ]
-                    ),
-                ]
-            )
     with _local_candidates(directory):
         destination = directory / snapshot.name
         snapshot.rename(destination)
@@ -489,7 +460,7 @@ def record_install(
                 "base_image": base_image,
                 "runtime": _runtime_settings(managed[0]),
                 "command": settings,
-                "bundles": {},
+                "bundles": (build_state or {}).get("applications", {}),
             },
         )
         (directory / "build.json").unlink(missing_ok=True)
@@ -853,14 +824,6 @@ class EditableDeployment:
                     arguments=build["arguments"],
                 )
                 if component == "model-server":
-                    builder.run(
-                        [
-                            "cp",
-                            "-R",
-                            builder.workspace + "/data-plane/model-server/python",
-                            payload + "/python",
-                        ]
-                    )
                     if self.state.get("engines"):
                         builder.build(
                             "deploy/inference-engines/source-build.Dockerfile",
@@ -908,7 +871,8 @@ class EditableDeployment:
                 ):
                     previous = active_control.rsplit("/", 1)[-1]
                 origin.publish(
-                    builder, payload, component, revision, previous, references
+                    builder, payload, component, revision, previous, references,
+                    timeout=timeout,
                 )
                 builder.run(["rm", "-rf", "--", staging])
         if "control-plane" in pending:
@@ -954,6 +918,11 @@ class EditableDeployment:
             metadata = obj["metadata"]
             template_metadata = template.get("metadata", {})
             references.update(
+                selection["applicationURL"]
+                for selection in obj.get("status", {}).get("poolApplications", {}).values()
+                if selection.get("applicationURL")
+            )
+            references.update(
                 filter(
                     None,
                     (
@@ -966,6 +935,9 @@ class EditableDeployment:
                             "inference.foretoken.io/application-url"
                         ),
                         template.get("sourceRevision"),
+                        template.get("application", {}).get("applicationURL"),
+                        spec.get("runtime", {}).get("applicationURL"),
+                        obj.get("status", {}).get("application", {}).get("applicationURL"),
                         spec.get("runtime", {}).get("sourceRevision"),
                         obj.get("status", {})
                         .get("plan", {})
@@ -990,6 +962,11 @@ class EditableDeployment:
                 p["poolUID"]: p["revision"]
                 for p in current.get("status", {}).get("servingPoolRevisions", [])
             }
+        else:
+            current = self.kubectl.get("frontendservice", service, namespace)
+            application = current.get("status", {}).get("application")
+            frontend_image = (application["image"] if application is not None else
+                              self.kubectl.get("deployment", service, namespace)["spec"]["template"]["spec"]["containers"][0]["image"])
         for pod in self.kubectl.list_resources(("pods",), namespace):
             metadata = pod["metadata"]
             if (
@@ -1003,7 +980,7 @@ class EditableDeployment:
             ):
                 continue
             labels = metadata.get("labels", {})
-            expected_image = self.state["runtime"]["image"]
+            expected_image = frontend_image if component == "frontend" else ""
             route_target = ""
             if component == "frontend":
                 if labels.get("inference.foretoken.io/frontend-service") != service:
@@ -1031,16 +1008,7 @@ class EditableDeployment:
                     or runtime.get("sourceRevision", "") != revision
                 ):
                     continue
-                image_key = (
-                    "omni_image"
-                    if runtime["backend"] == "vllm-omni"
-                    else "nsight_image"
-                    if runtime.get("profiling", {}).get("engine") == "nsight"
-                    else "model_image"
-                )
-                expected_image = self.state["runtime"][image_key]
-                if runtime["image"] != expected_image:
-                    continue
+                expected_image = runtime["image"]
                 pool_uid = pool["metadata"]["uid"]
                 pool_sizes[pool_uid] = pool["spec"]["desiredGroups"]
                 route_target = group["metadata"]["uid"]
@@ -1159,20 +1127,16 @@ class EditableDeployment:
         routes: dict[str, set[str]] = {}
         consumers = dict(self.selected)
         # Unchanged frontend code still needs to consume a new backend cohort.
-        if any(kind == "ModelService" for kind, _, _ in self.selected):
-            for obj in deployment.objects:
-                if obj.get("kind") == "FrontendService":
-                    metadata = obj["metadata"]
-                    key = (
-                        "FrontendService",
-                        deployment.namespace or "default",
-                        metadata["name"],
-                    )
+        namespaces = {namespace for kind, namespace, _ in self.selected if kind == "ModelService"}
+        for namespace in namespaces:
+            for frontend in self.kubectl.list_resources(("frontendservices",), namespace):
+                metadata = frontend["metadata"]
+                if not metadata.get("deletionTimestamp") and frontend["spec"].get("replicas", 1) > 0:
                     consumers.setdefault(
-                        key, metadata.get("annotations", {}).get(SOURCE_REVISION, "")
+                        ("FrontendService", namespace, metadata["name"]),
+                        metadata.get("annotations", {}).get(SOURCE_REVISION, ""),
                     )
-        # Source annotations do not advance Service generation. Verify committed
-        # backend code first, then the routing consumers of that exact cohort.
+        # Verify committed backend code first, then the routing consumers of that cohort.
         selected = sorted(
             consumers.items(), key=lambda item: item[0][0] == "FrontendService"
         )

@@ -67,7 +67,6 @@ type ModelGroupReconciler struct {
 	ImagePullSecrets      []corev1.LocalObjectReference
 	ModelDistribution     runtimeconfig.ModelDistributionProfile
 	LeaderWorkerSets      bool
-	SourceMode            bool
 	ApplicationFiles      runtimeconfig.ApplicationFiles
 }
 
@@ -116,7 +115,7 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := runtimeconfig.ValidateSourceRuntime(group.Spec.Runtime.SourceRevision, reconciler.SourceMode); err != nil {
+	if err := runtimeconfig.ValidateSourceRevision(group.Spec.Runtime.SourceRevision); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(err))
 	}
 	if err := validateGroupProfile(group); err != nil {
@@ -251,6 +250,14 @@ func (reconciler *ModelGroupReconciler) reconcilePreparation(ctx context.Context
 	return false, nil
 }
 
+// groupApplicationURL reads the immutable selection, including pre-selection source cohorts.
+func groupApplicationURL(group *inferencev1alpha1.ModelGroup, files runtimeconfig.ApplicationFiles) string {
+	if group.Spec.Runtime.ApplicationURL != "" {
+		return group.Spec.Runtime.ApplicationURL
+	}
+	return files.Ref("model-server", group.Spec.Runtime.SourceRevision)
+}
+
 // desiredPreparationJob builds a CPU/network/storage-only source preparation workload.
 func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference, distribution runtimeconfig.ModelDistributionProfile, files runtimeconfig.ApplicationFiles) (*batchv1.Job, error) {
 	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
@@ -303,7 +310,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 		mounts = append(mounts, corev1.VolumeMount{Name: "dragonfly", MountPath: directory, ReadOnly: true})
 		env = append(env, corev1.EnvVar{Name: runtimeconfig.DragonflySocketEnv, Value: distribution.DragonflySocketPath})
 	}
-	if group.Spec.Runtime.SourceRevision != "" {
+	if groupApplicationURL(group, files) != "" {
 		env = append(env, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: files.Directory()})
 	}
 	automountToken := true
@@ -341,7 +348,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	if revision := group.Spec.Runtime.SourceRevision; revision != "" {
 		job.Spec.Template.Annotations = map[string]string{runtimeconfig.SourceRevisionAnnotation: revision}
 	}
-	files.Configure(&job.Spec.Template, &job.Spec.Template.Spec.Containers[0], files.Ref("model-server", group.Spec.Runtime.SourceRevision), "foretoken-model-server")
+	files.Configure(&job.Spec.Template, &job.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), "foretoken-model-server")
 	return job, nil
 }
 
@@ -456,7 +463,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if group.Spec.Runtime.PreparationVersion > 0 {
 		env = append(env, corev1.EnvVar{Name: runtimeconfig.ModelPreparationScopeEnv, Value: group.Spec.ModelPoolRef.UID + "/" + group.Spec.Revision})
 	}
-	if group.Spec.Runtime.SourceRevision != "" {
+	if groupApplicationURL(group, files) != "" {
 		env = append(env, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: files.Directory()})
 	}
 	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Spec.Runtime.TritonCacheDirectory)...)
@@ -591,7 +598,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 			},
 		},
 	}
-	files.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], files.Ref("model-server", group.Spec.Runtime.SourceRevision), command)
+	files.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), command)
 	mountPreparationSource(group, &deployment.Spec.Template)
 	if err := configureWeightSources(group.Spec, &deployment.Spec.Template); err != nil {
 		return nil, err

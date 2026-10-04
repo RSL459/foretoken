@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -98,6 +99,31 @@ def _deploy(
             f"Source preparation completed in {time.monotonic() - started:.1f}s",
             flush=True,
         )
+    # A deployment explicitly selects current platform applications; reconciliation and
+    # capacity changes retain the controller's persisted selection.
+    import uuid
+    import yaml
+    from foretoken.manifest import parse_deployment
+
+    schema = json.loads(
+        kubectl.get_raw("/openapi/v3/apis/inference.foretoken.io/v1alpha1", timeout)
+    )
+    selection_kinds = set()
+    for definition in schema["components"]["schemas"].values():
+        for identity in definition.get("x-kubernetes-group-version-kind", []):
+            if (
+                identity["kind"] in {"ModelService", "FrontendService"}
+                and "deploymentRevision"
+                in definition["properties"]["spec"]["properties"]
+            ):
+                selection_kinds.add(identity["kind"])
+    revision = uuid.uuid4().hex
+    for obj in deployment.objects:
+        if obj.get("kind") in selection_kinds:
+            obj["spec"]["deploymentRevision"] = revision
+    deployment = parse_deployment(
+        deployment.path, yaml.safe_dump_all(deployment.objects, sort_keys=False)
+    )
     namespace = deployment.namespace or "<current>"
     print(f"Applying {deployment.path} to namespace {namespace}")
     DirectoryVolumes(kubectl).apply(deployment, timeout)

@@ -61,7 +61,7 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
 FROM scratch AS source-export
 COPY --from=builder /out/foretoken-frontend /bin/foretoken-frontend
 
-FROM ${RUNTIME_IMAGE} AS runtime
+FROM ${RUNTIME_IMAGE} AS environment
 
 ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION
@@ -75,9 +75,9 @@ RUN apt-get update \
     && mkdir -p /var/cache/foretoken \
     && chown -R 65532:65532 /var/cache/foretoken
 
-COPY --from=builder /out/foretoken-frontend /usr/local/bin/foretoken-frontend
-
 ENV HF_HOME=/var/cache/foretoken/huggingface
-
 USER 65532:65532
+
+FROM environment AS runtime
+COPY --from=builder /out/foretoken-frontend /usr/local/bin/foretoken-frontend
 ENTRYPOINT ["foretoken-frontend"]

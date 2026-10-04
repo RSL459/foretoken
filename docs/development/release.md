@@ -5,7 +5,7 @@
 
 English | [简体中文](release_zh.md)
 
-Foretoken publishes a Python distribution, OCI images, and a Helm Chart. Python packages follow PEP 440, while OCI images and Helm Charts use SemVer. A release keeps the same stage and sequence number across both formats even though their spelling differs.
+Foretoken publishes a Python distribution, runtime environment images, an application `.tar.gz` asset, and a Helm Chart. Python packages follow PEP 440, while OCI images and Helm Charts use SemVer. A release keeps the same stage and sequence number across both formats even though their spelling differs.
 
 ## Version stages
 
@@ -97,7 +97,15 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-The release uses one shared version for the control-plane, frontend, model-server images, and Helm Chart. The MetaX model-server image adds the `-metax` suffix.
+The command builds `control-plane-environment`, `frontend-environment`, and NVIDIA/MetaX `model-server-environment` images. Application executables, CRDs and Python adapters are exported separately into `foretoken-applications-<version>-linux-amd64.tar.gz`; model-server Python changes do not rebuild the Rust binary. The generated chart selects the matching environments and ordinary HTTP asset. All artifacts use the same release version; the MetaX environment adds the `-metax` suffix.
+
+To export the application archive without rebuilding environments:
+
+```bash
+deploy/release-artifacts export --output-dir /tmp/foretoken-release
+```
+
+Upload the archive as a normal GitHub Release asset after validation. `push` publishes only environment images and the Helm Chart; application files are not OCI artifacts. Installation imports the archive in the cluster before starting the controller, without a source checkout or compilation. Existing image-only releases, including `0.0.4`, continue using their already-published artifacts.
 
 After validating the artifacts, log in to the registry and push them:
 
