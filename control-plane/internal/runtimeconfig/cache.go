@@ -25,8 +25,8 @@ const (
 	SourceDirectoryEnv = "FORETOKEN_SOURCE_DIRECTORY"
 )
 
-// SourceRevision resolves service metadata without accepting source execution in release mode.
-// Absence selects the image runtime; a present annotation must identify one directory segment.
+// SourceRevision resolves new service source selections according to the platform source mode.
+// Absence requests no source override; a present annotation identifies one directory segment.
 func SourceRevision(annotations map[string]string, sourceMode bool) (string, error) {
 	revision, present := annotations[SourceRevisionAnnotation]
 	if !present {

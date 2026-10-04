@@ -887,8 +887,13 @@ class EditableDeployment:
         else:
             current = self.kubectl.get("frontendservice", service, namespace)
             application = current.get("status", {}).get("application")
-            frontend_image = (application["image"] if application is not None else
-                              self.kubectl.get("deployment", service, namespace)["spec"]["template"]["spec"]["containers"][0]["image"])
+            if application is not None:
+                frontend_image = application["image"]
+            else:
+                deployment = self.kubectl.get_if_exists("deployment", service, namespace)
+                if deployment is None:
+                    return []
+                frontend_image = deployment["spec"]["template"]["spec"]["containers"][0]["image"]
         for pod in self.kubectl.list_resources(("pods",), namespace):
             metadata = pod["metadata"]
             if (
@@ -1102,7 +1107,7 @@ class EditableDeployment:
                 continue
             for pod, container, directory, _ in writers:
                 expected = (
-                    f"FORETOKEN_ACTIVE_SOURCE_DIRECTORY={directory}" if revision else ""
+                    f"FORETOKEN_ACTIVE_SOURCE_DIRECTORY={directory}" if directory else ""
                 )
                 output = self.kubectl.run(
                     [
