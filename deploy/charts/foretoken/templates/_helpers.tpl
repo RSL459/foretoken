@@ -15,6 +15,11 @@
 {{- include "foretoken.compactName" (printf "%s-control-plane" .Release.Name) -}}
 {{- end }}
 
+{{/* Application paths are shared with controller-generated Pod templates through startup configuration. */}}
+{{- define "foretoken.applicationMount" -}}
+/opt/foretoken/application
+{{- end }}
+
 {{- define "foretoken.clusterName" -}}
 {{- include "foretoken.compactName" (printf "%s-%s-control-plane" .Release.Namespace .Release.Name) -}}
 {{- end }}

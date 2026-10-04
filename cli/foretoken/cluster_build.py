@@ -82,6 +82,32 @@ def remove_build_pods(
             )
 
 
+def find_build_cache(
+    kubectl: Kubectl, namespace: str, binding: str, node: str, mount: str
+) -> str | None:
+    """Find this binding's existing compiler volume on the requested node and mount."""
+    selector = f"{_BUILD_POD_LABEL}=true,{_BUILD_BINDING_LABEL}={binding}"
+    for pod in kubectl.list_resources(("pods",), namespace, label_selector=selector):
+        if pod["spec"].get("nodeName") != node:
+            continue
+        builders = [
+            container for container in pod["spec"]["containers"]
+            if container["name"] == "builder"
+        ]
+        if not any(
+            volume["name"] == "cache" and volume["mountPath"] == mount
+            for builder in builders
+            for volume in builder.get("volumeMounts", [])
+        ):
+            continue
+        return next(
+            volume["persistentVolumeClaim"]["claimName"]
+            for volume in pod["spec"]["volumes"]
+            if volume["name"] == "cache"
+        )
+    return None
+
+
 def registry_credentials(images: list[str]) -> dict[str, Any]:
     """Resolve workstation login helpers only for registries used by this build."""
     path = (

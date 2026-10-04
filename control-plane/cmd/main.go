@@ -49,6 +49,8 @@ func main() {
 	var frontendMode string
 	var frontendImage string
 	var videoWorkerImage string
+	var videoWorkerApplicationURL string
+	var applicationFilesJSON string
 	var frontendPort int
 	var frontendGatewayName string
 	var frontendGatewayNamespace string
@@ -110,7 +112,9 @@ func main() {
 	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload reconciliation.")
 	flag.StringVar(&frontendMode, "frontend-mode", frontendModeLocal, "Frontend access mode: local or gateway.")
 	flag.StringVar(&frontendImage, "frontend-image", "", "Frontend runtime image.")
-	flag.StringVar(&videoWorkerImage, "video-worker-image", "", "Platform image containing the video-worker executable.")
+	flag.StringVar(&videoWorkerImage, "video-worker-image", "", "Platform runtime image for video workers.")
+	flag.StringVar(&videoWorkerApplicationURL, "video-worker-application-url", "", "Published application directory containing the video worker.")
+	flag.StringVar(&applicationFilesJSON, "application-files", "{}", "JSON configuration for platform application download tools.")
 	flag.IntVar(&frontendPort, "frontend-port", 8080, "Frontend runtime HTTP port.")
 	flag.StringVar(&frontendGatewayName, "frontend-gateway-name", "", "Platform Gateway name used by frontend HTTPRoutes.")
 	flag.StringVar(&frontendGatewayNamespace, "frontend-gateway-namespace", "", "Platform Gateway namespace; defaults to the FrontendService namespace.")
@@ -167,6 +171,15 @@ func main() {
 	huggingFaceAccessProfile := controllers.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
 	modelDistributionProfile := runtimeconfig.ModelDistributionProfile{DragonflySocketPath: dragonflySocketPath}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
+	var applicationFiles runtimeconfig.ApplicationFiles
+	if err := json.Unmarshal([]byte(applicationFilesJSON), &applicationFiles); err != nil {
+		ctrl.Log.Error(err, "invalid application file configuration")
+		os.Exit(1)
+	}
+	if videoWorkerApplicationURL != "" && (applicationFiles.Image == "" || applicationFiles.Script == "" || applicationFiles.MountPath == "") {
+		ctrl.Log.Error(errors.New("video-worker-application-url requires application-files"), "invalid application file configuration")
+		os.Exit(1)
+	}
 	if inferenceEngineImage == "" {
 		ctrl.Log.Error(errors.New("inference-engine-image must be nonempty"), "invalid inference engine profile")
 		os.Exit(1)
@@ -342,7 +355,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ProfileRun controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.VideoTaskReconciler{Client: manager.GetClient(), WorkerImage: videoWorkerImage, FrontendPort: int32(frontendPort), ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.VideoTaskReconciler{Client: manager.GetClient(), WorkerImage: videoWorkerImage, WorkerApplicationURL: videoWorkerApplicationURL, ApplicationFiles: applicationFiles, FrontendPort: int32(frontendPort), ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register VideoTask controller")
 		os.Exit(1)
 	}

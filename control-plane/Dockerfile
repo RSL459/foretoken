@@ -26,6 +26,11 @@ RUN --mount=type=cache,id=foretoken-go-modules,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/crd-apply ./cmd/crd-apply && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/video-worker ./cmd/video-worker
 
+FROM scratch AS source-export
+COPY --from=builder /out/ /bin/
+COPY control-plane/config/crd/bases/ /crds/
+COPY LICENSE /LICENSE
+
 FROM ${RUNTIME_IMAGE}
 ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION

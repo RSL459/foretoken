@@ -24,7 +24,15 @@ development:
     storageClassName: ""
     storageSize: 100Gi
 
+# Persistent file delivery for source-built applications, independent of model caches.
+applicationFiles:
+  serverImage: docker.io/nginxinc/nginx-unprivileged:1.28-alpine
+  clientImage: docker.io/library/python:3.12-slim
+  storageClassName: ""
+  storageSize: 10Gi
+
 controller:
+  applicationURL: ""
   replicas: 1
   autoscalingTelemetry:
     collectionTimeout: 3s

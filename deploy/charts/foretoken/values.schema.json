@@ -32,6 +32,17 @@
       },
       "additionalProperties": false
     },
+    "applicationFiles": {
+      "type": "object",
+      "required": ["serverImage", "clientImage", "storageClassName", "storageSize"],
+      "properties": {
+        "serverImage": {"type": "string", "minLength": 1},
+        "clientImage": {"type": "string", "minLength": 1},
+        "storageClassName": {"type": "string"},
+        "storageSize": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "profiling": {
       "type": "object",
       "additionalProperties": false,
@@ -120,6 +131,7 @@
         "autoscalingTelemetry"
       ],
       "properties": {
+        "applicationURL": {"type": "string"},
         "replicas": {
           "type": "integer",
           "minimum": 1

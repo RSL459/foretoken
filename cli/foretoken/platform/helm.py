@@ -515,9 +515,25 @@ class Helm(HelmClient):
                 ):
                     if reference := document["data"][key]:
                         images[path] = reference
+            if (
+                document["kind"] == "ConfigMap"
+                and document["metadata"]
+                .get("labels", {})
+                .get("foretoken.io/application-files")
+                == "configuration"
+            ):
+                images["applicationFiles.clientImage"] = document["data"]["clientImage"]
             if document["kind"] not in {"Deployment", "DaemonSet"}:
                 continue
             for container in document["spec"]["template"]["spec"]["containers"]:
+                if (
+                    container["name"] == "files"
+                    and document["metadata"]
+                    .get("labels", {})
+                    .get("foretoken.io/application-files")
+                    == "server"
+                ):
+                    images["applicationFiles.serverImage"] = container["image"]
                 if container["name"] == "rdma-device-plugin":
                     images["rdma.image"] = container["image"]
                 if container["name"] == "manager":
@@ -649,6 +665,8 @@ class Helm(HelmClient):
             args.extend(
                 [
                     "--set-string",
+                    "controller.applicationURL=",
+                    "--set-string",
                     f"image.repository={repository}",
                     "--set-string",
                     f"image.tag={tag}",
@@ -674,6 +692,47 @@ class Helm(HelmClient):
         self._add_platform_image_sources(args, overrides, source_images, input_text)
         self._finish_upgrade(args, timeout)
         self.run(args, input_text=input_text)
+
+    def update_control_plane_application(
+        self, root: Path, reference: str, timeout: str
+    ) -> None:
+        """Select published control-plane files through the existing Helm release lifecycle."""
+        release = self.platform_release()
+        args = self._upgrade_install_args(
+            release,
+            str(root / "deploy/charts/foretoken"),
+            None,
+            ((self._config.install_source_label, "source"),),
+        )
+        args.extend(
+            [
+                "--reuse-values",
+                "--set-string",
+                f"controller.applicationURL={reference}",
+            ]
+        )
+        self._finish_upgrade(args, timeout)
+        self.run(args)
+
+    def control_plane_application_history(self) -> set[str] | None:
+        """Read retained application references, deferring cleanup if release history advances."""
+        release = self.platform_release()
+        status = json.loads(self.run([
+            "status", release.name, "--namespace", release.namespace, "--output", "json",
+        ]).stdout)
+        revision = int(status["version"])
+        history = json.loads(self.run([
+            "history", release.name, "--namespace", release.namespace,
+            "--max", str(revision), "--output", "json",
+        ]).stdout)
+        if any(int(item["revision"]) > revision for item in history):
+            return None
+        references = set()
+        for item in history:
+            values = self.release_user_values(release, revision=int(item["revision"]))
+            if reference := values.get("controller", {}).get("applicationURL"):
+                references.add(reference)
+        return references
 
     def install_metallb(
         self,

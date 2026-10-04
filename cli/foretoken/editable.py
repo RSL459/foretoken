@@ -107,8 +107,13 @@ def source_operation(
                     )
                     if binding:
                         bindings.add(binding)
+            from foretoken.application_files import remove_application_jobs
+
             for binding in bindings:
-                remove_build_pods(kubectl, timeout, binding=binding, preserve_ready=True)
+                remove_application_jobs(kubectl, binding, timeout)
+                remove_build_pods(
+                    kubectl, timeout, binding=binding, preserve_ready=True
+                )
             yield
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
@@ -606,6 +611,9 @@ class EditableDeployment:
                     rebuild = True
                 else:
                     components.add("model-server")
+            elif name.startswith("control-plane/") and Path(name).name != "Dockerfile":
+                components.add("control-plane")
+                compile_components.add("control-plane")
             elif name == "data-plane/artifacts/src/source.rs":
                 rebuild = True
             elif name.startswith("data-plane/model-server/python/") and name.endswith(
@@ -673,6 +681,8 @@ class EditableDeployment:
         self, deployment: ForetokenDeployment, timeout: str
     ) -> ForetokenDeployment:
         """Publish source bundles and return remaining intent for the final deployment apply."""
+        if bundle := self.state["bundles"].get("control-plane"):
+            self._publish_control_plane(bundle["revision"], timeout)
         objects = copy.deepcopy(deployment.objects)
         pending: dict[str, dict[str, dict[str, str]]] = {}
         for obj in objects:
@@ -736,6 +746,144 @@ class EditableDeployment:
         return parse_deployment(
             deployment.path, yaml.safe_dump_all(objects, sort_keys=False)
         )
+
+    def _publish_control_plane(self, revision: str, timeout: str) -> None:
+        """Build and activate platform executables without replacing their environment image."""
+        from foretoken.application_files import ApplicationFiles
+        from foretoken.cluster_build import find_build_cache
+        from foretoken.manifest import ResourceRef
+        from foretoken.platform.config import default_platform_config
+        from foretoken.platform.helm import Helm
+        from foretoken.source import (
+            ensure_build_cache,
+            image_tools_image,
+            local_build_nodes,
+        )
+
+        platforms = self.kubectl.list_all_resources(
+            ("deployments",),
+            label_selector="app.kubernetes.io/name=foretoken-control-plane",
+        )
+        platform = next(
+            item
+            for item in platforms
+            if item["metadata"]["uid"] == self.state["platform_uid"]
+        )
+        namespace = platform["metadata"]["namespace"]
+        origin = ApplicationFiles(self.kubectl, namespace)
+        reference = origin.reference("control-plane", revision)
+        active = (
+            platform["spec"]["template"]["metadata"]
+            .get("annotations", {})
+            .get("inference.foretoken.io/application-url", "")
+        )
+        resource = ResourceRef("Deployment", platform["metadata"]["name"], namespace)
+        if active == reference:
+            self.kubectl.rollout_status(resource, timeout)
+            return
+        origin.prepare(timeout)
+        build = self.state["build"]
+        mount = "/var/cache/foretoken"
+        claim = find_build_cache(self.kubectl, namespace, build["binding"], origin.node, mount)
+        if claim is None:
+            node_uid = self.kubectl.get("node", origin.node)["metadata"]["uid"][:8]
+            local_caches = local_build_nodes(
+                self.kubectl, build["registry"], build["containerd_socket"]
+            )
+            claim = next(
+                (claim for node, _, claim in local_caches if node == origin.node),
+                "foretoken-application-build-" + node_uid,
+            )
+        ensure_build_cache(
+            self.kubectl,
+            namespace,
+            claim,
+            build["configuration"],
+            owner={
+                "apiVersion": "v1",
+                "kind": "PersistentVolumeClaim",
+                "name": origin.claim,
+                "uid": origin.claim_uid,
+            },
+        )
+        snapshot = self.directory / self.state["inputs"]
+        inputs = {
+            str(path.relative_to(snapshot)): path
+            for path in snapshot.rglob("*")
+            if path.is_file()
+        }
+        helm = Helm(default_platform_config(self.state["command"]["oci_registry"]))
+        print("Preparing control-plane application files", flush=True)
+        with ClusterBuilder(
+            self.kubectl,
+            namespace,
+            claim,
+            mount,
+            build["configuration"]["image"],
+            build["binding"],
+            timeout,
+            tools_image=image_tools_image(build["arguments"]),
+            node=origin.node,
+            credentials=registry_credentials(
+                [
+                    build["configuration"]["image"],
+                    "docker.io",
+                    "gcr.io",
+                    *(
+                        value
+                        for key, value in build["arguments"].items()
+                        if key.endswith("REGISTRY")
+                    ),
+                ]
+            ),
+            pull_secrets=origin.pull_secrets,
+        ) as builder:
+            builder.sync(inputs, build["versions"])
+            output = builder.root + "/output/control-plane"
+            builder.build(
+                "control-plane/Dockerfile",
+                target="source-export",
+                destination=output,
+                arguments=build["arguments"],
+            )
+            validate_build_inputs(self.root, snapshot, self.state.get("engines", {}))
+            previous = (
+                active.rsplit("/", 1)[-1]
+                if active.startswith(origin.endpoint + "/control-plane/")
+                else ""
+            )
+            # Publication retains Helm rollback history and delayed worker/Pod consumers.
+            # Its Job releases the RWO origin before the controller starts its rollout.
+            references = helm.control_plane_application_history()
+            if references is not None:
+                for task in self.kubectl.list_all_resources(("videotasks",)):
+                    selected = (
+                        task.get("status", {})
+                        .get("plan", {})
+                        .get("workerApplicationURL")
+                    )
+                    if selected:
+                        references.add(selected)
+                consumers = self.kubectl.list_all_resources(
+                    ("pods", "replicasets"),
+                    label_selector="foretoken.io/application-files=consumer",
+                )
+                for consumer in consumers:
+                    metadata = (
+                        consumer["metadata"]
+                        if consumer["kind"] == "Pod"
+                        else consumer["spec"]["template"]["metadata"]
+                    )
+                    if selected := metadata.get("annotations", {}).get(
+                        "inference.foretoken.io/application-url"
+                    ):
+                        references.add(selected)
+            origin.publish(
+                builder, output, "control-plane", revision, previous, references
+            )
+            builder.run(["rm", "-rf", "--", output])
+        helm.update_control_plane_application(snapshot, reference, timeout)
+        self.kubectl.rollout_status(resource, timeout)
 
     def _publish(
         self, namespace: str, bundles: dict[str, dict[str, Any]], timeout: str

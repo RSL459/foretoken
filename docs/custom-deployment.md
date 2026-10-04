@@ -9,7 +9,7 @@ Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and have a default StorageClass for persistent compiler caches. To choose a different storage class, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
+Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and publishing Jobs, with a default StorageClass for compiler caches and control-plane application files. To override their storage classes, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -39,7 +39,9 @@ Deploy the maintained [Quick Start](../README.md#quick-start) on a GPU-enabled c
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-After editing the checkout, run the same command again. It uses the saved installation settings and sends only added or changed files and deletions. Dedicated build Pods compile Rust changes and prepare Python updates; compiler caches and outputs stay in the cluster. With writable persistent runtime storage, these updates do not rebuild runtime images. Dependency, build, control-plane, and startup bootstrap changes use the image build path automatically.
+After editing the checkout, run the same command again. It uses the saved installation settings and sends only added or changed files and deletions. Dedicated build Pods compile Go and Rust changes and prepare Python updates; compiler caches and outputs stay in the cluster.
+
+Control-plane Go updates publish files without replacing the runtime image or depending on model storage. Frontend and model-server updates reuse their runtime images when writable persistent runtime storage is available. Runtime dependency, image build, and data-plane bootstrap changes use the platform installation path.
 
 Affected workloads restart and may reload model weights. The command waits for the selected code and serving routes to become active. Unchanged source and deployment configuration leave existing workloads running. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
 
