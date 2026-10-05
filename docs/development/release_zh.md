@@ -97,7 +97,7 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-命令构建 `control-plane-environment`、`frontend-environment` 以及 NVIDIA/沐曦 `model-server-environment` 镜像。应用程序、CRD 和 Python 适配代码单独导出为 `foretoken-applications-<version>-linux-amd64.tar.gz`；修改 model-server Python 不会重新编译 Rust 程序。生成的 Chart 选择对应的运行环境和普通 HTTP 文件。所有产物使用同一发布版本，沐曦环境使用 `-metax` 后缀。
+命令构建 `control-plane-environment`、`frontend-environment` 以及 NVIDIA/沐曦 `model-server-environment` 镜像。应用程序、CRD 和 Python 适配代码导出为 `foretoken-applications-<version>-linux-amd64.tar.gz`，生成的 Chart 引用这些镜像和压缩包的 GitHub Release 地址。压缩包与 Chart 保存在 `/tmp/foretoken-release`，沐曦镜像 tag 使用 `-metax` 后缀。
 
 只导出应用文件、不重建运行环境时，执行：
 
@@ -105,7 +105,7 @@ deploy/release-artifacts build --registry "$REGISTRY"
 deploy/release-artifacts export --output-dir /tmp/foretoken-release
 ```
 
-验证后将压缩文件作为普通 GitHub Release asset 上传。`push` 仅发布环境镜像和 Helm Chart，应用文件不使用 OCI artifact。安装会先在集群中导入文件，再启动控制器，不需要源码目录或编译。`0.0.4` 等已有纯镜像版本继续使用实际已发布的产物。
+将验证后的压缩包上传为 GitHub Release 附件。下面的 `push` 命令发布运行环境镜像和 Helm Chart，不上传压缩包。
 
 完成产物验证后，登录仓库并推送：
 

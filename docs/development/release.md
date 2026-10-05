@@ -97,7 +97,7 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-The command builds `control-plane-environment`, `frontend-environment`, and NVIDIA/MetaX `model-server-environment` images. Application executables, CRDs and Python adapters are exported separately into `foretoken-applications-<version>-linux-amd64.tar.gz`; model-server Python changes do not rebuild the Rust binary. The generated chart selects the matching environments and ordinary HTTP asset. All artifacts use the same release version; the MetaX environment adds the `-metax` suffix.
+The command builds `control-plane-environment`, `frontend-environment`, and NVIDIA/MetaX `model-server-environment` images. It exports executables, CRDs, and Python adapters into `foretoken-applications-<version>-linux-amd64.tar.gz` and packages a Chart selecting those images and the archive's GitHub Release URL. The archive and Chart are saved in `/tmp/foretoken-release`. The MetaX image tag adds the `-metax` suffix.
 
 To export the application archive without rebuilding environments:
 
@@ -105,7 +105,7 @@ To export the application archive without rebuilding environments:
 deploy/release-artifacts export --output-dir /tmp/foretoken-release
 ```
 
-Upload the archive as a normal GitHub Release asset after validation. `push` publishes only environment images and the Helm Chart; application files are not OCI artifacts. Installation imports the archive in the cluster before starting the controller, without a source checkout or compilation. Existing image-only releases, including `0.0.4`, continue using their already-published artifacts.
+Upload the validated archive as a GitHub Release asset. The `push` command below publishes the environment images and Helm Chart, not the archive.
 
 After validating the artifacts, log in to the registry and push them:
 
