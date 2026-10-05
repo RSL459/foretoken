@@ -260,9 +260,10 @@ class ClusterBuilder(AbstractContextManager):
                 (container for container in containers if container.get("name") == "images"),
                 None,
             )
-            if (images is not None) != bool(self.containerd_socket):
-                continue
-            if images is not None and images.get("image") != self.tools_image:
+            # File-only exports can reuse a daemon with an idle image-import helper.
+            if self.containerd_socket and (
+                images is None or images.get("image") != self.tools_image
+            ):
                 continue
             candidates.append(pod)
         reusable = min(
