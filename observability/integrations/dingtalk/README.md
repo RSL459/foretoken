@@ -40,7 +40,7 @@ For a different language or time zone, edit [the receiver configuration](alertma
 
 ## Use an existing monitoring stack
 
-Prometheus Operator and Alertmanager must support `webhookConfigs.payload`. The monitoring administrator selects `foretoken-dingtalk` through `alertmanagerConfigSelector` and permits workload alerts. With the receiver in Alertmanager's own namespace, use `spec.alertmanagerConfigMatcherStrategy.type: OnNamespaceExceptForAlertmanagerNamespace`; see the [Operator API](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1.AlertmanagerConfigMatcherStrategy).
+Prometheus Operator and Alertmanager must support `webhookConfigs.payload`. If Alertmanager selects receivers by label through `alertmanagerConfigSelector`, add matching `metadata.labels` to the receiver configuration. With the receiver in Alertmanager's own namespace, use `spec.alertmanagerConfigMatcherStrategy.type: OnNamespaceExceptForAlertmanagerNamespace`; see the [Operator API](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1.AlertmanagerConfigMatcherStrategy).
 
 ## Remove the integration
 

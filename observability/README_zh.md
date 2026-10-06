@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 从集群的监控入口打开 Grafana。Foretoken 托管的 Grafana Service 位于 `foretoken-platform` 命名空间，名称为 `foretoken-prometheus-grafana`，端口为 80，默认类型是 `ClusterIP`；集群外访问需要由集群管理员配置入口。复用 Grafana 时沿用已有访问方式。
 
-打开 Foretoken 系统概览，或英文版 Foretoken System Overview。先选择命名空间和模型，再按模型实例、执行角色、引擎编号查看后端明细。模型总计曲线始终汇总全部实例，明细曲线随这些筛选变化。
+打开 Foretoken 系统概览，或英文版 Foretoken System Overview。先选命名空间，再按任务选择模型或前端：模型用于查看推理指标，前端用于查看 HTTP 流量和准入。模型实例、执行角色和引擎编号进一步筛选后端明细，模型总计曲线仍保留。
 
 默认查看最近 15 分钟，调整时间范围可查看历史趋势；概览数值对应所选范围的终点。
 
@@ -27,8 +27,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 | 请求为什么等待或被拒绝？ | 准入结果、排队等待，以及各前端副本的占用和上限。 |
 
 TTFT 表示首 token 延迟，E2EL 计至生成完成，两者使用秒。TPOT 统计每个请求的平均输出 token 间隔，ITL 统计逐 token 间隔，两者使用毫秒并提供均值曲线；详细口径见各面板说明。
-
-启用 GPU 起草后，看板会自动展示草稿阶段和目标模型前向计算的 GPU 耗时。结合草稿接受率、吞吐和延迟，可以比较推测解码的收益与成本。
 
 “共享前端”区域涵盖所选前端服务的全部模型流量，统计 HTTP 响应开始次数。“准入”区域按前端服务和前端 Pod 筛选，展开结果或资源区域可查看明细。“控制面”展示平台状态；扩缩容区域按所选模型和扩缩容服务展示。
 
@@ -46,18 +44,9 @@ TTFT 表示首 token 延迟，E2EL 计至生成完成，两者使用秒。TPOT �
 
 ## 告警
 
-在所属的 `ModelService` 或 `FrontendService` 中选择规则。例如，在 `spec` 下启用指标抓取失败告警：
+在 `ModelService` 或 `FrontendService` 中选择规则，重新部署服务配置后生效。[告警参考](runbooks/alerts_zh.md)介绍可用规则、阈值和处理方法；[服务可观测性示例](../examples/observability/README_zh.md)提供完整可运行配置。
 
-```yaml
-observability:
-  alerts:
-    rules:
-      - ForetokenMetricsTargetDown
-```
-
-修改后重新部署服务配置即可生效。移除规则或设为 `rules: []`，再次部署后关闭告警，指标仍保留。[服务可观测性示例](../examples/observability/README_zh.md)提供可运行的配置和部署命令。
-
-告警名称、阈值及适用的服务类型见[告警参考](runbooks/alerts_zh.md)。需要接收通知时，配置 [Lark](integrations/lark/README_zh.md)、[Slack](integrations/slack/README_zh.md) 或[钉钉](integrations/dingtalk/README_zh.md)接收器。
+接收通知请配置 [Lark](integrations/lark/README_zh.md)、[Slack](integrations/slack/README_zh.md) 或[钉钉](integrations/dingtalk/README_zh.md)接收器。
 
 ## 平台设置
 

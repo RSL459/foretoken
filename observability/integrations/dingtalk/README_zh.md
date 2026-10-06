@@ -40,7 +40,7 @@ kubectl apply --namespace "$ALERTMANAGER_NAMESPACE" \
 
 ## 使用已有监控栈
 
-Prometheus Operator 和 Alertmanager 需支持 `webhookConfigs.payload`。由监控管理员通过 `alertmanagerConfigSelector` 选中 `foretoken-dingtalk` 并允许工作负载告警。接收器与 Alertmanager 同命名空间时，使用 `spec.alertmanagerConfigMatcherStrategy.type: OnNamespaceExceptForAlertmanagerNamespace`，见 [Operator API](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1.AlertmanagerConfigMatcherStrategy)。
+Prometheus Operator 和 Alertmanager 需支持 `webhookConfigs.payload`。如果 Alertmanager 通过 `alertmanagerConfigSelector` 按标签选择接收器，在接收器配置的 `metadata.labels` 中填写匹配的标签。接收器与 Alertmanager 同命名空间时，使用 `spec.alertmanagerConfigMatcherStrategy.type: OnNamespaceExceptForAlertmanagerNamespace`，见 [Operator API](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1.AlertmanagerConfigMatcherStrategy)。
 
 ## 移除集成
 
