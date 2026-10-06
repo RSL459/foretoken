@@ -63,7 +63,10 @@ def remove_build_pods(
         )
         return
     for pod in kubectl.list_all_resources(("pods",), label_selector=selector):
-        if _pod_ready(pod):
+        # Retire obsolete cache-mounted publishers even when their compiler is healthy.
+        if _pod_ready(pod) and not any(
+            container["name"] == "publisher" for container in pod["spec"]["containers"]
+        ):
             continue
         metadata = pod.get("metadata", {})
         name, namespace = metadata.get("name"), metadata.get("namespace")
@@ -204,10 +207,6 @@ class ClusterBuilder(AbstractContextManager):
         node: str = "",
         containerd_socket: str = "",
         pull_secrets: tuple[str, ...] = (),
-        publisher_image: str = "",
-        runtime_claim: str = "",
-        runtime_mount: str = "",
-        runtime_owner: tuple[int, int] | None = None,
         credentials: dict[str, Any] | None = None,
     ) -> None:
         self.kubectl = kubectl
@@ -222,11 +221,6 @@ class ClusterBuilder(AbstractContextManager):
         self.containerd_socket = containerd_socket
         self.containerd_client = "/usr/local/bin/ctr"
         self.pull_secrets = pull_secrets
-        self.publisher_image = publisher_image
-        self.runtime_claim = runtime_claim
-        self.runtime_mount = runtime_mount
-        self.runtime_owner = runtime_owner
-        self.publisher_uid, self.publisher_gid = runtime_owner or (1000, 1000)
         self.credentials = credentials or {}
         self._secret_created = False
         self.name = "foretoken-build-" + uuid.uuid4().hex[:12]
@@ -240,7 +234,6 @@ class ClusterBuilder(AbstractContextManager):
     def _reuse_or_retire_pods(self) -> dict[str, Any] | None:
         """Select a compatible daemon and retire other builders sharing its compiler cache."""
         selector = f"{_BUILD_POD_LABEL}=true,{_BUILD_BINDING_LABEL}={self.binding}"
-        expected_publisher = bool(self.publisher_image)
         occupants = []
         candidates = []
         for pod in self.kubectl.list_resources(
@@ -280,29 +273,6 @@ class ClusterBuilder(AbstractContextManager):
             if (images is not None) != bool(self.containerd_socket):
                 continue
             if images is not None and images.get("image") != self.tools_image:
-                continue
-            publisher = next(
-                (
-                    container
-                    for container in containers
-                    if container.get("name") == "publisher"
-                ),
-                None,
-            )
-            if (publisher is not None) != expected_publisher:
-                continue
-            if publisher is not None:
-                identity = publisher.get("securityContext", {})
-                if (identity.get("runAsUser"), identity.get("runAsGroup")) != (
-                    self.publisher_uid,
-                    self.publisher_gid,
-                ):
-                    continue
-            claim_names = {
-                volume.get("persistentVolumeClaim", {}).get("claimName")
-                for volume in pod.get("spec", {}).get("volumes", [])
-            }
-            if self.runtime_claim and self.runtime_claim not in claim_names:
                 continue
             candidates.append(pod)
         reusable = min(
@@ -490,62 +460,6 @@ class ClusterBuilder(AbstractContextManager):
                             "readOnly": True,
                         },
                     ],
-                }
-            )
-        if self.publisher_image:
-            publisher_mounts = [{"name": "cache", "mountPath": self.mount}]
-            if self.runtime_claim:
-                spec["volumes"].append(
-                    {
-                        "name": "runtime",
-                        "persistentVolumeClaim": {"claimName": self.runtime_claim},
-                    }
-                )
-                publisher_mounts.append(
-                    {"name": "runtime", "mountPath": self.runtime_mount}
-                )
-                prepare_runtime = 'mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"'
-                if self.runtime_owner is not None:
-                    # Compiler leftovers were written by root; source bundles were
-                    # published by the previous publisher identity on its own subtree.
-                    prepare_runtime = (
-                        r'find "$1" -xdev -user 0 \( -type d -o -links 1 \) -exec chown -h "$2:$3" {} +; '
-                        'if test -d "$1/source" && ! test -L "$1/source"; then '
-                        r'find "$1/source" -xdev -user 1000 \( -type d -o -links 1 \) -exec chown -h "$2:$3" {} +; fi; '
-                        'chmod u+rwx "$1"'
-                    )
-                spec["initContainers"].append(
-                    {
-                        "name": "runtime-storage",
-                        "image": image,
-                        "command": [
-                            "sh",
-                            "-ec",
-                            prepare_runtime,
-                            "prepare",
-                            self.runtime_mount,
-                            str(self.publisher_uid),
-                            str(self.publisher_gid),
-                        ],
-                        "securityContext": {"runAsUser": 0, "runAsGroup": 0},
-                        "volumeMounts": [
-                            {"name": "runtime", "mountPath": self.runtime_mount}
-                        ],
-                    }
-                )
-            spec["containers"].append(
-                {
-                    "name": "publisher",
-                    "image": self.publisher_image,
-                    "command": idle_command,
-                    "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
-                    "securityContext": {
-                        "runAsUser": self.publisher_uid,
-                        "runAsGroup": self.publisher_gid,
-                        "allowPrivilegeEscalation": False,
-                        "capabilities": {"drop": ["ALL"]},
-                    },
-                    "volumeMounts": publisher_mounts,
                 }
             )
         pod = {
@@ -1032,25 +946,3 @@ rm -rf "$incoming"
                     [*self._containerd(), "images", "remove", *sorted(unused)],
                     container="images",
                 )
-
-    def publish(self, staging: str, destination: str, bundle: dict[str, Any]) -> None:
-        """Expose a fully prepared runtime payload once, without changing active revisions."""
-        manifest = shlex.quote(json.dumps(bundle))
-        self.run(["sh", "-ec", 'chmod -R a+rX "$1"', "prepare", staging])
-        script = f"""set -eu
-mkdir -p -m 2775 "${{2%/*}}"
-prefix="${{2%/*}}/.$3.staging"
-rm -rf -- "$prefix".*
-if test -f "$2/complete.json"; then exit 0; fi
-stage=$(mktemp -d "$prefix.XXXXXX")
-trap 'rm -rf -- "$stage"' EXIT
-cp -R "$1/." "$stage/"
-printf %s {manifest} > "$stage/complete.json"
-chmod -R a+rX "$stage"
-mv "$stage" "$2"
-"""
-        self.run(
-            ["sh", "-ec", script, "publish", staging, destination, self.binding],
-            container="publisher" if self.publisher_image else "builder",
-        )
-        self.run(["rm", "-rf", "--", staging])

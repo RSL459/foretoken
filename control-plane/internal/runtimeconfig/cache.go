@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Defines persistent model and source layouts shared by runtime workload projection.
+// Defines model storage paths and source selection shared by runtime workload projection.
 package runtimeconfig
 
 import (
 	"fmt"
 	"path"
 	"strings"
-
-	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
 const (
@@ -41,18 +39,12 @@ func SourceRevision(annotations map[string]string, sourceMode bool) (string, err
 }
 
 // ValidateSourceRuntime checks the persisted Pool or Group source contract before workload creation.
-// Source execution requires an enabled platform and a persistent cache binding.
-func ValidateSourceRuntime(revision string, sourceMode bool, cache *inferencev1alpha1.RuntimeCacheBinding) error {
+// Source execution requires an enabled platform and an opaque directory segment.
+func ValidateSourceRuntime(revision string, sourceMode bool) error {
 	if revision == "" {
 		return nil
 	}
-	if err := validateSourceRevision(revision, sourceMode); err != nil {
-		return err
-	}
-	if cache == nil || cache.ClaimName == "" || cache.MountPath == "" {
-		return fmt.Errorf("source execution requires a persistent RuntimeCache")
-	}
-	return nil
+	return validateSourceRevision(revision, sourceMode)
 }
 
 func validateSourceRevision(revision string, sourceMode bool) error {
@@ -63,11 +55,6 @@ func validateSourceRevision(revision string, sourceMode bool) error {
 		return fmt.Errorf("source revision must be a single directory segment")
 	}
 	return nil
-}
-
-// SourceDirectory returns the immutable bundle location beneath a workload's resolved cache.
-func SourceDirectory(dataRoot, revision string) string {
-	return path.Join(dataRoot, "source", revision)
 }
 
 // ModelDirectory returns the stable model area of a workload's persistent data root.

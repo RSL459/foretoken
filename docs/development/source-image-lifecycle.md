@@ -11,28 +11,28 @@ Source updates separate application code from its runtime dependencies. For inst
 
 The CLI owns checkout bindings, installation settings and input snapshots on the workstation. Source operations are serialized per cluster on that workstation and synchronize changed files and deletions before building.
 
-BuildKit Pods compile applications with persistent caches, separate from model storage. Interrupted installations retain these caches. Before reusing compiler output, a source operation stops abandoned publisher Jobs from the same binding. Temporary registry Secrets belong to their build Pods.
+BuildKit Pods compile applications with persistent caches, separate from model storage. Each component is prepared once for its runtime environment rather than once per model namespace. Before reusing compiler output, a source operation stops abandoned publisher Jobs from the same binding.
 
-Control-plane executables and CRDs are published to a platform-owned HTTP service and volume. The publisher runs on the file server's node and releases its mount before rollout; BuildKit Pods do not mount that volume. Complete versions are published atomically and remain immutable. Consumers download the selected version before startup.
-
-Frontend and model-server payloads are published to the workload's persistent cache. Publication completes before a service selects the revision. The publisher uses the runtime image's user and runs separately from serving Pods.
+Application files are published to a platform-owned HTTP service and volume. The publisher runs on the file server's node, so ReadWriteOnce storage can serve workloads on other nodes; BuildKit Pods do not mount that volume. Publication completes atomically before workloads select a version. Published files remain immutable.
 
 ## Engine source and native extensions
 
-An explicit engine checkout is independent of the pinned vLLM Rust dependency. Python modules come from that checkout with Foretoken's patches applied; the runtime supplies compatible native libraries and generated dependencies. Deleted inputs disappear from later payloads, while Python-only updates retain successful native builds.
+An explicit engine checkout is independent of the pinned vLLM Rust dependency. Python modules come from that checkout with Foretoken's patches applied; the runtime supplies compatible native libraries and generated dependencies. Deleted source files must not reappear from the image's older package.
 
-Native extensions use the selected runtime's Python, PyTorch and accelerator libraries with upstream incremental caches. Image builds package the prepared source and resolve its dependencies while retaining the accelerator ABI. MetaX native updates select the compiled plugin rather than its precompiled kernel package.
+Native extensions use the selected runtime's Python, PyTorch and accelerator libraries with upstream incremental caches. MetaX native updates select the compiled plugin rather than its precompiled kernel package. Dependency updates retain compatibility with these accelerator libraries.
 
 ## Workload activation
 
-The CLI selects a source revision on each service; controllers own frontend rollout and model Pool/Group replacement. Model preparation and serving use the same selection. The image bootstrap activates its executable, Python adapters and engine payload. A declared but missing executable fails startup.
+The CLI selects source revisions on services; controllers own frontend rollout and model Pool/Group replacement. Model preparation and all serving members, including LWS leaders and workers, use the same file selection. A download init container prepares application files in Pod-local storage, independently of RuntimeCache or shared model volumes.
 
-The CLI verifies selected workloads, active source, routing state and Service endpoints before reporting success. Controllers own admission, route withdrawal and request draining; frontend acknowledgement of an empty routing snapshot remains independent of serving readiness.
+Workloads start the downloaded executable with its matching Python and engine paths. Application files are read-only; model data, runtime caches and profiling output use separate writable storage.
 
-## Image updates and cleanup
+For source updates, Helm selects control-plane files, downloaded before CRD bootstrap and manager startup. Saved video-task plans retain their application version for execution and cleanup. The CLI checks actual runtime images, source versions, complete serving membership, routing state and Service endpoints before reporting success. Controllers own route withdrawal and request draining.
 
-Data-plane bootstrap, dependency, image recipe and Helm changes use the platform installation lifecycle. Runtime updates also use images when writable storage is unavailable or a single-node claim awaits its first placement; model preparation owns that placement. A successful source installation clears service source selections and the control-plane file selection so workloads use the newly built images.
+## Environment updates and cleanup
 
-Control-plane cleanup retains versions referenced by Helm history, workload templates, running Pods and saved VideoTask plans. Runtime cleanup retains service selections, templates and running or terminating consumers across namespaces sharing a data directory. Both remove only their binding's unreferenced publications.
+Runtime dependency, image recipe and Helm changes use the platform installation lifecycle. A successful full source installation clears previous service source selections and the control-plane file selection so workloads use the newly built images.
 
-Runtime build volumes follow the model cache's lifecycle; Helm owns the control-plane file service and volume. Source uninstall removes managed compiler caches and the workstation binding without deleting model data. vLLM-Omni uses a separate [image build recipe](../custom-deployment.md#vllm-omni-runtime).
+Cleanup retains versions referenced by service intent, Pool/Group templates, preparation Jobs, running or terminating workloads, saved video-task plans and Helm rollback history. A publisher removes only its own binding's unreferenced versions, preserving other publishers' in-flight files.
+
+Helm owns the file service and publication volume. Source uninstall removes managed compiler caches and the workstation binding without deleting model data. vLLM-Omni uses a separate [image build recipe](../custom-deployment.md#vllm-omni-runtime).

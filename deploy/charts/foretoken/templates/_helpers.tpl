@@ -16,6 +16,14 @@
 {{- end }}
 
 {{/* Application paths are shared with controller-generated Pod templates through startup configuration. */}}
+{{- define "foretoken.applicationFilesName" -}}
+{{- include "foretoken.compactName" (printf "%s-application-files" .Release.Name) -}}
+{{- end }}
+
+{{- define "foretoken.applicationFilesOrigin" -}}
+{{- printf "http://%s.%s.svc:8080" (include "foretoken.applicationFilesName" .) .Release.Namespace -}}
+{{- end }}
+
 {{- define "foretoken.applicationMount" -}}
 /opt/foretoken/application
 {{- end }}

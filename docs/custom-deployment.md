@@ -9,7 +9,7 @@ Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and publishing Jobs, with a default StorageClass for compiler caches and control-plane application files. To override their storage classes, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
+Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and publishing Jobs, with a default StorageClass for compiler caches and published application files. To override their storage classes, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -41,7 +41,7 @@ foretoken deploy examples/quickstart --timeout 20m
 
 After editing the checkout, run the same command again. It uses the saved installation settings.
 
-Control-plane Go updates publish files without replacing the runtime image or depending on model storage. Frontend and model-server updates reuse their runtime images when writable persistent runtime storage is available. Runtime dependency, image build, and data-plane bootstrap changes use the platform installation path.
+Go, Rust, and Python updates publish application files without replacing runtime images. Changes to runtime dependencies or image build settings update the platform installation.
 
 Affected workloads restart and may reload model weights. The command waits for the selected code and serving routes to become active. Unchanged source and deployment configuration leave existing workloads running. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
 

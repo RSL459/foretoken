@@ -103,7 +103,7 @@ spec:
           {{- end }}
           args:
             {{- if or $sourceMode $application }}
-            - {{ printf "--application-files=%s" (dict "image" $applicationClient "mountPath" $applicationMount "script" (.Files.Get "files/application-download.py") | toJson) | quote }}
+            - {{ printf "--application-files=%s" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "image" $applicationClient "mountPath" $applicationMount "script" (.Files.Get "files/application-download.py") | toJson) | quote }}
             {{- end }}
             {{- with $application }}
             - {{ printf "--video-worker-application-url=%s" . | quote }}

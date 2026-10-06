@@ -158,13 +158,6 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		})
 		return ctrl.Result{}, errors.Join(readinessErr, statusErr)
 	}
-	if err := runtimeconfig.ValidateSourceRuntime(sourceRevision, reconciler.SourceMode, runtimeCache); err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
-			compiled: conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
-			pools:    conditionState{metav1.ConditionFalse, "SourceRuntimeUnavailable", "No new ModelPools were materialized"},
-			ready:    conditionState{metav1.ConditionFalse, "SourceRuntimeUnavailable", err.Error()},
-		})
-	}
 	huggingFaceAccess := reconciler.HuggingFaceAccessProfile.Access()
 	for index := range compiledPools {
 		compiledPools[index].Template.RuntimeCache = runtimeCache.DeepCopy()

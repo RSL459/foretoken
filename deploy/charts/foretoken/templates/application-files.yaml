@@ -3,7 +3,7 @@
 
 # Serve immutable application files without depending on the Foretoken controller.
 {{- if or .Values.development.enabled .Values.controller.applicationURL }}
-{{- $name := include "foretoken.compactName" (printf "%s-application-files" .Release.Name) }}
+{{- $name := include "foretoken.applicationFilesName" . }}
 {{- $storageMount := "/srv/applications" }}
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -37,7 +37,7 @@ metadata:
 data:
   storageMount: {{ $storageMount | quote }}
   claim: {{ $name | quote }}
-  endpoint: {{ printf "http://%s.%s.svc:8080" $name .Release.Namespace | quote }}
+  endpoint: {{ include "foretoken.applicationFilesOrigin" . | quote }}
   clientImage: {{ include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage) | quote }}
   nginx.conf: |
     worker_processes auto;

@@ -87,7 +87,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	}
 	var annotations map[string]string
 	if profile.SourceRevision != "" {
-		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: runtimeconfig.SourceDirectory(cacheMountPath, profile.SourceRevision)})
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: profile.ApplicationFiles.Directory()})
 		annotations = map[string]string{runtimeconfig.SourceRevisionAnnotation: profile.SourceRevision}
 	}
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
@@ -180,6 +180,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		securityContext.RunAsUser = &cache.DirectoryOwner.UID
 		securityContext.RunAsGroup = &cache.DirectoryOwner.GID
 	}
+	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationFiles.Ref("frontend", profile.SourceRevision), "foretoken-frontend")
 	serviceType := corev1.ServiceTypeClusterIP
 	if profile.Gateway == nil {
 		serviceType = corev1.ServiceTypeLoadBalancer

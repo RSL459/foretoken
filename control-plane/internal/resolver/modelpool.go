@@ -110,7 +110,7 @@ type resolvedModelRuntime struct {
 
 // ResolveModelPool resolves one supported vLLM execution profile into a Group contract.
 func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
-	if err := runtimeconfig.ValidateSourceRuntime(template.SourceRevision, profile.SourceMode, template.RuntimeCache); err != nil {
+	if err := runtimeconfig.ValidateSourceRuntime(template.SourceRevision, profile.SourceMode); err != nil {
 		return ModelGroupTemplate{}, err
 	}
 	if template.SourceRevision != "" && template.Backend != "vllm" {

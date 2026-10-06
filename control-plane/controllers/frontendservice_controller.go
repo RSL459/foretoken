@@ -66,6 +66,7 @@ type GatewayParent struct {
 
 // FrontendRuntimeProfile contains platform-owned frontend settings and an optional production Gateway.
 type FrontendRuntimeProfile struct {
+	ApplicationFiles  runtimeconfig.ApplicationFiles
 	SourceMode        bool
 	SourceRevision    string
 	Image             string
@@ -243,12 +244,6 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	profile := reconciler.RuntimeProfile
 	profile.RuntimeCache = runtimeCache
 	profile.SourceRevision = sourceRevision
-	if sourceRevision != "" && !cacheReady {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "CacheNotReady", FailureMessage: "Source execution is waiting for persistent runtime cache storage and serving workloads"})
-	}
-	if err := runtimeconfig.ValidateSourceRuntime(sourceRevision, profile.SourceMode, runtimeCache); err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "SourceRuntimeUnavailable", FailureMessage: err.Error()})
-	}
 	applyDeployment := true
 	if !cacheReady {
 		current := new(appsv1.Deployment)
