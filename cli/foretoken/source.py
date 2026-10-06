@@ -335,6 +335,7 @@ def prepare_source_images(
             configuration["image"],
             prefix,
             inference_engine_image or "",
+            arguments.get("UV_IMAGE", ""),
             "docker.io",
             "gcr.io",
             "ghcr.io",
