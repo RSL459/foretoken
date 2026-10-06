@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from foretoken.accelerators.config import (
@@ -50,7 +51,13 @@ from foretoken.platform.rdma import (
     select_rdma,
 )
 from foretoken.platform.types import RuntimeOverrides
-from foretoken.source import prepare_source_images
+from foretoken.source import (
+    forget_install,
+    has_source_state,
+    prepare_source_images,
+    record_install,
+    remove_build_caches,
+)
 
 
 def _print_plan(responsibility: str, action: str, detail: str) -> None:
@@ -484,8 +491,6 @@ class PlatformLifecycle:
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
         if command.editable is not None:
-            from pathlib import Path
-
             helm.prepare_source_origin(Path(command.editable).expanduser().resolve(), (*stored_values, *values), command.timeout)
         source_images = (
             artifacts.enter_context(prepare_source_images(
@@ -639,8 +644,6 @@ class PlatformLifecycle:
         if install_managed_dcgm:
             _print_plan("NVIDIA DCGM Exporter", "Ready", managed_dcgm.display_name)
         if source_images is not None:
-            from foretoken.editable import record_install
-
             record_install(kubectl, command, source_runtime_image, source_images.inputs, build_state=source_images.build_state)
         _print_plan("Foretoken platform", "Ready", platform.display_name)
         if not load_balancer_plan.install and load_balancer_plan.action != "Reuse":
@@ -670,8 +673,6 @@ class PlatformLifecycle:
                 f"Helm release {platform.display_name} is not managed by foretoken; "
                 "use its existing Helm lifecycle"
             )
-
-        from foretoken.editable import has_source_state
 
         source_builds = (platform_exists and helm.release_install_source(platform) == "source") or has_source_state(kubectl)
         unadopted_origin = () if platform_exists else helm.application_origin_resources()
@@ -777,9 +778,6 @@ class PlatformLifecycle:
         load_balancer_result = load_balancer.finish_uninstall(command.timeout)
         if load_balancer_result is not None:
             _print_plan("LoadBalancer", *load_balancer_result)
-        from foretoken.editable import forget_install
-        from foretoken.source import remove_build_caches
-
         if source_builds:
             remove_build_caches(kubectl, command.timeout)
         forget_install(kubectl)
