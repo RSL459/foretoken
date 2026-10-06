@@ -13,7 +13,7 @@ use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
-use foretoken_router::algorithm::admission::{AdmissionAttempt, observe_http};
+use foretoken_admission::{AdmissionAttempt, observe_http};
 use futures::StreamExt;
 
 use crate::api::{self, ApiState};
@@ -74,7 +74,7 @@ async fn protect_intake(
         return next.run(request).await;
     };
     let attempt = AdmissionAttempt::intake();
-    let result = admission.try_reserve_request();
+    let result = admission.rule().try_reserve_request();
     attempt.complete(&result);
     let permit = match result {
         Ok(permit) => permit,

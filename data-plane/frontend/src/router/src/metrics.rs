@@ -17,7 +17,6 @@ use prometheus_client::metrics::family::{Family, MetricConstructor};
 use prometheus_client::metrics::histogram::{Histogram, exponential_buckets};
 use prometheus_client::registry::Registry;
 
-use crate::algorithm::admission::telemetry::AdmissionMetrics;
 use crate::{RouteCandidate, RouteError, RouteInventory, RoutingStage};
 
 const ROUTING_STAGES: [RoutingStage; 3] = [
@@ -76,7 +75,6 @@ struct LabelReferences {
 
 pub(crate) struct RouterMetrics {
     registry: Registry,
-    pub(crate) admission: AdmissionMetrics,
     stages: Family<StageLabels, Histogram, fn() -> Histogram>,
     selections: Family<OutcomeLabels, Counter>,
     duration: Family<OutcomeLabels, Histogram, fn() -> Histogram>,
@@ -99,7 +97,6 @@ impl RouterMetrics {
     // the same underlying metric handles.
     fn new() -> Self {
         let mut registry = Registry::default();
-        let admission = AdmissionMetrics::register(&mut registry);
         let stages = Family::new_with_constructor(latency_histogram as fn() -> Histogram);
         let selections = Family::default();
         let duration = Family::new_with_constructor(latency_histogram as fn() -> Histogram);
@@ -132,7 +129,6 @@ impl RouterMetrics {
         );
         Self {
             registry,
-            admission,
             stages,
             selections,
             duration,

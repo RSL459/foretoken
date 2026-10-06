@@ -35,23 +35,4 @@ spec:
 
 KV 索引不可用时，目标仍可参与路由，只是不享有 KV 前缀偏好。缓存位置的说明见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
-## 配置准入规则
-
-准入规则决定请求直接执行、等待还是被拒绝。默认使用 `allow_all`，不限制请求；选择 `concurrency` 可启用并发流控：
-
-```yaml
-spec:
-  routerPipeline:
-    admission:
-      algorithm: concurrency
-      parameters:
-        maxConcurrentRequests: 64
-```
-
-示例允许每个前端副本同时执行 64 个输出候选，具体数值应根据负载实测选择。批量补全按候选计数，例如四个 prompt、`n: 2` 占用八个名额。
-
-需要吸收短时突发流量时，可在 `parameters` 下增加 `maxQueuedRequests: 128` 和 `queueTimeout: 2s`。默认不排队；允许排队但未设置等待时限时，使用请求剩余的超时预算。容量和等待队列均已满，或排队超时，返回 HTTP 503；单个批次超过并发上限时返回 HTTP 400。
-
-每个前端副本上的模型共用这些限制，不是集群总配额。规则适用于文本生成和 tokenization，不包括视频请求；健康探针不受影响。
-
-开发自定义规则请参阅[准入规则开发指南](../../../../docs/development/admission-rules_zh.md)。
+请求限额与排队通过前端的[准入规则](../../README_zh.md#配置准入规则)配置。

@@ -57,6 +57,45 @@ spec:
             description: FrontendServiceSpec defines the desired state of a frontend
               service.
             properties:
+              admission:
+                description: Admission is omitted to allow unrestricted request execution.
+                properties:
+                  algorithm:
+                    default: allow_all
+                    minLength: 1
+                    type: string
+                  parameters:
+                    description: AdmissionParameters sets process-local concurrency
+                      and queue limits for the frontend.
+                    properties:
+                      maxConcurrentRequests:
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 1
+                        type: integer
+                      maxQueuedRequests:
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 0
+                        type: integer
+                      queueTimeout:
+                        description: QueueTimeout limits queueing within the remaining
+                          request budget.
+                        minLength: 2
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive duration
+                          rule: duration(self) > duration('0s')
+                    required:
+                    - maxConcurrentRequests
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: concurrency admission requires parameters
+                  rule: self.algorithm != 'concurrency' || has(self.parameters)
+                - message: allow_all admission accepts no parameters
+                  rule: self.algorithm != 'allow_all' || !has(self.parameters)
               hostname:
                 description: Hostname is required when the platform exposes frontends
                   through a Gateway.
@@ -248,45 +287,11 @@ spec:
                   routing algorithm stage.
                 properties:
                   admission:
-                    description: Admission is omitted to retain unrestricted routing.
-                    properties:
-                      algorithm:
-                        default: allow_all
-                        description: RouterAlgorithm names one compiled routing algorithm.
-                        minLength: 1
-                        type: string
-                      parameters:
-                        description: AdmissionParameters sets process-local concurrency
-                          and queue limits for the frontend.
-                        properties:
-                          maxConcurrentRequests:
-                            format: int64
-                            maximum: 4294967295
-                            minimum: 1
-                            type: integer
-                          maxQueuedRequests:
-                            format: int64
-                            maximum: 4294967295
-                            minimum: 0
-                            type: integer
-                          queueTimeout:
-                            description: QueueTimeout limits queueing within the remaining
-                              request budget.
-                            minLength: 2
-                            pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
-                            type: string
-                            x-kubernetes-validations:
-                            - message: must be a positive duration
-                              rule: duration(self) > duration('0s')
-                        required:
-                        - maxConcurrentRequests
-                        type: object
+                    description: |-
+                      DeprecatedAdmission preserves the removed field only so the API can reject it before pruning.
+                      It is never consumed as runtime configuration.
                     type: object
-                    x-kubernetes-validations:
-                    - message: concurrency admission requires parameters
-                      rule: self.algorithm != 'concurrency' || has(self.parameters)
-                    - message: allow_all admission accepts no parameters
-                      rule: self.algorithm != 'allow_all' || !has(self.parameters)
+                    x-kubernetes-preserve-unknown-fields: true
                   filter:
                     default:
                       algorithm: allow_all
@@ -343,6 +348,10 @@ spec:
                 - picker
                 - scorer
                 type: object
+                x-kubernetes-validations:
+                - message: spec.routerPipeline.admission is no longer supported; move
+                    it to spec.admission
+                  rule: '!has(self.admission)'
               timeouts:
                 description: FrontendTimeouts defines client-facing request budgets.
                 properties:

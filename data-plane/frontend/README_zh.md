@@ -115,6 +115,26 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
 
 取消和删除请求返回 `202` 后继续由服务处理。以上配置保留结果一天，从任务结束起算；到期后自动清理，原始参考文件保留。
 
+## 配置准入规则
+
+准入规则决定请求直接执行、等待还是被拒绝。默认使用 `allow_all`，不限制请求；在 `FrontendService` 中选择 `concurrency` 可启用并发流控：
+
+```yaml
+spec:
+  admission:
+    algorithm: concurrency
+    parameters:
+      maxConcurrentRequests: 64
+```
+
+示例允许每个前端副本同时执行 64 个输出候选，具体数值应根据负载实测选择。批量补全按候选计数，例如四个 prompt、`n: 2` 占用八个名额。
+
+需要吸收短时突发流量时，可在 `parameters` 下增加 `maxQueuedRequests: 128` 和 `queueTimeout: 2s`。默认不排队；允许排队但未设置等待时限时，使用请求剩余的超时预算。容量和等待队列均已满，或排队超时，返回 HTTP 503；单个批次超过并发上限时返回 HTTP 400。
+
+每个前端副本上的模型共用这些限制，不是集群总配额。规则适用于文本生成和 tokenization，不包括视频请求；健康探针不受影响。生成请求直到结束才释放并发名额，包括流式输出。
+
+[路由策略](src/router/README_zh.md)单独配置在 `spec.routerPipeline` 下。开发自定义规则请参阅[准入规则开发指南](../../docs/development/admission-rules_zh.md)。
+
 ## 运维
 
 使用 `foretoken status` 查看部署状态，使用 `foretoken delete` 删除部署，均传入对应配置目录。

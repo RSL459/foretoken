@@ -9,9 +9,12 @@ use std::time::Duration;
 use serde::Deserialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
-use crate::metrics::METRICS;
+use crate::telemetry::METRICS;
 
-use super::{AdmissionCapacity, AdmissionContext, AdmissionError, AdmissionPermit, AdmissionRequest, AdmissionReservation, RouteAdmission};
+use crate::{
+    AdmissionCapacity, AdmissionContext, AdmissionError, AdmissionPermit, AdmissionRequest,
+    AdmissionReservation, AdmissionRule,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -23,7 +26,7 @@ struct Parameters {
 }
 
 /// Runtime state for one frontend's concurrency admission rule.
-/// The pipeline retains this owner across serving-snapshot replacements.
+/// The frontend retains this owner across serving-snapshot replacements.
 pub struct ConcurrencyAdmission {
     capacity: u32,
     queue_capacity: u32,
@@ -37,30 +40,23 @@ impl ConcurrencyAdmission {
     /// Resolves the concurrency stage once at process startup, without guessing capacity.
     pub fn from_parameters(parameters: serde_json::Value) -> Result<Self, String> {
         let parameters: Parameters = serde_json::from_value(parameters)
-            .map_err(|error| format!("routerPipeline.admission.parameters: {error}"))?;
+            .map_err(|error| format!("admission.parameters: {error}"))?;
         let capacity = parameters.max_concurrent_requests;
         if capacity == 0 {
-            return Err(
-                "routerPipeline.admission.parameters.maxConcurrentRequests must be positive".into(),
-            );
+            return Err("admission.parameters.maxConcurrentRequests must be positive".into());
         }
         let resident = (capacity as usize)
             .checked_add(parameters.max_queued_requests as usize)
             .filter(|total| *total <= Semaphore::MAX_PERMITS)
-            .ok_or("routerPipeline.admission request limits exceed supported capacity")?;
+            .ok_or("admission request limits exceed supported capacity")?;
         let queue_timeout = parameters
             .queue_timeout
             .map(|value| {
                 humantime::parse_duration(&value)
-                    .map_err(|error| {
-                        format!("routerPipeline.admission.parameters.queueTimeout: {error}")
-                    })
+                    .map_err(|error| format!("admission.parameters.queueTimeout: {error}"))
                     .and_then(|duration| {
                         if duration.is_zero() {
-                            Err(
-                                "routerPipeline.admission.parameters.queueTimeout must be positive"
-                                    .into(),
-                            )
+                            Err("admission.parameters.queueTimeout must be positive".into())
                         } else {
                             Ok(duration)
                         }
@@ -76,11 +72,10 @@ impl ConcurrencyAdmission {
             queue_timeout,
         })
     }
-
 }
 
 #[async_trait::async_trait]
-impl RouteAdmission for ConcurrencyAdmission {
+impl AdmissionRule for ConcurrencyAdmission {
     fn capacity(&self) -> Option<AdmissionCapacity> {
         Some(AdmissionCapacity {
             concurrent_work_units: self.capacity,
@@ -128,9 +123,7 @@ impl RouteAdmission for ConcurrencyAdmission {
                 .try_acquire_many_owned(units)
                 .map_err(|error| match error {
                     TryAcquireError::Closed => AdmissionError::Closed,
-                    TryAcquireError::NoPermits => {
-                        AdmissionError::Overloaded
-                    }
+                    TryAcquireError::NoPermits => AdmissionError::Overloaded,
                 })?;
         let started = tokio::time::Instant::now();
         let _queued = Reservation::counted(queued, PermitKind::Queued);
@@ -179,15 +172,17 @@ struct Reservation {
 impl Reservation {
     fn counted(permit: OwnedSemaphorePermit, kind: PermitKind) -> AdmissionPermit {
         let reservation = Self { permit, kind };
-        reservation.gauge().inc_by(reservation.permit.num_permits() as i64);
+        reservation
+            .gauge()
+            .inc_by(reservation.permit.num_permits() as i64);
         AdmissionPermit::new(reservation)
     }
 
     fn gauge(&self) -> &prometheus_client::metrics::gauge::Gauge {
         match self.kind {
-            PermitKind::Active => &METRICS.admission.active,
-            PermitKind::Queued => &METRICS.admission.queued,
-            PermitKind::Resident => &METRICS.admission.resident,
+            PermitKind::Active => &METRICS.active,
+            PermitKind::Queued => &METRICS.queued,
+            PermitKind::Resident => &METRICS.resident,
         }
     }
 }
@@ -195,7 +190,10 @@ impl Reservation {
 impl AdmissionReservation for Reservation {
     fn split_one(&mut self) -> Box<dyn AdmissionReservation> {
         Box::new(Self {
-            permit: self.permit.split(1).expect("generation batch has a reserved unit for each child"),
+            permit: self
+                .permit
+                .split(1)
+                .expect("generation batch has a reserved unit for each child"),
             kind: self.kind,
         })
     }

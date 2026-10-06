@@ -4,12 +4,14 @@
 //! Admission-call results and queue timing, separate from reservation ownership.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use prometheus_client::encoding::EncodeLabelSet;
+use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
@@ -17,7 +19,6 @@ use prometheus_client::metrics::histogram::{Histogram, exponential_buckets};
 use prometheus_client::registry::Registry;
 
 use super::AdmissionError;
-use crate::metrics::METRICS;
 
 #[derive(Clone)]
 struct HttpObservation {
@@ -81,6 +82,7 @@ struct MetricOwners {
 }
 
 pub(crate) struct AdmissionMetrics {
+    registry: Registry,
     owners: Mutex<MetricOwners>,
     info: Family<AlgorithmLabels, Gauge>,
     concurrency_limit: Family<NoLabels, Gauge>,
@@ -99,8 +101,9 @@ fn wait_histogram() -> Histogram {
 }
 
 impl AdmissionMetrics {
-    pub(crate) fn register(registry: &mut Registry) -> Self {
-        let metrics = Self {
+    fn new() -> Self {
+        let mut metrics = Self {
+            registry: Registry::default(),
             owners: Mutex::new(MetricOwners::default()),
             info: Family::default(),
             concurrency_limit: Family::default(),
@@ -113,52 +116,52 @@ impl AdmissionMetrics {
             results: Family::default(),
             wait: Family::new_with_constructor(wait_histogram as fn() -> Histogram),
         };
-        registry.register(
+        metrics.registry.register(
             "foretoken_admission_info",
             "Configured admission algorithm",
             metrics.info.clone(),
         );
-        registry.register(
+        metrics.registry.register(
             "foretoken_admission_concurrency_limit_work_units",
             "Running admission work-unit limit",
             metrics.concurrency_limit.clone(),
         );
-        registry.register(
+        metrics.registry.register(
             "foretoken_admission_queue_limit_work_units",
             "Waiting admission work-unit limit",
             metrics.queue_limit.clone(),
         );
-        registry.register(
+        metrics.registry.register(
             "foretoken_admission_resident_limit_requests",
             "Resident protected HTTP request limit",
             metrics.resident_limit.clone(),
         );
-        registry.register(
+        metrics.registry.register(
             "foretoken_admission_active_work_units",
             "Work units retaining admission reservations",
             metrics.active.clone(),
         );
-        registry.register(
+        metrics.registry.register(
             "foretoken_admission_queued_work_units",
             "Work units waiting for admission",
             metrics.queued.clone(),
         );
-        registry.register(
+        metrics.registry.register(
             "foretoken_admission_resident_requests",
             "Resident protected HTTP requests",
             metrics.resident.clone(),
         );
-        registry.register(
+        metrics.registry.register(
             "foretoken_admission_attempts",
             "Admission calls started, not candidate units",
             metrics.attempts.clone(),
         );
-        registry.register(
+        metrics.registry.register(
             "foretoken_admission_results",
             "Completed admission calls by result",
             metrics.results.clone(),
         );
-        registry.register(
+        metrics.registry.register(
             "foretoken_admission_queue_wait_seconds",
             "Completed queue waits by admission result",
             metrics.wait.clone(),
@@ -190,7 +193,7 @@ pub struct AdmissionCapacity {
     pub resident_requests: u64,
 }
 
-/// Keeps configured-rule series present for the owning pipeline's lifetime.
+/// Keeps configured-rule series present for the owning admission instance's lifetime.
 pub(crate) struct AdmissionMetricsScope {
     algorithm: &'static str,
     capacity: Option<AdmissionCapacity>,
@@ -198,7 +201,7 @@ pub(crate) struct AdmissionMetricsScope {
 
 impl AdmissionMetricsScope {
     pub(crate) fn new(algorithm: &'static str, capacity: Option<AdmissionCapacity>) -> Self {
-        let metrics = &METRICS.admission;
+        let metrics = &METRICS;
         let mut owners = metrics
             .owners
             .lock()
@@ -233,7 +236,7 @@ impl AdmissionMetricsScope {
 
 impl Drop for AdmissionMetricsScope {
     fn drop(&mut self) {
-        let metrics = &METRICS.admission;
+        let metrics = &METRICS;
         let mut owners = metrics
             .owners
             .lock()
@@ -339,7 +342,7 @@ impl AdmissionAttempt {
         deadline: Option<tokio::time::Instant>,
     ) -> Self {
         let labels = CallLabels { stage, origin };
-        METRICS.admission.attempts.get_or_create(&labels).inc();
+        METRICS.attempts.get_or_create(&labels).inc();
         Self {
             labels,
             deadline,
@@ -393,7 +396,7 @@ impl AdmissionAttempt {
     }
 
     fn record(&mut self, result: &'static str) {
-        let metrics = &METRICS.admission;
+        let metrics = &METRICS;
         metrics
             .results
             .get_or_create(&ResultLabels {
@@ -441,4 +444,13 @@ impl Drop for AdmissionAttempt {
             });
         }
     }
+}
+
+pub(crate) static METRICS: LazyLock<AdmissionMetrics> = LazyLock::new(AdmissionMetrics::new);
+
+/// Encodes admission metrics for the frontend's combined OpenMetrics response.
+pub fn render_metrics() -> Result<String, fmt::Error> {
+    let mut output = String::new();
+    encode(&mut output, &METRICS.registry)?;
+    Ok(output)
 }

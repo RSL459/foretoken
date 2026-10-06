@@ -35,6 +35,10 @@ func frontendServingConfigMapName(frontend *inferencev1alpha1.FrontendService) s
 // Derive the frontend workload, stable Service, and optional gateway route as one desired-state
 // unit so ports, timeouts, labels, and ownership cannot drift across independently built objects.
 func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profile FrontendRuntimeProfile) (*appsv1.Deployment, *corev1.Service, *gatewayv1.HTTPRoute, error) {
+	// Existing resources can predate the CRD validation; never replace their admission with unrestricted execution.
+	if frontend.Spec.RouterPipeline.DeprecatedAdmission != nil {
+		return nil, nil, nil, fmt.Errorf("spec.routerPipeline.admission is no longer supported; move it to spec.admission")
+	}
 	requests, limits, err := frontendResources(frontend.Spec.Resources)
 	if err != nil {
 		return nil, nil, nil, err
@@ -84,6 +88,13 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_STREAM_IDLE_SECONDS", Value: strconv.FormatInt(streamIdleSeconds, 10)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
 		{Name: "FORETOKEN_ROUTER_PIPELINE", Value: string(routerPipeline)},
+	}
+	if frontend.Spec.Admission != nil {
+		admission, err := json.Marshal(frontend.Spec.Admission)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("encode frontend admission: %w", err)
+		}
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "FORETOKEN_ADMISSION", Value: string(admission)})
 	}
 	var annotations map[string]string
 	if profile.SourceRevision != "" {

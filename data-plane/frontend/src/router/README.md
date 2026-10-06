@@ -35,23 +35,4 @@ Omit `filter`, `scorer`, and `picker` to use the default routing strategy. By de
 
 When the KV index is unavailable, targets remain eligible without KV-prefix preference. See the [KV prefix index](../kv-indexer/README.md) for cache-locality behavior.
 
-## Configure admission rules
-
-Admission rules determine whether requests proceed, wait, or are rejected. The default, `allow_all`, adds no admission limit. Select `concurrency` to enable concurrency-based flow control:
-
-```yaml
-spec:
-  routerPipeline:
-    admission:
-      algorithm: concurrency
-      parameters:
-        maxConcurrentRequests: 64
-```
-
-This example allows 64 concurrent output candidates per frontend replica; choose the limit from measurements of your workload. Batched completions count each candidate separately: four prompts with `n: 2` use eight slots.
-
-For short bursts, add `maxQueuedRequests: 128` and `queueTimeout: 2s` under `parameters`. By default, requests do not queue; when queueing is enabled without a timeout, the remaining request budget applies. Full capacity without queue space and queue expiry return HTTP 503. A batch larger than the concurrency limit returns HTTP 400.
-
-Limits are shared across models on each frontend replica, not across the cluster. Text generation and tokenization use these rules; video requests do not. Health probes remain available.
-
-To implement a custom rule, see the [admission-rule development guide](../../../../docs/development/admission-rules.md).
+Configure request limits and queueing through the frontend's [admission rules](../../README.md#configure-admission-rules).

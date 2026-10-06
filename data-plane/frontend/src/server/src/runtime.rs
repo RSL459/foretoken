@@ -10,19 +10,17 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
+use foretoken_admission::{
+    Admission, AdmissionApi, AdmissionAttempt, AdmissionContext, AdmissionError,
+    AdmissionModelState, AdmissionModelStatus, AdmissionPermit, AdmissionRequest, AdmissionService,
+    AdmissionStateReader, AdmissionTargetState, mark_request_deadline,
+};
 use foretoken_chat::{
     ChatRequest, ChatRequestProcessor, DynChatOutputProcessor, NewChatOutputProcessorOptions,
     ParserSelection,
 };
 use foretoken_llm_facade::{LlmFacadeError, LlmFacadeResolver, TokenStream};
-use foretoken_router::algorithm::admission::{
-    AdmissionApi, AdmissionAttempt, AdmissionContext, AdmissionModelState, AdmissionModelStatus,
-    AdmissionService, AdmissionStateReader, AdmissionTargetState, mark_request_deadline,
-};
-use foretoken_router::{
-    AdmissionError, AdmissionPermit, AdmissionRequest, RouteAdmission, RouteDecision,
-    RouteInventory, RouteTargetSet, Router, RouterRequest,
-};
+use foretoken_router::{RouteDecision, RouteInventory, RouteTargetSet, Router, RouterRequest};
 use foretoken_text::{
     Prompt, SamplingParams, TextDecodeOptions, TextRequest, TextRequestProcessor,
 };
@@ -221,8 +219,8 @@ pub trait RuntimeControl: Send + Sync {
 
 #[async_trait]
 pub trait Generation: Send + Sync {
-    /// Returns the Router admission rule shared by HTTP and generation consumers, when supplied.
-    fn admission(&self) -> Option<Arc<dyn RouteAdmission>> {
+    /// Returns the admission owner shared by HTTP and generation consumers, when supplied.
+    fn admission(&self) -> Option<Arc<Admission>> {
         None
     }
 
@@ -459,7 +457,7 @@ pub struct RuntimeGeneration {
     publication_updates: tokio::sync::watch::Sender<u64>,
     accepting: AtomicBool,
     request_timeout: Duration,
-    admission: Arc<dyn RouteAdmission>,
+    admission: Arc<Admission>,
 }
 
 impl RuntimeGeneration {
@@ -467,7 +465,7 @@ impl RuntimeGeneration {
     ///
     /// The frontend process retains the returned owner for its full lifetime; snapshot watchers
     /// publish into it and HTTP handlers load its current immutable state per request.
-    pub fn new(request_timeout: Duration, admission: Arc<dyn RouteAdmission>) -> Self {
+    pub fn new(request_timeout: Duration, admission: Arc<Admission>) -> Self {
         let (publication_updates, _) = tokio::sync::watch::channel(0);
         Self {
             slot: ArcSwapOption::empty(),
@@ -512,7 +510,7 @@ impl RuntimeGeneration {
     /// then return unavailable while requests already holding a runtime can finish.
     pub fn close_admission(&self) {
         self.accepting.store(false, Ordering::Release);
-        self.admission.close();
+        self.admission.rule().close();
         self.publication_updates
             .send_replace(self.slot.load_full().map_or(0, |slot| slot.version));
     }
@@ -556,7 +554,7 @@ impl RuntimeGeneration {
             queue: attempt.queue(),
         };
         attempt
-            .run(self.admission.admit(request, &context))
+            .run(self.admission.rule().admit(request, &context))
             .await
             .map_err(GenerationError::from)
     }
@@ -637,7 +635,7 @@ impl RuntimeGeneration {
         }
         let generate_request = prepared.generate_request;
         let context = RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()));
-        let mut session = slot.state.router.start(context, admission).await;
+        let mut session = slot.state.router.start(context).await;
         let initial = session
             .select_initial()
             .map_err(|_| GenerationError::Unavailable)?;
@@ -649,9 +647,10 @@ impl RuntimeGeneration {
             generate_request.clone(),
         )
         .await?;
-        // The response stream owns routing load through completion, cancellation, and errors.
+        // The response stream owns the work permit and routing load through completion or cancellation.
         let stream = Box::pin(async_stream::stream! {
             use futures::StreamExt;
+            let _admission = admission;
             let mut backend_stream = backend_stream;
             let mut response_started = false;
             while let Some(output) = backend_stream.next().await {
@@ -801,7 +800,7 @@ impl AdmissionStateReader for RuntimeGeneration {
 
 #[async_trait]
 impl Generation for RuntimeGeneration {
-    fn admission(&self) -> Option<Arc<dyn RouteAdmission>> {
+    fn admission(&self) -> Option<Arc<Admission>> {
         Some(self.admission.clone())
     }
 
@@ -810,9 +809,9 @@ impl Generation for RuntimeGeneration {
     }
 
     async fn admit(&self, request: &AdmissionRequest) -> Result<AdmissionPermit, GenerationError> {
-        // Validate the model without retaining its runtime while waiting. Router-local
+        // Validate the model without retaining its runtime while waiting. Admission
         // limits are frontend pressure, not additional ModelPool scheduler demand.
-        if self.admission.requires_ready_runtime() {
+        if self.admission.rule().requires_ready_runtime() {
             let slot = self.ready_state()?;
             if !slot.state.models.contains_key(&request.model) {
                 return Err(
@@ -841,11 +840,7 @@ impl Generation for RuntimeGeneration {
             return Err(GenerationError::InvalidRequest);
         }
         let context = RouterRequest::video(request.model.clone(), request.request_id.clone());
-        let mut session = slot
-            .state
-            .router
-            .start(context, AdmissionPermit::default())
-            .await;
+        let mut session = slot.state.router.start(context).await;
         let decision = session
             .select_initial()
             .map_err(|_| GenerationError::Unavailable)?;
@@ -872,7 +867,10 @@ impl Generation for RuntimeGeneration {
                 None => self.admit(&admission::generation(&request, None)).await?,
             };
             let slot = self
-                .generation_slot(&request.model, !self.admission.requires_ready_runtime())
+                .generation_slot(
+                    &request.model,
+                    !self.admission.rule().requires_ready_runtime(),
+                )
                 .await?;
             let runtime = slot.state.model(&request.model)?;
             let text_request = TextRequest {
@@ -915,7 +913,10 @@ impl Generation for RuntimeGeneration {
                 }
             };
             let slot = self
-                .generation_slot(&request.model, !self.admission.requires_ready_runtime())
+                .generation_slot(
+                    &request.model,
+                    !self.admission.rule().requires_ready_runtime(),
+                )
                 .await?;
             let runtime = slot.state.model(&request.model)?;
             let bundle = runtime.bundle.clone();
