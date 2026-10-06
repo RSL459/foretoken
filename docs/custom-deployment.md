@@ -39,13 +39,14 @@ Deploy the maintained [Quick Start](../README.md#quick-start) on a GPU-enabled c
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-After editing the checkout, run the same command again. It uses the saved installation settings and sends only added or changed files and deletions. Dedicated build Pods compile Go and Rust changes and prepare Python updates; compiler caches and outputs stay in the cluster.
+After editing the checkout, run the same command again. It uses the saved installation settings.
 
 Control-plane Go updates publish files without replacing the runtime image or depending on model storage. Frontend and model-server updates reuse their runtime images when writable persistent runtime storage is available. Runtime dependency, image build, and data-plane bootstrap changes use the platform installation path.
 
 Affected workloads restart and may reload model weights. The command waits for the selected code and serving routes to become active. Unchanged source and deployment configuration leave existing workloads running. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
 
 Changes to CLI Python files take effect directly from the editable checkout; rerun `pip install -e .` when its Python dependencies change.
+
 ## Edit an inference engine
 
 To modify vLLM, bind a Git checkout matching the runtime's Python, PyTorch, and accelerator environment. For a checkout at `../vllm`:
@@ -64,7 +65,7 @@ foretoken install -e . \
   --engine-source vllm-metax=../vllm-metax
 ```
 
-The build Pod compiles plugin extensions for MetaX; core CUDA kernels are not used by that backend. Retain the installation's registry and values options.
+The build Pod compiles plugin extensions for MetaX; core CUDA kernels are not used by that backend.
 
 ### Select a different runtime environment
 

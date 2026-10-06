@@ -5,36 +5,34 @@
 
 English | [简体中文](source-image-lifecycle_zh.md)
 
-Source updates separate runtime code from the image that supplies its dependencies. This reference describes the ownership and activation rules for maintaining that separation. Installation and redeployment commands are in [Deploy Foretoken from Source](../custom-deployment.md).
+Source updates separate application code from its runtime dependencies. For installation and update commands, see [Deploy Foretoken from Source](../custom-deployment.md).
 
 ## Preparation and publication
 
-The CLI owns the workstation's checkout binding, saved installation settings, and input comparison. The binding identifies the cluster, installed platform, and controller-selected runtime environment; it is not shared between workstations. Source operations on the same workstation serialize by cluster. The client assigns revisions to changed paths and sends only their contents and removals; a completed input record marks the cluster workspace ready for a build.
+The CLI owns checkout bindings, installation settings and input snapshots on the workstation. Source operations are serialized per cluster on that workstation and synchronize changed files and deletions before building.
 
-Dedicated BuildKit Pods own compilation. Persistent compiler volumes retain the source workspace, dependency downloads, build caches, and outputs separately from model data. Existing Dockerfiles build platform images or export runtime executables. Registry builds push directly from the cluster. Local kind/k3d builds load images into the node's containerd without routing image archives through the client. An interrupted installation retains its compiler cache. After acquiring the workstation's operation lock, the next source operation stops that binding's abandoned publication Jobs before reusing compiler outputs, then retires abandoned build Pods. Each temporary registry Secret belongs to its build Pod.
+BuildKit Pods compile applications with persistent caches, separate from model storage. Interrupted installations retain these caches. Before reusing compiler output, a source operation stops abandoned publisher Jobs from the same binding. Temporary registry Secrets belong to their build Pods.
 
-Control-plane builds export executables and CRDs to the compiler volume. A short-lived Job publishes them to a separate platform volume served over HTTP; running consumers never need to mount that volume. The Job shares the origin's node, releases its mounts before rollout, and uses the caller's timeout for its deadline and retention. Cached BuildKit Pods do not hold the origin volume. Publication reuses unchanged files and retires only the current binding's versions outside Helm history, retained consumer templates, running Pods, and VideoTask plans. Helm then selects the published directory, which is downloaded before CRD bootstrap and manager startup.
+Control-plane executables and CRDs are published to a platform-owned HTTP service and volume. The publisher runs on the file server's node and releases its mount before rollout; BuildKit Pods do not mount that volume. Complete versions are published atomically and remain immutable. Consumers download the selected version before startup.
 
-Frontend and model-server publication copies a complete component payload into a staging directory on the workload's persistent cache, then selects the revision only after publication finishes. Published directories are not modified by later updates. The publisher uses the runtime image's user and runs outside the serving Pods, so a failed inference process does not prevent preparing its replacement.
+Frontend and model-server payloads are published to the workload's persistent cache. Publication completes before a service selects the revision. The publisher uses the runtime image's user and runs separately from serving Pods.
 
 ## Engine source and native extensions
 
-An explicit engine checkout is independent of the pinned vLLM Rust dependency. Its Python source is authoritative; the runtime supplies compatible native libraries and generated or vendor files that the checkout does not contain. Foretoken's engine patches remain applied. Deleted inputs must disappear from subsequent payloads, and Python-only updates retain successful native builds.
+An explicit engine checkout is independent of the pinned vLLM Rust dependency. Python modules come from that checkout with Foretoken's patches applied; the runtime supplies compatible native libraries and generated dependencies. Deleted inputs disappear from later payloads, while Python-only updates retain successful native builds.
 
-Native builds use the selected runtime's Python, PyTorch, and accelerator environment, adding compiler tools in a separate build stage. Upstream build tools own compilation and their incremental caches. Full-image updates package the completed payload with metadata from the engine source, then use the normal package resolver to install dependencies. Accelerator ABI dependencies remain tied to the selected base image. MetaX native updates also select the compiled plugin at runtime rather than its precompiled kernel package.
+Native extensions use the selected runtime's Python, PyTorch and accelerator libraries with upstream incremental caches. Image builds package the prepared source and resolve its dependencies while retaining the accelerator ABI. MetaX native updates select the compiled plugin rather than its precompiled kernel package.
 
 ## Workload activation
 
-The CLI selects the source revision on the service; existing controllers own frontend rollout and model Pool/Group replacement. Model preparation and serving receive the same selection. At startup, the image bootstrap selects the executable, Python adapters, and engine payload. If a bundle declares an executable, a missing executable fails startup rather than silently running the image's older code.
+The CLI selects a source revision on each service; controllers own frontend rollout and model Pool/Group replacement. Model preparation and serving use the same selection. The image bootstrap activates its executable, Python adapters and engine payload. A declared but missing executable fails startup.
 
-The CLI observes the selected workloads, active source, consumed routing version, and Service endpoints before reporting deployment success. Unchanged source reuses prepared artifacts, and unchanged workload configuration does not trigger replacement.
-
-Controllers retain admission closure, route withdrawal, request drain, and resource release for both source and image updates. Withdrawal is acknowledged by the frontend's active routing version, independently of serving readiness: a frontend with no remaining backend can acknowledge the empty routing snapshot while it is not ready to serve. Existing drain deadlines still bound unreachable consumers and unfinished requests.
+The CLI verifies selected workloads, active source, routing state and Service endpoints before reporting success. Controllers own admission, route withdrawal and request draining; frontend acknowledgement of an empty routing snapshot remains independent of serving readiness.
 
 ## Image updates and cleanup
 
-The data-plane image bootstrap runs before source activation, so changes to that bootstrap require a new image. Runtime dependency declarations, image recipes, and Helm changes use the platform installation lifecycle. Frontend and model-server updates use images when runtime storage is unavailable or a single-node writable claim is awaiting its first placement; model preparation retains ownership of initial storage placement.
+Data-plane bootstrap, dependency, image recipe and Helm changes use the platform installation lifecycle. Runtime updates also use images when writable storage is unavailable or a single-node claim awaits its first placement; model preparation owns that placement. A successful source installation clears service source selections and the control-plane file selection so workloads use the newly built images.
 
-Image reuse compares build output with installed references and the requested distribution destination. A successful source installation clears service source selections and the control-plane file selection so workloads use the newly built images. Local snapshots are retired when no longer referenced. Runtime payload cleanup preserves service intent, retained rollout templates, and running or terminating consumers across namespaces that may share a data directory. It removes only the current binding's unreferenced publications, leaving other writers' candidates intact.
+Control-plane cleanup retains versions referenced by Helm history, workload templates, running Pods and saved VideoTask plans. Runtime cleanup retains service selections, templates and running or terminating consumers across namespaces sharing a data directory. Both remove only their binding's unreferenced publications.
 
-Compiler volumes used for frontend and model-server updates follow the model cache's lifecycle. The platform file origin follows the Helm release. Source uninstall removes managed compiler caches and the workstation binding without deleting model data. vLLM-Omni retains its separate [image build recipe](../custom-deployment.md#vllm-omni-runtime).
+Runtime build volumes follow the model cache's lifecycle; Helm owns the control-plane file service and volume. Source uninstall removes managed compiler caches and the workstation binding without deleting model data. vLLM-Omni uses a separate [image build recipe](../custom-deployment.md#vllm-omni-runtime).

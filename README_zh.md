@@ -90,13 +90,7 @@ curl --fail-with-body --no-buffer \
 
 ### 快速迭代源码
 
-修改源码后，再执行同一条部署命令即可应用改动，无需重新创建集群或手动导入运行时镜像：
-
-```bash
-foretoken deploy examples/quickstart --timeout 20m
-```
-
-Go、Python、Triton、Rust、CUDA、C/C++ 和 vLLM 源码改动会复用集群编译缓存；依赖和启动代码未变化时继续复用运行时环境。引擎源码和运行环境设置见[从源码部署 Foretoken](docs/custom-deployment_zh.md)。
+源码安装后，修改代码并重新执行部署命令即可更新服务。引擎源码和运行环境设置见[从源码部署 Foretoken](docs/custom-deployment_zh.md)。
 
 ### 5. 评测与性能剖析
 

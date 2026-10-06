@@ -91,7 +91,8 @@ def find_build_cache(
         if pod["spec"].get("nodeName") != node:
             continue
         builders = [
-            container for container in pod["spec"]["containers"]
+            container
+            for container in pod["spec"]["containers"]
             if container["name"] == "builder"
         ]
         if not any(
@@ -247,7 +248,8 @@ class ClusterBuilder(AbstractContextManager):
         ):
             if not any(
                 volume["name"] == "cache"
-                and volume.get("persistentVolumeClaim", {}).get("claimName") == self.claim
+                and volume.get("persistentVolumeClaim", {}).get("claimName")
+                == self.claim
                 for volume in pod["spec"].get("volumes", [])
             ):
                 continue
@@ -258,13 +260,21 @@ class ClusterBuilder(AbstractContextManager):
                 continue
             containers = pod.get("spec", {}).get("containers", [])
             builder = next(
-                (container for container in containers if container.get("name") == "builder"),
+                (
+                    container
+                    for container in containers
+                    if container.get("name") == "builder"
+                ),
                 None,
             )
             if builder is None or builder.get("image") != self.image:
                 continue
             images = next(
-                (container for container in containers if container.get("name") == "images"),
+                (
+                    container
+                    for container in containers
+                    if container.get("name") == "images"
+                ),
                 None,
             )
             if (images is not None) != bool(self.containerd_socket):
@@ -272,7 +282,11 @@ class ClusterBuilder(AbstractContextManager):
             if images is not None and images.get("image") != self.tools_image:
                 continue
             publisher = next(
-                (container for container in containers if container.get("name") == "publisher"),
+                (
+                    container
+                    for container in containers
+                    if container.get("name") == "publisher"
+                ),
                 None,
             )
             if (publisher is not None) != expected_publisher:
@@ -280,7 +294,8 @@ class ClusterBuilder(AbstractContextManager):
             if publisher is not None:
                 identity = publisher.get("securityContext", {})
                 if (identity.get("runAsUser"), identity.get("runAsGroup")) != (
-                    self.publisher_uid, self.publisher_gid
+                    self.publisher_uid,
+                    self.publisher_gid,
                 ):
                     continue
             claim_names = {
@@ -302,9 +317,14 @@ class ClusterBuilder(AbstractContextManager):
                 continue
             self.kubectl.run(
                 [
-                    "delete", "pod", pod["metadata"]["name"],
-                    "--namespace", self.namespace,
-                    "--ignore-not-found", "--wait=true", "--timeout=" + self.timeout,
+                    "delete",
+                    "pod",
+                    pod["metadata"]["name"],
+                    "--namespace",
+                    self.namespace,
+                    "--ignore-not-found",
+                    "--wait=true",
+                    "--timeout=" + self.timeout,
                 ]
             )
         return reusable
@@ -315,7 +335,9 @@ class ClusterBuilder(AbstractContextManager):
         if reusable is not None:
             self.name = reusable["metadata"]["name"]
             print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
-            self.run(["rm", "-rf", "--", self.root + "/transfers", self.root + "/output"])
+            self.run(
+                ["rm", "-rf", "--", self.root + "/transfers", self.root + "/output"]
+            )
             return self
         image = self.image
         pvc = self.kubectl.get("pvc", self.claim, self.namespace)
@@ -901,7 +923,9 @@ rm -rf "$incoming"
         syntax_image = (arguments or {}).get("BUILDKIT_SYNTAX_IMAGE")
         if syntax_image:
             source = self.workspace + "/" + dockerfile
-            generated = f"{self.workspace}/.foretoken-build/{uuid.uuid4().hex}/Dockerfile"
+            generated = (
+                f"{self.workspace}/.foretoken-build/{uuid.uuid4().hex}/Dockerfile"
+            )
             # BuildKit resolves Dockerfile-specific exclusions from the generated filename.
             self.run(
                 [
