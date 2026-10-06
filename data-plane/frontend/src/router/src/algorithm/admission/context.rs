@@ -78,4 +78,6 @@ pub struct AdmissionContext<'a> {
     pub deadline: tokio::time::Instant,
     pub service: AdmissionService,
     pub state: &'a dyn AdmissionStateReader,
+    /// Queue timing supplied by the framework; rules keep capacity and scheduling ownership.
+    pub queue: super::AdmissionQueueObservation,
 }

@@ -48,10 +48,13 @@ let state = context.state.model_state(
 
 `split_one()` 将一个已预留单位转交给批次子请求，reservation 被丢弃时释放剩余资源。框架让执行许可覆盖预处理和请求完成；规则的等待资源随 admission future 持有，从而在取消时释放。
 
-有入口或模型就绪要求时，可实现以下方法：
+排队期间持有 `context.queue.begin_wait()` 返回的 guard，等待结束时释放。框架会将等待时长与最终准入结果一起记录。
+
+资源上报、入口和模型就绪要求可通过以下方法实现：
 
 | 方法 | 用途 |
 | --- | --- |
+| `capacity()` | 为准入看板提供有限的工作并发、队列和驻留上限。 |
 | `try_reserve_request()` | 在读取请求体前预留一个 HTTP 驻留名额，许可随响应体持有。 |
 | `requires_ready_runtime()` | 要求模型准备好后再准入生成请求。 |
 | `close()` | 关闭时唤醒等待中的请求。 |

@@ -48,10 +48,13 @@ For unrestricted admission, return `AdmissionPermit::default()`. For reserved re
 
 `split_one()` transfers one reserved unit to a batch child; dropping a reservation releases its remaining resources. The framework carries execution permits through preprocessing and request completion. Keep waiting resources owned by the admission future so cancellation releases them.
 
-Additional hooks support rules with intake or readiness requirements:
+While queueing, hold the guard returned by `context.queue.begin_wait()` until waiting ends. The framework records the wait with the final admission result.
+
+Additional hooks support resource reporting, intake, and readiness:
 
 | Hook | Purpose |
 | --- | --- |
+| `capacity()` | Report finite work, queue, and resident limits for the Admission dashboard. |
 | `try_reserve_request()` | Reserve a resident HTTP-request slot before body extraction; its permit follows the response body. |
 | `requires_ready_runtime()` | Require model preparation before generation admission. |
 | `close()` | Wake waiting requests during shutdown. |

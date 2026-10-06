@@ -24,12 +24,13 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 | Is speculative decoding helping? | Compare draft acceptance, output throughput, latency, and automatically collected draft/target GPU time. |
 | Are caches or devices under pressure? | Cache occupancy and hit rates, filesystem space, GPU utilization and memory, and CPU/memory usage. |
 | How are requests and replicas distributed? | Routing selection shares within each model and role, and autoscaling recommendations versus applied replicas. |
+| Why are requests waiting or being rejected? | Admission results, queue wait, and each frontend replica's occupancy and limits. |
 
 TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. Panel descriptions provide the detailed measurement definitions.
 
 When GPU drafting is active, the dashboard automatically shows draft and target-forward GPU time alongside acceptance, throughput, and latency. Use these panels to compare the cost of the two stages.
 
-Shared frontend panels cover all models served by the selected frontend and record HTTP response starts. Control-plane panels describe the platform; autoscaling panels follow the selected model and autoscaling service.
+Shared frontend panels cover all models served by the selected frontend and record HTTP response starts. The Admission section uses the frontend and frontend-Pod selectors; expand its results or resources rows for detail. Control-plane panels describe the platform; autoscaling panels follow the selected model and autoscaling service.
 
 ## Query logs
 
