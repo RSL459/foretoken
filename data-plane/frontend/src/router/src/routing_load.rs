@@ -14,6 +14,16 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Default)]
 pub struct RoutingLoadState(pub(crate) Arc<Mutex<RoutingReservations>>);
 
+impl RoutingLoadState {
+    /// Reads this frontend's current reservations for one target and rank without modifying them.
+    pub fn snapshot(&self, target: &RouteTargetId, rank: u32) -> RoutingLoadSnapshot {
+        self.0
+            .lock()
+            .expect("routing load lock poisoned")
+            .snapshot(&(target.clone(), rank))
+    }
+}
+
 pub(crate) type ReservationKey = (RouteTargetId, u32);
 
 /// Snapshot of this frontend's reservations for one route target and data-parallel rank.

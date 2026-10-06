@@ -26,7 +26,8 @@ from foretoken.arguments import (
     UninstallCommand,
     parse_arguments,
 )
-from foretoken.editable import source_operation
+from foretoken.cluster import run as run_cluster
+from foretoken.editable import EditableDeployment
 from foretoken.kubernetes import (
     Kubectl,
     ResourceProgress,
@@ -40,7 +41,9 @@ from foretoken.kubernetes import (
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.platform import PlatformLifecycle
 from foretoken.profiling import ProfileRun
+from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
+from foretoken.source import source_operation
 from foretoken.storage import DirectoryVolumes
 
 
@@ -88,7 +91,6 @@ def _deploy(
     if profile is not None:
         # Resolve the selected model before changing the deployment.
         capture = ProfileRun(profile, deployment=deployment)
-    from foretoken.editable import EditableDeployment
 
     source = EditableDeployment.discover(kubectl)
     if source is not None:
@@ -191,8 +193,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     command = parse_arguments(sys.argv[1:] if argv is None else argv)
     try:
         if isinstance(command, ClusterCommand):
-            from foretoken.cluster import run as run_cluster
-
             run_cluster(command)
         elif isinstance(command, InstallCommand):
             oci_registry = command.oci_registry or os.environ.get(
@@ -219,6 +219,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 command.host,
             )
         elif isinstance(command, PerformanceCommand):
+            # Load benchmark frameworks only for benchmark commands.
             from benchmarks.main import main as benchmark_main
 
             benchmark_main(command.arguments)
@@ -231,8 +232,6 @@ def main(argv: Sequence[str] | None = None) -> None:
 
             plot_main(command.arguments)
         elif isinstance(command, ProfileViewCommand):
-            from foretoken.profiling.viewer import view
-
             view(command)
     except DeploymentError as exc:
         raise SystemExit(str(exc)) from exc

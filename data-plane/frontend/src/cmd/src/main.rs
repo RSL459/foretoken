@@ -23,7 +23,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Establish the long-lived generation owner before starting background refreshes.
     // Snapshot updates publish atomically, so an invalid update cannot replace active routing.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
-    let generation = Arc::new(RuntimeGeneration::new(config.request_timeout));
 
     // KV locality is optional routing input. Credential failures degrade its score instead
     // of preventing otherwise healthy model routes from serving requests.
@@ -43,6 +42,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential));
+    let generation = Arc::new(RuntimeGeneration::new(
+        config.request_timeout,
+        builder.admission()?,
+    ));
 
     // Bind the HTTP listener before launching the refresh loops. The process can remain
     // live while readiness stays false until a valid routing snapshot is published.

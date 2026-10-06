@@ -122,19 +122,13 @@ class HelmClient:
                 raise DeploymentError("helm list returned an unexpected JSON value")
             for item in listed:
                 if item.get("name") and item.get("namespace"):
-                    release = ReleaseRef(
-                        str(item["name"]), str(item["namespace"])
-                    )
+                    release = ReleaseRef(str(item["name"]), str(item["namespace"]))
                     releases[(release.namespace, release.name)] = release
         return tuple(releases.values())
 
-    def has_release_label(
-        self, release: ReleaseRef, key: str, value: str
-    ) -> bool:
+    def has_release_label(self, release: ReleaseRef, key: str, value: str) -> bool:
         """Return whether Helm storage carries one exact release label."""
-        return bool(
-            self._list_releases(release, selector=f"{key}={value}")
-        )
+        return bool(self._list_releases(release, selector=f"{key}={value}"))
 
     def _release_values(self, release: ReleaseRef) -> dict[str, Any]:
         """Return the effective values stored for one Helm release."""
@@ -144,10 +138,16 @@ class HelmClient:
         self, release: ReleaseRef, *, revision: int | None = None
     ) -> dict[str, Any]:
         """Return supplied values for the installed release or one retained revision."""
-        return self._get_release_values(release, include_defaults=False, revision=revision)
+        return self._get_release_values(
+            release, include_defaults=False, revision=revision
+        )
 
     def _get_release_values(
-        self, release: ReleaseRef, *, include_defaults: bool, revision: int | None = None
+        self,
+        release: ReleaseRef,
+        *,
+        include_defaults: bool,
+        revision: int | None = None,
     ) -> dict[str, Any]:
         """Read one release's stored values with the requested default scope."""
         args = [
@@ -219,7 +219,6 @@ class HelmClient:
                 f"--timeout={timeout}",
             ]
         )
-
 
 
 def _decode_json(output: str) -> Any:
