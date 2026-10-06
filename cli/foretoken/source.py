@@ -336,6 +336,7 @@ def prepare_source_images(
             prefix,
             inference_engine_image or "",
             "docker.io",
+            "gcr.io",
             "ghcr.io",
             *(value for key, value in arguments.items() if key.endswith("REGISTRY")),
         ]

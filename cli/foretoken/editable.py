@@ -796,6 +796,7 @@ class EditableDeployment:
                 [
                     build["configuration"]["image"],
                     self.state["runtime"]["model_image"],
+                    self.state.get("base_image") or "",
                     "docker.io",
                     "gcr.io",
                     "ghcr.io",
