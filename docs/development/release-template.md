@@ -5,7 +5,7 @@
 
 Copy the template into the GitHub Release description, replace placeholders and remove unused sections. Group changes by user-facing area and acknowledge confirmed contributions.
 
-Replace `PYTHON_VERSION` and `PLATFORM_VERSION` with the release's [Python and platform versions](release.md#version-stages).
+Fill in the published versions and copy the full image references, Chart address and asset download links. Use a GitHub Compare link between the two release tags for the full changelog.
 
 ```markdown
 ## Highlights
@@ -41,16 +41,16 @@ Replace `PYTHON_VERSION` and `PLATFORM_VERSION` with the release's [Python and p
 
 ## Release Artifacts
 
-| Artifact | Version or tag | Install or access path |
+| Artifact | Published version or tag | Install or access path |
 | --- | --- | --- |
-| Python package | `foretoken==PYTHON_VERSION` | `pip install foretoken==PYTHON_VERSION` |
-| Control-plane environment | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/control-plane-environment:PLATFORM_VERSION` |
-| Frontend environment | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/frontend-environment:PLATFORM_VERSION` |
-| NVIDIA model-server environment | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:PLATFORM_VERSION` |
-| MetaX model-server environment | `PLATFORM_VERSION-metax` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:PLATFORM_VERSION-metax` |
-| Application archive | `PLATFORM_VERSION` | `https://github.com/shiweijiezero/foretoken/releases/download/vPYTHON_VERSION/foretoken-applications-PLATFORM_VERSION-linux-amd64.tar.gz` |
-| Helm Chart | `PLATFORM_VERSION` | `oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken` |
-| Examples | `vPYTHON_VERSION` | [examples at the release tag](https://github.com/shiweijiezero/foretoken/tree/vPYTHON_VERSION/examples) |
+| Python package | [package version] | `pip install foretoken==<package-version>` |
+| Control-plane environment | [image tag] | [full image reference] |
+| Frontend environment | [image tag] | [full image reference] |
+| NVIDIA model-server environment | [image tag] | [full image reference] |
+| MetaX model-server environment | [image tag] | [full image reference] |
+| Application archive | [release version] | [asset download link copied from the GitHub Release] |
+| Helm Chart | [Chart version] | [OCI Chart address] |
+| Examples | [release tag] | [link to the examples directory at that tag] |
 
 ## Known Limitations
 
@@ -63,5 +63,5 @@ Replace `PYTHON_VERSION` and `PLATFORM_VERSION` with the release's [Python and p
 
 ## Full Changelog
 
-[Compare `vPREVIOUS` to `vPYTHON_VERSION`](https://github.com/shiweijiezero/foretoken/compare/vPREVIOUS...vPYTHON_VERSION)
+[GitHub Compare link]
 ```
