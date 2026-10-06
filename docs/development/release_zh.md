@@ -37,31 +37,11 @@ pip install --pre foretoken
 pip install foretoken==0.0.1a1
 ```
 
-Stable 和 post-release 使用普通安装命令：
-
-```bash
-pip install foretoken
-```
-
 `.postN` 通常复用对应 Stable 版本的平台产物，因为它只修正已发布的 Python package 或 metadata，不承载常规代码变化。如果运行行为或平台产物需要变化，应发布下一 patch，例如 `0.0.2`，而不是把这些变化放进 `.postN`。
-
-从仓库安装源码与发布版本相互独立：
-
-```bash
-pip install -e .
-```
 
 ## Tag 与版本来源
 
-GitHub Release 使用带 `v` 前缀的 Python 版本，因为发布 workflow 会根据该 Release 上传对应的 Python distribution：
-
-```text
-v0.0.1a1
-v0.0.1b1
-v0.0.1rc1
-v0.0.1
-v0.0.1.post1
-```
+GitHub Release tag 使用带 `v` 前缀的 Python 版本。
 
 每类产物只有一个权威版本来源：
 
@@ -87,7 +67,7 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-命令构建 `control-plane-environment`、`frontend-environment` 以及 NVIDIA/沐曦 `model-server-environment` 镜像。应用程序、CRD 和 Python 适配代码导出为 `foretoken-applications-<version>-linux-amd64.tar.gz`，生成的 Chart 引用这些镜像和压缩包的 GitHub Release 地址。压缩包与 Chart 保存在 `/tmp/foretoken-release`，沐曦镜像 tag 使用 `-metax` 后缀。
+命令构建运行环境镜像，并将 `foretoken-applications-<version>-linux-amd64.tar.gz` 和匹配的 Helm Chart 保存到 `/tmp/foretoken-release`。沐曦镜像 tag 使用 `-metax` 后缀。
 
 只导出应用文件、不重建运行环境时，执行：
 
