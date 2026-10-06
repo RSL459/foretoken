@@ -89,7 +89,7 @@ func Render(selected []string, scope Scope, thresholds *inferencev1alpha1.ModelA
 		rule := template.DeepCopy()
 		expression := scopeValues.Replace(rule.Expr.String())
 		// Business admission rules retain stage and optionally Pod identity after aggregation.
-		if strings.Contains(expression, "foretoken_alert_admission_window") {
+		if strings.Contains(expression, "foretoken_alert_admission_grouping") {
 			if admission == nil {
 				return monitoringv1.PrometheusRuleSpec{}, fmt.Errorf("alert %s requires admission thresholds", name)
 			}
@@ -111,7 +111,7 @@ func Render(selected []string, scope Scope, thresholds *inferencev1alpha1.ModelA
 			}
 			expression = strings.NewReplacer(
 				"foretoken_alert_admission_grouping", grouping,
-				"foretoken_alert_admission_window", model.Duration(window).String(),
+				"[1s]", "["+model.Duration(window).String()+"]",
 			).Replace(expression)
 			forDuration := monitoringv1.Duration(model.Duration(persistence).String())
 			rule.For = &forDuration

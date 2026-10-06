@@ -78,20 +78,21 @@ groups:
           description_zh: 'NVIDIA GPU {{ $labels.device_id }} 功耗为 {{ $value | printf "%.1f" }} W，已达到或超过阈值 foretoken_alert_threshold_nvidia_power_watts W，持续 5 分钟。'
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokennvidiagpupowerusagehigh'
 
+      # The 1s ranges keep this catalogue valid PromQL; Render replaces them with the configured window.
       - alert: ForetokenAdmissionCapacityRejectionRatioHigh
         expr: |
           (
             sum by (foretoken_alert_admission_grouping) (
-              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage=~"intake|work", result="capacity_rejected"}[foretoken_alert_admission_window])
+              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage=~"intake|work", result="capacity_rejected"}[1s])
             )
             /
             sum by (foretoken_alert_admission_grouping) (
-              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage=~"intake|work"}[foretoken_alert_admission_window])
+              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage=~"intake|work"}[1s])
             )
           ) > foretoken_alert_threshold_capacity_rejection_ratio
           and on (foretoken_alert_admission_grouping)
           sum by (foretoken_alert_admission_grouping) (
-            rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage=~"intake|work"}[foretoken_alert_admission_window])
+            rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage=~"intake|work"}[1s])
           ) >= foretoken_alert_threshold_min_result_rate
         labels:
           service: foretoken
@@ -108,16 +109,16 @@ groups:
         expr: |
           (
             sum by (foretoken_alert_admission_grouping) (
-              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work", result=~"queue_timeout|deadline_exceeded"}[foretoken_alert_admission_window])
+              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work", result=~"queue_timeout|deadline_exceeded"}[1s])
             )
             /
             sum by (foretoken_alert_admission_grouping) (
-              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work"}[foretoken_alert_admission_window])
+              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work"}[1s])
             )
           ) > foretoken_alert_threshold_timeout_ratio
           and on (foretoken_alert_admission_grouping)
           sum by (foretoken_alert_admission_grouping) (
-            rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work"}[foretoken_alert_admission_window])
+            rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work"}[1s])
           ) >= foretoken_alert_threshold_min_result_rate
         labels:
           service: foretoken
@@ -136,12 +137,12 @@ groups:
           histogram_quantile(
             0.95,
             sum by (foretoken_alert_admission_grouping, le) (
-              rate(foretoken_admission_queue_wait_seconds_bucket{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", result="admitted"}[foretoken_alert_admission_window])
+              rate(foretoken_admission_queue_wait_seconds_bucket{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", result="admitted"}[1s])
             )
           ) > foretoken_alert_threshold_admitted_queue_p95_seconds
           and on (foretoken_alert_admission_grouping)
           sum by (foretoken_alert_admission_grouping) (
-            rate(foretoken_admission_queue_wait_seconds_count{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", result="admitted"}[foretoken_alert_admission_window])
+            rate(foretoken_admission_queue_wait_seconds_count{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", result="admitted"}[1s])
           ) >= foretoken_alert_threshold_min_queued_admission_rate
         labels:
           service: foretoken
