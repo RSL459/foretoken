@@ -120,7 +120,9 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
                 continue
             for entry in container.get("env", []):
                 if entry["name"] == "NVIDIA_VISIBLE_DEVICES":
-                    return entry.get("value")
+                    value = entry.get("value")
+                    # References use the plugin container's environment, not the exporter's.
+                    return value if value is not None and "$(" not in value else None
             return "all"
         return None
 
