@@ -8,486 +8,52 @@ from __future__ import annotations
 import copy
 import filecmp
 import json
-import os
-import shutil
-import subprocess
-import tempfile
 import time
 import uuid
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from dataclasses import asdict, replace
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from foretoken.application_files import ApplicationFiles
 from foretoken.arguments import InstallCommand
 from foretoken.cluster_build import (
     ClusterBuilder,
+    find_build_cache,
     registry_credentials,
-    remove_build_pods,
 )
 from foretoken.kubernetes import Kubectl, timeout_seconds
-from foretoken.manifest import DeploymentError, ForetokenDeployment, parse_deployment
+from foretoken.manifest import (
+    DeploymentError,
+    ForetokenDeployment,
+    ResourceRef,
+    parse_deployment,
+)
+from foretoken.platform import PlatformLifecycle
+from foretoken.platform.config import default_platform_config
+from foretoken.platform.helm import Helm
+from foretoken.source import (
+    _INSTALL_SOURCE,
+    SOURCE_REVISION,
+    _has_server_binding,
+    _inputs,
+    _local_candidates,
+    _runtime_settings,
+    _snapshot,
+    _state_directory,
+    _write_json,
+    ensure_build_cache,
+    image_tools_image,
+    local_build_nodes,
+    pinned_rust_revision,
+    snapshot_versions,
+    validate_build_inputs,
+)
+from foretoken.storage import DirectoryVolumes
 
-SOURCE_REVISION = "inference.foretoken.io/source-revision"
-_INSTALL_SOURCE = "foretoken.io/install-source"
 _COMPONENTS = {"ModelService": "model-server", "FrontendService": "frontend"}
-
-
-def _source_home() -> Path:
-    return (
-        Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
-        / "foretoken"
-        / "source"
-    )
-
-
-def _context_identity(kubectl: Kubectl) -> dict[str, str]:
-    """Read connection identity locally without adding API permissions to release deploys."""
-    config = json.loads(
-        kubectl.run(["config", "view", "--minify", "-o", "json"]).stdout
-    )
-    return {"server": config["clusters"][0]["cluster"]["server"]}
-
-
-def _state_directory(kubectl: Kubectl) -> Path:
-    """Keep workstation paths local and bind them to the actual cluster identity."""
-    cluster = kubectl.get("namespace", "kube-system")["metadata"]["uid"]
-    return _source_home() / cluster
-
-
-def _has_server_binding(kubectl: Kubectl) -> bool:
-    """Prefilter local bindings without requiring cluster access for release deployments."""
-    bindings = [
-        *(_source_home().glob("*/install.json")),
-        *(_source_home().glob("*/build.json")),
-    ]
-    if not bindings:
-        return False
-    server = _context_identity(kubectl)["server"]
-    for path in bindings:
-        try:
-            state = json.loads(path.read_text())
-        except FileNotFoundError:
-            # An uninstall may retire a binding before this operation acquires its lock.
-            continue
-        if state["context"]["server"] == server:
-            return True
-    return False
-
-
-@contextmanager
-def source_operation(
-    kubectl: Kubectl, timeout: str, *, installing: bool = False
-) -> Iterator[None]:
-    """Serialize CLI source operations by cluster, including artifact readers and cleanup.
-
-    The CLI entry point holds this lock through install, deploy, or uninstall. Internal
-    image rebuilds call the platform lifecycle directly within the same operation.
-    """
-    if not installing and not _has_server_binding(kubectl):
-        yield
-        return
-    import fcntl
-
-    directory = _state_directory(kubectl)
-    locks = _source_home() / "locks"
-    locks.mkdir(parents=True, exist_ok=True)
-    with (locks / directory.name).open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        try:
-            bindings = set()
-            for name in ("install.json", "build.json"):
-                path = directory / name
-                if path.is_file():
-                    binding = (
-                        json.loads(path.read_text()).get("build", {}).get("binding")
-                    )
-                    if binding:
-                        bindings.add(binding)
-            for binding in bindings:
-                remove_build_pods(kubectl, timeout, binding=binding, preserve_ready=True)
-            yield
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
-
-
-def engine_source_roots(sources: tuple[str, ...]) -> dict[str, str]:
-    """Resolve explicitly selected runtime checkouts, independently of Rust's pinned dependency."""
-    roots = {}
-    for source in sources:
-        name, separator, value = source.partition("=")
-        if not separator:
-            name, value = "vllm", source
-        if name not in {"vllm", "vllm-metax"} or name in roots:
-            raise DeploymentError(
-                "--engine-source accepts one vllm checkout and one optional vllm-metax checkout"
-            )
-        path = Path(value).expanduser().resolve()
-        package = path / name.replace("-", "_")
-        if not package.is_dir() or not (path / "setup.py").is_file():
-            raise DeploymentError(f"engine source is not a {name} checkout: {path}")
-        roots[name] = str(path)
-    if roots and "vllm" not in roots:
-        raise DeploymentError(
-            "--engine-source vllm-metax=PATH also requires the corresponding --engine-source vllm=PATH"
-        )
-    return roots
-
-
-def _inputs(root: Path, engines: dict[str, str] | None = None) -> dict[str, Path]:
-    """Select build inputs using Git's tracked and non-ignored source files."""
-    command = [
-        "git",
-        "-C",
-        str(root),
-        "ls-files",
-        "-z",
-        "--cached",
-        "--others",
-        "--exclude-standard",
-    ]
-    result = subprocess.run(command, capture_output=True, check=False)
-    if result.returncode:
-        raise DeploymentError(result.stderr.decode().strip())
-    files = {}
-    for raw in result.stdout.split(b"\0"):
-        if not raw:
-            continue
-        name = os.fsdecode(raw)
-        path = root / name
-        if not name.startswith(
-            ("data-plane/", "control-plane/", "deploy/")
-        ) and name not in {"Makefile", "LICENSE", ".dockerignore", ".gitmodules"}:
-            continue
-        if path.is_file() and path.suffix not in {".md", ".png", ".svg"}:
-            files[name] = path
-    # Rust dependencies use the pinned submodule. Its own ignore rules exclude build caches.
-    upstream = root / "data-plane/third_party/vllm"
-    if (upstream / ".git").exists():
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(upstream),
-                "ls-files",
-                "-z",
-                "--cached",
-                "--others",
-                "--exclude-standard",
-                "rust",
-            ],
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode:
-            raise DeploymentError(result.stderr.decode().strip())
-        for raw in result.stdout.split(b"\0"):
-            if raw:
-                name = "data-plane/third_party/vllm/" + os.fsdecode(raw)
-                if (root / name).is_file():
-                    files[name] = root / name
-    mooncake = root / "third_party/mooncake"
-    if (mooncake / ".git").exists():
-        result = subprocess.run(
-            ["git", "-C", str(mooncake), "ls-files", "--recurse-submodules", "-z"],
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode:
-            raise DeploymentError(result.stderr.decode().strip())
-        for raw in result.stdout.split(b"\0"):
-            if raw:
-                name = "third_party/mooncake/" + os.fsdecode(raw)
-                if (root / name).is_file():
-                    files[name] = root / name
-    for engine, checkout in (engines or {}).items():
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                checkout,
-                "ls-files",
-                "-z",
-                "--cached",
-                "--others",
-                "--exclude-standard",
-            ],
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode:
-            raise DeploymentError(result.stderr.decode().strip())
-        for raw in result.stdout.split(b"\0"):
-            if not raw:
-                continue
-            name = os.fsdecode(raw)
-            path = Path(checkout) / name
-            if path.is_file():
-                files[f"engine/{engine}/{name}"] = path
-    return files
-
-
-def _snapshot(
-    files: dict[str, Path],
-    destination: Path,
-    engines: dict[str, str] | None = None,
-    previous: Path | None = None,
-    unchanged: set[str] | None = None,
-) -> None:
-    """Save exact input bytes, reusing already-compared snapshot files without copying them."""
-    destination.mkdir(parents=True)
-    for name, source in files.items():
-        target = destination / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        prior = previous / name if previous is not None else None
-        if prior is not None and unchanged is not None and name in unchanged:
-            os.link(prior, target)
-        else:
-            shutil.copy2(source, target)
-    if engines:
-        manifest = {}
-        deleted = {}
-        for engine, checkout in engines.items():
-            prefix = f"engine/{engine}/"
-            manifest[engine] = {
-                "files": sorted(
-                    name.removeprefix(prefix)
-                    for name in files
-                    if name.startswith(prefix)
-                )
-            }
-            result = subprocess.run(
-                ["git", "-C", checkout, "ls-files", "--deleted", "-z"],
-                capture_output=True,
-                check=True,
-            )
-            deleted[engine] = [
-                os.fsdecode(name) for name in result.stdout.split(b"\0") if name
-            ]
-        (destination / "engine").mkdir(exist_ok=True)
-        _write_json(destination / "engine/manifest.json", manifest)
-        _write_json(destination / "engine/deleted.json", deleted)
-
-
-def _write_json(path: Path, value: object) -> None:
-    """Replace one local source state only after its complete payload has been written."""
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
-        try:
-            json.dump(value, stream, indent=2)
-            stream.write("\n")
-            stream.close()
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
-
-
-@contextmanager
-def capture_build_inputs(
-    root: Path, engines: dict[str, str] | None = None
-) -> Iterator[Path]:
-    """Own candidate image inputs until record_install moves them into committed state."""
-    destination = _source_home() / "builds" / ("inputs-" + uuid.uuid4().hex)
-    try:
-        _snapshot(_inputs(root, engines), destination, engines)
-        yield destination
-    finally:
-        if destination.exists():
-            shutil.rmtree(destination)
-
-
-@contextmanager
-def _local_candidates(directory: Path) -> Iterator[None]:
-    """Retire unreferenced local artifacts after a state commit or failed preparation.
-
-    The cluster operation lock keeps other CLI readers out during retirement. Running
-    workloads consume their published cache copies rather than these local candidates.
-    """
-    try:
-        yield
-    finally:
-        path = directory / "install.json"
-        state = json.loads(path.read_text()) if path.is_file() else {}
-        for snapshot in directory.glob("inputs-*"):
-            if snapshot.name != state.get("inputs"):
-                shutil.rmtree(snapshot)
-        if (directory / "bundles").is_dir():
-            shutil.rmtree(directory / "bundles")
-
-
-def has_source_state(kubectl: Kubectl) -> bool:
-    """Identify installed or interrupted source builds belonging to this actual cluster."""
-    if not _has_server_binding(kubectl):
-        return False
-    directory = _state_directory(kubectl)
-    return any((directory / name).is_file() for name in ("install.json", "build.json"))
-
-
-def forget_install(kubectl: Kubectl) -> None:
-    """Remove this cluster's workstation binding after platform uninstall, retaining remote data."""
-    if _has_server_binding(kubectl):
-        directory = _state_directory(kubectl)
-        if directory.exists():
-            shutil.rmtree(directory)
-
-
-def validate_build_inputs(
-    root: Path, snapshot: Path, engines: dict[str, str] | None = None
-) -> None:
-    """Reject a build whose checkout changed before its image or bundle was selected."""
-    current = _inputs(root, engines)
-    previous = {
-        str(path.relative_to(snapshot))
-        for path in snapshot.rglob("*")
-        if path.is_file()
-        and str(path.relative_to(snapshot))
-        not in {"engine/manifest.json", "engine/deleted.json"}
-    }
-    if previous != current.keys() or any(
-        not filecmp.cmp(snapshot / name, path, shallow=False)
-        or (snapshot / name).stat().st_mode != path.stat().st_mode
-        for name, path in current.items()
-    ):
-        raise DeploymentError(
-            "source changed while preparing artifacts; rerun the source operation"
-        )
-
-
-def snapshot_versions(
-    snapshot: Path,
-    previous: Path | None,
-    versions: dict[str, str],
-    changed: set[str] | None = None,
-) -> dict[str, str]:
-    """Assign a new revision only to changed input paths for cluster-side delta transfer."""
-    revision = snapshot.name.removeprefix("inputs-")
-    result = {}
-    for path in snapshot.rglob("*"):
-        if not path.is_file():
-            continue
-        name = str(path.relative_to(snapshot))
-        old = previous / name if previous else None
-        unchanged = (
-            name not in changed
-            if changed is not None
-            else (
-                name in versions
-                and old is not None
-                and old.is_file()
-                and old.stat().st_mode == path.stat().st_mode
-                and filecmp.cmp(old, path, shallow=False)
-            )
-        )
-        result[name] = versions[name] if unchanged else revision
-    return result
-
-
-def _runtime_settings(platform: dict[str, Any]) -> dict[str, Any]:
-    """Read the controller-owned runtime environment used to bind and validate source builds."""
-    arguments = platform["spec"]["template"]["spec"]["containers"][0]["args"]
-    options = dict(
-        arg[2:].split("=", 1)
-        for arg in arguments
-        if arg.startswith("--") and "=" in arg
-    )
-    return {
-        "image": options["frontend-image"],
-        "model_image": options["inference-engine-image"],
-        "omni_image": options.get("omni-inference-engine-image", ""),
-        "nsight_image": options.get("nsight-image", ""),
-        "mount": options["cache-mount-path"],
-        "claim": options.get("cache-claim", ""),
-        "pull_secrets": [
-            arg.split("=", 1)[1]
-            for arg in arguments
-            if arg.startswith("--workload-image-pull-secret=")
-        ],
-    }
-
-
-def record_install(
-    kubectl: Kubectl,
-    command: InstallCommand,
-    base_image: str | None,
-    snapshot: Path,
-    *,
-    build_state: dict[str, Any] | None = None,
-) -> None:
-    """Associate a successful editable installation with its checkout on this workstation."""
-    if command.editable is None:
-        return
-    root = Path(command.editable).expanduser().resolve()
-    directory = _state_directory(kubectl)
-    directory.mkdir(parents=True, exist_ok=True)
-    settings = asdict(command)
-    engines = engine_source_roots(command.engine_sources)
-    settings.update(
-        editable=str(root),
-        values=[],
-        engine_sources=[f"{name}={path}" for name, path in engines.items()],
-    )
-    platforms = kubectl.list_all_resources(
-        ("deployment.apps",),
-        label_selector="app.kubernetes.io/name=foretoken-control-plane",
-    )
-    managed = [
-        p
-        for p in platforms
-        if p["metadata"].get("annotations", {}).get(_INSTALL_SOURCE) == "source"
-    ]
-    if len(managed) != 1:
-        raise DeploymentError("expected one source-installed Foretoken platform")
-    # A full image build already includes source changes. Retire overlays for every service,
-    # not only the deployment which happened to trigger the environment update.
-    for service in kubectl.list_all_resources(("modelservice", "frontendservice")):
-        metadata = service["metadata"]
-        if SOURCE_REVISION in metadata.get("annotations", {}):
-            kubectl.run(
-                [
-                    "patch",
-                    service["kind"],
-                    metadata["name"],
-                    "-n",
-                    metadata["namespace"],
-                    "--type=json",
-                    "-p",
-                    json.dumps(
-                        [
-                            {
-                                "op": "test",
-                                "path": "/metadata/resourceVersion",
-                                "value": metadata["resourceVersion"],
-                            },
-                            {
-                                "op": "remove",
-                                "path": "/metadata/annotations/inference.foretoken.io~1source-revision",
-                            },
-                        ]
-                    ),
-                ]
-            )
-    with _local_candidates(directory):
-        destination = directory / snapshot.name
-        snapshot.rename(destination)
-        _write_json(
-            directory / "install.json",
-            {
-                "root": str(root),
-                "engines": engines,
-                "build": build_state or {},
-                "context": _context_identity(kubectl),
-                "inputs": destination.name,
-                "platform_uid": managed[0]["metadata"]["uid"],
-                "base_image": base_image,
-                "runtime": _runtime_settings(managed[0]),
-                "command": settings,
-                "bundles": {},
-            },
-        )
-        (directory / "build.json").unlink(missing_ok=True)
 
 
 class EditableDeployment:
@@ -546,7 +112,6 @@ class EditableDeployment:
 
     def _prepare(self, timeout: str) -> None:
         """Capture a runtime update or reuse installation for build-environment changes."""
-        from foretoken.source import pinned_rust_revision
 
         if not self.state.get("build") or self.state["build"]["arguments"].get(
             "VLLM_REVISION"
@@ -606,6 +171,9 @@ class EditableDeployment:
                     rebuild = True
                 else:
                     components.add("model-server")
+            elif name.startswith("control-plane/") and Path(name).name != "Dockerfile":
+                components.add("control-plane")
+                compile_components.add("control-plane")
             elif name == "data-plane/artifacts/src/source.rs":
                 rebuild = True
             elif name.startswith("data-plane/model-server/python/") and name.endswith(
@@ -656,7 +224,6 @@ class EditableDeployment:
 
     def _rebuild(self, timeout: str) -> None:
         """Let platform installation own environment images and retain installed values."""
-        from foretoken.platform import PlatformLifecycle
 
         settings = dict(self.state["command"])
         settings.update(values=(), timeout=timeout)
@@ -673,6 +240,8 @@ class EditableDeployment:
         self, deployment: ForetokenDeployment, timeout: str
     ) -> ForetokenDeployment:
         """Publish source bundles and return remaining intent for the final deployment apply."""
+        if bundle := self.state["bundles"].get("control-plane"):
+            self._publish_control_plane(bundle["revision"], timeout)
         objects = copy.deepcopy(deployment.objects)
         pending: dict[str, dict[str, dict[str, str]]] = {}
         for obj in objects:
@@ -707,7 +276,6 @@ class EditableDeployment:
             annotations[SOURCE_REVISION] = bundle["revision"]
         if pending:
             # Storage can be prepared without requiring the previous engine to start.
-            from foretoken.storage import DirectoryVolumes
 
             storage_kinds = {"Namespace", "RuntimeCache"}
             storage = tuple(
@@ -737,16 +305,140 @@ class EditableDeployment:
             deployment.path, yaml.safe_dump_all(objects, sort_keys=False)
         )
 
+    def _publish_control_plane(self, revision: str, timeout: str) -> None:
+        """Build and activate platform executables without replacing their environment image."""
+
+        platforms = self.kubectl.list_all_resources(
+            ("deployments",),
+            label_selector="app.kubernetes.io/name=foretoken-control-plane",
+        )
+        platform = next(
+            item
+            for item in platforms
+            if item["metadata"]["uid"] == self.state["platform_uid"]
+        )
+        namespace = platform["metadata"]["namespace"]
+        origin = ApplicationFiles(self.kubectl, namespace)
+        reference = origin.reference("control-plane", revision)
+        active = (
+            platform["spec"]["template"]["metadata"]
+            .get("annotations", {})
+            .get("inference.foretoken.io/application-url", "")
+        )
+        resource = ResourceRef("Deployment", platform["metadata"]["name"], namespace)
+        if active == reference:
+            self.kubectl.rollout_status(resource, timeout)
+            return
+        origin.prepare(timeout)
+        build = self.state["build"]
+        mount = "/var/cache/foretoken"
+        claim = find_build_cache(
+            self.kubectl, namespace, build["binding"], origin.node, mount
+        )
+        if claim is None:
+            node_uid = self.kubectl.get("node", origin.node)["metadata"]["uid"][:8]
+            local_caches = local_build_nodes(
+                self.kubectl, build["registry"], build["containerd_socket"]
+            )
+            claim = next(
+                (claim for node, _, claim in local_caches if node == origin.node),
+                "foretoken-application-build-" + node_uid,
+            )
+        ensure_build_cache(
+            self.kubectl,
+            namespace,
+            claim,
+            build["configuration"],
+            owner={
+                "apiVersion": "v1",
+                "kind": "PersistentVolumeClaim",
+                "name": origin.claim,
+                "uid": origin.claim_uid,
+            },
+        )
+        snapshot = self.directory / self.state["inputs"]
+        inputs = {
+            str(path.relative_to(snapshot)): path
+            for path in snapshot.rglob("*")
+            if path.is_file()
+        }
+        helm = Helm(default_platform_config(self.state["command"]["oci_registry"]))
+        print("Preparing control-plane application files", flush=True)
+        with ClusterBuilder(
+            self.kubectl,
+            namespace,
+            claim,
+            mount,
+            build["configuration"]["image"],
+            build["binding"],
+            timeout,
+            tools_image=image_tools_image(build["arguments"]),
+            node=origin.node,
+            credentials=registry_credentials(
+                [
+                    build["configuration"]["image"],
+                    "docker.io",
+                    "gcr.io",
+                    *(
+                        value
+                        for key, value in build["arguments"].items()
+                        if key.endswith("REGISTRY")
+                    ),
+                ]
+            ),
+            pull_secrets=origin.pull_secrets,
+        ) as builder:
+            builder.sync(inputs, build["versions"])
+            output = builder.root + "/output/control-plane"
+            builder.build(
+                "control-plane/Dockerfile",
+                target="source-export",
+                destination=output,
+                arguments=build["arguments"],
+            )
+            validate_build_inputs(self.root, snapshot, self.state.get("engines", {}))
+            previous = (
+                active.rsplit("/", 1)[-1]
+                if active.startswith(origin.endpoint + "/control-plane/")
+                else ""
+            )
+            # Publication retains Helm rollback history and delayed worker/Pod consumers.
+            # Its Job releases the RWO origin before the controller starts its rollout.
+            references = helm.control_plane_application_history()
+            if references is not None:
+                for task in self.kubectl.list_all_resources(("videotasks",)):
+                    selected = (
+                        task.get("status", {})
+                        .get("plan", {})
+                        .get("workerApplicationURL")
+                    )
+                    if selected:
+                        references.add(selected)
+                consumers = self.kubectl.list_all_resources(
+                    ("pods", "replicasets"),
+                    label_selector="foretoken.io/application-files=consumer",
+                )
+                for consumer in consumers:
+                    metadata = (
+                        consumer["metadata"]
+                        if consumer["kind"] == "Pod"
+                        else consumer["spec"]["template"]["metadata"]
+                    )
+                    if selected := metadata.get("annotations", {}).get(
+                        "inference.foretoken.io/application-url"
+                    ):
+                        references.add(selected)
+            origin.publish(
+                builder, output, "control-plane", revision, previous, references
+            )
+            builder.run(["rm", "-rf", "--", output])
+        helm.update_control_plane_application(snapshot, reference, timeout)
+        self.kubectl.rollout_status(resource, timeout)
+
     def _publish(
         self, namespace: str, bundles: dict[str, dict[str, Any]], timeout: str
     ) -> bool:
         """Compile on separate storage and publish to the workload cache before rollout."""
-        from foretoken.source import (
-            ensure_build_cache,
-            image_tools_image,
-            local_build_nodes,
-        )
-        from foretoken.storage import DirectoryVolumes
 
         runtime = self.state["runtime"]
         build = self.state["build"]
@@ -1201,8 +893,6 @@ for directory in root.iterdir():
             component = _COMPONENTS[kind]
             code_changed = (kind, namespace, service) in self.selected
             if component == "frontend" and code_changed:
-                from foretoken.manifest import ResourceRef
-
                 self.kubectl.rollout_status(
                     ResourceRef("Deployment", service, namespace),
                     f"{max(1, int(deadline - time.monotonic()))}s",
