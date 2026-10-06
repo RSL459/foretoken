@@ -29,7 +29,7 @@ pip install -e .
 foretoken install -e .
 ```
 
-编译在专用 Pod 中执行，镜像直接载入集群节点。联网时自动选择镜像源。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
+编译在集群中执行。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
 
 ## 部署与更新代码
 
@@ -53,7 +53,7 @@ CLI 的 Python 代码直接从 editable 源码目录加载；修改其 Python �
 foretoken install -e . --engine-source ../vllm
 ```
 
-原安装使用了 `--registry` 或 `--values` 时，保留这些选项。之后修改引擎源码，继续使用上面的 `foretoken deploy`。Python 和 Triton 改动同步源码，Triton JIT 编译由推理引擎执行；NVIDIA CUDA/C++ 改动在构建 Pod 中复用缓存编译 vLLM 扩展。
+原安装使用了 `--registry` 或 `--values` 时，保留这些选项。修改 Python、Triton 或 NVIDIA CUDA/C++ 源码后，继续使用上面的 `foretoken deploy`，所需编译会自动完成。
 
 沐曦原生 kernel 由插件源码提供。将插件与匹配的 core 源码一起关联：
 
@@ -62,8 +62,6 @@ foretoken install -e . \
   --engine-source ../vllm \
   --engine-source vllm-metax=../vllm-metax
 ```
-
-构建 Pod 为沐曦编译插件扩展；该后端不使用 core 中的 CUDA kernel。
 
 ### 更换运行环境
 

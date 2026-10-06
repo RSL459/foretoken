@@ -37,31 +37,11 @@ pip install --pre foretoken
 pip install foretoken==0.0.1a1
 ```
 
-Stable and post-release versions use the normal installation command:
-
-```bash
-pip install foretoken
-```
-
 A `.postN` release normally reuses the matching Stable platform artifacts because it only corrects the published Python package or its metadata. Do not use it for normal code changes. If runtime behavior or platform artifacts must change, publish the next patch version, such as `0.0.2`, instead of placing those changes in `.postN`.
-
-Installing from the repository is independent of published versions:
-
-```bash
-pip install -e .
-```
 
 ## Tags and version ownership
 
-GitHub Releases use the Python version with a `v` prefix because the release workflow publishes that Python distribution:
-
-```text
-v0.0.1a1
-v0.0.1b1
-v0.0.1rc1
-v0.0.1
-v0.0.1.post1
-```
+GitHub Release tags use the Python version with a `v` prefix.
 
 Each artifact has one authoritative version source:
 
@@ -87,7 +67,7 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-The command builds `control-plane-environment`, `frontend-environment`, and NVIDIA/MetaX `model-server-environment` images. It exports executables, CRDs, and Python adapters into `foretoken-applications-<version>-linux-amd64.tar.gz` and packages a Chart selecting those images and the archive's GitHub Release URL. The archive and Chart are saved in `/tmp/foretoken-release`. The MetaX image tag adds the `-metax` suffix.
+The command builds the runtime images and saves `foretoken-applications-<version>-linux-amd64.tar.gz` and the matching Helm Chart in `/tmp/foretoken-release`. MetaX image tags use the `-metax` suffix.
 
 To export the application archive without rebuilding environments:
 

@@ -29,7 +29,7 @@ For a local kind or k3d cluster, build and install without a registry:
 foretoken install -e .
 ```
 
-Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. Online source selection is automatic. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
+Builds run in the cluster. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
 
 ## Deploy and update code
 
@@ -53,7 +53,7 @@ To modify vLLM, bind a Git checkout matching the runtime's Python, PyTorch, and 
 foretoken install -e . --engine-source ../vllm
 ```
 
-Retain `--registry` and `--values` when using them. After editing the engine checkout, use `foretoken deploy` as above. Python and Triton changes synchronize source; Triton JIT compilation runs in the inference engine. NVIDIA CUDA/C++ changes compile the vLLM extensions in the build Pod using persistent caches.
+Retain `--registry` and `--values` when using them. After editing Python, Triton or NVIDIA CUDA/C++ source, use `foretoken deploy` as above; required compilation is automatic.
 
 For MetaX, native kernels belong to the plugin checkout. Bind it alongside the matching core checkout:
 
@@ -62,8 +62,6 @@ foretoken install -e . \
   --engine-source ../vllm \
   --engine-source vllm-metax=../vllm-metax
 ```
-
-The build Pod compiles plugin extensions for MetaX; core CUDA kernels are not used by that backend.
 
 ### Select a different runtime environment
 
