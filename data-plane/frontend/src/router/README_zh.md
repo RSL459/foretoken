@@ -5,6 +5,8 @@
 
 Router 根据请求的模型、输入长度和能力要求，选择兼容且健康的目标；对于预填充/解码分离及编码/预填充/解码分离的服务，还会确保各阶段相互兼容。
 
+## 选择路由策略
+
 例如，要优先选择等待请求较少的目标，可在 `FrontendService` 中配置：
 
 ```yaml
@@ -14,7 +16,7 @@ spec:
       algorithm: queue_depth
 ```
 
-只有需要调整路由策略时才填写 `spec.routerPipeline`。默认保留全部兼容目标（`allow_all`），用 `kv_least_loaded` 评分，再由 `gamble_sampling` 选取目标。各阶段通过 `algorithm` 选择算法；评分算法的可调选项写在 `scorer.parameters` 下。
+不填写 `filter`、`scorer` 和 `picker` 时使用默认策略：保留全部兼容目标（`allow_all`），用 `kv_least_loaded` 评分，再由 `gamble_sampling` 选取目标。各阶段通过 `algorithm` 选择算法；评分算法的可调选项写在 `scorer.parameters` 下。
 
 | 阶段 | 算法 | 选择方式 |
 | --- | --- | --- |
@@ -32,3 +34,24 @@ spec:
 | Picker | `max` · `power_of_two_choices` | 选择最高分目标 · 随机抽取两个不同目标，选择分数较高者，同分时随机选取。 |
 
 KV 索引不可用时，目标仍可参与路由，只是不享有 KV 前缀偏好。缓存位置的说明见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+
+## 配置准入规则
+
+准入规则决定请求直接执行、等待还是被拒绝。默认使用 `allow_all`，不限制请求；选择 `concurrency` 可启用并发流控：
+
+```yaml
+spec:
+  routerPipeline:
+    admission:
+      algorithm: concurrency
+      parameters:
+        maxConcurrentRequests: 64
+```
+
+示例允许每个前端副本同时执行 64 个输出候选，具体数值应根据负载实测选择。批量补全按候选计数，例如四个 prompt、`n: 2` 占用八个名额。
+
+需要吸收短时突发流量时，可在 `parameters` 下增加 `maxQueuedRequests: 128` 和 `queueTimeout: 2s`。默认不排队；允许排队但未设置等待时限时，使用请求剩余的超时预算。容量和等待队列均已满，或排队超时，返回 HTTP 503；单个批次超过并发上限时返回 HTTP 400。
+
+每个前端副本上的模型共用这些限制，不是集群总配额。规则适用于文本生成和 tokenization，不包括视频请求；健康探针不受影响。
+
+开发自定义规则请参阅[准入规则开发指南](../../../../docs/development/admission-rules_zh.md)。
