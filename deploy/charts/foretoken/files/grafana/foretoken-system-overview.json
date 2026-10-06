@@ -27,7 +27,7 @@
         "y": 0
       },
       "options": {
-        "content": "Model totals follow namespace and model; instance, role and rank narrow backend details only. Frontend and routing follow the frontend selector; shared frontend traffic includes every model. Frontend pod narrows Admission only.\n\nRates use a rolling window.",
+        "content": "Select a model for inference metrics or a frontend for traffic and admission. Adjust the time range to inspect trends.",
         "mode": "markdown"
       },
       "repeatDirection": "h",
@@ -581,7 +581,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model completion rate counts aggregate and decode executions once; backend lines retain execution stage and finish reason.",
+      "description": "Completed generation requests per second, with backend details.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1181,7 +1181,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets.",
+      "description": "Time between output tokens, in milliseconds.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1338,7 +1338,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "P95 time spent in queue, prefill and decode by requests finishing in this window, in seconds. Stage durations appear when a request completes.",
+      "description": "P95 queue, prefill and decode time for completed requests, in seconds.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2117,7 +2117,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification and excludes sampling. The mean is stage duration sum divided by timed steps.",
+      "description": "Average draft and target-forward time per measured step.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2220,7 +2220,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Draft and target-forward durations each divided by their sum over the same measured steps.",
+      "description": "Share of measured time spent on drafting and target forward.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2324,7 +2324,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Timed pure speculative decode batches per second, collected automatically for GPU drafting.",
+      "description": "Measured speculative decoding steps per second.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3088,7 +3088,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Routing selections by backend within each model and execution role. Each backend is one model instance and data-parallel rank; the denominator is all backends.",
+      "description": "Routing share by backend within each model and execution role.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3676,7 +3676,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Time to HTTP response headers, in seconds; excludes SSE body delivery.",
+      "description": "Time to HTTP response headers, in seconds.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3955,7 +3955,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Online replicas and replicas reporting the required admission metrics. Coverage excludes failed scrapes; missing metrics are not allow_all.",
+      "description": "Online frontend replicas and those with complete admission metrics.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4047,7 +4047,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Protected HTTP calls entering intake per second; not HTTP response starts or work units.",
+      "description": "HTTP requests entering admission per second.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4129,7 +4129,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "HTTP work admission calls ending in admitted per second; a batch counts once.",
+      "description": "HTTP requests admitted for processing per second; batches count once.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4211,7 +4211,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Capacity-rejected results divided by all completed HTTP admission results, separately for intake and work. No completed results means no samples.",
+      "description": "Share of completed admission calls rejected for capacity, by stage.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4293,7 +4293,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Queue timeout and deadline-exceeded results divided by all completed HTTP work admission results. This excludes deadlines after admission.",
+      "description": "Share of completed work-admission calls that timed out.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4375,7 +4375,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "P95 wait of HTTP work calls that actually queued and were admitted. No queued admissions means no samples.",
+      "description": "Queue-wait p95 for HTTP requests that were admitted.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4457,7 +4457,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Running rule, scrape status, telemetry coverage and HTTP admission outcomes by replica. Scrape 0 means unavailable; missing rule or telemetry 0 means incomplete reporting. Missing cells are unavailable, not zero. Frontend pod filters Admission only; model, role and rank do not affect it.",
+      "description": "Compare admission status and results across frontend replicas.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
@@ -4754,7 +4754,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Completed admission calls per second by origin and result. Work also shows arriving calls, including calls still waiting. Intake and work are separate populations; internal calls are not HTTP traffic.",
+          "description": "Admission calls per second by result, with work arrivals shown separately.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4814,7 +4814,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Completed admission calls per second by origin and result. Work also shows arriving calls, including calls still waiting. Intake and work are separate populations; internal calls are not HTTP traffic.",
+          "description": "Admission calls per second by result, with work arrivals shown separately.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4916,7 +4916,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Wait from calls that actually queued: admitted p50/p95 and unsuccessful p95, separated by origin and final result. Pending calls have no sample yet.",
+          "description": "Compare queue waits for admitted, timed-out and cancelled calls.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5000,7 +5000,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Observed queue waits per second by origin and final result, including successful, timed-out and cancelled waits.",
+          "description": "Completed queue-wait observations per second, grouped by result.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5074,7 +5074,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Work-unit occupancy and HTTP residency with limits reported by each running replica, not desired configuration. allow_all has no finite limits; queue limit 0 means no queue. Missing cells are unavailable, not zero.",
+          "description": "Current usage and configured limits for each frontend replica.",
           "fieldConfig": {
             "defaults": {
               "mappings": [
@@ -5391,7 +5391,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Work units held by permits, including preprocessing, and concurrency limits across the same reporting replicas. HTTP and internal calls share capacity.",
+          "description": "Admitted work units and their concurrency limit.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5494,7 +5494,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Work units awaiting permits and queue limits across the same reporting replicas. A zero queue limit means no queue; unlimited rules have no finite limit.",
+          "description": "Waiting work units and the queue limit.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5597,7 +5597,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Protected resident HTTP requests and their limits across the same reporting replicas. Slow clients can retain residency after work finishes.",
+          "description": "HTTP requests still being handled and the residency limit.",
           "fieldConfig": {
             "defaults": {
               "color": {

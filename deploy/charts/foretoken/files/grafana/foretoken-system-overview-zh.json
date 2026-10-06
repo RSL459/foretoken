@@ -27,7 +27,7 @@
         "y": 0
       },
       "options": {
-        "content": "模型总计按命名空间和模型筛选；实例、角色和引擎编号只筛选后端明细。前端与路由按前端服务筛选，共享前端包含所有模型的流量。前端 Pod 仅筛选准入区域。\n\n速率使用滚动窗口。",
+        "content": "查看推理指标时选择模型；查看流量和准入时选择前端。调整时间范围查看趋势。",
         "mode": "markdown"
       },
       "repeatDirection": "h",
@@ -581,7 +581,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "模型总计只统计一次聚合或解码阶段的完成请求；后端曲线保留执行阶段和结束原因。",
+      "description": "每秒完成的生成请求数及后端明细。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1181,7 +1181,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "聚合和解码引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到。",
+      "description": "相邻输出 token 的时间间隔，单位毫秒。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1338,7 +1338,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "本窗口内已完成请求在排队、预填充和解码阶段的 P95 耗时，单位秒；请求完成时才记录各阶段耗时。",
+      "description": "已完成请求的排队、预填充和解码耗时 P95，单位秒。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2117,7 +2117,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个引擎在一个输出引擎编号上统计完整的推测解码批次。GPU 事件耗时包含排队内核之间的主机间隙；目标模型前向计算包含验证但不含采样。均值是阶段耗时总和除以计时步数。",
+      "description": "每个计时步中草稿与目标模型前向计算的平均耗时。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2220,7 +2220,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "同一批计时步中，草稿与目标模型前向计算耗时分别除以两者之和。",
+      "description": "草稿与目标模型前向计算各自的耗时占比。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2324,7 +2324,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "使用 GPU 起草时自动采集的纯推测解码批次计时数量（每秒）。",
+      "description": "每秒计时的推测解码步数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3088,7 +3088,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型及执行角色内各后端的路由选择比例。一个后端对应一个模型实例和数据并行副本，分母为该模型该角色的全部后端。",
+      "description": "各模型、执行角色内的后端路由占比。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3676,7 +3676,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "到 HTTP 响应头的时间，单位为秒；不包含 SSE 正文传输。",
+      "description": "收到 HTTP 响应头的等待时间，单位秒。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3955,7 +3955,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "在线副本数与准入指标完整的副本数。抓取失败不计入覆盖数；缺失指标不代表 allow_all。",
+      "description": "在线前端副本数及其中指标完整的副本数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4047,7 +4047,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每秒进入入口准入的受保护 HTTP 调用数，不是 HTTP 响应数或工作单位数。",
+      "description": "每秒进入准入的 HTTP 请求数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4129,7 +4129,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每秒以获准结束的 HTTP 工作准入调用数；一个批次计一次。",
+      "description": "每秒获准处理的 HTTP 请求数，批次计一次。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4211,7 +4211,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "入口与工作阶段分别统计：容量拒绝结果数除以已结束的 HTTP 准入调用数。没有已结束调用时显示无样本。",
+      "description": "各准入阶段已结束的调用中，因容量不足被拒绝的占比。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4293,7 +4293,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "排队超时与请求预算耗尽的结果数除以已结束的 HTTP 工作准入调用数，不包含获准后的超时。",
+      "description": "已结束的工作准入调用中，超时调用的占比。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4375,7 +4375,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "实际排队且最终获准的 HTTP 工作准入调用等待 P95；没有此类样本时显示无样本。",
+      "description": "排队后获准的 HTTP 请求等待 P95。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4457,7 +4457,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "逐副本查看运行规则、抓取状态、指标覆盖与 HTTP 准入结果。抓取为 0 表示不可用；规则缺失或指标完整为 0 表示上报不完整。缺失单元格表示无数据，不是零。前端 Pod 仅筛选准入区域；模型、角色和引擎编号不影响此区域。",
+      "description": "对比各前端副本的准入状态与结果。",
       "fieldConfig": {
         "defaults": {
           "mappings": [
@@ -4754,7 +4754,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "按来源与结果统计每秒结束的准入调用数。工作阶段另展示到达调用，包含仍在等待的调用。入口与工作阶段是不同的调用集合；内部调用不属于 HTTP 流量。",
+          "description": "各结果的准入调用速率，另列工作准入到达速率。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4814,7 +4814,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "按来源与结果统计每秒结束的准入调用数。工作阶段另展示到达调用，包含仍在等待的调用。入口与工作阶段是不同的调用集合；内部调用不属于 HTTP 流量。",
+          "description": "各结果的准入调用速率，另列工作准入到达速率。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4916,7 +4916,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "仅统计实际排队的调用：获准结果展示 P50/P95，未获准结果展示 P95，按来源和最终结果分开。仍在等待的调用尚无样本。",
+          "description": "对比获准、超时和取消调用的排队等待。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5000,7 +5000,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "按来源和最终结果统计每秒记录的排队等待样本，包含获准、超时及取消。",
+          "description": "按结果展示每秒结束的排队等待样本数。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5074,7 +5074,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "逐副本查看工作单位占用、HTTP 驻留及上限，数值来自运行实例，不是期望配置。allow_all 无有限上限；队列上限为 0 表示不排队。缺失单元格表示无数据，不是零。",
+          "description": "各前端副本的当前占用和配置上限。",
           "fieldConfig": {
             "defaults": {
               "mappings": [
@@ -5391,7 +5391,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "同一组上报副本中已持有许可的工作单位（包含预处理）及并发上限；HTTP 与内部调用共享容量。",
+          "description": "已准入的工作单位及并发上限。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5494,7 +5494,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "同一组上报副本中等待许可的工作单位及队列上限。队列上限为零表示不排队；无限流规则没有有限上限。",
+          "description": "等待中的工作单位及队列上限。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5597,7 +5597,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "同一组上报副本中受保护的驻留 HTTP 请求数及上限；工作结束后，慢客户端仍可能保持驻留。",
+          "description": "仍在处理的 HTTP 请求数及驻留上限。",
           "fieldConfig": {
             "defaults": {
               "color": {
