@@ -552,6 +552,7 @@ class PlatformLifecycle:
                 nvidia_metrics.node_selector,
                 managed_dcgm_exists,
                 command.timeout,
+                visible_devices=nvidia_metrics.visible_devices,
             )
             # The chart permits one unavailable DaemonSet Pod during Helm's
             # wait, while discovery requires Ready coverage on every GPU node.
