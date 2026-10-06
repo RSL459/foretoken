@@ -5,7 +5,7 @@
 
 将模板复制到 GitHub Release 描述中，替换占位内容并删除不适用的章节。按用户关心的领域归纳变更，根据已确认的贡献记录致谢。
 
-将 `PYTHON_VERSION` 和 `PLATFORM_VERSION` 分别替换为本次发布的 [Python 版本和平台版本](release_zh.md#版本阶段)。
+产物表填写实际发布的版本，粘贴完整镜像地址、Chart 地址及附件下载链接。完整变更记录使用两个发布 tag 之间的 GitHub Compare 链接。
 
 ```markdown
 ## 主要亮点
@@ -41,16 +41,16 @@
 
 ## 发布产物
 
-| 产物 | 版本或 tag | 安装或访问方式 |
+| 产物 | 实际版本或 tag | 安装或访问方式 |
 | --- | --- | --- |
-| Python package | `foretoken==PYTHON_VERSION` | `pip install foretoken==PYTHON_VERSION` |
-| 控制面运行环境 | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/control-plane-environment:PLATFORM_VERSION` |
-| 前端运行环境 | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/frontend-environment:PLATFORM_VERSION` |
-| NVIDIA 模型服务运行环境 | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:PLATFORM_VERSION` |
-| 沐曦模型服务运行环境 | `PLATFORM_VERSION-metax` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:PLATFORM_VERSION-metax` |
-| 应用压缩包 | `PLATFORM_VERSION` | `https://github.com/shiweijiezero/foretoken/releases/download/vPYTHON_VERSION/foretoken-applications-PLATFORM_VERSION-linux-amd64.tar.gz` |
-| Helm Chart | `PLATFORM_VERSION` | `oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken` |
-| 示例 | `vPYTHON_VERSION` | [Release tag 中的 examples](https://github.com/shiweijiezero/foretoken/tree/vPYTHON_VERSION/examples) |
+| Python 包 | [包版本] | `pip install foretoken==<包版本>` |
+| 控制面运行环境 | [镜像 tag] | [完整镜像地址] |
+| 前端运行环境 | [镜像 tag] | [完整镜像地址] |
+| NVIDIA 模型服务运行环境 | [镜像 tag] | [完整镜像地址] |
+| 沐曦模型服务运行环境 | [镜像 tag] | [完整镜像地址] |
+| 应用压缩包 | [发布版本] | [从 GitHub Release 复制的附件下载链接] |
+| Helm Chart | [Chart 版本] | [OCI Chart 地址] |
+| 示例 | [发布 tag] | [该 tag 下 examples 目录的链接] |
 
 ## 已知限制
 
@@ -63,5 +63,5 @@
 
 ## 完整变更记录
 
-[比较 `vPREVIOUS` 与 `vPYTHON_VERSION`](https://github.com/shiweijiezero/foretoken/compare/vPREVIOUS...vPYTHON_VERSION)
+[GitHub Compare 链接]
 ```
