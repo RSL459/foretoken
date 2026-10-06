@@ -73,17 +73,7 @@ Published versions are immutable. Never rebuild and overwrite a version already 
 
 ## Release descriptions
 
-Use the [Release Description Template](release-template.md) when creating a GitHub Release. A release description is a user-facing summary of the published combination, not a copy of the commit log. Keep the following information when it affects installation or operation:
-
-- three to five highlights and grouped changes for users;
-- compatibility across Python, Kubernetes, NVIDIA, MetaX, APIs, and configuration;
-- breaking changes, deprecations, and the exact upgrade action;
-- every published package, runtime environment image variant, application archive, Helm Chart, and tagged example;
-- actionable known limitations, factual thanks, and a compare link to the full history.
-
-Remove sections that do not apply. Link related pull requests when they help readers trace a change, and do not claim support that was not confirmed for this release.
-
-The [Chinese template](release-template_zh.md) follows the same release contract and should be written naturally for Chinese readers.
+Use the [Release Description Template](release-template.md) when creating a GitHub Release.
 
 ## Build and push the release artifacts
 

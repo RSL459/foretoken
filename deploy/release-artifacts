@@ -265,58 +265,58 @@ if [[ "$MODE" == build || "$MODE" == export ]]; then
   [[ "$MODE" != build ]] || { selected chart && require_command helm; }
 
   if [[ "$MODE" == build ]]; then
-  if selected control-plane; then
-    run make -C "$ROOT" image-control-plane \
-      "CONTROL_PLANE_IMAGE=$CONTROL_PLANE_IMAGE" "IMAGE_TARGET=environment" \
-      "OCI_SOURCE=$SOURCE_URL" \
-      "OCI_REVISION=$OCI_REVISION"
-  fi
-  if selected frontend; then
-    run make -C "$ROOT" image-frontend \
-      "FRONTEND_IMAGE=$FRONTEND_IMAGE" "IMAGE_TARGET=environment" \
-      "OCI_SOURCE=$SOURCE_URL" \
-      "OCI_REVISION=$OCI_REVISION"
-  fi
-  if selected model-server; then
-    if [[ "$DRY_RUN" == true ]]; then
-      build_model_server \
-        "$MODEL_SERVER_IMAGE" \
-        "${INFERENCE_ENGINE_IMAGE:-INFERENCE_ENGINE_IMAGE}" \
-        "${FORETOKEN_VLLM_PYTHON:-}"
-    else
-      [[ -n "${INFERENCE_ENGINE_IMAGE:-}" ]] || {
-        printf '%s\n' 'INFERENCE_ENGINE_IMAGE is required for model-server' >&2
-        exit 2
-      }
-      build_model_server \
-        "$MODEL_SERVER_IMAGE" \
-        "$INFERENCE_ENGINE_IMAGE" \
-        "${FORETOKEN_VLLM_PYTHON:-}"
+    if selected control-plane; then
+      run make -C "$ROOT" image-control-plane \
+        "CONTROL_PLANE_IMAGE=$CONTROL_PLANE_IMAGE" "IMAGE_TARGET=environment" \
+        "OCI_SOURCE=$SOURCE_URL" \
+        "OCI_REVISION=$OCI_REVISION"
     fi
-  fi
-  if selected model-server-metax; then
-    if [[ "$DRY_RUN" == true ]]; then
-      (
-        unset FORETOKEN_VLLM_PYTHON
-        build_model_server \
-          "$MODEL_SERVER_METAX_IMAGE" \
-          "${METAX_INFERENCE_ENGINE_IMAGE:-METAX_INFERENCE_ENGINE_IMAGE}" \
-          "${METAX_VLLM_PYTHON:-}"
-      )
-    else
-      [[ -n "${METAX_INFERENCE_ENGINE_IMAGE:-}" ]] || {
-        printf '%s\n' 'METAX_INFERENCE_ENGINE_IMAGE is required for model-server-metax' >&2
-        exit 2
-      }
-      (
-        unset FORETOKEN_VLLM_PYTHON
-        build_model_server \
-          "$MODEL_SERVER_METAX_IMAGE" \
-          "$METAX_INFERENCE_ENGINE_IMAGE" \
-          "${METAX_VLLM_PYTHON:-}"
-      )
+    if selected frontend; then
+      run make -C "$ROOT" image-frontend \
+        "FRONTEND_IMAGE=$FRONTEND_IMAGE" "IMAGE_TARGET=environment" \
+        "OCI_SOURCE=$SOURCE_URL" \
+        "OCI_REVISION=$OCI_REVISION"
     fi
-  fi
+    if selected model-server; then
+      if [[ "$DRY_RUN" == true ]]; then
+        build_model_server \
+          "$MODEL_SERVER_IMAGE" \
+          "${INFERENCE_ENGINE_IMAGE:-INFERENCE_ENGINE_IMAGE}" \
+          "${FORETOKEN_VLLM_PYTHON:-}"
+      else
+        [[ -n "${INFERENCE_ENGINE_IMAGE:-}" ]] || {
+          printf '%s\n' 'INFERENCE_ENGINE_IMAGE is required for model-server' >&2
+          exit 2
+        }
+        build_model_server \
+          "$MODEL_SERVER_IMAGE" \
+          "$INFERENCE_ENGINE_IMAGE" \
+          "${FORETOKEN_VLLM_PYTHON:-}"
+      fi
+    fi
+    if selected model-server-metax; then
+      if [[ "$DRY_RUN" == true ]]; then
+        (
+          unset FORETOKEN_VLLM_PYTHON
+          build_model_server \
+            "$MODEL_SERVER_METAX_IMAGE" \
+            "${METAX_INFERENCE_ENGINE_IMAGE:-METAX_INFERENCE_ENGINE_IMAGE}" \
+            "${METAX_VLLM_PYTHON:-}"
+        )
+      else
+        [[ -n "${METAX_INFERENCE_ENGINE_IMAGE:-}" ]] || {
+          printf '%s\n' 'METAX_INFERENCE_ENGINE_IMAGE is required for model-server-metax' >&2
+          exit 2
+        }
+        (
+          unset FORETOKEN_VLLM_PYTHON
+          build_model_server \
+            "$MODEL_SERVER_METAX_IMAGE" \
+            "$METAX_INFERENCE_ENGINE_IMAGE" \
+            "${METAX_VLLM_PYTHON:-}"
+        )
+      fi
+    fi
   fi
   # A release archive contains all applications; partial environment builds skip it.
   if selected control-plane && selected frontend && { selected model-server || selected model-server-metax; }; then

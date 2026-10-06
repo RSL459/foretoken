@@ -5,6 +5,8 @@
 
 Copy this template into the GitHub Release description, then remove unused sections and all comments. Keep the body focused on what users need to understand, install, upgrade, and verify this release. Link user-visible changes to their pull requests or issues when a link adds useful context.
 
+Replace `PYTHON_VERSION` and `PLATFORM_VERSION` with the release's [Python and platform versions](release.md#version-stages).
+
 ```markdown
 ## Highlights
 
@@ -53,14 +55,14 @@ Copy this template into the GitHub Release description, then remove unused secti
 
 | Artifact | Version or tag | Install or access path |
 | --- | --- | --- |
-| Python package | `foretoken==X.Y.Z` | `pip install foretoken==X.Y.Z` |
-| Control-plane environment | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/control-plane-environment:X.Y.Z` |
-| Frontend environment | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/frontend-environment:X.Y.Z` |
-| NVIDIA model-server environment | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:X.Y.Z` |
-| MetaX model-server environment | `X.Y.Z-metax` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:X.Y.Z-metax` |
-| Application archive | `X.Y.Z` | `https://github.com/shiweijiezero/foretoken/releases/download/vX.Y.Z/foretoken-applications-X.Y.Z-linux-amd64.tar.gz` |
-| Helm Chart | `X.Y.Z` | `oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken` |
-| Examples | `vX.Y.Z` | [examples at the release tag](https://github.com/shiweijiezero/foretoken/tree/vX.Y.Z/examples) |
+| Python package | `foretoken==PYTHON_VERSION` | `pip install foretoken==PYTHON_VERSION` |
+| Control-plane environment | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/control-plane-environment:PLATFORM_VERSION` |
+| Frontend environment | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/frontend-environment:PLATFORM_VERSION` |
+| NVIDIA model-server environment | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:PLATFORM_VERSION` |
+| MetaX model-server environment | `PLATFORM_VERSION-metax` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:PLATFORM_VERSION-metax` |
+| Application archive | `PLATFORM_VERSION` | `https://github.com/shiweijiezero/foretoken/releases/download/vPYTHON_VERSION/foretoken-applications-PLATFORM_VERSION-linux-amd64.tar.gz` |
+| Helm Chart | `PLATFORM_VERSION` | `oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken` |
+| Examples | `vPYTHON_VERSION` | [examples at the release tag](https://github.com/shiweijiezero/foretoken/tree/vPYTHON_VERSION/examples) |
 
 ## Known Limitations
 
@@ -73,7 +75,7 @@ Copy this template into the GitHub Release description, then remove unused secti
 
 ## Full Changelog
 
-[Compare `vPREVIOUS` to `vX.Y.Z`](https://github.com/shiweijiezero/foretoken/compare/vPREVIOUS...vX.Y.Z)
+[Compare `vPREVIOUS` to `vPYTHON_VERSION`](https://github.com/shiweijiezero/foretoken/compare/vPREVIOUS...vPYTHON_VERSION)
 ```
 
 ## Authoring rules
