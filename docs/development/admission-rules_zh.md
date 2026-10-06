@@ -27,9 +27,9 @@ async fn admit(
 
 ## 使用框架提供的输入
 
-- **请求信息**：`AdmissionRequest` 提供模型、操作、候选数、输入与媒体摘要、输出预算、客户端偏好和处理起点。
-- **服务上下文**：`context.deadline` 是请求总截止时间；`context.service` 承载解析后的身份、服务类别、优先级和延迟目标。当前身份及服务策略值尚未填充。
-- **运行观测**：通过 `context.state` 查询当前模型可用性、目标健康、负载和容量统计：
+- 请求信息：`AdmissionRequest` 提供模型、操作、候选数、输入与媒体摘要、输出预算、客户端偏好和处理起点。
+- 服务上下文：`context.deadline` 是请求总截止时间；`context.service` 承载解析后的身份、服务类别、优先级和延迟目标。当前身份及服务策略值尚未填充。
+- 运行观测：通过 `context.state` 查询当前模型可用性、目标健康、负载和容量统计：
 
 ```rust
 let state = context.state.model_state(

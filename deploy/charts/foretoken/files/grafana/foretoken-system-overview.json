@@ -27,7 +27,7 @@
         "y": 0
       },
       "options": {
-        "content": "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model. **Frontend pod** narrows Admission only.\n\nRates use a rolling window.",
+        "content": "Model totals follow namespace and model; instance, role and rank narrow backend details only. Frontend and routing follow the frontend selector; shared frontend traffic includes every model. Frontend pod narrows Admission only.\n\nRates use a rolling window.",
         "mode": "markdown"
       },
       "repeatDirection": "h",

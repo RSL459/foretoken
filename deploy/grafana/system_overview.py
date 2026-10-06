@@ -52,8 +52,8 @@ ZH = {
     "Foretoken System Overview": "Foretoken 系统概览",
     "Overview": "概览",
     "Reading this dashboard": "看板读法",
-    "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model. **Frontend pod** narrows Admission only.\n\nRates use a rolling window.":
-        "**模型总计**按命名空间和模型筛选；实例、角色和引擎编号只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。**前端 Pod** 仅筛选准入区域。\n\n速率使用滚动窗口。",
+    "Model totals follow namespace and model; instance, role and rank narrow backend details only. Frontend and routing follow the frontend selector; shared frontend traffic includes every model. Frontend pod narrows Admission only.\n\nRates use a rolling window.":
+        "模型总计按命名空间和模型筛选；实例、角色和引擎编号只筛选后端明细。前端与路由按前端服务筛选，共享前端包含所有模型的流量。前端 Pod 仅筛选准入区域。\n\n速率使用滚动窗口。",
     "No data": "无数据",
     "Generation latency": "生成延迟",
     "Request lengths": "请求长度分布",
@@ -1058,9 +1058,9 @@ def build() -> dashboard_models.Dashboard:
         .title("Reading this dashboard")
         .mode(text_models.TextMode.MARKDOWN)
         .content(
-            "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. "
-            "**Frontend and routing** follow the frontend selector; shared frontend traffic includes every model. "
-            "**Frontend pod** narrows Admission only.\n\nRates use a rolling window."
+            "Model totals follow namespace and model; instance, role and rank narrow backend details only. "
+            "Frontend and routing follow the frontend selector; shared frontend traffic includes every model. "
+            "Frontend pod narrows Admission only.\n\nRates use a rolling window."
         )
         .span(24)
         .height(4)

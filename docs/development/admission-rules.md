@@ -27,9 +27,9 @@ Use [allow_all](../../data-plane/frontend/src/router/src/algorithm/admission/all
 
 ## Use the supplied inputs
 
-- **Request facts:** `AdmissionRequest` provides the model, operation, candidate count, input and media summaries, output budgets, client preferences, and processing start time.
-- **Service context:** `context.deadline` is the total request deadline; `context.service` contains resolved identity, service class, priority, and latency objectives. Identity and service-policy values are currently unpopulated.
-- **Runtime observations:** query current model availability, target health, load, and capacity statistics through `context.state`:
+- Request facts: `AdmissionRequest` provides the model, operation, candidate count, input and media summaries, output budgets, client preferences, and processing start time.
+- Service context: `context.deadline` is the total request deadline; `context.service` contains resolved identity, service class, priority, and latency objectives. Identity and service-policy values are currently unpopulated.
+- Runtime observations: query current model availability, target health, load, and capacity statistics through `context.state`:
 
 ```rust
 let state = context.state.model_state(
