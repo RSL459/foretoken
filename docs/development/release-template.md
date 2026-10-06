@@ -3,7 +3,7 @@
 
 # Release Description Template
 
-Copy this template into the GitHub Release description, then remove unused sections and all comments. Keep the body focused on what users need to understand, install, upgrade, and verify this release. Link user-visible changes to their pull requests or issues when a link adds useful context.
+Copy the template into the GitHub Release description, replace placeholders and remove unused sections. Group changes by user-facing area and acknowledge confirmed contributions.
 
 Replace `PYTHON_VERSION` and `PLATFORM_VERSION` with the release's [Python and platform versions](release.md#version-stages).
 
@@ -15,21 +15,9 @@ Replace `PYTHON_VERSION` and `PLATFORM_VERSION` with the release's [Python and p
 
 ## Changes
 
-### New Features
+### [Area, such as deployment or inference]
 
-- [What is available and who can use it.] ([#PR](URL))
-
-### Improvements
-
-- [Behavior, performance, observability, deployment, or developer experience improvement.] ([#PR](URL))
-
-### Fixes
-
-- [User-visible bug and the behavior after the fix.] ([#PR](URL))
-
-### Documentation
-
-- [New or corrected user or maintainer documentation.] ([#PR](URL))
+- [Capability, improvement or fix, and its effect on users.] ([#PR](URL))
 
 ## Compatibility
 
@@ -77,13 +65,3 @@ Replace `PYTHON_VERSION` and `PLATFORM_VERSION` with the release's [Python and p
 
 [Compare `vPREVIOUS` to `vPYTHON_VERSION`](https://github.com/shiweijiezero/foretoken/compare/vPREVIOUS...vPYTHON_VERSION)
 ```
-
-## Authoring rules
-
-- Use `Highlights` for three to five outcomes, not a commit list.
-- Keep `Changes` grouped by user-facing area. Combine related pull requests into one explanation.
-- Keep `Compatibility` and `Upgrade Notes` when a reader may need to choose a runtime, change configuration, or take an action before using the release.
-- List the Python package, each runtime environment image variant, the application archive, the Chart, and the tagged examples published for the release, with their actual access paths.
-- Keep `Known Limitations` short and actionable. Omit it when there is nothing that changes user action.
-- Name contributors only from confirmed contribution or support records, and describe the concrete help provided.
-- Put the complete commit history in the compare link rather than expanding every internal commit in the release body.
