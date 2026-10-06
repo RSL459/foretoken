@@ -3,65 +3,30 @@
 
 # Release Description Template
 
-Copy the template into the GitHub Release description, replace placeholders and remove unused sections. Group changes by user-facing area and acknowledge confirmed contributions.
-
-Fill in the published versions and copy the full image references, Chart address and asset download links. Use a GitHub Compare link between the two release tags for the full changelog.
+Describe user-visible changes by area. Remove sections that do not apply.
 
 ```markdown
-## Highlights
-
-- [User-visible capability or important behavior change.] ([#PR](URL))
-- [Important reliability, performance, platform, or documentation improvement.] ([#PR](URL))
-
-## Changes
+## What's changed
 
 ### [Area, such as deployment or inference]
 
-- [Capability, improvement or fix, and its effect on users.] ([#PR](URL))
+- [What changed and how it helps users.]
 
-## Compatibility
+## Getting started and upgrading
 
-| Area | This release | Notes |
-| --- | --- | --- |
-| Python | [version range] | [runtime requirement or packaging note] |
-| Kubernetes | [supported range] | [deployment limitation, if relevant] |
-| NVIDIA | [supported runtime/image] | [compatibility or image note] |
-| MetaX | [supported runtime/image] | [compatibility or image note] |
-| API and configuration | [compatible / changed] | [field, endpoint, or protocol note] |
+See the [Quick Start](https://github.com/shiweijiezero/foretoken/blob/main/README.md#quick-start).
 
-## Breaking Changes and Deprecations
+- [Any additional action required for this release, including changed requirements or replacements for removed features.]
 
-- [Removed, renamed, or behavior-changing interface.] Use [replacement or migration action].
+## Known issues
 
-## Upgrade Notes
-
-1. [Required version, image, Chart, CRD, or configuration update.]
-2. [Command or migration action, if required.]
-3. [Default behavior or rollback consideration, if it changes the operator's action.]
-
-## Release Artifacts
-
-| Artifact | Published version or tag | Install or access path |
-| --- | --- | --- |
-| Python package | [package version] | `pip install foretoken==<package-version>` |
-| Control-plane environment | [image tag] | [full image reference] |
-| Frontend environment | [image tag] | [full image reference] |
-| NVIDIA model-server environment | [image tag] | [full image reference] |
-| MetaX model-server environment | [image tag] | [full image reference] |
-| Application archive | [release version] | [asset download link copied from the GitHub Release] |
-| Helm Chart | [Chart version] | [OCI Chart address] |
-| Examples | [release tag] | [link to the examples directory at that tag] |
-
-## Known Limitations
-
-- [Current limitation that changes whether or how users should install, upgrade, or operate this release.]
+- [An issue that affects usage and the available workaround.]
 
 ## Thanks
 
-- [@contributor](URL) — [specific code, test, documentation, issue, hardware, or other support].
-- Thanks to everyone who reported issues, reviewed changes, tested releases, or helped improve Foretoken.
+- [@contributor](URL) — [their specific contribution or support].
 
-## Full Changelog
+## Full changelog
 
-[GitHub Compare link]
+[Link to the changes since the previous release.]
 ```
