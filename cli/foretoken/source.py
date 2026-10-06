@@ -772,10 +772,14 @@ def prepare_source_images(
         kubectl, command.registry, build.get("containerd_socket", "")
     )
     if registry:
-        claim = find_build_cache(kubectl, namespace, binding, origin.node, "/var/cache/foretoken")
+        claim = find_build_cache(
+            kubectl, namespace, binding, origin.node, "/var/cache/foretoken"
+        )
         node_uid = kubectl.get("node", origin.node)["metadata"]["uid"][:8]
         nodes = [(origin.node, "", claim or "foretoken-application-build-" + node_uid)]
-    applications = {component: origin.reference(component, suffix) for component in references}
+    applications = {
+        component: origin.reference(component, suffix) for component in references
+    }
     # Keep a failed first installation's compiler cache addressable for retry and
     # uninstall, without replacing an existing successful installation binding.
     state_directory.mkdir(parents=True, exist_ok=True)

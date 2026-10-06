@@ -76,9 +76,7 @@ class _RuntimeSelection:
 
 def _resource_capacity(node: dict[str, Any], resource_name: str) -> int:
     """Return one node's allocatable extended-resource capacity."""
-    value = ((node.get("status") or {}).get("allocatable") or {}).get(
-        resource_name
-    )
+    value = ((node.get("status") or {}).get("allocatable") or {}).get(resource_name)
     try:
         return int(str(value))
     except (TypeError, ValueError):
@@ -96,8 +94,7 @@ def _select_runtime(
             selected_nodes = tuple(
                 node
                 for node in nodes
-                if ((node.get("metadata") or {}).get("labels") or {}).get(key)
-                == value
+                if ((node.get("metadata") or {}).get("labels") or {}).get(key) == value
             )
 
     if overrides.gpu_resource_name is not None:
@@ -125,7 +122,8 @@ def _select_runtime(
         GPU_RESOURCE_BACKENDS.get(resource_name, "custom"),
         resource_name,
         tuple(
-            node for node in selected_nodes
+            node
+            for node in selected_nodes
             if _resource_capacity(node, resource_name) > 0
         ),
     )
@@ -140,7 +138,9 @@ class PlatformLifecycle:
         self._oci_registry = config.image_registry
         self._kubectl = Kubectl()
         self._metax_exporter = MetaXExporterLifecycle(
-            self._kubectl, config.management_label, config.metax_exporter_image,
+            self._kubectl,
+            config.management_label,
+            config.metax_exporter_image,
             config.image_registry,
         )
         self._gateway = GatewayControllerLifecycle(self._helm, self._kubectl)
@@ -159,13 +159,16 @@ class PlatformLifecycle:
         """Install the platform and commit successful source inputs to its workstation binding."""
         with ExitStack() as artifacts:
             self._install(
-                command, artifacts,
+                command,
+                artifacts,
                 source_base_image=source_base_image,
                 source_build_arguments=source_build_arguments,
             )
 
     def _install(
-        self, command: InstallCommand, artifacts: ExitStack,
+        self,
+        command: InstallCommand,
+        artifacts: ExitStack,
         *,
         source_base_image: str | None,
         source_build_arguments: dict[str, str] | None,
@@ -202,7 +205,8 @@ class PlatformLifecycle:
         current_runtime = runtime_overrides_from_values(values)
         stored_values = (
             (migrate_stored_rdma_values(helm.release_user_values(platform)),)
-            if platform_exists else ()
+            if platform_exists
+            else ()
         )
         if stored_values:
             stored_logs = stored_values[0].get("observability", {}).get("logs", {})
@@ -314,8 +318,7 @@ class PlatformLifecycle:
             elif runtime_selection is not None and runtime_selection.backend == "metax":
                 build_metax_runtime = True
             elif (
-                runtime_selection is not None
-                and runtime_selection.backend == "custom"
+                runtime_selection is not None and runtime_selection.backend == "custom"
             ):
                 raise DeploymentError(
                     "runtime.vllm.image must be set in --values for source builds on "
@@ -460,9 +463,7 @@ class PlatformLifecycle:
         _print_plan(
             "LoadBalancer", load_balancer_plan.action, load_balancer_plan.detail
         )
-        _print_plan(
-            "Gateway Controller", gateway_plan.action, gateway_plan.detail
-        )
+        _print_plan("Gateway Controller", gateway_plan.action, gateway_plan.detail)
         _print_plan("Prometheus", prometheus_action, prometheus_detail)
         for responsibility, action, detail in log_plan:
             _print_plan(responsibility, action, detail)
@@ -485,26 +486,42 @@ class PlatformLifecycle:
             )
         _print_plan("Inference runtime", runtime_action, runtime_detail)
         _print_plan("RDMA", rdma.action, rdma.detail)
-        _print_plan("LeaderWorkerSet", leader_worker_plan.action, leader_worker_plan.detail)
+        _print_plan(
+            "LeaderWorkerSet", leader_worker_plan.action, leader_worker_plan.detail
+        )
         if dragonfly_plan.config.enabled:
-            _print_plan("Model file distribution", dragonfly_plan.action, dragonfly_plan.release.display_name)
+            _print_plan(
+                "Model file distribution",
+                dragonfly_plan.action,
+                dragonfly_plan.release.display_name,
+            )
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
         if command.editable is not None:
-            helm.prepare_source_origin(Path(command.editable).expanduser().resolve(), (*stored_values, *values), command.timeout)
-        source_images = (
-            artifacts.enter_context(prepare_source_images(
-                command,
-                platform.namespace,
+            helm.prepare_source_origin(
+                Path(command.editable).expanduser().resolve(),
                 (*stored_values, *values),
-                source_runtime_image,
-                installed_images=(
-                    helm.platform_image_references(platform) if platform_exists else None
-                ),
-                build_metax_runtime=build_metax_runtime,
-                runtime_backend=runtime_selection.backend if runtime_selection else "nvidia",
-                saved_arguments=source_build_arguments,
-            ))
+                command.timeout,
+            )
+        source_images = (
+            artifacts.enter_context(
+                prepare_source_images(
+                    command,
+                    platform.namespace,
+                    (*stored_values, *values),
+                    source_runtime_image,
+                    installed_images=(
+                        helm.platform_image_references(platform)
+                        if platform_exists
+                        else None
+                    ),
+                    build_metax_runtime=build_metax_runtime,
+                    runtime_backend=runtime_selection.backend
+                    if runtime_selection
+                    else "nvidia",
+                    saved_arguments=source_build_arguments,
+                )
+            )
             if command.editable is not None
             else None
         )
@@ -516,7 +533,11 @@ class PlatformLifecycle:
             dragonfly_plan,
             runtime_selection.resource_name if runtime_selection is not None else "",
             command.timeout,
-            node_names=tuple(node["metadata"]["name"] for node in runtime_selection.nodes) if runtime_selection is not None else (),
+            node_names=tuple(
+                node["metadata"]["name"] for node in runtime_selection.nodes
+            )
+            if runtime_selection is not None
+            else (),
         )
         if install_managed_prometheus:
             helm.install_prometheus(
@@ -526,7 +547,9 @@ class PlatformLifecycle:
                 command.timeout,
                 anonymous_access=grafana_anonymous_access,
             )
-            mark_managed_metrics_scraper_namespace(kubectl, managed_prometheus.namespace)
+            mark_managed_metrics_scraper_namespace(
+                kubectl, managed_prometheus.namespace
+            )
             resource = helm.prometheus_resource(managed_prometheus)
             selected_prometheus = PrometheusRef(resource.name, resource.namespace, ())
         if install_managed_dcgm:
@@ -541,9 +564,7 @@ class PlatformLifecycle:
             # The chart permits one unavailable DaemonSet Pod during Helm's
             # wait, while discovery requires Ready coverage on every GPU node.
             # Complete the managed rollout before resolving it as existing.
-            kubectl.rollout_status(
-                helm.dcgm_resource(managed_dcgm), command.timeout
-            )
+            kubectl.rollout_status(helm.dcgm_resource(managed_dcgm), command.timeout)
         if install_managed_metax:
             metax_exporter.install(
                 metax_metrics.node_names, observability_labels, command.timeout
@@ -564,9 +585,7 @@ class PlatformLifecycle:
                     ),
                     (
                         "mxExporter",
-                        verified_metax.exporter
-                        if verified_metax is not None
-                        else None,
+                        verified_metax.exporter if verified_metax is not None else None,
                     ),
                 )
                 if exporter is not None
@@ -580,7 +599,9 @@ class PlatformLifecycle:
                 timeout_seconds=timeout_seconds(command.timeout),
             )
 
-        log_endpoint, log_storage_statefulset = self._logs.install(log_config, command.timeout)
+        log_endpoint, log_storage_statefulset = self._logs.install(
+            log_config, command.timeout
+        )
         helm.install_platform(
             release=platform,
             source_images=source_images,
@@ -624,7 +645,9 @@ class PlatformLifecycle:
             _print_plan(
                 "RDMA",
                 "Available" if allocation.available else "Not available",
-                allocation.detail if allocation.available else (
+                allocation.detail
+                if allocation.available
+                else (
                     "device plugin has no allocatable RDMA pool on the GPU nodes; "
                     "check node drivers and network interfaces"
                 ),
@@ -644,7 +667,13 @@ class PlatformLifecycle:
         if install_managed_dcgm:
             _print_plan("NVIDIA DCGM Exporter", "Ready", managed_dcgm.display_name)
         if source_images is not None:
-            record_install(kubectl, command, source_runtime_image, source_images.inputs, build_state=source_images.build_state)
+            record_install(
+                kubectl,
+                command,
+                source_runtime_image,
+                source_images.inputs,
+                build_state=source_images.build_state,
+            )
         _print_plan("Foretoken platform", "Ready", platform.display_name)
         if not load_balancer_plan.install and load_balancer_plan.action != "Reuse":
             _print_plan(
@@ -674,20 +703,23 @@ class PlatformLifecycle:
                 "use its existing Helm lifecycle"
             )
 
-        source_builds = (platform_exists and helm.release_install_source(platform) == "source") or has_source_state(kubectl)
-        unadopted_origin = () if platform_exists else helm.application_origin_resources()
+        source_builds = (
+            platform_exists and helm.release_install_source(platform) == "source"
+        ) or has_source_state(kubectl)
+        unadopted_origin = (
+            () if platform_exists else helm.application_origin_resources()
+        )
         dcgm_exists = helm.release_exists(managed_dcgm)
         dcgm_managed = dcgm_exists and helm.is_cleanup_managed(managed_dcgm)
         prometheus_exists = helm.release_exists(managed_prometheus)
-        prometheus_managed = (
-            prometheus_exists and helm.is_cleanup_managed(managed_prometheus)
+        prometheus_managed = prometheus_exists and helm.is_cleanup_managed(
+            managed_prometheus
         )
         metax_managed = bool(metax_exporter.managed_resources())
         managed_logs = self._logs.managed_releases()
-        dragonfly_managed = (
-            helm.release_exists(helm.dragonfly_release())
-            and helm.is_cleanup_managed(helm.dragonfly_release())
-        )
+        dragonfly_managed = helm.release_exists(
+            helm.dragonfly_release()
+        ) and helm.is_cleanup_managed(helm.dragonfly_release())
         gateway_plan = gateway.resolve_uninstall(
             platform, platform_exists=platform_exists
         )
@@ -739,11 +771,11 @@ class PlatformLifecycle:
             )
         else:
             _print_plan("MetaX mxExporter", "Preserve", "not CLI-managed")
-        _print_plan(
-            "Gateway Controller", gateway_plan.action, gateway_plan.detail
-        )
+        _print_plan("Gateway Controller", gateway_plan.action, gateway_plan.detail)
         for release in managed_logs:
-            _print_plan("Logs", "Remove", release.display_name + " (retain stored logs)")
+            _print_plan(
+                "Logs", "Remove", release.display_name + " (retain stored logs)"
+            )
         self._logs.uninstall(managed_logs, command.timeout)
         if platform_exists:
             helm.uninstall(platform, command.timeout)
@@ -767,14 +799,17 @@ class PlatformLifecycle:
                 "Removed",
                 f"{metax_exporter.namespace}/{metax_exporter.daemonset.name}",
             )
-        gateway_result = gateway.finish_uninstall(
-            gateway_plan, command.timeout
-        )
+        gateway_result = gateway.finish_uninstall(gateway_plan, command.timeout)
         if gateway_result is not None:
             _print_plan("Gateway Controller", *gateway_result)
-        _print_plan("LeaderWorkerSet", *self._leader_worker.finish_uninstall(command.timeout))
+        _print_plan(
+            "LeaderWorkerSet", *self._leader_worker.finish_uninstall(command.timeout)
+        )
         if helm.release_exists(helm.dragonfly_release()):
-            _print_plan("Model file distribution", *self._model_distribution.finish_uninstall(command.timeout))
+            _print_plan(
+                "Model file distribution",
+                *self._model_distribution.finish_uninstall(command.timeout),
+            )
         load_balancer_result = load_balancer.finish_uninstall(command.timeout)
         if load_balancer_result is not None:
             _print_plan("LoadBalancer", *load_balancer_result)

@@ -196,7 +196,8 @@ class EditableDeployment:
         bundles = dict(self.state["bundles"])
         for component in components:
             prior = bundles.get(
-                component, self.state["build"].get("applications", {}).get(component, {})
+                component,
+                self.state["build"].get("applications", {}).get(component, {}),
             )
             bundles[component] = {
                 "revision": str(uuid.uuid4()),
@@ -338,7 +339,9 @@ class EditableDeployment:
             and origin.node not in build["engine_caches"]
         ):
             # A newly prepared origin node needs a cold cache, not another node's native outputs.
-            build["engine_caches"][origin.node] = build["binding"] + "-" + uuid.uuid4().hex
+            build["engine_caches"][origin.node] = (
+                build["binding"] + "-" + uuid.uuid4().hex
+            )
             _write_json(self.directory / "install.json", self.state)
         snapshot = self.directory / self.state["inputs"]
         inputs = {
@@ -349,7 +352,9 @@ class EditableDeployment:
         helm = Helm(default_platform_config(self.state["command"]["oci_registry"]))
         references = origin.references(helm.application_history())
         if references is not None:
-            references.update(bundle["revision"] for bundle in self.state["bundles"].values())
+            references.update(
+                bundle["revision"] for bundle in self.state["bundles"].values()
+            )
         print("Preparing application files: " + ", ".join(sorted(pending)), flush=True)
         with ClusterBuilder(
             self.kubectl,
@@ -430,7 +435,12 @@ class EditableDeployment:
                 ):
                     previous = active_control.rsplit("/", 1)[-1]
                 origin.publish(
-                    builder, payload, component, revision, previous, references,
+                    builder,
+                    payload,
+                    component,
+                    revision,
+                    previous,
+                    references,
                     timeout=timeout,
                 )
                 builder.run(["rm", "-rf", "--", staging])
@@ -462,10 +472,14 @@ class EditableDeployment:
             if application is not None:
                 frontend_image = application["image"]
             else:
-                deployment = self.kubectl.get_if_exists("deployment", service, namespace)
+                deployment = self.kubectl.get_if_exists(
+                    "deployment", service, namespace
+                )
                 if deployment is None:
                     return []
-                frontend_image = deployment["spec"]["template"]["spec"]["containers"][0]["image"]
+                frontend_image = deployment["spec"]["template"]["spec"]["containers"][
+                    0
+                ]["image"]
         for pod in self.kubectl.list_resources(("pods",), namespace):
             metadata = pod["metadata"]
             if (
@@ -626,11 +640,18 @@ class EditableDeployment:
         routes: dict[str, set[str]] = {}
         consumers = dict(self.selected)
         # Unchanged frontend code still needs to consume a new backend cohort.
-        namespaces = {namespace for kind, namespace, _ in self.selected if kind == "ModelService"}
+        namespaces = {
+            namespace for kind, namespace, _ in self.selected if kind == "ModelService"
+        }
         for namespace in namespaces:
-            for frontend in self.kubectl.list_resources(("frontendservices",), namespace):
+            for frontend in self.kubectl.list_resources(
+                ("frontendservices",), namespace
+            ):
                 metadata = frontend["metadata"]
-                if not metadata.get("deletionTimestamp") and frontend["spec"].get("replicas", 1) > 0:
+                if (
+                    not metadata.get("deletionTimestamp")
+                    and frontend["spec"].get("replicas", 1) > 0
+                ):
                     consumers.setdefault(
                         ("FrontendService", namespace, metadata["name"]),
                         metadata.get("annotations", {}).get(SOURCE_REVISION, ""),
@@ -677,7 +698,9 @@ class EditableDeployment:
                 continue
             for pod, container, directory, _ in writers:
                 expected = (
-                    f"FORETOKEN_ACTIVE_SOURCE_DIRECTORY={directory}" if directory else ""
+                    f"FORETOKEN_ACTIVE_SOURCE_DIRECTORY={directory}"
+                    if directory
+                    else ""
                 )
                 output = self.kubectl.run(
                     [
