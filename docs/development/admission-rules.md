@@ -27,9 +27,9 @@ Use [allow_all](../../data-plane/frontend/src/router/src/algorithm/admission/all
 
 ## Use the supplied inputs
 
-- **Request facts:** `AdmissionRequest` provides the model, operation, candidate count, input and media summaries, output budgets, client preferences, and processing start time.
-- **Service context:** `context.deadline` is the total request deadline; `context.service` contains resolved identity, service class, priority, and latency objectives. Identity and service-policy values are currently unpopulated.
-- **Runtime observations:** query current model availability, target health, load, and capacity statistics through `context.state`:
+- Request facts: `AdmissionRequest` provides the model, operation, candidate count, input and media summaries, output budgets, client preferences, and processing start time.
+- Service context: `context.deadline` is the total request deadline; `context.service` contains resolved identity, service class, priority, and latency objectives. Identity and service-policy values are currently unpopulated.
+- Runtime observations: query current model availability, target health, load, and capacity statistics through `context.state`:
 
 ```rust
 let state = context.state.model_state(
@@ -48,10 +48,13 @@ For unrestricted admission, return `AdmissionPermit::default()`. For reserved re
 
 `split_one()` transfers one reserved unit to a batch child; dropping a reservation releases its remaining resources. The framework carries execution permits through preprocessing and request completion. Keep waiting resources owned by the admission future so cancellation releases them.
 
-Additional hooks support rules with intake or readiness requirements:
+While queueing, hold the guard returned by `context.queue.begin_wait()` until waiting ends. The framework records the wait with the final admission result.
+
+Additional hooks support resource reporting, intake, and readiness:
 
 | Hook | Purpose |
 | --- | --- |
+| `capacity()` | Report finite work, queue, and resident limits for the Admission dashboard. |
 | `try_reserve_request()` | Reserve a resident HTTP-request slot before body extraction; its permit follows the response body. |
 | `requires_ready_runtime()` | Require model preparation before generation admission. |
 | `close()` | Wake waiting requests during shutdown. |

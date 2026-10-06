@@ -27,9 +27,9 @@ async fn admit(
 
 ## 使用框架提供的输入
 
-- **请求信息**：`AdmissionRequest` 提供模型、操作、候选数、输入与媒体摘要、输出预算、客户端偏好和处理起点。
-- **服务上下文**：`context.deadline` 是请求总截止时间；`context.service` 承载解析后的身份、服务类别、优先级和延迟目标。当前身份及服务策略值尚未填充。
-- **运行观测**：通过 `context.state` 查询当前模型可用性、目标健康、负载和容量统计：
+- 请求信息：`AdmissionRequest` 提供模型、操作、候选数、输入与媒体摘要、输出预算、客户端偏好和处理起点。
+- 服务上下文：`context.deadline` 是请求总截止时间；`context.service` 承载解析后的身份、服务类别、优先级和延迟目标。当前身份及服务策略值尚未填充。
+- 运行观测：通过 `context.state` 查询当前模型可用性、目标健康、负载和容量统计：
 
 ```rust
 let state = context.state.model_state(
@@ -48,10 +48,13 @@ let state = context.state.model_state(
 
 `split_one()` 将一个已预留单位转交给批次子请求，reservation 被丢弃时释放剩余资源。框架让执行许可覆盖预处理和请求完成；规则的等待资源随 admission future 持有，从而在取消时释放。
 
-有入口或模型就绪要求时，可实现以下方法：
+排队期间持有 `context.queue.begin_wait()` 返回的 guard，等待结束时释放。框架会将等待时长与最终准入结果一起记录。
+
+资源上报、入口和模型就绪要求可通过以下方法实现：
 
 | 方法 | 用途 |
 | --- | --- |
+| `capacity()` | 为准入看板提供有限的工作并发、队列和驻留上限。 |
 | `try_reserve_request()` | 在读取请求体前预留一个 HTTP 驻留名额，许可随响应体持有。 |
 | `requires_ready_runtime()` | 要求模型准备好后再准入生成请求。 |
 | `close()` | 关闭时唤醒等待中的请求。 |

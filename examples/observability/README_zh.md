@@ -15,7 +15,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 foretoken deploy examples/observability --timeout 20m
 ```
 
-该部署沿用快速开始的模型、资源、命名空间和数据目录。按其示例发送请求，再到 Grafana 打开 **Foretoken System Overview**。告警名称及触发条件见[告警参考](../../observability/runbooks/alerts_zh.md)。
+该部署沿用快速开始的模型、资源、命名空间和数据目录。按其示例发送请求，再到 Grafana 打开 Foretoken System Overview。告警名称及触发条件见[告警参考](../../observability/runbooks/alerts_zh.md)。
 
 关闭某条告警时，移除其名称并再次部署该目录。删除整个部署：
 

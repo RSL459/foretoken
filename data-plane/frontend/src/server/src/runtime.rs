@@ -16,8 +16,8 @@ use foretoken_chat::{
 };
 use foretoken_llm_facade::{LlmFacadeError, LlmFacadeResolver, TokenStream};
 use foretoken_router::algorithm::admission::{
-    AdmissionApi, AdmissionContext, AdmissionModelState, AdmissionModelStatus, AdmissionService,
-    AdmissionStateReader, AdmissionTargetState,
+    AdmissionApi, AdmissionAttempt, AdmissionContext, AdmissionModelState, AdmissionModelStatus,
+    AdmissionService, AdmissionStateReader, AdmissionTargetState, mark_request_deadline,
 };
 use foretoken_router::{
     AdmissionError, AdmissionPermit, AdmissionRequest, RouteAdmission, RouteDecision,
@@ -547,18 +547,18 @@ impl RuntimeGeneration {
         &self,
         request: &AdmissionRequest,
     ) -> Result<AdmissionPermit, GenerationError> {
+        let deadline = tokio::time::Instant::from_std(request.received_at + self.request_timeout);
+        let attempt = AdmissionAttempt::work(deadline);
         let context = AdmissionContext {
-            deadline: tokio::time::Instant::from_std(request.received_at + self.request_timeout),
+            deadline,
             service: AdmissionService::default(),
             state: self,
+            queue: attempt.queue(),
         };
-        before_deadline(context.deadline, async {
-            self.admission
-                .admit(request, &context)
-                .await
-                .map_err(GenerationError::from)
-        })
-        .await
+        attempt
+            .run(self.admission.admit(request, &context))
+            .await
+            .map_err(GenerationError::from)
     }
 
     fn ready_state(&self) -> Result<Arc<RuntimeSlot>, GenerationError> {
@@ -712,10 +712,14 @@ pub(crate) async fn before_deadline<T>(
 ) -> Result<T, GenerationError> {
     tokio::select! {
         biased;
-        _ = tokio::time::sleep_until(deadline) => Err(GenerationError::DeadlineExceeded),
+        _ = tokio::time::sleep_until(deadline) => {
+            mark_request_deadline();
+            Err(GenerationError::DeadlineExceeded)
+        },
         result = work => {
             // Synchronous tokenization can finish without yielding to the timer.
             if tokio::time::Instant::now() >= deadline {
+                mark_request_deadline();
                 Err(GenerationError::DeadlineExceeded)
             } else {
                 result

@@ -5,6 +5,12 @@
 
 mod context;
 mod request;
+pub(crate) mod telemetry;
+
+pub use telemetry::{
+    AdmissionAttempt, AdmissionCapacity, AdmissionQueueObservation, AdmissionQueueWait,
+    mark_request_deadline, observe_http,
+};
 
 use thiserror::Error;
 
@@ -29,6 +35,11 @@ declare_router_algorithms! {
 /// A successful result already holds its resources; dropping the future cancels its waiter.
 #[async_trait::async_trait]
 pub trait RouteAdmission: Send + Sync {
+    /// Advertises the rule's finite resource limits for process-local observability.
+    fn capacity(&self) -> Option<AdmissionCapacity> {
+        None
+    }
+
     /// Requires the runtime to check model preparation before admission, without waiting for it.
     fn requires_ready_runtime(&self) -> bool {
         false

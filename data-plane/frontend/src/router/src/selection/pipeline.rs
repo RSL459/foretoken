@@ -12,6 +12,8 @@ use crate::{RouteAdmission, RouteFilter, RoutePicker, RouteScorer, RouterRequest
 pub struct RouterPipeline<C: Send + 'static = ()> {
     /// Admission shared by every routing generation using this pipeline.
     pub admission: Arc<dyn RouteAdmission>,
+    pub(super) admission_metrics:
+        Option<crate::algorithm::admission::telemetry::AdmissionMetricsScope>,
     /// Candidate-list filter.
     pub(super) filter: Arc<dyn RouteFilter<C>>,
     /// Filtered-candidate scorer.
@@ -43,6 +45,7 @@ impl<C: Send + 'static> RouterPipeline<C> {
     ) -> Self {
         Self {
             admission: Arc::new(AllowAllAdmission),
+            admission_metrics: None,
             filter,
             scorer,
             picker,

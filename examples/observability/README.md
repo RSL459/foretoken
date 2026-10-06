@@ -15,7 +15,7 @@ After installing the platform with `foretoken install`, add only the wanted rule
 foretoken deploy examples/observability --timeout 20m
 ```
 
-The deployment uses the Quick Start's model, resources, namespace, and data directory. Follow its request example, then open **Foretoken System Overview** in Grafana. Alert names and trigger conditions are listed in the [alert reference](../../observability/runbooks/alerts.md).
+The deployment uses the Quick Start's model, resources, namespace, and data directory. Follow its request example, then open Foretoken System Overview in Grafana. Alert names and trigger conditions are listed in the [alert reference](../../observability/runbooks/alerts.md).
 
 To disable a rule, remove its name and deploy the directory again. To remove the deployment:
 

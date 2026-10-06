@@ -246,6 +246,12 @@ impl RouterPipelineConfig {
         let mut pipeline =
             RouterPipeline::new(configured_filter, configured_scorer, configured_picker);
         pipeline.algorithm_names = [filter.name, scorer.name, picker.name];
+        pipeline.admission_metrics = Some(
+            crate::algorithm::admission::telemetry::AdmissionMetricsScope::new(
+                admission_descriptor.name,
+                configured_admission.capacity(),
+            ),
+        );
         pipeline.admission = configured_admission;
         Ok(pipeline)
     }
