@@ -102,7 +102,7 @@ Build and install from the repository root. The cluster needs a default StorageC
 foretoken install -e .
 ```
 
-This prepares runtime environments and application files in dedicated Pods and binds the checkout to the target cluster.
+This binds the checkout to the target cluster for subsequent source updates.
 
 After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
 

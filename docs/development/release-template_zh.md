@@ -5,6 +5,8 @@
 
 将下面的模板复制到 GitHub Release 描述中，然后删除不适用的章节和所有注释。正文只保留用户理解、安装、升级和验证本版本所需的信息；如果链接能帮助读者追溯实现，再为用户可见的变更附上 PR 或 Issue。
 
+将 `PYTHON_VERSION` 和 `PLATFORM_VERSION` 分别替换为本次发布的 [Python 版本和平台版本](release_zh.md#版本阶段)。
+
 ```markdown
 ## 主要亮点
 
@@ -53,14 +55,14 @@
 
 | 产物 | 版本或 tag | 安装或访问方式 |
 | --- | --- | --- |
-| Python package | `foretoken==X.Y.Z` | `pip install foretoken==X.Y.Z` |
-| 控制面运行环境 | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/control-plane-environment:X.Y.Z` |
-| 前端运行环境 | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/frontend-environment:X.Y.Z` |
-| NVIDIA 模型服务运行环境 | `X.Y.Z` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:X.Y.Z` |
-| 沐曦模型服务运行环境 | `X.Y.Z-metax` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:X.Y.Z-metax` |
-| 应用压缩包 | `X.Y.Z` | `https://github.com/shiweijiezero/foretoken/releases/download/vX.Y.Z/foretoken-applications-X.Y.Z-linux-amd64.tar.gz` |
-| Helm Chart | `X.Y.Z` | `oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken` |
-| 示例 | `vX.Y.Z` | [Release tag 中的 examples](https://github.com/shiweijiezero/foretoken/tree/vX.Y.Z/examples) |
+| Python package | `foretoken==PYTHON_VERSION` | `pip install foretoken==PYTHON_VERSION` |
+| 控制面运行环境 | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/control-plane-environment:PLATFORM_VERSION` |
+| 前端运行环境 | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/frontend-environment:PLATFORM_VERSION` |
+| NVIDIA 模型服务运行环境 | `PLATFORM_VERSION` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:PLATFORM_VERSION` |
+| 沐曦模型服务运行环境 | `PLATFORM_VERSION-metax` | `ghcr.io/shiweijiezero/foretoken/model-server-environment:PLATFORM_VERSION-metax` |
+| 应用压缩包 | `PLATFORM_VERSION` | `https://github.com/shiweijiezero/foretoken/releases/download/vPYTHON_VERSION/foretoken-applications-PLATFORM_VERSION-linux-amd64.tar.gz` |
+| Helm Chart | `PLATFORM_VERSION` | `oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken` |
+| 示例 | `vPYTHON_VERSION` | [Release tag 中的 examples](https://github.com/shiweijiezero/foretoken/tree/vPYTHON_VERSION/examples) |
 
 ## 已知限制
 
@@ -73,7 +75,7 @@
 
 ## 完整变更记录
 
-[比较 `vPREVIOUS` 与 `vX.Y.Z`](https://github.com/shiweijiezero/foretoken/compare/vPREVIOUS...vX.Y.Z)
+[比较 `vPREVIOUS` 与 `vPYTHON_VERSION`](https://github.com/shiweijiezero/foretoken/compare/vPREVIOUS...vPYTHON_VERSION)
 ```
 
 ## 编写规则

@@ -15,6 +15,8 @@ from typing import Any
 
 import yaml
 
+from foretoken.application_files import ApplicationFiles, application_references
+from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.network_sources import (
     platform_image_reference,
@@ -601,9 +603,6 @@ class Helm(HelmClient):
         self, args: list[str], input_text: str | None, timeout: str
     ) -> Iterator[None]:
         """Bootstrap native storage and hold release publication ownership through Helm selection."""
-        from foretoken.application_files import ApplicationFiles, application_references
-        from foretoken.kubernetes import Kubectl
-
         release = self.platform_release()
         rendered = self._render_chart(args, input_text=input_text)
         documents = [
@@ -701,8 +700,6 @@ class Helm(HelmClient):
 
     def application_origin_resources(self) -> tuple[dict[str, Any], ...]:
         """Find native file-origin resources owned by this release, including failed bootstraps."""
-        from foretoken.kubernetes import Kubectl
-
         release = self.platform_release()
         kubectl = Kubectl()
         if not kubectl.exists("namespace", release.namespace):
@@ -721,8 +718,6 @@ class Helm(HelmClient):
         self, resources: tuple[dict[str, Any], ...], timeout: str
     ) -> None:
         """Remove an unadopted file origin and its PVC-owned writers during explicit uninstall."""
-        from foretoken.kubernetes import Kubectl
-
         if not resources:
             return
         kubectl = Kubectl()
@@ -912,8 +907,6 @@ class Helm(HelmClient):
 
     def application_history(self) -> set[str] | None:
         """Retain all rendered application defaults and defer cleanup if Helm history advances."""
-        from foretoken.application_files import application_references
-
         release = self.platform_release()
         if not self.release_exists(release):
             return set()

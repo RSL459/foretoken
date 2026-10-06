@@ -102,7 +102,7 @@ foretoken install \
 foretoken install -e .
 ```
 
-命令在集群专用 Pod 中准备运行环境和应用文件，并将源码目录绑定到目标集群。
+命令将源码目录与目标集群关联，后续从该目录更新服务。
 
 修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
 

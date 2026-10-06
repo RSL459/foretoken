@@ -39,9 +39,7 @@ foretoken install -e .
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-修改源码后，再执行同一条命令。命令沿用保存的安装设置，只发送新增、修改的文件和删除信息。专用构建 Pod 负责编译 Go、Rust 改动并准备 Python 更新，编译缓存与产物留在集群。
-
-Go、Rust 和 Python 更新直接发布应用文件，不替换运行时镜像。运行环境依赖或镜像构建配置变化时，会更新平台安装。
+修改源码后，再执行同一条命令。代码更新沿用保存的安装设置和运行环境；运行环境依赖或镜像构建配置变化时，会更新平台安装。
 
 受影响的工作负载会重启，并可能重新加载模型权重。命令等待所选代码和服务路由生效后退出。源码和部署配置均未变化时，现有工作负载保持运行。请求与清理操作沿用快速开始中的[发送请求](../README_zh.md#4-发送测试请求)和[停止与卸载](../README_zh.md#停止与卸载)。
 
@@ -65,7 +63,7 @@ foretoken install -e . \
   --engine-source vllm-metax=../vllm-metax
 ```
 
-构建 Pod 为沐曦编译插件扩展；该后端不使用 core 中的 CUDA kernel。安装时保留原镜像仓库和 values 选项。
+构建 Pod 为沐曦编译插件扩展；该后端不使用 core 中的 CUDA kernel。
 
 ### 更换运行环境
 

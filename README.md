@@ -90,13 +90,7 @@ curl --fail-with-body --no-buffer \
 
 ### Iterate on source
 
-After editing the checkout, run the same deploy command again to apply the change without recreating the cluster or manually importing the runtime image:
-
-```bash
-foretoken deploy examples/quickstart --timeout 20m
-```
-
-Go, Python, Triton, Rust, CUDA, C/C++, and vLLM source changes use the cluster build caches and reuse the runtime environment when its dependencies are unchanged. See [Deploy Foretoken from Source](docs/custom-deployment.md) for engine checkouts and runtime changes.
+After a source installation, edit the checkout and rerun the deploy command to update the service. See [Deploy Foretoken from Source](docs/custom-deployment.md) for engine checkouts and runtime changes.
 
 ### 5. Evaluate and profile the service
 
