@@ -120,10 +120,12 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- $image := trim .Values.runtime.vllm.image -}}
 {{- if eq $image "auto" -}}
 {{- $tag := .Chart.AppVersion -}}
+{{- $backend := "nvidia" -}}
 {{- if or (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/gpu") (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/sgpu") -}}
 {{- $tag = printf "%s-metax" $tag -}}
+{{- $backend = "metax" -}}
 {{- end -}}
-{{- printf "ghcr.io/shiweijiezero/foretoken/model-server:%s" $tag -}}
+{{- default (printf "ghcr.io/shiweijiezero/foretoken/model-server:%s" $tag) (index .Values.runtime.vllm.environmentImages $backend) -}}
 {{- else -}}
 {{- $image -}}
 {{- end -}}

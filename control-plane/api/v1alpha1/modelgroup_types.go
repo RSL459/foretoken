@@ -197,6 +197,10 @@ type ModelGroupRuntime struct {
 	// +optional
 	SourceRevision string `json:"sourceRevision,omitempty"`
 
+	// ApplicationURL pins the controller-selected executable publication for this cohort.
+	// +optional
+	ApplicationURL string `json:"applicationURL,omitempty"`
+
 	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 

@@ -134,20 +134,12 @@ class HelmClient:
         """Return the effective values stored for one Helm release."""
         return self._get_release_values(release, include_defaults=True)
 
-    def release_user_values(
-        self, release: ReleaseRef, *, revision: int | None = None
-    ) -> dict[str, Any]:
-        """Return supplied values for the installed release or one retained revision."""
-        return self._get_release_values(
-            release, include_defaults=False, revision=revision
-        )
+    def release_user_values(self, release: ReleaseRef) -> dict[str, Any]:
+        """Return supplied values for the installed release."""
+        return self._get_release_values(release, include_defaults=False)
 
     def _get_release_values(
-        self,
-        release: ReleaseRef,
-        *,
-        include_defaults: bool,
-        revision: int | None = None,
+        self, release: ReleaseRef, *, include_defaults: bool
     ) -> dict[str, Any]:
         """Read one release's stored values with the requested default scope."""
         args = [
@@ -159,8 +151,6 @@ class HelmClient:
         ]
         if include_defaults:
             args.append("--all")
-        if revision is not None:
-            args.extend(["--revision", str(revision)])
         values = _decode_json(self.run([*args, "--output", "json"]).stdout)
         if not isinstance(values, dict):
             raise DeploymentError("helm get values returned an unexpected JSON value")

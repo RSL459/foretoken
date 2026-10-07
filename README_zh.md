@@ -63,7 +63,7 @@ foretoken cluster create k3d --name foretoken-dev --gpus 0
 # 从当前源码构建：
 foretoken install -e .
 
-# 使用发布镜像：
+# 使用已发布的平台：
 # foretoken install
 ```
 
