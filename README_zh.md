@@ -34,7 +34,7 @@ foretoken install -e .
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-部署会启动一个前端和一个模型副本。等待服务 Ready 后，发送请求：
+等待前端和模型服务 Ready 后，发送请求：
 
 ```bash
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"

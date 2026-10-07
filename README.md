@@ -34,7 +34,7 @@ foretoken install -e .
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-The deployment starts a frontend and a model replica. Wait for Ready, then send a request:
+Wait for the frontend and model service to report Ready, then send a request:
 
 ```bash
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
