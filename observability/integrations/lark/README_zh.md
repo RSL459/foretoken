@@ -7,17 +7,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-通过群自定义机器人接收 Foretoken 服务告警。
+通过群自定义机器人接收 Foretoken 服务告警。使用已安装的 [Foretoken 监控](../../README_zh.md)，或按下文接入已有监控栈。
 
 ## 接入机器人
-
-使用 CLI 管理的监控时，先按原安装方式更新平台。源码安装从仓库根目录执行，并保留原命令中的镜像仓库和引擎源码选项：
-
-```bash
-foretoken install
-# 源码安装的平台，在仓库根目录执行：
-# foretoken install -e .
-```
 
 取得群机器人的消息接收地址（Webhook）后，在仓库根目录执行以下命令，并替换 URL 占位符。使用已有监控栈时，改为其 Alertmanager 所在命名空间：
 

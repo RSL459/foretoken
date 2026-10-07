@@ -3,22 +3,26 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Maintaining vLLM patches
+# Maintain vLLM patches
 
 English | [简体中文](README_zh.md)
 
-| Location | Purpose |
-| --- | --- |
-| `common/` | Shared Python, communication, and native-code patches |
-| `compatibility/` | Patch series and insertion points for different upstream interfaces |
-| `rust/` | Patches to the upstream Rust crates |
-| `source.series` | Ordered patches for the pinned source checkout, consumed by `make vllm-source` |
-| `version-map.yaml` | Installed Python package versions mapped to a compatibility series |
+Use this directory for changes applied to Foretoken's pinned vLLM source or installed vLLM Python packages. MetaX engine-source patches have a separate [bundle](../../../deploy/inference-engines/vllm-metax/patches/vllm-030/glm-5.3/README.md).
 
-Series entries are relative to this directory. Patches use `-p1` against the upstream repository root or the installed package's parent directory, both of which contain `vllm/`.
+## Update a patch
 
-Edit the corresponding upstream source and regenerate unified diffs. Keep shared behavior in `common/`; compatibility patches retain only the differing imports, interfaces, and insertion points. Several package versions can use the same series. Extend the version mapping after checking the patch stack against those sources and exercising the affected runtime.
+Edit the matching upstream source and regenerate the unified diff. Put shared behavior in `common/`, upstream Rust changes in `rust/`, and version-specific imports, interfaces, or insertion points in `compatibility/`. Patches for another library belong beside `vllm/` in their own directory.
 
-The model-server image runs `apply.py` to select a series, apply missing patches, and compile the changed Python files. Rust source preparation reads `source.series` without selecting a Python package version. Run source preparation or image construction again to check that an already-patched tree is accepted.
+Add the patch to the consuming series. `source.series` defines the pinned source stack; `version-map.yaml` selects compatibility series for installed Python versions. Several versions may share a series. Series paths are relative to this directory, and patches use `-p1` from a directory containing `vllm/`.
 
-Patches for another library belong in a separate directory alongside `vllm/`.
+## Validate the consuming build
+
+For the pinned source stack, run from the repository root:
+
+```bash
+make vllm-source
+```
+
+For installed-package changes, rebuild the model-server with the selected inference runtime using the [source deployment guide](../../../docs/custom-deployment.md). The image applies missing patches and compiles the changed Python files.
+
+Repeat source preparation or image construction to check that an already-patched tree is accepted. Exercise the affected runtime before extending the version mapping to another upstream version.

@@ -2,42 +2,48 @@
 
 English | [简体中文](arrival-rate_zh.md) · [Performance examples](README.md)
 
-After [setup](README.md#setup), send at an average of five requests per second while allowing up to sixteen concurrent requests:
+Use concurrency to measure capacity, or a request rate to model incoming traffic. Run these examples after [setup](README.md#setup).
+
+## Keep the service busy
 
 ```bash
-foretoken perf examples/quickstart \
-  --prompt Hello --request-rate 5 --max-concurrency 16 --num-prompts 100 \
-  --output local,wandb
+foretoken perf examples/quickstart --prompt Hello \
+  --max-concurrency 16 --num-prompts 100 --max-tokens 128 --output local
 ```
 
-`--request-rate` controls the target request rate and `--max-concurrency` limits in-flight requests. The default `--arrival-pattern poisson` uses Poisson arrivals; use `constant` for fixed intervals or `gamma` with `--burstiness` for bursty arrivals; use `--trace` separately for timestamp replay. `--request-rate -1` sends as fast as possible, and `--max-concurrency -1` removes the concurrency cap. Defaults are no rate limit and one concurrent request. Generated arrivals, multi-turn conversations, and multiple datasets use the same request-rate, concurrency, warmup, and duration controls.
+Without a rate limit, new work starts as capacity becomes available. `--max-concurrency` defaults to 1; `-1` removes the limit. For multi-turn data, it limits conversations in progress, while `--num-prompts` counts the total HTTP turns.
 
-To remove the concurrency cap:
+## Set an arrival rate
 
 ```bash
-foretoken perf examples/quickstart \
-  --prompt Hello --request-rate 5 --max-concurrency -1 --num-prompts 100 \
-  --output local,wandb
+foretoken perf examples/quickstart --prompt Hello \
+  --request-rate 5 --max-concurrency 16 --num-prompts 100 \
+  --max-tokens 128 --output local
 ```
 
-With `--request-rate -1 --max-concurrency -1`, the entire request budget starts as fast as possible. Add `--duration 5min` to stop sending new requests after five minutes; omit `--num-prompts` for a duration-bounded workload. Multi-turn data uses the same HTTP request budget and limits conversations in progress.
+The target is an average of five requests/s, using Poisson arrivals. With multi-turn data, the rate controls conversation starts instead. The concurrency limit can delay starts when earlier work has not finished; `--max-concurrency -1` removes that constraint.
 
-To use fixed or Gamma arrivals:
+| Arrival choice | Timing |
+| --- | --- |
+| `--arrival-pattern poisson` (default) | Random intervals averaging the selected rate |
+| `--arrival-pattern constant` | Fixed intervals |
+| `--arrival-pattern gamma --burstiness 0.5` | Bursty intervals; smaller shape values are more bursty, 1 is Poisson |
+
+`constant` and `gamma` require a positive `--request-rate`. The default `--request-rate -1` sends as fast as possible. Use [trace replay](studychat.md) for recorded timestamps.
+
+## Measure for a fixed duration
 
 ```bash
-foretoken perf examples/quickstart \
-  --prompt Hello --request-rate 5 --arrival-pattern constant \
-  --max-concurrency 16 --num-prompts 100 --output local,wandb
-
-foretoken perf examples/quickstart \
-  --prompt Hello --request-rate 5 --arrival-pattern gamma \
-  --burstiness 0.5 --max-concurrency 16 --num-prompts 100 --output local,wandb
+foretoken perf examples/quickstart --prompt Hello \
+  --max-concurrency 16 --duration 5min --max-tokens 128 --output local
 ```
 
-## Example output
+New requests stop after five minutes; in-flight requests finish. Omit `--num-prompts` for a duration-only run, or supply both to stop at whichever bound is reached first. An unlimited, unrated workload requires a request budget rather than `--duration`.
 
-A short run with a lower arrival rate:
+Time options accept `ms`, `s`, `m`/`min`, `h`, or `d`; unitless values use seconds. Add `--warmup-requests` to run warmup before measurement, excluded from the summary.
 
-![CLI output](../imgs/arrival-rate-cli.png)
+## Read the load response
 
-![W&B run](../imgs/arrival-rate-wandb.png)
+Compare requested rate with achieved throughput, observed request concurrency, and latency percentiles. [Sweeps](sweep.md) compare several rates or limits; [SLO measurement](slo.md) reports the share of requests meeting latency targets.
+
+![Arrival-rate summary](../imgs/arrival-rate-cli.png)

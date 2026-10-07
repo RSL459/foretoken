@@ -5,165 +5,59 @@
 
 [English](k3d-deployment.md) | [中文](k3d-deployment_zh.md)
 
-k3d 在 Docker 容器中运行轻量级 Kubernetes 发行版 k3s。它适合在一台共享 GPU 服务器上创建相互隔离、可随时删除的 Foretoken 集群，同时继续使用标准 Helm、CRD 和 Kubernetes API。k3d 集群的节点位于同一台 Docker 主机；跨物理机器部署使用 k3s 或 Kubernetes。
+在一台 Linux 主机上运行支持 GPU 的 Kubernetes 集群。k3d 的节点运行在 Docker 容器中；跨物理机器部署请使用 [Kubernetes 部署指南](kubernetes-deployment_zh.md)。
 
-## 前置条件
+## 开始前
 
-主机需要：
+安装 Python 3.11+、Git、Docker、NVIDIA 驱动、[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)、[k3d](https://k3d.io/stable/#installation)、[kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/) 和 [Helm](https://helm.sh/docs/intro/install/)。为 Docker 配置 NVIDIA 运行时，并确认当前用户可以无 `sudo` 执行 `docker info`。
 
-- Python 3.11 或更高版本；
-- Linux；
-- NVIDIA 驱动程序；
-- NVIDIA Container Toolkit；
-- 可使用 NVIDIA 运行时的 Docker；
-- k3d、kubectl 和 Helm。
+示例申请 1 张 GPU、8 核 CPU 和 52 GiB 主机内存，另外需要为平台预留资源。
 
-## 1. 准备 Linux GPU 主机
-
-下面命令适用于 Ubuntu 或 Debian 系统。宿主机依赖只需安装一次；不要使用 `sudo` 运行 `foretoken`。
-
-```bash
-sudo apt-get update
-sudo apt-get install -y docker.io curl ca-certificates gnupg
-sudo usermod -aG docker "$USER"
-newgrp docker
-```
-
-安装 NVIDIA Container Toolkit 并配置 Docker：
-
-```bash
-distribution=$(. /etc/os-release; echo "$ID$VERSION_ID")
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey |
-  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -fsSL "https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list" |
-  sed 's#^deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' |
-  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-```
-
-安装 k3d、kubectl 和 Helm，然后检查主机：
-
-```bash
-curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-curl -fsSL https://dl.k8s.io/release/stable.txt -o /tmp/kubectl-version
-curl -fsSLO "https://dl.k8s.io/release/$(cat /tmp/kubectl-version)/bin/linux/amd64/kubectl"
-sudo install -m 0755 kubectl /usr/local/bin/kubectl
-rm kubectl /tmp/kubectl-version
-
-nvidia-smi
-docker info
-k3d version
-kubectl version --client
-helm version --short
-```
-
-## 3. 进入仓库并选择 GPU
-
-获取源码后，从仓库根目录执行后续命令：
+## 1. 获取示例并选择 GPU
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install -e .
-```
-
-查看 GPU：
-
-```bash
+pip install foretoken
 nvidia-smi
 ```
 
-选择没有其他任务的 GPU。快速开始需要 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。下面以 GPU 6、7 和集群名 `foretoken-qwen-test` 为例，按实际空卡修改。Docker 限定节点可见的物理卡，Pod 再从中申请 GPU 数量：
+按 `nvidia-smi` 的编号选择空闲 GPU。下面使用 GPU 0；需要两张卡时可改为 `0,1`：
 
 ```bash
-export GPU_INDICES=6,7
-export CLUSTER=foretoken-qwen-test
-```
-
-## 4. 创建限定 GPU 的 k3d 集群
-
-```bash
+GPU_INDICES=0
+CLUSTER=foretoken-dev
 foretoken cluster create k3d --name "$CLUSTER" --gpus "$GPU_INDICES"
 kubectl get nodes
 ```
 
-命令会挂载 NVIDIA 运行时和仓库中的 `data/` 目录，安装 NVIDIA 设备插件，并切换到新建集群的 kubeconfig context。
+集群使用选定的 GPU，并挂载仓库中的 `data/` 保存模型和缓存。CLI 会安装 NVIDIA 设备插件，并切换到新集群的 Kubernetes context。
 
-## 5. 安装并访问 Foretoken
-
-### 4.1 选择部署方式
-
-从当前源码构建并安装集群平台：
+## 2. 安装平台并部署模型
 
 ```bash
-foretoken install -e .
-```
-
-使用发布包和镜像时，从所选[发布页面](https://github.com/shiweijiezero/foretoken/releases)取得示例，再安装：
-
-```bash
-pip install foretoken
 foretoken install
-```
-
-### 4.2 本地模式
-
-部署快速开始示例，解析 k3s ServiceLB 为前端分配的地址：
-
-```bash
-foretoken deploy examples/quickstart --timeout 20m
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
-```
-
-### 4.3 网关模式
-
-先在 `examples/quickstart/frontend.yaml` 中设置对外域名：
-
-```yaml
-spec:
-  hostname: foretoken.example.com
-```
-
-启用网关模式并部署快速开始示例：
-
-```bash
-foretoken install -e . --frontend-mode gateway
-# 发布安装使用：foretoken install --frontend-mode gateway
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-解析已配置的 Gateway 入口：
+示例部署一个 `Qwen/Qwen3-0.6B` 模型副本和一个前端服务。如需从当前源码构建平台，改用 `pip install -e .` 和 `foretoken install -e .`，后续代码修改仍通过同一条 `foretoken deploy` 命令部署。修改引擎的用法见[源码部署指南](custom-deployment_zh.md)。
+
+## 3. 发送请求
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
-```
-
-### 4.4 发送 OpenAI API 兼容格式的请求
-
-```bash
-curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
-  -H "Host: $FORETOKEN_REQUEST_HOST" \
+FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
-  -d '{
-    "model": "Qwen/Qwen3-0.6B",
-    "messages": [{"role": "user", "content": "Reply with: Foretoken is ready"}],
-    "max_tokens": 32,
-    "temperature": 0
-  }'
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"请回复：Foretoken 已就绪"}],"max_tokens":32,"temperature":0}'
 printf '\n'
 ```
 
-## 5. 清理
+通过域名和 Gateway 访问的设置见[网关模式](../cli/README_zh.md#网关模式)。
 
-删除集群：
+## 4. 清理
 
 ```bash
 foretoken cluster delete k3d --name "$CLUSTER"
 ```
 
-删除集群会停止其中的 Pod 并释放 GPU。保留 `data`，创建新集群时恢复相同 bind mount，即可复用已下载的模型。
+删除集群会停止其中的工作负载并释放 GPU。宿主机的 `data/` 目录保留，之后从同一仓库创建集群时可以继续复用。

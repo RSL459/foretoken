@@ -7,114 +7,86 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-使用 lm-evaluation-harness 或 EvalScope 评测运行中的模型。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。添加 `--reference` 可[比较参考与候选模型](distribution-comparison_zh.md)：既能比较固定原文前缀下的概率分布，也能比较贪心生成的 token 序列。
-
-## lm-evaluation-harness
-
-先评测 100 道 GSM8K 数学题：
+使用 lm-evaluation-harness 或 EvalScope 对模型答案评分。完成[准备步骤](../../README_zh.md#开始使用)，在仓库根目录运行 100 道 GSM8K 数学题：
 
 ```bash
-foretoken eval examples/quickstart \
-  --evaluator lm-eval \
-  --model Qwen/Qwen3-0.6B \
-  --tasks gsm8k --limit 100 \
-  --output local,wandb
+foretoken eval examples/quickstart --tasks gsm8k --limit 100 --output local
 ```
 
-汇总结果列出任务得分、答案提取方式、样本数，以及框架提供的标准误差。默认框架是 `lm-eval`，任务名称和参数直接采用[上游 CLI 的写法](https://github.com/EleutherAI/lm-evaluation-harness/blob/main/docs/interface.md)：
-
-- `--num_fewshot 0` 使用零样本提示。
-- `--log_samples` 保存逐题输入和回答。
-- `--model_args num_concurrent=4` 同时发送四个 API 请求。
-
-### 候选答案似然与困惑度
-
-PIQA 通过比较候选答案的概率选择答案。WikiText 测量文本困惑度（PPL），数值越低，表示原文越容易被模型预测。这两类任务需要[源码安装的 Foretoken 平台](../../../docs/custom-deployment_zh.md)，或能返回输入 token 对数概率的已有 Completions 服务：
-
-```bash
-foretoken eval examples/quickstart \
-  --tasks piqa --limit 100 --output local
-
-foretoken eval examples/quickstart \
-  --tasks wikitext --limit 100 --output local
-```
-
-分词器从部署配置读取；使用已有 URL 时默认采用 `--model`。若模型名是服务别名，或文件仅在服务器可见，可用 `--model_args tokenizer=MODEL_OR_LOCAL_DIRECTORY` 指定实际模型仓库或客户端本地分词器目录。
-
-候选答案评分默认使用原始文本，任务要求指令模型模板时添加 `--apply_chat_template`。困惑度评测使用原始语料，不套用聊天模板。
-
-## 比较多个部署的任务评分
-
-按[量化模型示例](../../../examples/quantized-model/README_zh.md)准备好部署后，将多个 Kustomize 目录写在任务参数之前，即可依次对相同任务评分：
-
-```bash
-foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
-  --tasks piqa --limit 100 --output local,wandb,plot
-```
-
-各部署依次评测。通过 `evaluation_comparison.csv` 比较任务得分及框架提供的标准误差；详细报告保存在各次运行的结果目录中。
-
-如需比较[参考模型与多个候选模型的概率分布或贪心生成序列](distribution-comparison_zh.md)，请显式添加 `--reference`。
-
-## EvalScope
-
-```bash
-foretoken eval examples/quickstart \
-  --evaluator evalscope \
-  --model Qwen/Qwen3-0.6B \
-  --datasets gsm8k --limit 100 \
-  --output local,wandb
-```
-
-汇总结果展示任务得分和样本数，各类别及子集的详细分数见保存的报告。通过 [EvalScope 原生参数](https://evalscope.readthedocs.io/zh-cn/latest/get_started/basic_usage.html)配置任务，例如 `--dataset-args` 和 `--generation-config`。
-
-两个框架都可去掉 `--limit`，运行完整的所选任务。提示词和判分规则由框架及任务定义。全部选项分别见 `foretoken eval --evaluator lm-eval --help` 和 `foretoken eval --evaluator evalscope --help`。
-
-## 评测已有服务
-
-将部署目录换成服务的 Chat Completions URL，并指定模型名：
-
-```bash
-foretoken eval \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --evaluator lm-eval \
-  --model Qwen/Qwen3-0.6B \
-  --tasks gsm8k --limit 100 \
-  --output local,wandb
-```
-
-此模式不使用 Kubernetes 资源。需要认证时添加 `--api-key`。Foretoken Gateway 部署则传入 Kustomize 目录，由命令查找地址并配置路由请求头。
-
-## 恢复中断的评测
-
-单部署评测保留本地输出即可保存进度。中断后，在原命令中追加 `--resume`，指向该次运行打印的结果目录。将下面的 `results/previous-run` 换成实际目录：
-
-```bash
-foretoken eval examples/quickstart \
-  --evaluator lm-eval --tasks gsm8k --limit 100 \
-  --resume results/previous-run --output local
-```
-
-恢复会创建新的结果目录，复用已完成工作，并汇总完整评分；原目录保持不变。如果再次中断，从最新目录继续恢复。模型权重、任务配置、生成参数和样本范围应保持不变。
-
-| 评测类型 | 复用的工作 |
-| --- | --- |
-| lm-evaluation-harness | 已完成的文本生成结果（包括多次采样），以及候选答案和困惑度任务已完成的似然评分窗口 |
-| EvalScope | 服务地址和评测设置不变时，复用独立样本已完成的预测和评分 |
-| 模型概率分布对比 | 已完成的评分窗口，见[恢复概率分布对比](distribution-comparison_zh.md#恢复概率分布对比) |
-
-按上述方式恢复时，使用 `--resume`，不再指定原生 `--use_cache` 或 `--use-cache`。
+默认使用 lm-evaluation-harness（`lm-eval`）。去掉 `--limit` 可运行完整任务。
 
 ## 查看评分
+
+汇总结果列出任务得分、答案提取方式（filter）、样本数和框架提供的标准误差。比较分数时，选择相同指标和 filter，并保持任务设置及样本范围一致。
 
 打开命令打印的结果目录：
 
 | 文件或目录 | 内容 |
 | --- | --- |
-| `metrics.json` | 任务得分、子集、答案提取方式、样本数，以及框架提供的不确定性或执行状态 |
-| `native/` | 框架报告及其生成的逐样本记录 |
-| `evaluator.log` | 评测框架的运行日志 |
+| `metrics.json` | 得分、子集、filter、样本数，以及框架提供的不确定性或执行状态 |
+| `native/` | 框架报告与生成的逐样本记录 |
+| `evaluator.log` | 评测进度和诊断日志 |
 
-结果保存位置见[输出设置](../../README_zh.md#查看和保存结果)。
+添加 `--log_samples` 可保存 lm-eval 的逐题输入和回答。[输出设置](../../README_zh.md#查看和保存结果)支持 W&B 和图表，W&B 的 `Evaluation/Scores` 表保留详细得分。
 
-比较分数时，使用相同的框架、任务配置和样本范围。
+## 选择 lm-evaluation-harness 任务
+
+任务名称和选项采用[上游接口](https://github.com/EleutherAI/lm-evaluation-harness/blob/main/docs/interface.md)。多个任务在 `--tasks` 中以逗号分隔，`--num_fewshot 0` 使用零样本提示，`--model_args num_concurrent=4` 同时发送四个 API 请求。提示构造和评分规则由所选任务决定。
+
+### 候选答案似然与困惑度
+
+PIQA 比较候选答案的概率来选择答案。WikiText 测量困惑度：数值越低，原文越容易被模型预测。这些任务需要[源码安装的 Foretoken 平台](../../../docs/custom-deployment_zh.md)，或能返回输入 token 对数概率的已有 Completions 服务：
+
+```bash
+foretoken eval examples/quickstart --tasks piqa --limit 100 --output local
+
+foretoken eval examples/quickstart --tasks wikitext --limit 100 --output local
+```
+
+tokenizer 从部署配置推导，URL 模式则使用 `--model`。模型采用服务别名或 tokenizer 文件在客户端本地时，可用 `--model_args tokenizer=MODEL_OR_LOCAL_DIRECTORY` 指定。候选答案评分默认使用原始文本；任务要求指令模型模板时加上 `--apply_chat_template`。困惑度使用原始语料，不套聊天模板。
+
+## 使用 EvalScope
+
+```bash
+foretoken eval examples/quickstart --evaluator evalscope \
+  --datasets gsm8k --limit 100 --output local
+```
+
+保存的报告包含类别和子集得分。用 [EvalScope 原生选项](https://evalscope.readthedocs.io/zh-cn/latest/get_started/basic_usage.html)配置任务，例如 `--dataset-args` 和 `--generation-config`。
+
+已安装版本的选项分别见 `foretoken eval --evaluator lm-eval --help` 和 `foretoken eval --evaluator evalscope --help`。
+
+## 比较多个部署的任务评分
+
+准备好[量化模型示例](../../../examples/quantized-model/README_zh.md)，将部署目录写在任务参数之前：
+
+```bash
+foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
+  --tasks piqa --limit 100 --output local,plot
+```
+
+各部署依次运行。`evaluation_comparison.csv` 对齐任务得分及框架提供的标准误差，各次运行保留框架报告。需要比较概率分布或生成 token 序列而非任务得分时，使用[参考与候选模型对比](distribution-comparison_zh.md)。
+
+## 评测已有服务
+
+将下方 URL 和模型名换成服务的 Chat Completions 地址及公开模型 ID：
+
+```bash
+foretoken eval --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen/Qwen3-0.6B --tasks gsm8k --limit 100 --output local
+```
+
+此模式不使用 Kubernetes；认证通过 `--api-key` 提供。Foretoken Gateway 部署传入 Kustomize 目录，自动查找路由信息。
+
+## 恢复中断的评测
+
+单部署评测保留本地输出即可保存进度。中断后，在原命令中加上 `--resume`，指向打印的结果目录。替换下面的 `results/previous-run`：
+
+```bash
+foretoken eval examples/quickstart --tasks gsm8k --limit 100 \
+  --resume results/previous-run --output local
+```
+
+lm-eval 复用已完成的生成或似然评分窗口，EvalScope 复用已完成的预测和评分。恢复会把完整结果写入新目录，原目录保持不变。再次中断时从最新目录恢复，保持权重、任务设置和样本范围一致；EvalScope 还要求服务 URL 不变。此流程使用 `--resume`，不同时指定原生 `--use_cache` 或 `--use-cache`。
+
+[概率分布对比](distribution-comparison_zh.md#恢复概率分布对比)也可复用已完成的评分窗口。

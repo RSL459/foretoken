@@ -9,15 +9,17 @@ Use kind for a local Kubernetes development cluster. kind runs Kubernetes nodes 
 
 ## 1. Install the tools and create a cluster
 
-Install Docker, kind, kubectl, Python 3.11+, and Helm. From the Foretoken repository root:
+Install Docker, kind, kubectl, Python 3.11+, and Helm, then get the source checkout:
 
 ```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 pip install -e .
 foretoken cluster create kind --name foretoken-dev
 kubectl get nodes
 ```
 
-The command creates the kind cluster, refreshes its kubeconfig context, and waits for the control plane.
+The new cluster becomes the active Kubernetes context.
 
 ## 2. Build and install Foretoken
 
@@ -32,8 +34,6 @@ The Quick Start model requires a GPU; use the [k3d deployment guide](k3d-deploym
 ## 3. Remove the cluster
 
 ```bash
-foretoken delete examples/quickstart
-foretoken uninstall
 foretoken cluster delete kind --name foretoken-dev
 ```
 

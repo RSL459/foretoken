@@ -9,7 +9,7 @@
 
 ## 从源码安装
 
-本机需要 Python 3.11+、Git、kubectl 和 Helm。集群需要允许运行 BuildKit Pod 和发布 Job，并有默认 StorageClass 保存编译缓存与发布的应用文件。需要自定义存储类时，在 `deploy/platform-values.yaml` 中分别用 `development.build.storageClassName` 或 `applicationFiles.storageClassName` 覆盖，并通过 `--values` 传入。
+准备 Python 3.11+、Git、kubectl、Helm，以及有默认 StorageClass 的集群。远程集群还需按 [Kubernetes 指南](kubernetes-deployment_zh.md#将当前源码部署到集群)准备镜像仓库。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -29,7 +29,7 @@ pip install -e .
 foretoken install -e .
 ```
 
-编译在集群中执行。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
+编译在集群中执行，GPU 配置见 [k3d 部署指南](k3d-deployment_zh.md)。自定义构建或应用文件的存储类时，在 values 文件中设置 `development.build.storageClassName` 或 `applicationFiles.storageClassName`，并通过 `--values` 传入。
 
 ## 部署与更新代码
 
@@ -39,9 +39,7 @@ foretoken install -e .
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-修改源码后，再执行同一条命令。代码更新沿用保存的安装设置和运行环境；运行环境依赖或镜像构建配置变化时，会更新平台安装。
-
-受影响的工作负载会重启，并可能重新加载模型权重。命令等待所选代码和服务路由生效后退出。源码和部署配置均未变化时，现有工作负载保持运行。请求与清理操作沿用快速开始中的[发送请求](../README_zh.md#4-发送测试请求)和[停止与卸载](../README_zh.md#停止与卸载)。
+修改源码后，重复执行部署命令。它会沿用安装设置，更新受影响的工作负载，模型可能重新加载权重；未变化的工作负载继续运行。请求命令见[单模型示例](../examples/quickstart/README_zh.md#部署并调用)，清理操作见[快速开始](../README_zh.md#停止与卸载)。
 
 CLI 的 Python 代码直接从 editable 源码目录加载；修改其 Python 依赖后，重新执行 `pip install -e .`。
 
@@ -91,7 +89,7 @@ make image-model-server-omni \
 使用 k3d 时，将 `CLUSTER` 设为已有集群的名称，再导入镜像：
 
 ```bash
-CLUSTER=foretoken-qwen-test
+CLUSTER=foretoken-dev
 k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
 ```
 

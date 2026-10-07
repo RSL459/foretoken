@@ -17,9 +17,8 @@
 ## 部署
 
 默认从公开 Hugging Face 仓库 `MiniMaxAI/MiniMax-H3` 自动下载权重，
-与 Quick Start 示例共用仓库根目录的 `data/`。本地 k3d 复用建集群时的数据挂载；
-远程集群按[模型存储指南](../../../../docs/model-storage_zh.md)，将 `cache.yaml`
-中的 `directory` 改为目标节点可访问的目录。
+本地 k3d 与 Quick Start 示例共用仓库根目录的 `data/`。
+远程集群在部署前准备足够容纳 checkpoint 的缓存空间，可使用动态 PVC 或已有节点目录，配置见[模型存储](../../../../docs/model-storage_zh.md)。
 
 使用 Gateway 时，先在本配方的 `frontend.yaml` 中设置 `spec.hostname`，
 并按[网关模式](../../../../README_zh.md#网关模式)安装平台，再部署模型。
@@ -91,19 +90,9 @@ spec:
   source: modelscope
 ```
 
-使用 Hugging Face 兼容镜像站时，将地址加入 `deploy/platform-values.yaml`，
-在部署模型前重新执行平台安装命令：
-
-```yaml
-runtime:
-  vllm:
-    modelSource:
-      endpoint: https://your-huggingface-compatible-mirror.example
-```
-
-保留同一文件中的 `runtime.vllmOmni.image`。此地址用于 Hugging Face 下载。
-使用离线权重时，按[模型来源指南](../../../../docs/model-sources_zh.md)选择 `source: local`，
-并将模型标识设为模型根目录或所选 FL2VA/Ref2VA 目录；请求中使用相同的模型标识。
+Hugging Face 兼容下载地址和离线权重的用法见[模型来源](../../../../docs/model-sources_zh.md)。
+应用平台 values 时保留 `runtime.vllmOmni.image`。本地权重可使用模型根目录或所选
+FL2VA/Ref2VA 目录，请求中使用同一模型标识。
 
 ## 清理
 

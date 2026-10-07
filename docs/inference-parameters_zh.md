@@ -5,7 +5,7 @@
 
 [English](inference-parameters.md) | 简体中文
 
-通过 `ModelService.spec.engineArgs` 配置所选引擎，参数名沿用原生名称，不写 `--`：
+在 `ModelService.spec.engineArgs` 中设置引擎参数，使用原生名称，不写 `--`。修改 `model.yaml` 后重新部署：
 
 ```yaml
 spec:
@@ -19,65 +19,34 @@ spec:
     gpu-memory-utilization: 0.85
 ```
 
-值直接使用 YAML 布尔值、数字、字符串、列表或对象。未填写的选项沿用引擎默认值，`null` 表示不传该原生选项。具体取值需与引擎镜像、模型及硬件匹配。
+值可以是 YAML 布尔值、数字、字符串、列表或对象。未填写的选项沿用引擎默认值，`null` 表示不传该选项。支持的取值取决于引擎镜像、模型和硬件。Pool 的 `engineArgs` 会整体替换服务级字典，而不是与其合并。
 
-## 选择模型服务节点
+## 选择引擎设置
 
-通过 Kubernetes 节点 label，将整个服务或某个 Pool 固定到指定机器组。为组内每台节点设置相同的 key/value：
+`max-model-len` 限制输入和输出合计的 token 数。`gpu-memory-utilization` 设置每个引擎实例可用的显存比例。权重量化和 `kv-cache-dtype` 分别控制模型权重与 attention KV Cache 的存储精度。
 
-```bash
-kubectl label node <node-a> workload-group=group-a --overwrite
-kubectl label node <node-b> workload-group=group-a --overwrite
-kubectl get nodes -L workload-group
+调度、计算精度、计算图捕获等原生选项见 [vLLM 参数文档](https://docs.vllm.ai/en/latest/configuration/engine_args/)。模型标识、服务端点、传输连接器和性能剖析设置由 Foretoken 提供。vLLM-Omni 部署使用[独立运行时](custom-deployment_zh.md#vllm-omni-运行时)及对应引擎的参数。
+
+## 让并行度与 GPU 资源一致
+
+vLLM 每个模型副本的 GPU 数量需满足：
+
+```text
+nodes × resources.requests.gpu.count = TP × PP × DP × PCP
 ```
 
-然后在模型 YAML 中使用同一组 key/value：
+`nodes` 是每个副本使用的 Kubernetes 节点数，GPU 请求作用于每个成员 Pod。原生参数分别设置张量并行（`tensor-parallel-size`，TP）、流水线并行（`pipeline-parallel-size`，PP）、数据并行（`data-parallel-size`，DP）和 Prefill 上下文并行（`prefill-context-parallel-size`，PCP）。Decode 上下文并行（`decode-context-parallel-size`，DCP）复用已有 rank，不增加 GPU 数。服务的 `replicas` 与引擎内部 DP 分别配置。
 
-```yaml
-spec:
-  nodeSelector:
-    workload-group: group-a
-```
+专家并行使用 `enable-expert-parallel`、`all2all-backend` 和 `enable-eplb`。跨节点副本需要合适的通信设备，以及所有成员都能访问的缓存存储；安装会准备 LeaderWorkerSet 和 RDMA 分配。
 
-`ModelService.spec.nodeSelector` 选择默认 Pool，`modelPools[].nodeSelector` 为单个 Pool 选择另一组节点。Kubernetes 会把模型服务和运行时准备 Pod 调度到带有该 label 的节点。
+P/D 或 E/P/D 各 Pool 可以分别选择支持的并行方式。PCP/DCP 是否可用取决于 attention backend。使用 [E/P/D 运行时](../examples/encoder-prefill-decode/README_zh.md)时，Prefill 与 Decode 的 PCP/DCP 缓存布局需要匹配，TP 大小需互为整数倍。
 
-## vLLM 常用参数
-
-| 引擎参数 | 用途 |
-| --- | --- |
-| `max-model-len` | 输入和输出合计的最大 token 数 |
-| `dtype` | 模型计算精度 |
-| `quantization` | 权重量化方法 |
-| `kv-cache-dtype` | KV Cache 精度，与权重量化分别配置 |
-| `gpu-memory-utilization` | 每个引擎实例可使用的显存比例 |
-| `max-num-seqs` | 每轮调度的最大序列数 |
-| `max-num-batched-tokens` | 每轮调度的最大 token 数 |
-| `enforce-eager` | `true` 时禁用计算图捕获 |
-| `speculative-config` | 推测解码的原生配置字典 |
-| `tensor-parallel-size` | 张量并行度（TP） |
-| `pipeline-parallel-size` | 流水线并行度（PP） |
-| `data-parallel-size` | 单个模型副本内的数据并行度（DP） |
-| `prefill-context-parallel-size` | Prefill 上下文并行度（PCP） |
-| `decode-context-parallel-size` | Decode 上下文并行度（DCP），复用已有 rank |
-
-`nodes` 指定每个模型副本使用的 Kubernetes 节点数，`resources.requests.gpu.count` 是每个成员 Pod 申请的 GPU 数量。两者乘积必须等于 vLLM 的 TP × PP × DP × PCP，DCP 不增加 GPU 数。专家并行使用原生 `enable-expert-parallel`、`all2all-backend` 和 `enable-eplb` 参数。
-
-模型副本可以跨节点运行，每个节点放置一个成员，按完整执行组启动、判断就绪和重启。`foretoken install` 自动准备 LeaderWorkerSet 控制器与 RDMA 分配，通信库从已分配设备中选择链路。跨节点使用的持久缓存需要所有成员均可访问。
-
-P/D 和 E/P/D 各 Pool 可以在模型和引擎支持的组合内分别配置并行参数。PCP、DCP 的支持还取决于 attention backend。[EPD runtime 镜像](../examples/encoder-prefill-decode/README_zh.md) 包含支持上下文并行的 Mooncake 传输实现：Prefill 与 Decode 需要使用匹配的 PCP/DCP 缓存布局，TP 大小需互为整数倍。
-
-填写 `modelPools[].engineArgs` 时，它会整体替换该 Pool 继承的服务级原生参数。服务副本数与引擎内部的数据并行度分别配置。
-
-开启 EP 后，attention 可以按 TP × DP 执行，路由专家则分布在对应的 EP 组中。共享专家不会让 attention 的 KV Cache 在 DP ranks 之间共享。
-
-## 推测解码
+## 启用推测解码
 
 将完整的原生字典写在一起：
 
 ```yaml
 spec:
-  model: Qwen/Qwen3-0.6B
-  backend: vllm
   engineArgs:
     speculative-config:
       method: ngram
@@ -85,8 +54,37 @@ spec:
       prompt_lookup_max: 4
 ```
 
-方法和子字段沿用 vLLM。需要草稿权重时，`model` 可填写 Hub 模型 ID 或容器内可见的绝对目录，由 vLLM 下载、加载和缓存。`spec.source: modelscope` 同时适用于主模型和草稿模型的 Hub ID。
+方法和子字段沿用 vLLM。需要草稿权重的方法，其 `model` 可填写 Hub 模型标识或容器内可见的绝对目录。`spec.source: modelscope` 同时适用于主模型和草稿模型的 Hub 标识。
 
-## 平台管理的选项
+## 工具、思考与结构化输出
 
-模型标识、启动端点、传输连接器和性能剖析由 Foretoken 管理，其余原生选项交给所选引擎解释。完整选项见 [vLLM 参数文档](https://docs.vllm.ai/en/latest/configuration/engine_args/)；当前已实现的 backend 为 vLLM。
+强制选择工具或严格约束工具参数时，模型需要支持对应的结构化输出格式。支持结构标签时，在 ModelService 中声明该能力：
+
+```yaml
+spec:
+  features:
+    structuredOutputs: [structuralTag]
+```
+
+使用 `spec.modelPools` 时，在各适用 Pool 的 `features.structuredOutputs` 中声明，不使用服务级 `features`；保留已有的其他格式。
+
+输出 token 预算包含思考内容。Messages 必须填写 `max_tokens`，不接受独立的 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `incomplete`。客户端只应执行完整的工具调用。
+
+## 选择模型服务节点
+
+将 `NODE_NAME` 替换为实际节点名称，再添加标签：
+
+```bash
+kubectl label node NODE_NAME workload-group=group-a --overwrite
+kubectl get nodes -L workload-group
+```
+
+为组内每个节点设置相同标签，然后在模型 YAML 中选择：
+
+```yaml
+spec:
+  nodeSelector:
+    workload-group: group-a
+```
+
+服务级选择器用于默认 Pool；如需为某个 Pool 单独选择节点，使用 `modelPools[].nodeSelector`。

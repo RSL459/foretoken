@@ -20,10 +20,10 @@ Run the recipe commands below from the Foretoken repository root.
 
 The default model source is the public Hugging Face repository
 `MiniMaxAI/MiniMax-H3`. Weights download automatically on first startup and share
-the repository-root `data/` directory with the Quick Start examples. Local k3d
-uses the data mount from its setup guide; for a remote cluster, set `directory`
-in `cache.yaml` to a directory available on the target node, as described in
-[model storage](../../../../docs/model-storage.md).
+the repository-root `data/` directory with the Quick Start examples on local
+k3d. On a remote cluster, provision enough cache capacity for the checkpoint
+before deployment, using a dynamic PVC or a prepared node directory as described
+in [model storage](../../../../docs/model-storage.md).
 
 For Gateway access, set `spec.hostname` in this recipe's `frontend.yaml` and
 install the platform in [Gateway mode](../../../../README.md#gateway-mode)
@@ -97,21 +97,10 @@ spec:
   source: modelscope
 ```
 
-For a Hugging Face-compatible mirror, add its URL to `deploy/platform-values.yaml`
-and rerun the platform installation command before deploying the model:
-
-```yaml
-runtime:
-  vllm:
-    modelSource:
-      endpoint: https://your-huggingface-compatible-mirror.example
-```
-
-Keep `runtime.vllmOmni.image` in the same file. This endpoint applies to
-Hugging Face downloads. For offline weights, use `source: local` with the model
-root or selected FL2VA/Ref2VA directory described in
-[model sources](../../../../docs/model-sources.md), and use the same model
-identifier in the request.
+For a Hugging Face-compatible endpoint or offline weights, follow
+[model sources](../../../../docs/model-sources.md). Keep `runtime.vllmOmni.image`
+when applying platform values. Local weights can use the model root or the
+selected FL2VA/Ref2VA directory; requests use the same model identifier.
 
 ## Clean up
 

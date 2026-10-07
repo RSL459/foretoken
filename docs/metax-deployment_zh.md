@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 开始前
 
-准备好 Foretoken CLI、kubectl、curl，以及管理员提供的集群访问配置和 Foretoken 示例源码。命令均在仓库根目录执行。CLI 尚未安装时，按[命令行工具指南](../cli/README_zh.md#安装命令行工具)安装。
+准备好 Foretoken CLI、kubectl、curl，以及管理员提供的集群访问配置和 Foretoken 示例源码。命令均在仓库根目录执行。CLI 尚未安装时，按[命令行工具指南](../cli/README_zh.md#安装)安装。
 
 和管理员确认两件事：
 
@@ -24,7 +24,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 1. 部署示例模型
 
-在 `examples/quickstart/cache.yaml` 中填写管理员准备的目录或 StorageClass，配置方式见[模型存储](model-storage_zh.md)。
+示例在远程集群默认使用动态模型存储。如需复用已有目录或选择其他 StorageClass，按[模型存储](model-storage_zh.md)修改 `examples/quickstart/cache.yaml`。
 
 在 `examples/quickstart/frontend.yaml` 已有的 `spec` 中加入 `hostname`，将示例域名替换为管理员分配的域名，保留其余配置：
 
@@ -39,9 +39,7 @@ spec:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-命令在模型和前端服务 Ready 后退出。
-
-若要使用其他模型，修改 `examples/quickstart/model.yaml`；资源和缓存配置说明见[单模型示例](../examples/quickstart/README_zh.md)。在共享集群中使用其他 namespace 时，需要同时调整示例的 `namespace.yaml` 和 `kustomization.yaml`，不能只修改本机 kubectl 默认 namespace。
+若要使用其他模型，修改 `examples/quickstart/model.yaml`；资源和缓存配置说明见[单模型示例](../examples/quickstart/README_zh.md)。使用其他 namespace 时，同时调整 `namespace.yaml` 和 `kustomization.yaml`。
 
 ## 2. 发送请求
 
@@ -86,6 +84,6 @@ foretoken delete examples/quickstart
 
 ## 请求未成功时
 
-- **部署一直等待或 Pod 为 Pending：** 查看 `kubectl describe pod --namespace foretoken-demo <pod-name>`。GPU、CPU、内存不足或缓存卷无法绑定时，将具体事件交给管理员处理。
-- **返回 404：** 检查配置中的 `hostname` 和请求的 Host 是否一致；`model_not_found` 则表示模型名称不匹配，使用 `/v1/models` 查询。
-- **返回 503：** 先查看 `foretoken status` 和 Pod 日志，确认模型已加载、服务已 Ready，再检查访问入口。
+- 部署一直等待或 Pod 为 Pending： 查看 `kubectl describe pod --namespace foretoken-demo <pod-name>`。GPU、CPU、内存不足或缓存卷无法绑定时，将具体事件交给管理员处理。
+- 返回 404： 检查配置中的 `hostname` 和请求的 Host 是否一致；`model_not_found` 则表示模型名称不匹配，使用 `/v1/models` 查询。
+- 返回 503： 先查看 `foretoken status` 和 Pod 日志，确认模型已加载、服务已 Ready，再检查访问入口。

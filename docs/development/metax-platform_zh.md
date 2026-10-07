@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 集群需要 Kubernetes 1.29 或更高版本、沐曦驱动和设备插件，并提供 `metax-tech.com/gpu` 资源。准备好目标节点可访问的模型目录，或用于模型缓存的 StorageClass；存储配置见[模型存储](../model-storage_zh.md)。前端还需要可访问的 LoadBalancer 地址；使用网关模式时则需要 Gateway 入口。
 
-先安装 [Foretoken 命令行工具](../../cli/README_zh.md#安装命令行工具)，确认 `kubectl` 指向目标集群。安装平台还需要 Helm 和集群权限；共享依赖由命令行工具按需准备。
+先安装 [Foretoken 命令行工具](../../cli/README_zh.md#安装)，确认 `kubectl` 指向目标集群。安装平台还需要 Helm 和集群权限；共享依赖由命令行工具按需准备。
 
 ## 安装发布版
 
@@ -21,7 +21,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 foretoken install
 ```
 
-命令会选择兼容沐曦的发布镜像，安装平台和所需共享依赖，并在平台就绪后返回。网关访问或自定义配置见[命令行安装指南](../../cli/README_zh.md#安装-kubernetes-平台)。
+命令会选择兼容沐曦的发布镜像，安装平台和所需共享依赖，并在平台就绪后返回。网关访问或自定义配置见[命令行安装指南](../../cli/README_zh.md#自定义安装)。
 
 ## 从源码安装
 

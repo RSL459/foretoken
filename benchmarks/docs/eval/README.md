@@ -7,114 +7,86 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) · [Evaluation and profiling](../../README.md)
 
-Evaluate a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. Add `--reference` for [reference/candidate comparisons](distribution-comparison.md): teacher-forced probabilities or greedy generated token sequences.
-
-## lm-evaluation-harness
-
-Run 100 GSM8K math problems:
+Score model answers with lm-evaluation-harness or EvalScope. After [setup](../../README.md#get-started), run 100 GSM8K math problems from the repository root:
 
 ```bash
-foretoken eval examples/quickstart \
-  --evaluator lm-eval \
-  --model Qwen/Qwen3-0.6B \
-  --tasks gsm8k --limit 100 \
-  --output local,wandb
+foretoken eval examples/quickstart --tasks gsm8k --limit 100 --output local
 ```
 
-The summary lists task scores, answer filters, sample counts, and standard errors when available. `lm-eval` is the default evaluator. Task names and parameters follow the [upstream CLI syntax](https://github.com/EleutherAI/lm-evaluation-harness/blob/main/docs/interface.md):
-
-- `--num_fewshot 0` uses zero-shot prompts.
-- `--log_samples` saves individual inputs and answers.
-- `--model_args num_concurrent=4` selects four concurrent API requests.
-
-### Candidate likelihood and perplexity
-
-PIQA selects answers by comparing their probabilities. WikiText measures perplexity: lower values mean the model predicts the text more readily. These tasks need a [source-built Foretoken platform](../../../docs/custom-deployment.md) or an existing Completions service that returns input-token log probabilities:
-
-```bash
-foretoken eval examples/quickstart \
-  --tasks piqa --limit 100 --output local
-
-foretoken eval examples/quickstart \
-  --tasks wikitext --limit 100 --output local
-```
-
-The tokenizer is inferred from the deployment, or from `--model` for an existing URL; override it with `--model_args tokenizer=MODEL_OR_LOCAL_DIRECTORY` when the served name is an alias or its files are only available on the server.
-
-Candidate scoring uses raw text by default. Add `--apply_chat_template` when the task requires an instruction-model template. Perplexity uses the original corpus without a chat template.
-
-## Compare task scores across deployments
-
-After preparing the [quantized-model examples](../../../examples/quantized-model/README.md), pass their Kustomize directories before the task options to score the same task on each service:
-
-```bash
-foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
-  --tasks piqa --limit 100 --output local,wandb,plot
-```
-
-The deployments are evaluated in turn. Compare task scores and available standard errors in `evaluation_comparison.csv`; detailed evaluator reports are saved with each run.
-
-For [reference/candidate distribution or greedy sequence comparisons](distribution-comparison.md), provide `--reference` explicitly with multiple candidate deployment paths.
-
-## EvalScope
-
-```bash
-foretoken eval examples/quickstart \
-  --evaluator evalscope \
-  --model Qwen/Qwen3-0.6B \
-  --datasets gsm8k --limit 100 \
-  --output local,wandb
-```
-
-The summary reports task scores and sample counts; saved reports provide category and subset scores. Use [EvalScope's native options](https://evalscope.readthedocs.io/en/latest/get_started/basic_usage.html), including `--dataset-args` and `--generation-config`, to configure the task.
-
-For both frameworks, omit `--limit` to run the complete selected task. The evaluator and task define prompting and scoring. Run `foretoken eval --evaluator lm-eval --help` or `foretoken eval --evaluator evalscope --help` for the corresponding options.
-
-## Use an existing endpoint
-
-Replace the deployment directory with the service's Chat Completions URL and model name:
-
-```bash
-foretoken eval \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --evaluator lm-eval \
-  --model Qwen/Qwen3-0.6B \
-  --tasks gsm8k --limit 100 \
-  --output local,wandb
-```
-
-This mode uses no Kubernetes resources. Add `--api-key` when authentication is required. For a Foretoken Gateway deployment, pass its Kustomize directory so the command discovers the address and routing headers.
-
-## Resume an evaluation
-
-For a single-deployment evaluation, keep local output to retain progress. After an interruption, repeat the original command with `--resume` pointing to its printed result directory. Replace `results/previous-run` below with that directory:
-
-```bash
-foretoken eval examples/quickstart \
-  --evaluator lm-eval --tasks gsm8k --limit 100 \
-  --resume results/previous-run --output local
-```
-
-The resumed invocation writes a new result directory, reuses completed work, and reports the combined scores. The source directory remains unchanged; if interrupted again, resume from the newest directory. Keep model weights, task configuration, generation settings, and sample selection unchanged.
-
-| Evaluation | Reused work |
-| --- | --- |
-| lm-evaluation-harness | Completed text generations, including repeated sampling, and completed likelihood-scoring windows for candidate answers and perplexity |
-| EvalScope | Completed predictions and reviews for independent samples, with the same service URL and evaluation settings |
-| Distribution comparison | Complete scoring windows; see [resuming a distribution comparison](distribution-comparison.md#resume-a-distribution-comparison) |
-
-Use `--resume` instead of native `--use_cache` or `--use-cache` for this workflow.
+lm-evaluation-harness (`lm-eval`) is the default evaluator. Omit `--limit` to run the complete task.
 
 ## Read scores
+
+The summary lists task scores, answer filters, sample counts, and available standard errors. A filter describes how the framework extracts an answer for scoring. Compare the same metric and filter with matching task settings and sample selection.
 
 Open the result directory printed by the command:
 
 | File or directory | Contents |
 | --- | --- |
-| `metrics.json` | Task scores, subsets, answer filters, sample counts, and available uncertainty or execution status |
-| `native/` | The framework's reports and any generated sample records |
-| `evaluator.log` | The evaluator's execution log |
+| `metrics.json` | Scores, subsets, filters, sample counts, and available uncertainty or execution status |
+| `native/` | Evaluator reports and generated sample records |
+| `evaluator.log` | Evaluator progress and diagnostics |
 
-See [output settings](../../README.md#read-and-save-results) to choose where results are saved.
+Add `--log_samples` for individual lm-eval inputs and answers. [Output settings](../../README.md#read-and-save-results) enable W&B and figures; W&B's `Evaluation/Scores` table retains the detailed scores.
 
-Compare scores using the same evaluator, task configuration, and sample selection.
+## Choose lm-evaluation-harness tasks
+
+Task names and options follow the [upstream interface](https://github.com/EleutherAI/lm-evaluation-harness/blob/main/docs/interface.md). Use comma-separated `--tasks` for several tasks, `--num_fewshot 0` for zero-shot prompts, and `--model_args num_concurrent=4` for four concurrent API requests. Prompting and scoring come from the chosen task.
+
+### Candidate likelihood and perplexity
+
+PIQA selects answers by comparing their probabilities. WikiText measures perplexity: lower values mean the model predicts the text more readily. These tasks need a [source-installed Foretoken platform](../../../docs/custom-deployment.md) or an existing Completions service returning input-token log probabilities:
+
+```bash
+foretoken eval examples/quickstart --tasks piqa --limit 100 --output local
+
+foretoken eval examples/quickstart --tasks wikitext --limit 100 --output local
+```
+
+The tokenizer is inferred from the deployment, or from `--model` for a URL. Override it with `--model_args tokenizer=MODEL_OR_LOCAL_DIRECTORY` for a serving alias or client-local tokenizer files. Candidate scoring uses raw text by default; add `--apply_chat_template` when the task requires an instruction-model template. Perplexity uses the original corpus without a chat template.
+
+## Use EvalScope
+
+```bash
+foretoken eval examples/quickstart --evaluator evalscope \
+  --datasets gsm8k --limit 100 --output local
+```
+
+Saved reports include category and subset scores. Configure tasks with [EvalScope's native options](https://evalscope.readthedocs.io/en/latest/get_started/basic_usage.html), such as `--dataset-args` and `--generation-config`.
+
+The installed options are listed by `foretoken eval --evaluator lm-eval --help` and `foretoken eval --evaluator evalscope --help`.
+
+## Compare task scores across deployments
+
+Prepare the [quantized-model examples](../../../examples/quantized-model/README.md), then pass the deployment directories before the task options:
+
+```bash
+foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
+  --tasks piqa --limit 100 --output local,plot
+```
+
+The deployments run in turn. `evaluation_comparison.csv` aligns task scores and available standard errors; each run retains its evaluator reports. To compare probability distributions or generated token sequences instead of task scores, use [reference/candidate comparison](distribution-comparison.md).
+
+## Use an existing endpoint
+
+Replace the URL and model below with your service's Chat Completions endpoint and served model ID:
+
+```bash
+foretoken eval --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen/Qwen3-0.6B --tasks gsm8k --limit 100 --output local
+```
+
+This uses no Kubernetes resources. Add `--api-key` for authentication. For Foretoken Gateway access, pass the Kustomize directory to discover routing automatically.
+
+## Resume an evaluation
+
+Keep local output for a single-deployment evaluation. After an interruption, repeat the original command with `--resume` pointing to its printed result directory; replace `results/previous-run` below:
+
+```bash
+foretoken eval examples/quickstart --tasks gsm8k --limit 100 \
+  --resume results/previous-run --output local
+```
+
+The command reuses completed generations or likelihood-scoring windows for lm-eval, and completed predictions and reviews for EvalScope. It writes combined results into a new directory, leaving the original unchanged. Resume from the newest directory after another interruption, keeping weights, task settings, and sample selection unchanged; EvalScope also requires the same service URL. Use `--resume` rather than native `--use_cache` or `--use-cache` for this workflow.
+
+[Distribution comparisons](distribution-comparison.md#resume-a-distribution-comparison) can also resume completed scoring windows.

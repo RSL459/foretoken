@@ -12,11 +12,11 @@ Serve `Qwen/Qwen3-0.6B` and `Qwen/Qwen2.5-0.5B-Instruct` through one frontend an
 | `compact` | 1 | 1 GiB | 4 GiB |
 | `large` | 1 | 4 GiB | 16 GiB |
 
-The example requests two GPUs, 14 CPU cores, 44 GiB memory, and 21 GiB of dynamically provisioned storage, including the Master snapshot. Model files and compilation caches use the separate `./data` directory in `cache.yaml`.
+The example requests two GPUs, 14 CPU cores, 44 GiB memory, and 21 GiB of dynamically provisioned Store volumes, including the Master snapshot. Model files and compilation caches use the separate repository-root `data/` directory.
 
 ## Deploy
 
-Use a [source-installed platform](../../docs/custom-deployment.md), a model-server image containing vLLM's `MooncakeStoreConnector` and `mooncake-transfer-engine`, and a default StorageClass. Configure the model directory as described in [Model storage](../../docs/model-storage.md).
+Use a [source-installed platform](../../docs/custom-deployment.md), a vLLM runtime with Mooncake Store support, and a default StorageClass. The example shares the repository-root data mount with the Quick Start; other storage choices are described in [model storage](../../docs/model-storage.md).
 
 Build the Store image from the repository root. For a local k3d cluster, import it into the active cluster:
 

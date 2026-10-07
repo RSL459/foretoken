@@ -5,14 +5,13 @@
 
 English | [中文](README_zh.md)
 
-Provides KV prefix matches to Router filters and scorers:
+The KV prefix index helps routing reuse prompt tokens already cached by a model replica. It reports local accelerator cache as `Device/Local`, filesystem offload as `Disk/Local`, and Mooncake shared memory or SSD cache as `External/Remote`. Prefix lookup supports text requests without LoRA that allow prefix-cache reads.
 
-- Local accelerator cache: `Device/Local`.
-- Mooncake shared memory and SSD cache: `External/Remote`, for single-DP text requests.
+To use cache-aware routing without writing an algorithm, select a scorer in the [routing guide](../router/README.md).
 
-## Calling from a routing algorithm
+## Use prefix matches in an algorithm
 
-A `RouteFilter` or `RouteScorer` that uses shared KV matches declares:
+In a `RouteFilter` or `RouteScorer`, request prefix observations by implementing:
 
 ```rust
 fn needs_kv_prefix(&self) -> bool {
@@ -20,7 +19,7 @@ fn needs_kv_prefix(&self) -> bool {
 }
 ```
 
-`PipelineRouter::start` calls `KvPrefixIndexer::prepare` asynchronously before selection. The algorithm then uses the supplied reader synchronously in `filter` or `score`:
+Query the reader supplied to `filter` or `score` for the candidate's exact target and data-parallel rank. Routing prepares external observations before calling the algorithm, so the lookup is synchronous:
 
 ```rust
 use foretoken_kv_indexer::{KvPrefixIndexer, KvPrefixQueryResult};
@@ -43,8 +42,6 @@ fn candidate_prefix(
 
 Each match provides `placement` and `matched_tokens`. An empty `Matches` means no matching prefix was found; `Unavailable` means the result is unknown. Keep unavailable candidates eligible for ordinary routing.
 
-The built-in [KvLeastLoadedScorer](../router/src/algorithm/scorer/kv_least_loaded_scorer.rs) prefers longer matches, then faster cache tiers and lower load. See [PipelineRouter](../router/src/selection/pipeline_router.rs) for batched query preparation.
+## Inspect index health
 
-## Observe
-
-Use the frontend's `/statusz` for index health and `/metrics` for monitoring. See [frontend endpoint access](../../README.md#endpoint-access).
+Use the frontend's `/statusz` for index health and `/metrics` for monitoring. See [frontend operations](../../README.md#operations).

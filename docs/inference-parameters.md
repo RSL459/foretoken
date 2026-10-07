@@ -5,7 +5,7 @@
 
 English | [简体中文](inference-parameters_zh.md)
 
-Configure the selected engine through `ModelService.spec.engineArgs`, using native option names without `--`:
+Set engine options in `ModelService.spec.engineArgs`. Use the engine's native names without `--`, and redeploy after editing `model.yaml`:
 
 ```yaml
 spec:
@@ -19,65 +19,34 @@ spec:
     gpu-memory-utilization: 0.85
 ```
 
-Values are YAML booleans, numbers, strings, lists or objects. Omitted options retain engine defaults; `null` omits a native option. Supported values depend on the backend image, model and hardware.
+Values can be YAML booleans, numbers, strings, lists, or objects. Omitted options keep engine defaults; `null` omits an option. Supported values depend on the engine image, model, and hardware. A Pool's `engineArgs` replaces, rather than merges with, the service-level dictionary.
 
-## Select serving nodes
+## Choose engine settings
 
-Use a Kubernetes label to place a service or Pool on a machine group. Assign the same key/value to every node in the group:
+`max-model-len` limits the combined input and output token count. `gpu-memory-utilization` sets the fraction of device memory available to each engine instance. Weight quantization and `kv-cache-dtype` control different storage: model weights and attention KV cache, respectively.
 
-```bash
-kubectl label node <node-a> workload-group=group-a --overwrite
-kubectl label node <node-b> workload-group=group-a --overwrite
-kubectl get nodes -L workload-group
+For scheduler, precision, graph capture, and other native options, use the [vLLM argument reference](https://docs.vllm.ai/en/latest/configuration/engine_args/). Foretoken supplies model identity, serving endpoints, transfer connectors, and profiling settings. vLLM-Omni deployments use the [separate runtime](custom-deployment.md#vllm-omni-runtime) and that engine's options.
+
+## Match parallelism to GPU resources
+
+For vLLM, the GPU count per model replica must satisfy:
+
+```text
+nodes × resources.requests.gpu.count = TP × PP × DP × PCP
 ```
 
-Use that same key/value in the model YAML:
+`nodes` is the number of Kubernetes nodes per replica; GPU requests apply to each member Pod. Native options select tensor parallelism (`tensor-parallel-size`, TP), pipeline parallelism (`pipeline-parallel-size`, PP), data parallelism (`data-parallel-size`, DP), and prefill context parallelism (`prefill-context-parallel-size`, PCP). Decode context parallelism (`decode-context-parallel-size`, DCP) reuses existing ranks and does not add GPUs. The service's `replicas` count is separate from engine DP.
 
-```yaml
-spec:
-  nodeSelector:
-    workload-group: group-a
-```
+Use `enable-expert-parallel`, `all2all-backend`, and `enable-eplb` for expert parallelism. Cross-node replicas require suitable communication devices and cache storage accessible from every member; installation prepares LeaderWorkerSet and RDMA allocation.
 
-`ModelService.spec.nodeSelector` selects the default Pool. `modelPools[].nodeSelector` selects a different group for one Pool. The cluster scheduler places serving and runtime-preparation Pods on nodes carrying the selected label.
+Each P/D or E/P/D Pool can select its own supported parallelism. PCP/DCP support depends on the attention backend. With the [E/P/D runtime](../examples/encoder-prefill-decode/README.md), Prefill and Decode need matching PCP/DCP cache layouts, and their TP sizes must divide one another.
 
-## Common vLLM options
-
-| Engine option | Purpose |
-| --- | --- |
-| `max-model-len` | Maximum combined input and output token count |
-| `dtype` | Model compute precision |
-| `quantization` | Weight quantization method |
-| `kv-cache-dtype` | KV cache precision, separate from weight quantization |
-| `gpu-memory-utilization` | Fraction of device memory per engine instance |
-| `max-num-seqs` | Maximum sequences scheduled per iteration |
-| `max-num-batched-tokens` | Maximum tokens scheduled per iteration |
-| `enforce-eager` | Disable graph capture when `true` |
-| `speculative-config` | Native speculative decoding configuration |
-| `tensor-parallel-size` | Tensor parallelism (TP) |
-| `pipeline-parallel-size` | Pipeline parallelism (PP) |
-| `data-parallel-size` | Data parallelism (DP) within one model replica |
-| `prefill-context-parallel-size` | Prefill context parallelism (PCP) |
-| `decode-context-parallel-size` | Decode context parallelism (DCP), reusing existing ranks |
-
-`nodes` selects how many Kubernetes nodes each model replica uses; `resources.requests.gpu.count` is the GPU count per member Pod. Their product must equal TP × PP × DP × PCP for vLLM. DCP does not add GPUs. Expert parallelism uses native `enable-expert-parallel`, `all2all-backend` and `enable-eplb` options.
-
-Model replicas can span nodes. Foretoken places one member on each node and manages startup, readiness and restart as a complete group. `foretoken install` prepares the LeaderWorkerSet controller and RDMA allocation; communication libraries select from allocated devices. A persistent cache used across nodes must be accessible from every member.
-
-P/D and E/P/D Pools can select their own parallelism settings within the model and engine's supported combinations. PCP and DCP support also depends on the attention backend. The [EPD runtime](../examples/encoder-prefill-decode/README.md) includes CP-aware Mooncake transfer: Prefill and Decode must use matching PCP/DCP cache layouts, and their TP sizes must divide one another.
-
-`modelPools[].engineArgs`, when supplied, replaces the service-level native options for that Pool. Service replica counts remain separate from engine data parallelism.
-
-With EP enabled, attention can use TP × DP while routed experts span the corresponding EP group. Sharing experts does not share attention KV caches between DP ranks.
-
-## Speculative decoding
+## Enable speculative decoding
 
 Keep the complete native dictionary together:
 
 ```yaml
 spec:
-  model: Qwen/Qwen3-0.6B
-  backend: vllm
   engineArgs:
     speculative-config:
       method: ngram
@@ -85,8 +54,37 @@ spec:
       prompt_lookup_max: 4
 ```
 
-Methods and child fields follow vLLM. For methods using draft weights, `model` accepts a Hub ID or a container-visible absolute directory. vLLM downloads, loads and caches the draft; `spec.source: modelscope` applies to both target and draft Hub IDs.
+Methods and child fields follow vLLM. For a method that needs draft weights, its `model` accepts a Hub identifier or a container-visible absolute directory. `spec.source: modelscope` applies to both target and draft Hub identifiers.
 
-## Platform-managed options
+## Tools, reasoning, and structured output
 
-Foretoken manages model identity, startup endpoints, transfer connectors and profiling. Other native options are interpreted by the selected engine. See the [vLLM argument reference](https://docs.vllm.ai/en/latest/configuration/engine_args/); vLLM is the currently implemented backend.
+For forced tool selection or strict tool arguments, the model must support the required structured-output format. When it supports structural tags, add this capability to its ModelService configuration:
+
+```yaml
+spec:
+  features:
+    structuredOutputs: [structuralTag]
+```
+
+With `spec.modelPools`, declare `features.structuredOutputs` in each applicable Pool rather than at service level. Preserve any other formats already declared.
+
+Output token budgets include reasoning. Messages requires `max_tokens` and does not accept a separate `thinking.budget_tokens`; thinking controls depend on the model's chat template. When the budget is exhausted, Messages reports `max_tokens` and Responses reports `incomplete`. Clients should execute only complete tool calls.
+
+## Select serving nodes
+
+Replace `NODE_NAME` with a node's actual name, then label it:
+
+```bash
+kubectl label node NODE_NAME workload-group=group-a --overwrite
+kubectl get nodes -L workload-group
+```
+
+Apply the same label to every node in the group. Select it in the model YAML:
+
+```yaml
+spec:
+  nodeSelector:
+    workload-group: group-a
+```
+
+The service selector places its default Pool on those nodes. Use `modelPools[].nodeSelector` to choose nodes separately for a Pool.

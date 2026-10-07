@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](distribution-comparison_zh.md) · [Quality evaluation](README.md)
 
-Add `--reference` to `foretoken eval` to compare a candidate with a reference. By default, the comparison uses identical text prefixes and reports full-vocabulary KL divergence, Top-1/Top-k agreement, and logit differences. To compare the tokens the models actually generate, use [greedy generation](#compare-greedy-generated-sequences).
+Compare how a candidate model's predictions differ from a reference, for example after quantization. Add `--reference` to compare next-token probabilities on identical text prefixes. Use [greedy generation](#compare-greedy-generated-sequences) to compare the token sequences they actually produce.
 
 ## Compare a quantized model
 
@@ -36,11 +36,11 @@ The summary compares candidates using these metrics:
 
 Use `distribution_comparison_candidates.csv` for the candidate summary, `distribution_comparison_positions.jsonl` to inspect individual positions, and `plots/` for the comparison figures.
 
-These plots compare Qwen3-0.6B BF16 and bitsandbytes 4-bit through existing endpoints, using two 96-token WikiText-2 windows and scoring their last 32 positions:
+Inspect aggregate differences across candidates, then locate large deviations in the position-level results:
 
-![Nominal weight precision compared by KL, logit RMSE, and Top-1 agreement](../imgs/distribution-comparison-weight-bits.png)
+![Weight precision compared by KL, logit RMSE, and Top-1 agreement](../imgs/distribution-comparison-weight-bits.png)
 
-![KL and centered-logit RMSE across 64 scored positions](../imgs/distribution-comparison-positions.png)
+![KL and centered-logit RMSE by scored position](../imgs/distribution-comparison-positions.png)
 
 Use [task evaluation](README.md) for answer quality and [performance evaluation](../perf/README.md) for serving speed.
 

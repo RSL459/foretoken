@@ -43,19 +43,23 @@ Add `"stream": true` and `curl --no-buffer` to receive output as it is generated
 
 `GET /v1/models` lists configured model identifiers. `/tokenize` and `/detokenize` convert between text and token IDs. Image-capable text models accept base64 image `data:` URLs.
 
-Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and custom-text tools, but not server-hosted tools or background execution. Forced tool choice and strict tool schemas require structured-output support in the model.
+Run tool calls in the client and send their results in the next request. Output budgets include reasoning tokens. For tool, reasoning, and structured-output settings, see [Inference parameters](../../docs/inference-parameters.md).
 
-Some tool parsers use a structural-tag grammar to constrain forced or strict tool calls. If the model's parser and grammar backend support it, add `structuralTag` to the ModelService's existing structured-output formats:
+## Configure admission rules
+
+Admission controls concurrency and queuing for text generation and tokenization. The default is unrestricted (`allow_all`). To limit each frontend replica to 64 concurrent candidates, add this to its `FrontendService` configuration:
 
 ```yaml
 spec:
-  features:
-    structuredOutputs: [structuralTag]
+  admission:
+    algorithm: concurrency
+    parameters:
+      maxConcurrentRequests: 64
 ```
 
-For configurations with `spec.modelPools`, declare this capability in each applicable pool's `features.structuredOutputs` instead of the top-level `features`.
+Choose the limit for your workload; batches count each output candidate separately. To allow queuing, add `maxQueuedRequests` and optionally `queueTimeout` under `parameters`.
 
-Output budgets include reasoning tokens. Messages uses `max_tokens`, not a separate `thinking.budget_tokens`; thinking controls depend on the model's chat template. When the budget is exhausted, Messages reports `max_tokens` and Responses reports `incomplete`. Execute only complete tool calls.
+See [Observability](../../observability/README.md) to inspect admission results, or [Implementing admission rules](../../docs/development/admission-rules.md) to add an algorithm.
 
 ## Generate video
 
@@ -115,26 +119,6 @@ The response contains a task `id`, `status_url`, and `content_url`. Use the same
 
 Cancellation and deletion continue after the HTTP `202` response. The configuration above retains results for one day after a task ends, then removes them automatically. Original reference files are retained.
 
-## Configure admission rules
-
-Admission rules determine whether requests proceed, wait, or are rejected. The default, `allow_all`, adds no admission limit. Select `concurrency` in a `FrontendService` to enable concurrency-based flow control:
-
-```yaml
-spec:
-  admission:
-    algorithm: concurrency
-    parameters:
-      maxConcurrentRequests: 64
-```
-
-This example allows 64 concurrent output candidates per frontend replica; choose the limit from measurements of your workload. Batched completions count each candidate separately: four prompts with `n: 2` use eight slots.
-
-For short bursts, add `maxQueuedRequests: 128` and `queueTimeout: 2s` under `parameters`. By default, requests do not queue; when queueing is enabled without a timeout, the remaining request budget applies. Full capacity without queue space and queue expiry return HTTP 503. A batch larger than the concurrency limit returns HTTP 400.
-
-Limits are shared across models on each frontend replica, not across the cluster. Text generation and tokenization use these rules; video requests do not. Health probes remain available. Generation occupies capacity until the request ends, including streaming output.
-
-Configure [routing](src/router/README.md) separately under `spec.routerPipeline`. To implement a custom rule, see the [admission-rule development guide](../../docs/development/admission-rules.md).
-
 ## Operations
 
 Use `foretoken status` to inspect a deployment and `foretoken delete` to remove it, passing its configuration directory to either command.
@@ -146,6 +130,6 @@ Use `foretoken status` to inspect a deployment and `foretoken delete` to remove 
 | `/statusz` | Serving and cache-index status |
 | `/metrics` | Prometheus metrics |
 
-The HTTP frontend stays reachable while models start or change. A valid configuration with no models is also HTTP-ready; inference requests then return HTTP 503. Check `serving_ready` in `/statusz` for serving readiness.
+Check `serving_ready` in `/statusz` to see whether models are available for inference.
 
 For gateway configuration, see [Gateway mode](../../README.md#gateway-mode). Configure TLS and authentication at the cluster ingress; network policies govern access to operator endpoints.

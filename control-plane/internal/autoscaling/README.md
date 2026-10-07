@@ -1,45 +1,45 @@
-# Autoscaling Architecture
+# Develop an Autoscaling Algorithm
 
-[English](README.md) | [中文](README_zh.md)
+English | [简体中文](README_zh.md)
 
-This package turns controller-owned observations into `ModelPool` capacity. Users configure autoscaling through `ModelService.spec.autoscaling`; configuration and status usage are documented in the [autoscaling guide](../../../../docs/autoscaling.md).
+Autoscaling algorithms recommend how many complete model replicas a Pool needs. To configure an existing algorithm, use the [autoscaling guide](../../../docs/autoscaling.md).
 
-## Ownership
+## Add a replica recommendation
 
-The `ModelService` controller owns scheduling, observation collection, target discovery, status publication, and writing capacity to `ModelPool`. Algorithms are side-effect-free: they only evaluate one complete observation and return a recommendation.
+Start with the [queue algorithm](algorithm/decision/queue.go): it converts waiting requests into a replica recommendation and holds capacity when the queue is empty but requests are still active. A decision algorithm implements `core.DecisionAlgorithm`:
 
-Every target scales one Pool. An E/P/D service has one encoder, one prefill, and one decode Pool; their capacities are evaluated independently, while the ModelService controller commits their prepared revisions as one complete serving cohort.
-
-## Evaluation pipeline
-
-```text
-controller polling loop
-→ ScalingSnapshot
-→ TriggerDecision
-→ ReplicaRecommendation
-→ ReplicaAdjustment
-→ ScalingDecision
-→ ModelPool capacity and ModelService status
+```go
+type DecisionAlgorithm interface {
+    Name() string
+    RecommendReplicas(core.ScalingSnapshot) (core.ReplicaRecommendation, error)
+}
 ```
 
-The controller supplies complete, fresh observations to the pipeline. `periodic` accepts those observations; it does not own an interval or requeue loop. The resolver applies hard min/max bounds even when observations are missing, and holds capacity while a target is transitioning.
+Use the supplied snapshot for the calculation and return a recommendation with a reason and message that explain the result in service status. Each snapshot describes one Pool; encoder, prefill, and decode Pools are evaluated separately. Replica counts refer to complete ModelGroups, not individual Pods or engine ranks.
 
-`step` stabilization uses recent recommendations retained by the current controller process. The history is intentionally runtime-local, so a restart or leader change does not restore a pending scale-down delay.
+Add the implementation and its factory descriptor to [the decision registry](algorithm/decision/registry.go). The factory receives the selected `parameters` JSON object. Set defaults in the factory, decode explicitly supported fields with `core.DecodeParameters`, and validate the algorithm's parameters there.
 
-## Extension boundary
+Rebuild and deploy the controller, then select the registered name through `ModelService.spec.autoscaling.decision.algorithm`. Algorithms are compiled into the controller.
 
-Built-in algorithms live under `algorithm/`. Trigger, decision, and adjustment implementations return domain results and do not read Kubernetes resources, mutate capacity, or schedule work. Add a new implementation only when it represents a current, independently owned recommendation policy; controller lifecycle behavior remains in `core` and the ModelService reconciler.
+## Change when or how capacity is adjusted
 
-Each trigger, decision, and adjustment stage owns a compiled descriptor list. Add an implementation and one descriptor in its stage; the top-level registry constructs the selected factory and does not accept runtime registrations. Algorithms own their parameter defaults and validation, while `core.DecodeParameters` provides shared field and type decoding without exposing implementation structs as configuration.
+Most recommendation algorithms can use the existing `periodic` trigger and `step` adjustment. Implement a different stage only when that behavior needs to change:
 
-All stages receive an optional JSON parameters object. Adjustment factories also receive the controller-owned recommendation history. Trigger implementations expose their polling interval; the controller owns scheduling and derives observation freshness from that interval. Capacity bounds and lifecycle constraints remain platform responsibilities.
+- A trigger implements `core.TriggerAlgorithm`: it decides whether the observation supports evaluation and supplies `PollingInterval()` for controller scheduling. Use [periodic](algorithm/trigger/periodic.go) as the example and add its descriptor to [the trigger registry](algorithm/trigger/registry.go).
+- An adjustment implements `core.AdjustmentAlgorithm`: it converts a recommendation into bounded capacity, optionally applying stabilization or rate limits. Use [step](algorithm/adjustment/step.go) as the example and add its descriptor to [the adjustment registry](algorithm/adjustment/registry.go). Its factory also receives the controller's recommendation history.
 
-The controller constructs the pipeline once per reconciliation. Built-in defaults select periodic triggering and step adjustment when those stages are omitted; individual parameter defaults remain in the selected implementation. A new implementation requires rebuilding and deploying the controller, not runtime plugin loading.
+Algorithms calculate results from their inputs. The ModelService controller collects observations, schedules evaluation, applies capacity, and publishes status; those operations do not belong in an algorithm.
 
-## Validation
+## Check the result
 
-Use the control-plane verification target after changing this package:
+Compare the recommendation, adjustment, and applied replicas in [service status](../../../docs/autoscaling.md#inspect-capacity). A recommendation can differ from applied capacity: missing, stale, or incomplete observations hold demand-driven scaling; automatic scaling also holds during a replica transition. Hard min/max bounds still apply when observations are unavailable or a transition is in progress.
+
+The `step` history exists only in the current controller process. Restarting the controller or changing leaders starts a new stabilization history.
+
+Run the control-plane verification target after changing an algorithm:
 
 ```bash
 make -C control-plane verify
 ```
+
+Then exercise it with a model workload and inspect capacity changes and successful requests. The [multi-model example](../../../examples/multi-model-quickstart/README.md) provides an autoscaling deployment.

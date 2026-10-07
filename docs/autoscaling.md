@@ -5,38 +5,47 @@
 
 [English](autoscaling.md) | [中文](autoscaling_zh.md)
 
-Configure autoscaling in `ModelService.spec.autoscaling`. The controller uses the selected built-in algorithms; users do not edit CRDs or register algorithms.
-
-## Minimal configuration
-
-Add this block to a `ModelService`:
+Scale model replicas with request queue demand. Add `autoscaling` under the existing `spec` in `examples/quickstart/model.yaml`:
 
 ```yaml
 spec:
   replicas: 1
   autoscaling:
     minReplicas: 1
-    maxReplicas: 8
+    maxReplicas: 3
     decision:
       algorithm: queue
 ```
 
-This evaluates queue demand every five seconds and changes at most one replica per evaluation. `periodic` triggering and `step` adjustment are the defaults, so they can be omitted.
+This starts with one replica and evaluates demand every five seconds. By default, capacity changes by at most one replica per evaluation, with a five-minute scale-down stabilization window. Each additional Quick Start replica needs one GPU, 4 CPU cores, and 48 GiB of memory.
 
-## Optional parameters
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
 
-Every stage accepts an `algorithm` and an optional `parameters` object. Omitted parameters use the algorithm defaults.
+For a ready-to-run workload that generates queue pressure, use the [multi-model example](../examples/multi-model-quickstart/README.md).
 
-| Stage | Algorithm | Parameters and defaults |
-| --- | --- | --- |
-| Decision | `queue` | `targetAverageQueuedRequests: 1` |
-| Decision | `queue_threshold` | `scaleUpQueuedRequests: 1`, `scaleDownQueuedRequests: 0` |
-| Decision | `aimd` | `additiveIncrease: 1`, `multiplicativeDecreasePercent: 50`, `scaleUpQueuedRequests: 0` |
-| Trigger | `periodic` | `interval: 5s` |
-| Adjustment | `step` | `scaleUpStabilizationWindow: 0s`, `scaleDownStabilizationWindow: 300s` |
-| Adjustment | `direct` | No parameters |
+## Inspect capacity
 
-For example, change the polling interval and scale-down window:
+```bash
+kubectl get modelservice quickstart-qwen3-0.6b -n foretoken-demo -o json \
+  | jq '.status.autoscaling[] | {
+      direction,
+      desiredReplicas: .decision.desiredReplicas,
+      appliedReplicas,
+      constraint: .constraint.reason
+    }'
+```
+
+`desiredReplicas` is the recommendation; `appliedReplicas` is the capacity selected after stabilization and service constraints. Invalid algorithms or parameters appear as a `ScalingFailed` condition on the ModelService.
+
+## Tune the response to traffic
+
+The default `queue` algorithm targets one waiting request per replica. Use `queue_threshold` for explicit scale-up and scale-down queue thresholds, or `aimd` for additive increases and multiplicative decreases.
+
+AIMD adds `additiveIncrease` replicas when the queue exceeds `scaleUpQueuedRequests`. With no waiting or active requests, it retains `multiplicativeDecreasePercent` of capacity. The adjustment settings and min/max limits still apply.
+
+To change the polling interval or stabilization window, add `trigger` and `adjustment` beside `decision` under `spec.autoscaling`:
 
 ```yaml
 trigger:
@@ -49,35 +58,13 @@ adjustment:
     scaleDownStabilizationWindow: 60s
 ```
 
-Unknown algorithms and invalid parameters produce a `ScalingFailed` condition on the `ModelService`.
+`step` limits each evaluation to a one-replica change; `direct` applies the recommendation without step adjustment. Both respect the service's min/max limits. Omitted parameters use these defaults:
 
-## AIMD
-
-Select AIMD with:
-
-```yaml
-decision:
-  algorithm: aimd
-```
-
-AIMD adds `additiveIncrease` replicas when the queue exceeds `scaleUpQueuedRequests`. When there are no waiting or active requests, it keeps `multiplicativeDecreasePercent` of the current capacity. The selected adjustment algorithm and service min/max limits still apply.
-
-## Observe autoscaling
-
-Autoscaling results are published in `.status.autoscaling[]`:
-
-```bash
-kubectl get modelservice <name> -o json \
-  | jq '.status.autoscaling[] | {
-      id,
-      direction,
-      desiredReplicas: .decision.desiredReplicas,
-      adjustedReplicas: .adjustment.adjustedReplicas,
-      appliedReplicas,
-      constraint: .constraint.reason
-    }'
-```
-
-`desiredReplicas` is the algorithm recommendation. `adjustedReplicas` includes adjustment rules, and `appliedReplicas` is the capacity written after service constraints.
-
-For the complete maintained workload, see the [multi-model example](../examples/multi-model-quickstart/README.md). The implementation boundary is documented in the [Autoscaling architecture guide](../control-plane/internal/autoscaling/README.md).
+| Setting | Algorithm | Parameters and defaults |
+| --- | --- | --- |
+| Replica recommendation | `queue` | `targetAverageQueuedRequests: 1` |
+| Replica recommendation | `queue_threshold` | `scaleUpQueuedRequests: 1`, `scaleDownQueuedRequests: 0` |
+| Replica recommendation | `aimd` | `additiveIncrease: 1`, `multiplicativeDecreasePercent: 50`, `scaleUpQueuedRequests: 0` |
+| Evaluation interval | `periodic` | `interval: 5s` |
+| Capacity adjustment | `step` | `scaleUpStabilizationWindow: 0s`, `scaleDownStabilizationWindow: 300s` |
+| Capacity adjustment | `direct` | No parameters |

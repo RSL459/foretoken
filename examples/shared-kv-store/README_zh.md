@@ -12,11 +12,11 @@
 | `compact` | 1 | 1 GiB | 4 GiB |
 | `large` | 1 | 4 GiB | 16 GiB |
 
-示例共请求两张 GPU、14 核 CPU、44 GiB 内存和 21 GiB 动态存储，其中包含 Master 快照卷。模型文件和编译缓存单独保存在 `cache.yaml` 配置的 `./data` 目录中。
+示例共请求两张 GPU、14 核 CPU、44 GiB 内存和 21 GiB Store 动态存储，其中包含 Master 快照卷。模型文件和编译缓存单独保存在仓库根目录的 `data/` 中。
 
 ## 部署
 
-使用[从源码安装的平台](../../docs/custom-deployment_zh.md)、包含 vLLM `MooncakeStoreConnector` 和 `mooncake-transfer-engine` 的 model-server 镜像，以及默认 StorageClass。模型目录的配置见[模型存储](../../docs/model-storage_zh.md)。
+使用[从源码安装的平台](../../docs/custom-deployment_zh.md)、支持 Mooncake Store 的 vLLM 运行时，以及默认 StorageClass。示例与快速开始共用仓库根目录的数据挂载，其他存储方式见[模型存储](../../docs/model-storage_zh.md)。
 
 在仓库根目录构建 Store 镜像。使用本地 k3d 时，将镜像导入当前集群：
 
@@ -45,6 +45,8 @@ done
 ## 调整容量和部署位置
 
 修改 `kvservice.yaml` 中对应存储池的 `replicas`，再次执行部署命令即可。这里的副本数指存储实例数量，不是每条缓存数据的复制份数。Mooncake 负责分配和淘汰缓存；移除实例可能丢弃部分 KV，并触发重算。
+
+纯内存池省略 `client.disk` 即可，`memoryCapacity` 仍向同一 Store 提供主机内存，不创建客户端 PVC 或使用 SSD offload。内存池与磁盘池可以共存，Master 快照存储单独配置。
 
 Kubernetes 根据资源和卷要求选择节点。如果需要将某个池部署到已有标签对应的节点，在该池的 `name`、`replicas`、`client` 同级添加：
 

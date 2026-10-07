@@ -5,48 +5,35 @@
 
 [English](README.md) | [中文](README_zh.md)
 
-如需运行双模型并验证自动扩缩容，请参阅[多模型快速开始](../multi-model-quickstart/README_zh.md)。
+通过 OpenAI 兼容前端调用 `Qwen/Qwen3-0.6B`。示例包含两个前端副本，合计申请 1 张 GPU、8 核 CPU 和 52 GiB 内存；还需为平台预留资源。
 
-预量化权重和在线量化的用法见[部署量化模型](../quantized-model/README_zh.md)。
+## 部署并调用
 
-本示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。模型文件和运行时缓存与多模型示例共用项目根目录的 `data/`，由 `cache.yaml` 配置。
-
-在 [`model.yaml`](model.yaml) 的 `ModelService` 中配置模型、副本数、资源、并行方式和[推理参数](../../docs/inference-parameters_zh.md)，在 [`cache.yaml`](cache.yaml) 的 `RuntimeCache` 中配置运行时缓存，在 [`frontend.yaml`](frontend.yaml) 的 `FrontendService` 中配置前端。Foretoken 会自动创建所需的 Kubernetes 工作负载。
-
-## 部署
-
-从源码[安装平台](../../docs/custom-deployment_zh.md)并准备[模型存储](../../docs/model-storage_zh.md)，再从仓库根目录部署：
+按仓库[快速开始](../../README_zh.md#快速开始)安装 Foretoken，再从仓库根目录运行：
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
-```
-
-该命令会在服务状态变化时输出进度，并在当前配置就绪后退出。
-
-## 发送请求
-
-解析前端服务 URL：
-
-```bash
 FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-```
-
-发送 OpenAI API 兼容格式的请求：
-
-```bash
-curl "$FRONTEND_URL/v1/chat/completions" \
+curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
-  -d '{
-    "model": "Qwen/Qwen3-0.6B",
-    "messages": [{"role": "user", "content": "Reply with: Foretoken is ready"}],
-    "max_tokens": 32,
-    "temperature": 0
-  }'
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"请回复：Foretoken 已就绪"}],"max_tokens":32,"temperature":0}'
 printf '\n'
 ```
+
+Gateway 部署还需填写请求 Host，配置方式见[网关模式](../../cli/README_zh.md#网关模式)。
+
+## 更换模型或调整容量
+
+在 [`model.yaml`](model.yaml) 中修改模型、副本数、资源和[引擎参数](../../docs/inference-parameters_zh.md)，在 [`frontend.yaml`](frontend.yaml) 中调整前端副本数。配置修改后重新部署同一目录。
+
+[`cache.yaml`](cache.yaml) 在本地 k3d 使用仓库根目录的 `data/`，其他集群使用动态存储。已有目录或自定义 StorageClass 的设置见[模型存储](../../docs/model-storage_zh.md)。
+
+运行两个模型并按队列自动扩缩容时，使用[多模型示例](../multi-model-quickstart/README_zh.md)；AWQ 和加载时量化的用法见[量化模型](../quantized-model/README_zh.md)。
 
 ## 清理
 
 ```bash
 foretoken delete examples/quickstart
 ```
+
+命令会删除示例命名空间及其中的服务和 PVC；目录中的模型文件保留供复用。

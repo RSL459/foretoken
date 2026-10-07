@@ -1,4 +1,4 @@
-# SLO 并发搜索
+# 测量 SLO 达标率与并发
 
 [English](slo.md) | 简体中文 · [性能评测示例](README_zh.md)
 
@@ -23,10 +23,10 @@ foretoken perf examples/quickstart \
 
 ## 固定对话启动速率，测量达标率
 
-[对话到达率配置](../../scripts/common/conversation-rate.jsonl)扫描每秒启动 2、4、8、16 段对话，数据集通过命令行指定。将下方 URL 和模型名换成服务的 Chat Completions 地址和模型：
+[对话到达率配置](../../scripts/common/conversation-rate.jsonl)在 ShareGPT 上比较每秒启动 2、4、8、16 段对话：
 
 ```bash
-foretoken perf --url http://host/v1/chat/completions --model Qwen/Qwen3-0.6B \
+foretoken perf examples/quickstart \
   --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --temperature 0 --random-seed 0 --max-concurrency -1 \

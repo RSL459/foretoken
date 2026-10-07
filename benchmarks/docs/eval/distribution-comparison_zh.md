@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](distribution-comparison.md) | 简体中文 · [质量评测](README_zh.md)
 
-给 `foretoken eval` 添加 `--reference`，即可比较候选模型与参考模型。默认使用相同的原文前缀，比较下一个 token 的完整词表 KL、Top-1/Top-k 一致率和 logit 差异；要比较实际生成的 token，使用[贪心生成序列对比](#比较贪心生成序列)。
+比较候选模型与参考模型的预测差异，例如量化前后的变化。给 `foretoken eval` 添加 `--reference`，在相同的原文前缀上比较下一个 token 的概率；要比较实际生成的 token 序列，使用[贪心生成对比](#比较贪心生成序列)。
 
 ## 比较量化模型
 
@@ -36,11 +36,11 @@ foretoken eval examples/quantized-model/bitsandbytes \
 
 在结果目录中，`distribution_comparison_candidates.csv` 汇总各候选的指标，`distribution_comparison_positions.jsonl` 用于查看逐位置差异，`plots/` 保存对比图。
 
-下图通过已有服务比较 Qwen3-0.6B BF16 与 bitsandbytes 4-bit：取两个 96-token WikiText-2 窗口，每个窗口比较最后 32 个位置。
+先比较候选模型的汇总差异，再用逐位置结果定位明显偏差：
 
-![按名义位宽比较 KL、logit 均方根误差及 Top-1 一致率](../imgs/distribution-comparison-weight-bits.png)
+![按权重位宽比较 KL、logit 均方根误差及 Top-1 一致率](../imgs/distribution-comparison-weight-bits.png)
 
-![64 个评分位置的 KL 与去均值 logit 差异](../imgs/distribution-comparison-positions.png)
+![逐评分位置的 KL 与去均值 logit 差异](../imgs/distribution-comparison-positions.png)
 
 答案正确率使用[任务质量评测](README_zh.md)，服务速度使用[性能评测](../perf/README_zh.md)。
 

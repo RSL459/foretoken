@@ -2,36 +2,47 @@
 
 English | [简体中文](conversations_zh.md) · [Performance examples](README.md)
 
-After [setup](README.md#setup), run the repository's [conversation dataset](../../examples/conversations.jsonl):
+Replay recorded conversations to measure the cost of growing history and sequential turns. After [setup](README.md#setup), run the [sample dataset](../../examples/conversations.jsonl):
 
 ```bash
 foretoken perf examples/quickstart \
   --dataset benchmarks/examples/conversations.jsonl \
-  --num-prompts 3 --max-concurrency 2 --output local,wandb
+  --num-prompts 3 --max-concurrency 2 --output local
 ```
 
-This sends three requests: one single-turn conversation and one two-turn conversation. Within each conversation, the next turn starts after the previous response finishes.
+This sends three HTTP requests: one single-turn conversation and one two-turn conversation. A conversation's next turn waits for its previous response. `--num-prompts` counts HTTP turns across all conversations; `--max-concurrency` limits conversations in progress. Add `--max-turns 1` to keep only the first user turn of each conversation, and adjust the request budget accordingly.
 
-By default, later requests use the dataset's recorded assistant answers as history (`--conversation-history dataset`). Each request still generates a new response for performance measurement. Add `--conversation-history generated` to put those generated responses into subsequent history instead.
+## Prepare your data
 
-A turn with a non-empty text reference answer automatically requests the same number of output tokens, counted with the request model's tokenizer without added special tokens. Tokenization happens before measurement. The service must support `min_tokens` and `ignore_eos`; target and actual output lengths appear in the request results.
+Save one JSON object per line. For example, `conversations.jsonl` can contain:
 
-A row's `output_length` takes precedence, followed by an explicit `--min-output-length`/`--max-output-length` range, then the reference answer length. Turns without a usable text answer stop naturally under `--max-tokens`. The tokenizer comes from the request model; use `--tokenizer-path` when the service uses an alias or its tokenizer is stored separately.
-
-`--num-prompts` limits the total HTTP requests across conversations. To run only the first user turn of each conversation:
-
-```bash
-foretoken perf examples/quickstart \
-  --dataset benchmarks/examples/conversations.jsonl \
-  --max-turns 1 --num-prompts 2 --output local,wandb
+```json
+{"messages":[{"role":"user","content":"Name a planet."},{"role":"assistant","content":"Mars."},{"role":"user","content":"Name another one."}]}
 ```
 
-For your own data, use one JSON object per line with `messages`, `prompt`, or `user` and an optional `system` field. See [ShareGPT](sharegpt.md) and [tool data](tools.md) for other formats.
+Replace the sample path with this file in the command. `messages` uses OpenAI-style roles and content, including system messages and image content for image-capable models. A row can instead contain a string `prompt`, or `user` with optional `system`. JSON arrays of conversation records are also accepted. See [ShareGPT](sharegpt.md), [Hugging Face sources](huggingface.md), and [tool data](tools.md) for other inputs.
 
-## Example output
+Optional row fields control individual requests:
 
-A short run against an existing service with a two-turn conversation:
+| Field | Meaning |
+| --- | --- |
+| `model` | Served model ID; otherwise use the selected service model |
+| `output_length` | Positive integer exact output-token target |
+| `priority` | Integer sent to a service supporting priority scheduling |
+| `request_class` | Label used to group benchmark results, such as `interactive` |
 
-![CLI output](../imgs/local-dataset-benchmark-output.png)
+Rows can supply model IDs instead of `--model` for URL or multi-model deployments. An integer-array `prompt`, such as `{"prompt":[1,42,73],"output_length":32}`, sends one pre-tokenized Completions request without a chat template; token IDs must match the served model's tokenizer.
 
-![W&B run](../imgs/local-dataset-wandb-dashboard.png)
+## Choose conversation history
+
+The default `--conversation-history dataset` uses recorded assistant answers in later requests, while generating a new response at each turn for measurement. Use `--conversation-history generated` to carry the service's actual answers forward instead.
+
+## Control output length
+
+A turn with a non-empty text reference answer generates the same number of tokens as that answer. Length is counted before measurement using the request model's tokenizer, without special tokens. `--tokenizer-path` overrides it for a serving alias or separately stored tokenizer.
+
+Output targets follow this order: a row's `output_length`, an explicit `--min-output-length`/`--max-output-length` range, then the recorded answer's token count. A turn without a text reference uses `--max-tokens` and can end naturally. Exact targets require `min_tokens`, `ignore_eos`, and reported token usage; a missed target counts as a failed request.
+
+Inspect target and actual token counts, request labels, and per-turn timing in the results. [Multiple datasets](multi-dataset.md) combines conversation sources in one workload.
+
+![Conversation timings and token counts](../imgs/local-dataset-wandb-dashboard.png)

@@ -43,19 +43,23 @@ curl --fail-with-body "$FRONTEND_URL/v1/messages" \
 
 `GET /v1/models` 列出已配置的模型标识；`/tokenize` 和 `/detokenize` 用于文本与 token ID 之间的转换。支持图片的文本模型接受 base64 编码的图片 `data:` URL。
 
-工具由客户端执行，再将结果传入下一轮请求。Responses 支持函数工具、带命名空间的函数和自定义文本工具，不支持服务端托管工具或后台执行模式。强制选择工具和严格约束工具参数需要模型支持结构化输出。
+工具由客户端执行，再将结果传入下一轮请求。输出 token 预算包含思考内容。工具、思考与结构化输出的设置见[推理参数](../../docs/inference-parameters_zh.md)。
 
-部分工具解析器通过结构标签语法约束强制工具调用或严格工具的输出格式。模型的解析器和语法后端支持该能力时，在 ModelService 已有的结构化输出格式中加入 `structuralTag`：
+## 配置准入规则
+
+准入规则控制文本生成和 tokenization 的并发与排队，默认不限流（`allow_all`）。例如，在 `FrontendService` 中配置每个前端副本最多同时处理 64 个候选：
 
 ```yaml
 spec:
-  features:
-    structuredOutputs: [structuralTag]
+  admission:
+    algorithm: concurrency
+    parameters:
+      maxConcurrentRequests: 64
 ```
 
-使用 `spec.modelPools` 配置时，在适用池的 `features.structuredOutputs` 中声明该能力，不使用顶层 `features`。
+并发上限按实际负载选择，批量请求按输出候选数计数。需要排队时，在 `parameters` 下添加 `maxQueuedRequests`，并可用 `queueTimeout` 设置等待时限。
 
-输出 token 预算包含思考内容。Messages 使用 `max_tokens`，不接受独立的 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `incomplete`，客户端只应执行完整的工具调用。
+查看准入结果见[可观测性](../../observability/README_zh.md)，新增算法见[开发准入规则](../../docs/development/admission-rules_zh.md)。
 
 ## 视频生成
 
@@ -115,26 +119,6 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
 
 取消和删除请求返回 `202` 后继续由服务处理。以上配置保留结果一天，从任务结束起算；到期后自动清理，原始参考文件保留。
 
-## 配置准入规则
-
-准入规则决定请求直接执行、等待还是被拒绝。默认使用 `allow_all`，不限制请求；在 `FrontendService` 中选择 `concurrency` 可启用并发流控：
-
-```yaml
-spec:
-  admission:
-    algorithm: concurrency
-    parameters:
-      maxConcurrentRequests: 64
-```
-
-示例允许每个前端副本同时执行 64 个输出候选，具体数值应根据负载实测选择。批量补全按候选计数，例如四个 prompt、`n: 2` 占用八个名额。
-
-需要吸收短时突发流量时，可在 `parameters` 下增加 `maxQueuedRequests: 128` 和 `queueTimeout: 2s`。默认不排队；允许排队但未设置等待时限时，使用请求剩余的超时预算。容量和等待队列均已满，或排队超时，返回 HTTP 503；单个批次超过并发上限时返回 HTTP 400。
-
-每个前端副本上的模型共用这些限制，不是集群总配额。规则适用于文本生成和 tokenization，不包括视频请求；健康探针不受影响。生成请求直到结束才释放并发名额，包括流式输出。
-
-[路由策略](src/router/README_zh.md)单独配置在 `spec.routerPipeline` 下。开发自定义规则请参阅[准入规则开发指南](../../docs/development/admission-rules_zh.md)。
-
 ## 运维
 
 使用 `foretoken status` 查看部署状态，使用 `foretoken delete` 删除部署，均传入对应配置目录。
@@ -146,6 +130,6 @@ spec:
 | `/statusz` | 服务和缓存索引状态 |
 | `/metrics` | Prometheus 指标 |
 
-模型启动或切换时，HTTP 前端保持可访问。合法的空模型配置也可接收 HTTP 请求，此时推理请求返回 HTTP 503。服务就绪状态见 `/statusz` 中的 `serving_ready`。
+查看 `/statusz` 中的 `serving_ready`，确认模型是否可提供推理服务。
 
 网关配置见[网关模式](../../README_zh.md#网关模式)。TLS 和身份认证由集群入口配置，运维接口的访问范围由网络策略控制。
