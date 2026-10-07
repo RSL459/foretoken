@@ -30,11 +30,35 @@ import (
 
 // reconcileServingSnapshot publishes the versioned routing and scaling snapshot consumed by frontend Pods.
 func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService) (bool, error) {
-	models, admission, err := reconciler.projectConfiguredModels(ctx, frontend, services)
-	if err != nil {
-		return false, err
+	name := frontendServingConfigMapName(frontend)
+	current := new(corev1.ConfigMap)
+	err := reconciler.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: name}, current)
+	if err == nil && !metav1.IsControlledBy(current, frontend) {
+		return false, fmt.Errorf("ConfigMap %q is not controlled by FrontendService", name)
 	}
-	groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, projectionErr := reconciler.projectableRouting(ctx, frontend.Namespace, services)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("get serving snapshot ConfigMap: %w", err)
+	}
+	var previous servingSnapshot
+	previousValid := err == nil && json.Unmarshal([]byte(current.Data[servingSnapshotKey]), &previous) == nil
+	if !previousValid {
+		previous = servingSnapshot{}
+	}
+	models, admission, catalogErr := reconciler.projectConfiguredModels(ctx, frontend, services, previous.Models)
+	if catalogErr != nil {
+		var unavailable *modelCatalogProjectionError
+		if !errors.As(catalogErr, &unavailable) {
+			return false, catalogErr
+		}
+	}
+	// A service without a proven catalog identity cannot contribute executable routes.
+	routingServices := make([]inferencev1alpha1.ModelService, 0, len(models))
+	for _, service := range services {
+		if slices.ContainsFunc(models, func(model servingSnapshotModel) bool { return model.ServiceUID == string(service.UID) }) {
+			routingServices = append(routingServices, service)
+		}
+	}
+	groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, projectionErr := reconciler.projectableRouting(ctx, frontend.Namespace, routingServices)
 	if projectionErr != nil {
 		var splitProjectionError *splitRoutingProjectionError
 		if !errors.As(projectionErr, &splitProjectionError) {
@@ -45,28 +69,17 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 	if err := validateRoutingIdentities(models, groups, pdComponents, epdComponents); err != nil {
 		return false, err
 	}
-	name := frontendServingConfigMapName(frontend)
-	current := new(corev1.ConfigMap)
-	err = reconciler.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: name}, current)
-	if err == nil && !metav1.IsControlledBy(current, frontend) {
-		return false, fmt.Errorf("ConfigMap %q is not controlled by FrontendService", name)
-	}
-	if err != nil && !apierrors.IsNotFound(err) {
-		return false, fmt.Errorf("get serving snapshot ConfigMap: %w", err)
-	}
+	projectionErr = errors.Join(catalogErr, projectionErr)
 
 	// Status is the durable version floor, while the persisted ConfigMap is the last semantic payload.
 	// Increment only for changed content so recreation or reconcile replay cannot publish an older generation.
 	version := frontend.Status.ServingSnapshotVersion
 	contentsChanged := true
-	var previous servingSnapshot
-	if err == nil {
-		if decodeErr := json.Unmarshal([]byte(current.Data[servingSnapshotKey]), &previous); decodeErr == nil {
-			if previous.Version > version {
-				version = previous.Version
-			}
-			contentsChanged = !reflect.DeepEqual(previous.Admission, admission) || !slices.EqualFunc(previous.Models, models, equalScalingModel) || !slices.EqualFunc(previous.Groups, groups, equalRoutingGroup) || !slices.EqualFunc(previous.PDComponents, pdComponents, equalRoutingPDComponent) || !slices.EqualFunc(previous.PDPipelineScopes, pdPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previous.EPDComponents, epdComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previous.EPDPipelineScopes, epdPipelineScopes, equalRoutingEPDPipelineScope)
+	if previousValid {
+		if previous.Version > version {
+			version = previous.Version
 		}
+		contentsChanged = !reflect.DeepEqual(previous.Admission, admission) || !slices.EqualFunc(previous.Models, models, equalScalingModel) || !slices.EqualFunc(previous.Groups, groups, equalRoutingGroup) || !slices.EqualFunc(previous.PDComponents, pdComponents, equalRoutingPDComponent) || !slices.EqualFunc(previous.PDPipelineScopes, pdPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previous.EPDComponents, epdComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previous.EPDPipelineScopes, epdPipelineScopes, equalRoutingEPDPipelineScope)
 	}
 	if contentsChanged || version == 0 {
 		version++
@@ -126,8 +139,8 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 }
 
 // projectConfiguredModels resolves model discovery and admission together, independently of capacity.
-// Selected cohorts retain their identity through restarts; unresolved selections leave the previous snapshot intact.
-func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService) ([]servingSnapshotModel, map[string]inferencev1alpha1.AdmissionConfig, error) {
+// Missing selected artifacts exclude only their service unless its published provenance still matches.
+func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService, previousModels []servingSnapshotModel) ([]servingSnapshotModel, map[string]inferencev1alpha1.AdmissionConfig, error) {
 	var pools inferencev1alpha1.ModelPoolList
 	if err := reconciler.List(ctx, &pools, client.InNamespace(frontend.Namespace)); err != nil {
 		return nil, nil, fmt.Errorf("list ModelPools for model catalog: %w", err)
@@ -144,6 +157,7 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 		identity          servingSnapshotGroup
 	}
 	providers := make(map[string]contribution)
+	var projectionErr error
 	for index := range services {
 		service := &services[index]
 		if (service.Spec.Backend != "vllm" && service.Spec.Backend != "vllm-omni") || !service.DeletionTimestamp.IsZero() {
@@ -152,37 +166,22 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 		servicePools := ownedRoutingPools(service, pools.Items)
 		var identities []servingSnapshotGroup
 		var roles []inferencev1alpha1.ModelRole
+		topology := ""
 		if len(service.Status.ServingPoolRevisions) > 0 {
 			servicePools = slices.DeleteFunc(servicePools, func(pool *inferencev1alpha1.ModelPool) bool {
 				return serviceServingRevision(service, pool) == ""
 			})
-			// Never infer the selected cohort's identity from a newer desired template.
-			for _, selected := range service.Status.ServingPoolRevisions {
-				found := false
-				for _, pool := range servicePools {
-					if string(pool.UID) != selected.PoolUID || pool.Spec.PoolName != selected.PoolName {
-						continue
-					}
-					for groupIndex := range groups.Items {
-						group := &groups.Items[groupIndex]
-						if !routingGroupOwnedBy(group, pool) || group.Spec.Revision != selected.Revision {
-							continue
-						}
-						found = true
-						identity := routingGroupForService(service, pool, group)
-						if group.Spec.Role == inferencev1alpha1.ModelRolePrefill || group.Spec.Role == inferencev1alpha1.ModelRoleDecode {
-							features := group.Spec.Features
-							features.Multimodal = nil
-							identity.Capabilities = routingCapabilities(features)
-						}
-						identities = append(identities, identity)
-						roles = append(roles, group.Spec.Role)
-					}
+			identity, selectedTopology, err := selectedCatalogIdentity(service, pools.Items, groups.Items, previousModels)
+			if err != nil {
+				var unavailable *modelCatalogProjectionError
+				if !errors.As(err, &unavailable) {
+					return nil, nil, err
 				}
-				if !found {
-					return nil, nil, fmt.Errorf("ModelService %q selected Pool %q revision %q has no model identity", service.Name, selected.PoolName, selected.Revision)
-				}
+				projectionErr = errors.Join(projectionErr, err)
+				continue
 			}
+			identities = append(identities, identity)
+			topology = selectedTopology
 		} else {
 			// The same compilers used by the service and runtime resolve cold models before Pools or Groups exist.
 			compiled, err := compiler.CompileModelService(service.Spec)
@@ -198,11 +197,8 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 				roles = append(roles, pool.Template.Role)
 			}
 		}
-		topology := "aggregate"
-		if slices.Contains(roles, inferencev1alpha1.ModelRoleEncoder) {
-			topology = "E/P/D"
-		} else if slices.Contains(roles, inferencev1alpha1.ModelRolePrefill) || slices.Contains(roles, inferencev1alpha1.ModelRoleDecode) {
-			topology = "P/D"
+		if topology == "" {
+			topology = catalogTopology(roles)
 		}
 		identity := identities[0]
 		for _, other := range identities[1:] {
@@ -230,15 +226,16 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 			targetSets = make([][]servingSnapshotScalingTarget, 0)
 		}
 		models = append(models, servingSnapshotModel{
-			ServiceUID:          string(service.UID),
-			Model:               identity.Model,
-			Source:              identity.Source,
-			Revision:            identity.Revision,
-			Tokenizer:           identity.Tokenizer,
-			TokenizerRevision:   identity.TokenizerRevision,
-			MaxInputTokens:      identity.MaxInputTokens,
-			Capabilities:        identity.Capabilities,
-			AdmissionTargetSets: targetSets,
+			ServiceUID:            string(service.UID),
+			Model:                 identity.Model,
+			Source:                identity.Source,
+			Revision:              identity.Revision,
+			Tokenizer:             identity.Tokenizer,
+			TokenizerRevision:     identity.TokenizerRevision,
+			SelectedPoolRevisions: sortedServingPoolRevisions(service.Status.ServingPoolRevisions),
+			Topology:              topology,
+			Capabilities:          identity.Capabilities,
+			AdmissionTargetSets:   targetSets,
 		})
 	}
 	slices.SortFunc(models, func(left, right servingSnapshotModel) int {
@@ -247,12 +244,118 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 		}
 		return compareStrings(left.ServiceUID, right.ServiceUID)
 	})
-	return models, admission, nil
+	return models, admission, projectionErr
+}
+
+// selectedCatalogIdentity reads immutable selected artifacts, including draining Groups.
+// Only the same published cohort may supply identity after its artifacts disappear.
+func selectedCatalogIdentity(service *inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, previousModels []servingSnapshotModel) (servingSnapshotGroup, string, error) {
+	selectedRevisions := sortedServingPoolRevisions(service.Status.ServingPoolRevisions)
+	var retained *servingSnapshotModel
+	for index := range previousModels {
+		model := &previousModels[index]
+		if model.ServiceUID == string(service.UID) && model.Topology != "" && slices.Equal(model.SelectedPoolRevisions, selectedRevisions) {
+			retained = model
+			break
+		}
+	}
+	var identities []servingSnapshotGroup
+	var roles []inferencev1alpha1.ModelRole
+	var missing []string
+	for _, selected := range selectedRevisions {
+		found := false
+		for poolIndex := range pools {
+			pool := &pools[poolIndex]
+			if !modelPoolOwnedBy(pool, service) || string(pool.UID) != selected.PoolUID || pool.Spec.PoolName != selected.PoolName {
+				continue
+			}
+			for groupIndex := range groups {
+				group := &groups[groupIndex]
+				if !modelGroupOwnedBy(group, pool) || group.Spec.Revision != selected.Revision {
+					continue
+				}
+				found = true
+				identity := routingGroupForService(service, pool, group)
+				if group.Spec.Role == inferencev1alpha1.ModelRolePrefill || group.Spec.Role == inferencev1alpha1.ModelRoleDecode {
+					features := group.Spec.Features
+					features.Multimodal = nil
+					identity.Capabilities = routingCapabilities(features)
+				}
+				identities = append(identities, identity)
+				roles = append(roles, group.Spec.Role)
+			}
+		}
+		if !found {
+			missing = append(missing, fmt.Sprintf("Pool %q revision %q", selected.PoolName, selected.Revision))
+		}
+	}
+	topology := catalogTopology(roles)
+	if retained != nil {
+		// Missing stages keep their published topology; surviving stages must fit it.
+		if len(roles) > 0 && topology != retained.Topology && !(len(missing) > 0 && topology == "P/D" && retained.Topology == "E/P/D") {
+			return servingSnapshotGroup{}, "", &routingIdentityConflictError{reason: fmt.Sprintf("ModelService %q selected artifacts conflict with its published topology", service.Name)}
+		}
+		topology = retained.Topology
+		published := servingSnapshotGroup{
+			Model: retained.Model, Source: retained.Source, Revision: retained.Revision,
+			Tokenizer: retained.Tokenizer, TokenizerRevision: retained.TokenizerRevision,
+		}
+		if len(missing) > 0 {
+			published.Capabilities = slices.Clone(retained.Capabilities)
+		}
+		identities = append(identities, published)
+	}
+	// Validate readable artifacts even when another selected stage is unavailable.
+	if len(identities) > 0 {
+		identity := identities[0]
+		for _, other := range identities[1:] {
+			if !matchingRoutingArtifacts(identity, other) {
+				return servingSnapshotGroup{}, "", &routingIdentityConflictError{reason: fmt.Sprintf("ModelService %q has conflicting selected model identities", service.Name)}
+			}
+			identity.Capabilities = append(identity.Capabilities, other.Capabilities...)
+		}
+		if len(missing) == 0 || retained != nil {
+			return identity, topology, nil
+		}
+	}
+	return servingSnapshotGroup{}, "", &modelCatalogProjectionError{service: service.Name, reason: fmt.Sprintf("selected %v has no model identity or matching published provenance", missing)}
+}
+
+// sortedServingPoolRevisions makes cohort provenance independent of status list order.
+func sortedServingPoolRevisions(revisions []inferencev1alpha1.ServingPoolRevision) []inferencev1alpha1.ServingPoolRevision {
+	selected := slices.Clone(revisions)
+	slices.SortFunc(selected, func(left, right inferencev1alpha1.ServingPoolRevision) int {
+		if compared := compareStrings(left.PoolName, right.PoolName); compared != 0 {
+			return compared
+		}
+		if compared := compareStrings(left.PoolUID, right.PoolUID); compared != 0 {
+			return compared
+		}
+		return compareStrings(left.Revision, right.Revision)
+	})
+	return selected
+}
+
+func catalogTopology(roles []inferencev1alpha1.ModelRole) string {
+	if slices.Contains(roles, inferencev1alpha1.ModelRoleEncoder) {
+		return "E/P/D"
+	}
+	if slices.Contains(roles, inferencev1alpha1.ModelRolePrefill) || slices.Contains(roles, inferencev1alpha1.ModelRoleDecode) {
+		return "P/D"
+	}
+	return "aggregate"
+}
+
+type modelCatalogProjectionError struct{ service, reason string }
+
+// Error reports a service-local selected catalog identity that could not be proven.
+func (err *modelCatalogProjectionError) Error() string {
+	return fmt.Sprintf("model catalog projection for ModelService %q: %s", err.service, err.reason)
 }
 
 // configuredTemplateIdentity uses the runtime's backend compiler for pre-serving discovery.
 func configuredTemplateIdentity(template inferencev1alpha1.NormalizedPoolTemplate) (servingSnapshotGroup, error) {
-	identity := servingSnapshotGroup{MaxInputTokens: copyOptionalInt32(template.MaxInputTokens)}
+	identity := servingSnapshotGroup{}
 	features := template.Features
 	if template.Role == inferencev1alpha1.ModelRolePrefill || template.Role == inferencev1alpha1.ModelRoleDecode {
 		features.Multimodal = nil
@@ -700,13 +803,23 @@ func modelServiceReady(service *inferencev1alpha1.ModelService) bool {
 }
 
 func routingPoolOwnedBy(pool *inferencev1alpha1.ModelPool, service *inferencev1alpha1.ModelService) bool {
-	return pool != nil && service != nil && pool.DeletionTimestamp.IsZero() &&
+	return modelPoolOwnedBy(pool, service) && pool.DeletionTimestamp.IsZero()
+}
+
+// modelPoolOwnedBy verifies identity ownership independently of routing eligibility.
+func modelPoolOwnedBy(pool *inferencev1alpha1.ModelPool, service *inferencev1alpha1.ModelService) bool {
+	return pool != nil && service != nil &&
 		pool.Spec.ModelServiceRef.Name == service.Name && pool.Spec.ModelServiceRef.UID == string(service.UID) &&
 		routingControllerOwnerMatches(pool, inferencev1alpha1.GroupVersion.String(), "ModelService", service.Name, service.UID)
 }
 
 func routingGroupOwnedBy(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) bool {
-	return group != nil && pool != nil && group.DeletionTimestamp.IsZero() &&
+	return modelGroupOwnedBy(group, pool) && group.DeletionTimestamp.IsZero()
+}
+
+// modelGroupOwnedBy verifies immutable artifact ownership even during deletion drain.
+func modelGroupOwnedBy(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) bool {
+	return group != nil && pool != nil &&
 		group.Spec.ModelPoolRef.Name == pool.Name && group.Spec.ModelPoolRef.UID == string(pool.UID) &&
 		routingControllerOwnerMatches(group, inferencev1alpha1.GroupVersion.String(), "ModelPool", pool.Name, pool.UID)
 }
@@ -883,7 +996,7 @@ func validateRoutingIdentities(models []servingSnapshotModel, groups []servingSn
 		return nil
 	}
 	for _, model := range models {
-		if err := add(model.Model, identity{routeTargetID: model.ServiceUID, source: model.Source, revision: model.Revision, tokenizer: model.Tokenizer, tokenizerRevision: model.TokenizerRevision}); err != nil {
+		if err := add(model.Model, identity{topology: model.Topology, routeTargetID: model.ServiceUID, source: model.Source, revision: model.Revision, tokenizer: model.Tokenizer, tokenizerRevision: model.TokenizerRevision}); err != nil {
 			return err
 		}
 	}
@@ -908,7 +1021,7 @@ func matchingRoutingArtifacts(left, right servingSnapshotGroup) bool {
 	return left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision
 }
 func equalScalingModel(left, right servingSnapshotModel) bool {
-	return left.ServiceUID == right.ServiceUID && left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && equalOptionalInt32(left.MaxInputTokens, right.MaxInputTokens) && slices.Equal(left.Capabilities, right.Capabilities) && slices.EqualFunc(left.AdmissionTargetSets, right.AdmissionTargetSets, func(left, right []servingSnapshotScalingTarget) bool { return slices.Equal(left, right) })
+	return left.ServiceUID == right.ServiceUID && left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && left.Topology == right.Topology && slices.Equal(left.SelectedPoolRevisions, right.SelectedPoolRevisions) && slices.Equal(left.Capabilities, right.Capabilities) && slices.EqualFunc(left.AdmissionTargetSets, right.AdmissionTargetSets, func(left, right []servingSnapshotScalingTarget) bool { return slices.Equal(left, right) })
 }
 
 func equalRoutingGroup(left, right servingSnapshotGroup) bool {

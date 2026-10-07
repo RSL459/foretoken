@@ -50,7 +50,7 @@ To receive notifications, connect a [Lark](integrations/lark/README.md), [Slack]
 
 ## Platform settings
 
-For a source installation, run platform updates from the checkout root with `-e .`, retaining registry settings and any `--engine-source` bindings. Reapply the original install command after upgrading Foretoken to update dashboards and telemetry together.
+Reapply the original `foretoken install` command to update dashboards and collection settings. Then run `foretoken deploy` with your deployment directory to update the serving applications. For source installations, run from the checkout root and retain `-e .`, registry settings, and any `--engine-source` bindings.
 
 ### Grafana login
 

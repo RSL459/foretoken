@@ -105,6 +105,10 @@ type FrontendServiceSpec struct {
 
 // FrontendServiceStatus defines the observed state of a frontend service.
 type FrontendServiceStatus struct {
+	// ServingConfigVersion is the configuration protocol of the selected frontend application.
+	// +optional
+	ServingConfigVersion uint32 `json:"servingConfigVersion,omitempty"`
+
 	// Application retains the selected frontend environment and files across workload recovery.
 	// +optional
 	Application *ApplicationSelection `json:"application,omitempty"`

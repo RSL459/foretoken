@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, Weak};
 
-use crate::telemetry::{AdmissionMetricsScope, set_configured_models};
+use crate::telemetry::{AdmissionMetricsScope, AdmissionModelMetrics, set_configured_models};
 use crate::{
     AdmissionAttempt, AdmissionConfig, AdmissionConfigError, AdmissionContext, AdmissionError,
     AdmissionPermit, AdmissionRequest, AdmissionReservation, AdmissionRule, AdmissionService,
@@ -14,14 +14,14 @@ use crate::{
 };
 
 /// Validated rules prepared without publishing metrics or changing active requests.
-pub struct PreparedAdmissions(BTreeMap<String, Arc<PreparedRule>>);
+pub struct PreparedAdmissions(BTreeMap<String, PreparedRule>);
 
 impl PreparedAdmissions {
     /// Constructs a candidate independently of live rules, which may close before publication.
     pub fn new(configs: &BTreeMap<String, AdmissionConfig>) -> Result<Self, AdmissionConfigError> {
         configs
             .iter()
-            .map(|(model, config)| config.prepare().map(|rule| (model.clone(), Arc::new(rule))))
+            .map(|(model, config)| config.prepare().map(|rule| (model.clone(), rule)))
             .collect::<Result<BTreeMap<_, _>, _>>()
             .map(Self)
     }
@@ -96,14 +96,15 @@ impl AdmissionRegistry {
 }
 
 struct ActiveRule {
-    prepared: Arc<PreparedRule>,
+    prepared: PreparedRule,
     metrics: AdmissionMetricsScope,
 }
 
 #[derive(Default)]
 struct ModelState {
     active: Option<ActiveRule>,
-    pending: Option<Arc<PreparedRule>>,
+    pending: Option<PreparedRule>,
+    events: Option<AdmissionModelMetrics>,
     draining: bool,
     users: usize,
 }
@@ -137,7 +138,7 @@ impl Admission {
 
     // Callers hold the registry/publication boundary. New rules are never activated until every
     // old attempt or accepted batch releases its lease, including resource-free allow_all work.
-    fn replace(&self, replacement: Option<Arc<PreparedRule>>) {
+    fn replace(&self, replacement: Option<PreparedRule>) {
         let mut state = self.state.lock().expect("model admission lock poisoned");
         if !state.draining
             && state
@@ -168,10 +169,17 @@ impl Admission {
         // Drop retired metadata before registering the successor under the same model labels.
         state.active = None;
         if let Some(prepared) = state.pending.take() {
+            state
+                .events
+                .get_or_insert_with(|| AdmissionModelMetrics::new(&self.model));
             let metrics =
                 AdmissionMetricsScope::new(&self.model, prepared.name, prepared.rule.capacity());
             state.active = Some(ActiveRule { prepared, metrics });
             state.draining = false;
+        } else {
+            // Retire events before the last strong reference can disappear; a concurrent
+            // re-add either reuses this locked entry or starts after its series are gone.
+            state.events = None;
         }
     }
 

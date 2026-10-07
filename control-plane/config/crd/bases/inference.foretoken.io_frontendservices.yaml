@@ -489,6 +489,11 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              servingConfigVersion:
+                description: ServingConfigVersion is the configuration protocol of
+                  the selected frontend application.
+                format: int32
+                type: integer
               servingSnapshotVersion:
                 description: Last successfully persisted versioned routing configuration
                   version. It survives ConfigMap recreation.

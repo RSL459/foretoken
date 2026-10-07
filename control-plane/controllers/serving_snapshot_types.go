@@ -21,15 +21,16 @@ type servingSnapshot struct {
 }
 
 type servingSnapshotModel struct {
-	ServiceUID          string                           `json:"service_uid"`
-	Model               string                           `json:"model"`
-	Source              inferencev1alpha1.ModelSource    `json:"source"`
-	Revision            string                           `json:"revision"`
-	Tokenizer           string                           `json:"tokenizer"`
-	TokenizerRevision   string                           `json:"tokenizer_revision"`
-	MaxInputTokens      *int32                           `json:"max_input_tokens,omitempty"`
-	Capabilities        []string                         `json:"capabilities,omitempty"`
-	AdmissionTargetSets [][]servingSnapshotScalingTarget `json:"admission_target_sets"`
+	ServiceUID            string                                  `json:"service_uid"`
+	Model                 string                                  `json:"model"`
+	Source                inferencev1alpha1.ModelSource           `json:"source"`
+	Revision              string                                  `json:"revision"`
+	Tokenizer             string                                  `json:"tokenizer"`
+	TokenizerRevision     string                                  `json:"tokenizer_revision"`
+	SelectedPoolRevisions []inferencev1alpha1.ServingPoolRevision `json:"selected_pool_revisions,omitempty"`
+	Topology              string                                  `json:"topology"`
+	Capabilities          []string                                `json:"capabilities,omitempty"`
+	AdmissionTargetSets   [][]servingSnapshotScalingTarget        `json:"admission_target_sets"`
 }
 
 type servingSnapshotScalingTarget struct {

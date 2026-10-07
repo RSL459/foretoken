@@ -220,7 +220,6 @@ impl AdmissionMetricsScope {
         let model = ModelLabels {
             model_name: model.into(),
         };
-        metrics.initialize_calls(&model.model_name);
         metrics
             .info
             .get_or_create(&AlgorithmLabels {
@@ -286,6 +285,28 @@ impl Drop for AdmissionMetricsScope {
             metrics.active.remove(&self.model);
             metrics.queued.remove(&self.model);
         }
+    }
+}
+
+/// Cumulative events belong to the model, so rule replacement preserves unsampled results.
+pub(crate) struct AdmissionModelMetrics {
+    model: ModelLabels,
+}
+
+impl AdmissionModelMetrics {
+    pub(crate) fn new(model: &str) -> Self {
+        METRICS.initialize_calls(model);
+        Self {
+            model: ModelLabels {
+                model_name: model.into(),
+            },
+        }
+    }
+}
+
+impl Drop for AdmissionModelMetrics {
+    fn drop(&mut self) {
+        let metrics = &METRICS;
         for origin in ["http", "internal"] {
             metrics.attempts.remove(&CallLabels {
                 model_name: self.model.model_name.clone(),

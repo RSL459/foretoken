@@ -50,7 +50,7 @@ TTFT 是首 token 延迟，E2EL 是生成完成延迟。TPOT 是每个请求的�
 
 ## 平台设置
 
-源码安装时，从源码根目录以 `-e .` 更新平台，并保留镜像仓库设置和已有的 `--engine-source` 绑定。升级 Foretoken 后，重新执行原安装命令，让看板和指标采集一起更新。
+重新执行原来的 `foretoken install` 命令，更新看板和采集配置；再对部署目录执行 `foretoken deploy`，更新运行中的服务程序。源码安装从仓库根目录操作，保留 `-e .`、镜像仓库设置和已有的 `--engine-source` 绑定。
 
 ### Grafana 登录
 

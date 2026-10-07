@@ -35,8 +35,6 @@ Expose new configuration through the shared FrontendService and ModelService adm
 
 ## Configuration lifecycle
 
-The controller resolves frontend defaults and whole-block model overrides into the versioned serving snapshot. Each frontend replica maintains independent rule instances and queues for its models; routing changes retain unchanged rules.
-
-`PreparedAdmissions::new` validates and constructs candidates without registering metrics or changing active rules. `AdmissionRegistry::publish` commits the selected candidate. Factories must leave metric activation to the registry.
+Each frontend replica maintains independent rule instances and queues for its models; routing changes retain unchanged rules. Factories validate and construct rules without publishing metrics or changing active requests. The framework activates metrics when the configuration takes effect.
 
 A changed model rule stops accepting new requests, cancels waiting attempts, and lets accepted work finish before activating its replacement. New requests receive HTTP 503 during this handover; other models continue independently.
