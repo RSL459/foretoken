@@ -58,7 +58,3 @@ let state = context.state.model_state(
 | `try_reserve_request()` | 在读取请求体前预留一个 HTTP 驻留名额，许可随响应体持有。 |
 | `requires_ready_runtime()` | 要求模型准备好后再准入生成请求。 |
 | `close()` | 关闭时唤醒等待中的请求。 |
-
-## 更新已有配置
-
-将 `spec.routerPipeline.admission` 移到 `spec.admission`，与 `routerPipeline` 平级，并删除旧字段。算法名称、参数和默认的 `allow_all` 均不变。

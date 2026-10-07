@@ -35,10 +35,6 @@ func frontendServingConfigMapName(frontend *inferencev1alpha1.FrontendService) s
 // Derive the frontend workload, stable Service, and optional gateway route as one desired-state
 // unit so ports, timeouts, labels, and ownership cannot drift across independently built objects.
 func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profile FrontendRuntimeProfile) (*appsv1.Deployment, *corev1.Service, *gatewayv1.HTTPRoute, error) {
-	// Existing resources can predate the CRD validation; never replace their admission with unrestricted execution.
-	if frontend.Spec.RouterPipeline.DeprecatedAdmission != nil {
-		return nil, nil, nil, fmt.Errorf("spec.routerPipeline.admission is no longer supported; move it to spec.admission")
-	}
 	requests, limits, err := frontendResources(frontend.Spec.Resources)
 	if err != nil {
 		return nil, nil, nil, err

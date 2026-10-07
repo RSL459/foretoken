@@ -75,15 +75,7 @@ type AdmissionConfig struct {
 }
 
 // RouterPipeline selects each independently composable routing algorithm stage.
-// +kubebuilder:validation:XValidation:rule="!has(self.admission)",message="spec.routerPipeline.admission is no longer supported; move it to spec.admission"
 type RouterPipeline struct {
-	// DeprecatedAdmission preserves the removed field only so the API can reject it before pruning.
-	// It is never consumed as runtime configuration.
-	// +optional
-	// +kubebuilder:validation:Type=object
-	// +kubebuilder:pruning:PreserveUnknownFields
-	DeprecatedAdmission *runtime.RawExtension `json:"admission,omitempty"`
-
 	// +kubebuilder:default={algorithm:allow_all,parameters:{}}
 	Filter RouterStage `json:"filter"`
 

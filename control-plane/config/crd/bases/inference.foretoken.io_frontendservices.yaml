@@ -286,12 +286,6 @@ spec:
                 description: RouterPipeline selects each independently composable
                   routing algorithm stage.
                 properties:
-                  admission:
-                    description: |-
-                      DeprecatedAdmission preserves the removed field only so the API can reject it before pruning.
-                      It is never consumed as runtime configuration.
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
                   filter:
                     default:
                       algorithm: allow_all
@@ -348,10 +342,6 @@ spec:
                 - picker
                 - scorer
                 type: object
-                x-kubernetes-validations:
-                - message: spec.routerPipeline.admission is no longer supported; move
-                    it to spec.admission
-                  rule: '!has(self.admission)'
               timeouts:
                 description: FrontendTimeouts defines client-facing request budgets.
                 properties:

@@ -58,7 +58,3 @@ Additional hooks support resource reporting, intake, and readiness:
 | `try_reserve_request()` | Reserve a resident HTTP-request slot before body extraction; its permit follows the response body. |
 | `requires_ready_runtime()` | Require model preparation before generation admission. |
 | `close()` | Wake waiting requests during shutdown. |
-
-## Update existing configuration
-
-Move `spec.routerPipeline.admission` to `spec.admission`, alongside `routerPipeline`, and remove the old field. Algorithm names, parameters, and the `allow_all` default are unchanged.
