@@ -86,11 +86,20 @@ results/<goal>/<motivation>/
         └── runs/
 ```
 
-This layout is produced by `--output experiment`. `context.json` records the command, status, timing, and source information. When source capture is available, `changes/` retains modified files at their repository-relative paths. `run.log` is saved with `quiet` enabled. `artifacts/` preserves the benchmark tool's result directories and files.
+`generated/` holds run information; `artifacts/` holds benchmark results. With `quiet` enabled, execution logs are saved to `generated/run.log`.
 
 Run `foretoken perf` or `foretoken eval` with `--output experiment`, `--output-dir results/<goal>/<motivation>`, and `--iteration <name>`. Replace the placeholders with the chosen goal, motivation, and iteration name. Reuse these options for the same approach; each command adds a run directory. Without `--iteration`, each command creates a new numbered iteration.
 
-The command creates blank note templates only when they do not exist. Developers or agents fill them in; subsequent runs do not overwrite the notes. Run from the checkout containing the changes to capture its source state; record the source of separately built serving code in the notes.
+The command creates blank note templates only when they do not exist. Developers or agents fill them in; subsequent runs do not overwrite the notes.
+
+### Record code changes
+
+Run evaluations with `--output experiment` from the source checkout. The command records the current Git commit ID and copies modified or newly added, uncommitted files so you can inspect the code changes for this experiment later:
+
+- `generated/context.json`: commit ID and change list.
+- `generated/changes/`: copies of changed files at their original paths, excluding Git-ignored files.
+
+If the service uses a separately built image or another checkout, identify its source in the iteration notes. Source records and author-written notes stay local.
 
 ## Inspect the results
 
