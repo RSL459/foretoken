@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use crate::{RouteTarget, RouteTargetStats, RoutingLoadSnapshot};
+use foretoken_serving_types::{RouteTarget, RouteTargetStats, RoutingLoadSnapshot};
 
 /// Identity resolved by a trusted authentication boundary, never inferred from client hints.
 #[derive(Clone, Debug)]

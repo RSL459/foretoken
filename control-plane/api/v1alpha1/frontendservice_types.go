@@ -61,14 +61,14 @@ type AdmissionParameters struct {
 	QueueTimeout Duration `json:"queueTimeout,omitempty"`
 }
 
-// AdmissionStage selects a request admission rule and its parameters.
+// AdmissionConfig selects a request admission rule and its parameters.
 // +kubebuilder:validation:XValidation:rule="self.algorithm != 'concurrency' || has(self.parameters)",message="concurrency admission requires parameters"
 // +kubebuilder:validation:XValidation:rule="self.algorithm != 'allow_all' || !has(self.parameters)",message="allow_all admission accepts no parameters"
-type AdmissionStage struct {
+type AdmissionConfig struct {
 	// +optional
 	// +kubebuilder:default=allow_all
 	// +kubebuilder:validation:MinLength=1
-	Algorithm RouterAlgorithm `json:"algorithm,omitempty"`
+	Algorithm string `json:"algorithm,omitempty"`
 
 	// +optional
 	Parameters *AdmissionParameters `json:"parameters,omitempty"`
@@ -76,10 +76,6 @@ type AdmissionStage struct {
 
 // RouterPipeline selects each independently composable routing algorithm stage.
 type RouterPipeline struct {
-	// Admission is omitted to retain unrestricted routing.
-	// +optional
-	Admission *AdmissionStage `json:"admission,omitempty"`
-
 	// +kubebuilder:default={algorithm:allow_all,parameters:{}}
 	Filter RouterStage `json:"filter"`
 
@@ -117,6 +113,10 @@ type FrontendServiceSpec struct {
 	// Observability selects frontend-scoped alerts, including shared HTTP failures.
 	// +optional
 	Observability *FrontendObservability `json:"observability,omitempty"`
+
+	// Admission is omitted to allow unrestricted request execution.
+	// +optional
+	Admission *AdmissionConfig `json:"admission,omitempty"`
 
 	// +optional
 	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:gamble_sampling}}
