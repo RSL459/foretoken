@@ -222,7 +222,6 @@ class ClusterBuilder(AbstractContextManager):
         self.containerd_client = "/usr/local/bin/ctr"
         self.pull_secrets = pull_secrets
         self.credentials = credentials or {}
-        self._secret_created = False
         self.name = "foretoken-build-" + uuid.uuid4().hex[:12]
         self.root = f"{self.mount}/build/{binding}"
         self.workspace = f"{self.root}/workspace"
@@ -270,10 +269,30 @@ class ClusterBuilder(AbstractContextManager):
                 ),
                 None,
             )
-            if (images is not None) != bool(self.containerd_socket):
+            # File-only exports can reuse a daemon with an idle image-import helper.
+            if self.containerd_socket and (
+                images is None or images.get("image") != self.tools_image
+            ):
                 continue
-            if images is not None and images.get("image") != self.tools_image:
+            auth = next(
+                (
+                    volume.get("secret")
+                    for volume in pod["spec"].get("volumes", [])
+                    if volume["name"] == "registry-auth"
+                ),
+                None,
+            )
+            if bool(auth) != bool(self.credentials):
                 continue
+            if auth is not None:
+                secret = self.kubectl.get_if_exists(
+                    "secret", auth["secretName"], self.namespace
+                )
+                # A new Pod mounts current credentials before its first build starts.
+                if secret is None or json.loads(
+                    base64.b64decode(secret["data"][".dockerconfigjson"])
+                ) != self.credentials:
+                    continue
             candidates.append(pod)
         reusable = min(
             candidates,
@@ -510,7 +529,6 @@ class ClusterBuilder(AbstractContextManager):
                         }
                     ),
                 )
-                self._secret_created = True
             self.kubectl.run(
                 [
                     "wait",
