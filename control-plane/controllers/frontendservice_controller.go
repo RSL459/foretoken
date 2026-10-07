@@ -127,11 +127,7 @@ func (reconciler *FrontendServiceReconciler) frontendsInNamespace(ctx context.Co
 
 // servingCacheReady lets frontends share a cache only after a serving workload has bound it.
 // Every selected cohort must use that cache before the frontend changes its mount.
-func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding) (bool, error) {
-	var services inferencev1alpha1.ModelServiceList
-	if err := reconciler.List(ctx, &services, client.InNamespace(namespace)); err != nil {
-		return false, fmt.Errorf("list ModelServices for frontend runtime cache: %w", err)
-	}
+func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, services []inferencev1alpha1.ModelService) (bool, error) {
 	var pools inferencev1alpha1.ModelPoolList
 	if err := reconciler.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
 		return false, fmt.Errorf("list ModelPools for frontend runtime cache: %w", err)
@@ -141,8 +137,8 @@ func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Conte
 		return false, fmt.Errorf("list ModelGroups for frontend runtime cache: %w", err)
 	}
 	selectedRevision := false
-	for serviceIndex := range services.Items {
-		service := &services.Items[serviceIndex]
+	for serviceIndex := range services {
+		service := &services[serviceIndex]
 		if !service.DeletionTimestamp.IsZero() {
 			continue
 		}
@@ -251,10 +247,14 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
 	}
+	var services inferencev1alpha1.ModelServiceList
+	if err := reconciler.List(ctx, &services, client.InNamespace(frontend.Namespace)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list ModelServices for frontend: %w", err)
+	}
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, frontend.Namespace); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
 	}
-	servingSnapshotInstalled, err := reconciler.reconcileServingSnapshot(ctx, frontend)
+	servingSnapshotInstalled, err := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ServingSnapshotProjectionFailed", FailureMessage: err.Error()})
 	}
@@ -264,7 +264,7 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
 	if cacheReady {
-		cacheReady, err = reconciler.servingCacheReady(ctx, frontend.Namespace, runtimeCache)
+		cacheReady, err = reconciler.servingCacheReady(ctx, frontend.Namespace, runtimeCache, services.Items)
 		if err != nil {
 			statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
 			return ctrl.Result{}, errors.Join(err, statusErr)

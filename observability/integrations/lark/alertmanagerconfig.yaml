@@ -31,7 +31,7 @@ spec:
           - namespace
           - frontend_service
           - alertname
-          - stage
+          - model_name
   receivers:
     - name: lark
       webhookConfigs:
@@ -62,7 +62,7 @@ spec:
             {{- with .Labels.instance }}{{ $lines = append $lines (dict "zh" (printf "实例：%s" .) "en" (printf "Instance: %s" .)) }}{{ end -}}
             {{- with .Labels.endpoint }}{{ $lines = append $lines (dict "zh" (printf "端点：%s" .) "en" (printf "Endpoint: %s" .)) }}{{ end -}}
             {{- with or .Labels.frontend_service .Labels.inference_foretoken_io_frontend_service }}{{ $lines = append $lines (dict "zh" (printf "前端：%s" .) "en" (printf "Frontend: %s" .)) }}{{ end -}}
-            {{- with .Labels.stage }}{{ $lines = append $lines (dict "zh" (printf "准入阶段：%s" .) "en" (printf "Admission stage: %s" .)) }}{{ end -}}
+            {{- with .Labels.model_name }}{{ $lines = append $lines (dict "zh" (printf "模型：%s" .) "en" (printf "Model: %s" .)) }}{{ end -}}
             {{- with .Labels.scope }}{{ $lines = append $lines (dict "zh" (printf "统计范围：%s" .) "en" (printf "Scope: %s" .)) }}{{ end -}}
             {{- with .Labels.model_service }}{{ $lines = append $lines (dict "zh" (printf "模型服务：%s" .) "en" (printf "Model service: %s" .)) }}{{ end -}}
             {{- with or .Labels.model_group .Labels.inference_foretoken_io_model_group }}{{ $lines = append $lines (dict "zh" (printf "模型组：%s" .) "en" (printf "Model group: %s" .)) }}{{ end -}}

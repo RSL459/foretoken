@@ -80,4 +80,6 @@ pub struct AdmissionContext<'a> {
     pub state: &'a dyn AdmissionStateReader,
     /// Queue timing supplied by the framework; rules keep capacity and scheduling ownership.
     pub queue: super::AdmissionQueueObservation,
+    /// Counters for resources reserved by this model's rule.
+    pub metrics: super::AdmissionMetricsHandle,
 }

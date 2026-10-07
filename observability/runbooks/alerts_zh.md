@@ -38,7 +38,7 @@ spec:
 | [ForetokenNVIDIAGPUTemperatureHigh](#foretokennvidiagputemperaturehigh) | 模型服务 | NVIDIA GPU 温度连续 2 分钟达到阈值，默认 85°C。 |
 | [ForetokenNVIDIAGPUPowerUsageHigh](#foretokennvidiagpupowerusagehigh) | 模型服务 | NVIDIA GPU 功耗连续 5 分钟达到配置阈值。 |
 
-准入阈值写在 `spec.observability.alerts.thresholds.admission` 下。三条比例或延迟告警需要显式填写阈值和正数最小速率。可选 `scope` 默认 `service`，可设为 `pod`；`window` 默认 `1m`，`for` 默认 `5m`。时长支持整数秒、分钟或小时，分别控制聚合范围、计算窗口及触发告警前条件须持续的时间。
+准入阈值写在 `spec.observability.alerts.thresholds.admission` 下。三条比例或延迟告警需要显式填写阈值和正数最小速率。可选 `scope` 默认 `service`，按模型汇总所选前端的各 Pod；设为 `pod` 时，按模型与 Pod 分别评估。`window` 默认 `1m`，`for` 默认 `5m`。时长支持整数秒、分钟或小时，分别控制聚合范围、计算窗口及触发告警前条件须持续的时间。
 
 ## 定位告警原因
 
@@ -54,13 +54,13 @@ spec:
 
 ### ForetokenAdmissionCapacityRejectionRatioHigh
 
-在准入阈值下填写 0 至 1 的 `capacityRejectionRatio`，以及以已结束调用次数/秒为单位的 `minResultRate`。拒绝比例按准入阶段分别计算，以该阶段已结束的调用为分母。
+在准入阈值下填写 0 至 1 的 `capacityRejectionRatio`，以及以已结束调用次数/秒为单位的 `minResultRate`。拒绝比例按模型分别计算，以该模型已结束的 HTTP 准入调用为分母。
 
-比较各前端 Pod 的流量、占用和配置上限。`intake` 对应 HTTP 驻留名额，`work` 对应工作准入；调整前端限额前，同时查看后端负载。
+选择受影响的模型，比较其在各前端 Pod 的流量、占用和配置上限。调整该模型的限额前，同时查看后端负载。
 
 ### ForetokenAdmissionTimeoutRatioHigh
 
-在准入阈值下填写 0 至 1 的 `timeoutRatio`，以及以已结束调用次数/秒为单位的 `minResultRate`。分子为 `queue_timeout` 和 `deadline_exceeded`，分母为已结束的工作准入调用。
+在准入阈值下填写 0 至 1 的 `timeoutRatio`，以及以已结束调用次数/秒为单位的 `minResultRate`。按模型分别计算，分子为 `queue_timeout` 和 `deadline_exceeded`，分母为该模型已结束的 HTTP 准入调用。
 
 对照队列占用、等待时间、`queueTimeout` 和请求超时。结果分类可区分队列等待到期与获准前请求预算耗尽。
 
@@ -68,11 +68,11 @@ spec:
 
 在准入阈值下填写正数 `admittedQueueP95Seconds`（秒）和 `minQueuedAdmissionRate`（调用次数/秒）。此规则只统计实际排队后获准的请求，不包含直接获准或等待超时的请求。
 
-结合获准等待曲线、队列占用和模型容量定位延迟，同时查看超时结果，判断是否还有请求等待后未能获准。
+选择受影响的模型，结合其获准等待曲线、队列占用和模型容量定位延迟，同时查看超时结果，判断是否还有请求等待后未能获准。
 
 ### ForetokenAdmissionTelemetryMissing
 
-在准入副本表中定位指标不完整的 Pod，并核对运行版本。升级完成后仍未恢复时，检查监控配置。
+在准入副本表中定位指标不完整的模型与 Pod，并核对运行版本。升级完成后仍未恢复时，检查监控配置。
 
 ### ForetokenNVIDIAGPUTemperatureHigh
 

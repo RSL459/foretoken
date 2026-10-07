@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 从集群的监控入口打开 Grafana。Foretoken 托管的 Grafana Service 位于 `foretoken-platform` 命名空间，名称为 `foretoken-prometheus-grafana`，端口为 80，默认类型是 `ClusterIP`；集群外访问需要由集群管理员配置入口。复用 Grafana 时沿用已有访问方式。
 
-打开 Foretoken 系统概览，或英文版 Foretoken System Overview。先选命名空间，再按任务选择模型或前端：模型用于查看推理指标，前端用于查看 HTTP 流量和准入。模型实例、执行角色和引擎编号进一步筛选后端明细，模型总计曲线仍保留。
+打开 Foretoken 系统概览，或英文版 Foretoken System Overview。先选命名空间和模型，查看推理与准入指标；选择前端查看 HTTP 流量。模型实例、执行角色和引擎编号进一步筛选后端明细，模型总计曲线仍保留。
 
 默认查看最近 15 分钟，调整时间范围可查看历史趋势；概览数值对应所选范围的终点。
 
@@ -24,11 +24,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 | 推测解码是否有效？ | 结合草稿接受率、输出吞吐、延迟，以及自动采集的草稿与目标模型 GPU 耗时判断。 |
 | 缓存或设备是否紧张？ | 缓存占用和命中率、文件系统空间、GPU 利用率与显存，以及 CPU／内存用量。 |
 | 路由与副本配置是否合适？ | 各模型、执行角色内的路由选择份额，以及扩缩容建议与实际副本数。 |
-| 请求为什么等待或被拒绝？ | 准入结果、排队等待，以及各前端副本的占用和上限。 |
+| 请求为什么等待或被拒绝？ | 各模型的准入结果、排队等待，以及各前端副本内该模型的占用和上限。 |
 
 TTFT 是首 token 延迟，E2EL 是生成完成延迟。TPOT 是每个请求的平均输出 token 间隔，ITL 是逐 token 间隔；单位见各面板。
 
-在“准入”区域选择前端 Pod，可查看副本明细；展开结果或资源区域可查看相应曲线。
+在“准入”区域选择模型，可进一步选择前端 Pod 查看副本明细；展开结果或资源区域可查看相应曲线。各副本内的模型限额与队列相互独立，全部模型视图不表示共享配额。
 
 ## 查询日志
 

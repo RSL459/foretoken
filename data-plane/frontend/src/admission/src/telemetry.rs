@@ -3,7 +3,7 @@
 
 //! Admission-call results and queue timing, separate from reservation ownership.
 
-use std::collections::HashMap;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -50,50 +50,49 @@ pub fn mark_request_deadline() {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct CallLabels {
-    stage: &'static str,
+    model_name: String,
     origin: &'static str,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct ResultLabels {
-    stage: &'static str,
-    origin: &'static str,
-    result: &'static str,
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
-struct WaitLabels {
+    model_name: String,
     origin: &'static str,
     result: &'static str,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct AlgorithmLabels {
+    model_name: String,
     algorithm: &'static str,
 }
 
-#[derive(Clone, Debug, Default, Hash, PartialEq, Eq, EncodeLabelSet)]
-struct NoLabels {}
-
-#[derive(Default)]
-struct MetricOwners {
-    algorithms: HashMap<&'static str, usize>,
-    bounded: usize,
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct ModelLabels {
+    model_name: String,
 }
 
-pub(crate) struct AdmissionMetrics {
+struct AdmissionMetrics {
     registry: Registry,
-    owners: Mutex<MetricOwners>,
+    catalog: Mutex<BTreeSet<String>>,
+    model_info: Family<ModelLabels, Gauge>,
+    draining: Family<ModelLabels, Gauge>,
+    configured_models: Gauge,
     info: Family<AlgorithmLabels, Gauge>,
-    concurrency_limit: Family<NoLabels, Gauge>,
-    queue_limit: Family<NoLabels, Gauge>,
-    resident_limit: Family<NoLabels, Gauge>,
-    pub(crate) active: Gauge,
-    pub(crate) queued: Gauge,
-    pub(crate) resident: Gauge,
+    concurrency_limit: Family<ModelLabels, Gauge>,
+    queue_limit: Family<ModelLabels, Gauge>,
+    active: Family<ModelLabels, Gauge>,
+    queued: Family<ModelLabels, Gauge>,
     attempts: Family<CallLabels, Counter>,
     results: Family<ResultLabels, Counter>,
-    wait: Family<WaitLabels, Histogram, fn() -> Histogram>,
+    wait: Family<ResultLabels, Histogram, fn() -> Histogram>,
+}
+
+/// Model-local resource counters retained by algorithm-owned reservations.
+#[derive(Clone)]
+pub struct AdmissionMetricsHandle {
+    pub active: Gauge,
+    pub queued: Gauge,
 }
 
 fn wait_histogram() -> Histogram {
@@ -104,18 +103,29 @@ impl AdmissionMetrics {
     fn new() -> Self {
         let mut metrics = Self {
             registry: Registry::default(),
-            owners: Mutex::new(MetricOwners::default()),
+            catalog: Mutex::new(BTreeSet::new()),
+            model_info: Family::default(),
+            draining: Family::default(),
+            configured_models: Gauge::default(),
             info: Family::default(),
             concurrency_limit: Family::default(),
             queue_limit: Family::default(),
-            resident_limit: Family::default(),
-            active: Gauge::default(),
-            queued: Gauge::default(),
-            resident: Gauge::default(),
+            active: Family::default(),
+            queued: Family::default(),
             attempts: Family::default(),
             results: Family::default(),
             wait: Family::new_with_constructor(wait_histogram as fn() -> Histogram),
         };
+        metrics.registry.register(
+            "foretoken_admission_model_info",
+            "Models in the currently published serving catalog",
+            metrics.model_info.clone(),
+        );
+        metrics.registry.register(
+            "foretoken_admission_draining",
+            "Whether the effective model rule is draining outstanding work",
+            metrics.draining.clone(),
+        );
         metrics.registry.register(
             "foretoken_admission_info",
             "Configured admission algorithm",
@@ -132,9 +142,9 @@ impl AdmissionMetrics {
             metrics.queue_limit.clone(),
         );
         metrics.registry.register(
-            "foretoken_admission_resident_limit_requests",
-            "Resident protected HTTP request limit",
-            metrics.resident_limit.clone(),
+            "foretoken_admission_configured_models",
+            "Models in the currently published serving catalog",
+            metrics.configured_models.clone(),
         );
         metrics.registry.register(
             "foretoken_admission_active_work_units",
@@ -145,11 +155,6 @@ impl AdmissionMetrics {
             "foretoken_admission_queued_work_units",
             "Work units waiting for admission",
             metrics.queued.clone(),
-        );
-        metrics.registry.register(
-            "foretoken_admission_resident_requests",
-            "Resident protected HTTP requests",
-            metrics.resident.clone(),
         );
         metrics.registry.register(
             "foretoken_admission_attempts",
@@ -169,14 +174,18 @@ impl AdmissionMetrics {
         metrics
     }
 
-    fn initialize_calls(&self) {
-        for (stage, origin) in [("intake", "http"), ("work", "http"), ("work", "internal")] {
+    /// Publishes zero-event baselines for both framework call origins before traffic arrives.
+    fn initialize_calls(&self, model: &str) {
+        for origin in ["http", "internal"] {
             self.attempts
-                .get_or_create(&CallLabels { stage, origin })
+                .get_or_create(&CallLabels {
+                    model_name: model.into(),
+                    origin,
+                })
                 .inc_by(0);
             self.results
                 .get_or_create(&ResultLabels {
-                    stage,
+                    model_name: model.into(),
                     origin,
                     result: "admitted",
                 })
@@ -190,89 +199,142 @@ impl AdmissionMetrics {
 pub struct AdmissionCapacity {
     pub concurrent_work_units: u32,
     pub queued_work_units: u32,
-    pub resident_requests: u64,
 }
 
-/// Keeps configured-rule series present for the owning admission instance's lifetime.
+/// Keeps model-local rule series present for the owning admission instance's lifetime.
 pub(crate) struct AdmissionMetricsScope {
+    model: ModelLabels,
     algorithm: &'static str,
-    capacity: Option<AdmissionCapacity>,
+    bounded: bool,
+    handle: AdmissionMetricsHandle,
 }
 
 impl AdmissionMetricsScope {
-    pub(crate) fn new(algorithm: &'static str, capacity: Option<AdmissionCapacity>) -> Self {
+    /// Publishes an effective rule after the registry has committed its activation.
+    pub(crate) fn new(
+        model: &str,
+        algorithm: &'static str,
+        capacity: Option<AdmissionCapacity>,
+    ) -> Self {
         let metrics = &METRICS;
-        let mut owners = metrics
-            .owners
-            .lock()
-            .expect("admission metric owners lock poisoned");
-        metrics.initialize_calls();
-        *owners.algorithms.entry(algorithm).or_default() += 1;
+        let model = ModelLabels {
+            model_name: model.into(),
+        };
+        metrics.initialize_calls(&model.model_name);
         metrics
             .info
-            .get_or_create(&AlgorithmLabels { algorithm })
+            .get_or_create(&AlgorithmLabels {
+                model_name: model.model_name.clone(),
+                algorithm,
+            })
             .set(1);
-        if let Some(capacity) = capacity {
-            owners.bounded += 1;
+        metrics.draining.get_or_create(&model).set(0);
+        // The registry owns exactly one effective rule per model, including during a drain.
+        let handle = if let Some(capacity) = capacity {
             metrics
                 .concurrency_limit
-                .get_or_create(&NoLabels {})
-                .inc_by(i64::from(capacity.concurrent_work_units));
+                .get_or_create(&model)
+                .set(i64::from(capacity.concurrent_work_units));
             metrics
                 .queue_limit
-                .get_or_create(&NoLabels {})
-                .inc_by(i64::from(capacity.queued_work_units));
-            metrics
-                .resident_limit
-                .get_or_create(&NoLabels {})
-                .inc_by(capacity.resident_requests as i64);
-        }
+                .get_or_create(&model)
+                .set(i64::from(capacity.queued_work_units));
+            AdmissionMetricsHandle {
+                active: metrics.active.get_or_create(&model).clone(),
+                queued: metrics.queued.get_or_create(&model).clone(),
+            }
+        } else {
+            AdmissionMetricsHandle {
+                active: Gauge::default(),
+                queued: Gauge::default(),
+            }
+        };
         Self {
+            model,
             algorithm,
-            capacity,
+            bounded: capacity.is_some(),
+            handle,
         }
+    }
+
+    /// Supplies resource gauges that reservations retain until their work ends.
+    pub(crate) fn metrics(&self) -> AdmissionMetricsHandle {
+        self.handle.clone()
+    }
+
+    /// Publishes the registry's handover state without exposing pending rule limits.
+    pub(crate) fn set_draining(&self, draining: bool) {
+        METRICS
+            .draining
+            .get_or_create(&self.model)
+            .set(i64::from(draining));
     }
 }
 
 impl Drop for AdmissionMetricsScope {
     fn drop(&mut self) {
+        // The registry retires this scope only after its attempts and reservations finish.
         let metrics = &METRICS;
-        let mut owners = metrics
-            .owners
-            .lock()
-            .expect("admission metric owners lock poisoned");
-        let count = owners
-            .algorithms
-            .get_mut(self.algorithm)
-            .expect("registered admission metric owner");
-        *count -= 1;
-        if *count == 0 {
-            owners.algorithms.remove(self.algorithm);
-            metrics.info.remove(&AlgorithmLabels {
-                algorithm: self.algorithm,
-            });
+        metrics.info.remove(&AlgorithmLabels {
+            model_name: self.model.model_name.clone(),
+            algorithm: self.algorithm,
+        });
+        metrics.draining.remove(&self.model);
+        if self.bounded {
+            metrics.concurrency_limit.remove(&self.model);
+            metrics.queue_limit.remove(&self.model);
+            metrics.active.remove(&self.model);
+            metrics.queued.remove(&self.model);
         }
-        if let Some(capacity) = self.capacity {
-            metrics
-                .concurrency_limit
-                .get_or_create(&NoLabels {})
-                .dec_by(i64::from(capacity.concurrent_work_units));
-            metrics
-                .queue_limit
-                .get_or_create(&NoLabels {})
-                .dec_by(i64::from(capacity.queued_work_units));
-            metrics
-                .resident_limit
-                .get_or_create(&NoLabels {})
-                .dec_by(capacity.resident_requests as i64);
-            owners.bounded -= 1;
-            if owners.bounded == 0 {
-                metrics.concurrency_limit.remove(&NoLabels {});
-                metrics.queue_limit.remove(&NoLabels {});
-                metrics.resident_limit.remove(&NoLabels {});
+        for origin in ["http", "internal"] {
+            metrics.attempts.remove(&CallLabels {
+                model_name: self.model.model_name.clone(),
+                origin,
+            });
+            for result in [
+                "admitted",
+                "capacity_rejected",
+                "queue_timeout",
+                "deadline_exceeded",
+                "invalid_request",
+                "closed",
+                "cancelled",
+            ] {
+                let labels = ResultLabels {
+                    model_name: self.model.model_name.clone(),
+                    origin,
+                    result,
+                };
+                metrics.results.remove(&labels);
+                metrics.wait.remove(&labels);
             }
         }
     }
+}
+
+/// Publishes model inventory from the committed catalog, independently of effective rule telemetry.
+pub(crate) fn set_configured_models(models: &[String]) {
+    let metrics = &METRICS;
+    let mut catalog = metrics
+        .catalog
+        .lock()
+        .expect("admission model catalog lock poisoned");
+    let next: BTreeSet<String> = models.iter().cloned().collect();
+    for model in catalog.difference(&next) {
+        metrics.model_info.remove(&ModelLabels {
+            model_name: model.clone(),
+        });
+    }
+    for model in &next {
+        metrics
+            .model_info
+            .get_or_create(&ModelLabels {
+                model_name: model.clone(),
+            })
+            .set(1);
+    }
+    metrics.configured_models.set(next.len() as i64);
+    *catalog = next;
 }
 
 #[derive(Default)]
@@ -310,38 +372,28 @@ impl Drop for AdmissionQueueWait {
     }
 }
 
-/// Observes one intake or work admission call and emits exactly one final result.
+/// Observes one model's work admission call and emits exactly one final result.
 /// Resource permits have their own lifetime and never update this result.
 pub struct AdmissionAttempt {
     labels: CallLabels,
-    deadline: Option<tokio::time::Instant>,
+    deadline: tokio::time::Instant,
     deadline_elapsed: Option<Arc<AtomicBool>>,
     queue: AdmissionQueueObservation,
     finished: bool,
 }
 
 impl AdmissionAttempt {
-    /// Starts the immediate HTTP intake decision before body extraction.
-    pub fn intake() -> Self {
-        Self::start("intake", "http", None)
-    }
-
-    /// Starts a complete work admission, deriving its origin from the framework HTTP scope.
-    pub fn work(deadline: tokio::time::Instant) -> Self {
+    /// Starts a configured model's work admission, deriving origin from the framework HTTP scope.
+    pub fn work(model: &str, deadline: tokio::time::Instant) -> Self {
         let origin = if HTTP_OBSERVATION.try_with(|_| ()).is_ok() {
             "http"
         } else {
             "internal"
         };
-        Self::start("work", origin, Some(deadline))
-    }
-
-    fn start(
-        stage: &'static str,
-        origin: &'static str,
-        deadline: Option<tokio::time::Instant>,
-    ) -> Self {
-        let labels = CallLabels { stage, origin };
+        let labels = CallLabels {
+            model_name: model.into(),
+            origin,
+        };
         METRICS.attempts.get_or_create(&labels).inc();
         Self {
             labels,
@@ -359,14 +411,12 @@ impl AdmissionAttempt {
         self.queue.clone()
     }
 
-    /// Runs work admission under the original budget and records its final decision.
+    /// Runs the registry's admission decision under the original budget and records its result.
     pub async fn run<T>(
         self,
         work: impl Future<Output = Result<T, AdmissionError>>,
     ) -> Result<T, AdmissionError> {
-        let deadline = self
-            .deadline
-            .expect("work admission has a request deadline");
+        let deadline = self.deadline;
         let result = tokio::select! {
             biased;
             _ = tokio::time::sleep_until(deadline) => Err(AdmissionError::DeadlineExceeded),
@@ -400,7 +450,7 @@ impl AdmissionAttempt {
         metrics
             .results
             .get_or_create(&ResultLabels {
-                stage: self.labels.stage,
+                model_name: self.labels.model_name.clone(),
                 origin: self.labels.origin,
                 result,
             })
@@ -416,7 +466,8 @@ impl AdmissionAttempt {
         {
             metrics
                 .wait
-                .get_or_create(&WaitLabels {
+                .get_or_create(&ResultLabels {
+                    model_name: self.labels.model_name.clone(),
                     origin: self.labels.origin,
                     result,
                 })
@@ -434,9 +485,7 @@ impl Drop for AdmissionAttempt {
                 .deadline_elapsed
                 .as_ref()
                 .is_some_and(|flag| flag.load(Ordering::Relaxed))
-                || self
-                    .deadline
-                    .is_some_and(|deadline| tokio::time::Instant::now() >= deadline);
+                || tokio::time::Instant::now() >= self.deadline;
             self.record(if expired {
                 "deadline_exceeded"
             } else {
@@ -446,7 +495,7 @@ impl Drop for AdmissionAttempt {
     }
 }
 
-pub(crate) static METRICS: LazyLock<AdmissionMetrics> = LazyLock::new(AdmissionMetrics::new);
+static METRICS: LazyLock<AdmissionMetrics> = LazyLock::new(AdmissionMetrics::new);
 
 /// Encodes admission metrics for the frontend's combined OpenMetrics response.
 pub fn render_metrics() -> Result<String, fmt::Error> {

@@ -25,8 +25,18 @@ async fn admit(
 
 无需占用资源时返回 `AdmissionPermit::default()`；否则返回 `AdmissionPermit::new(reservation)`。reservation 应持有已取得的容量，在丢弃时释放，并通过 `split_one()` 将一个候选所需的份额交给批次子请求。
 
+只有算法实际预留容量或进入队列时，才更新 `context.metrics.active` 和 `context.metrics.queued` 的工作量计数。随资源释放扣除相应计数；拆分只转移已计量的份额，不重复增加。调用结果和等待时长由框架独立记录。
+
 ## 注册规则
 
-提供 `from_parameters(Value) -> Result<Self, String>`，在启动时校验参数并构造规则。将其加入 [algorithm/mod.rs](../../data-plane/frontend/src/admission/src/algorithm/mod.rs) 的 `declare_admission_algorithms!` 列表；外部实现也可通过 `inventory` 注册 `AdmissionDescriptor`。
+提供 `from_parameters(Value) -> Result<Self, String>`，校验参数并为模型构造规则。将其加入 [algorithm/mod.rs](../../data-plane/frontend/src/admission/src/algorithm/mod.rs) 的 `declare_admission_algorithms!` 列表；外部实现也可通过 `inventory` 注册 `AdmissionDescriptor`。
 
-新增配置需同步 FrontendService API 并重新生成 CRD。容量上报、HTTP 入口和关闭等可选方法见 [AdmissionRule](../../data-plane/frontend/src/admission/src/lib.rs) 的接口说明。
+新增配置需同步 FrontendService 和 ModelService 共用的准入 API，并重新生成 CRD。可选方法 `capacity`、`requires_ready_runtime` 和 `close` 见 [AdmissionRule](../../data-plane/frontend/src/admission/src/lib.rs) 的接口说明。`close` 应唤醒算法自己的等待任务，不撤销已获准请求的资源预留。
+
+## 配置生命周期
+
+控制器将前端默认规则和模型整块覆盖后的结果写入带版本的服务快照。每个前端副本为各模型维护独立的规则实例和队列；路由变化时保留配置未变的规则。
+
+`PreparedAdmissions::new` 校验并构造候选规则，不注册指标，也不改变生效规则。`AdmissionRegistry::publish` 发布选定的候选。规则工厂应将指标启用交给 registry。
+
+模型规则更换时停止接纳新请求，取消等待中的准入调用，待已获准的工作结束后启用替代规则。交接期间新请求返回 HTTP 503，其他模型独立运行。

@@ -493,7 +493,7 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 					}
 				}
 			}
-			if err := validateRoutingIdentities(routes, nil, nil); err != nil {
+			if err := validateRoutingIdentities(nil, routes, nil, nil); err != nil {
 				return false, err
 			}
 		}

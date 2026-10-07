@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use foretoken_admission::AdmissionTargetState;
+use foretoken_admission::{AdmissionTargetState, PreparedAdmissions};
 use foretoken_backend_registry::{
     BackendRegistry, BackendRegistryBuild, ModelIdentity, ServingSnapshot,
 };
@@ -88,6 +88,13 @@ impl RuntimeBuilder {
             || !snapshot.epd_components.is_empty();
         let identities = snapshot
             .model_identities()
+            .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
+        if identities.keys().ne(snapshot.admission.keys()) {
+            return Err(RuntimeBuildError::InvalidSnapshot(
+                "model catalog and admission rules differ".into(),
+            ));
+        }
+        let admission = PreparedAdmissions::new(&snapshot.admission)
             .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
         let admission_targets = snapshot
             .admission_target_sets()
@@ -182,6 +189,7 @@ impl RuntimeBuilder {
             version,
             state: Arc::new(state),
             control,
+            admission,
         })
     }
 }
@@ -190,6 +198,7 @@ pub struct PreparedRuntime {
     version: u64,
     state: Arc<RuntimeState>,
     control: Arc<dyn RuntimeControl>,
+    admission: PreparedAdmissions,
 }
 
 impl PreparedRuntime {
@@ -198,7 +207,7 @@ impl PreparedRuntime {
     /// Snapshot watchers consume the candidate exactly once. Returns whether its version replaced
     /// the active state; stale candidates are dropped without affecting request handling.
     pub fn publish(self, generation: &RuntimeGeneration) -> bool {
-        generation.replace_state(self.version, self.state, self.control)
+        generation.replace_state(self.version, self.state, self.control, self.admission)
     }
 }
 

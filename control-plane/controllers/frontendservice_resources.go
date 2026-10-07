@@ -85,13 +85,6 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
 		{Name: "FORETOKEN_ROUTER_PIPELINE", Value: string(routerPipeline)},
 	}
-	if frontend.Spec.Admission != nil {
-		admission, err := json.Marshal(frontend.Spec.Admission)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("encode frontend admission: %w", err)
-		}
-		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "FORETOKEN_ADMISSION", Value: string(admission)})
-	}
 	var annotations map[string]string
 	if profile.ApplicationURL != "" {
 		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: profile.ApplicationFiles.Directory()})

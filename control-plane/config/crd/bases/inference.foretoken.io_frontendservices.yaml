@@ -58,15 +58,17 @@ spec:
               service.
             properties:
               admission:
-                description: Admission is omitted to allow unrestricted request execution.
+                description: |-
+                  Admission supplies defaults applied independently to each model in each frontend replica.
+                  A ModelService admission block replaces these defaults; omitted defaults are unrestricted.
                 properties:
                   algorithm:
                     default: allow_all
                     minLength: 1
                     type: string
                   parameters:
-                    description: AdmissionParameters sets process-local concurrency
-                      and queue limits for the frontend.
+                    description: AdmissionParameters sets per-model concurrency and
+                      queue limits in each frontend process.
                     properties:
                       maxConcurrentRequests:
                         format: int64

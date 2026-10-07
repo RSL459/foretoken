@@ -10,13 +10,14 @@ import inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v
 const servingSnapshotKey = "serving.json"
 
 type servingSnapshot struct {
-	Version           uint64                            `json:"version"`
-	Models            []servingSnapshotModel            `json:"models"`
-	Groups            []servingSnapshotGroup            `json:"groups"`
-	PDComponents      []servingSnapshotPDComponent      `json:"pd_components,omitempty"`
-	PDPipelineScopes  []servingSnapshotPDPipelineScope  `json:"pd_pipeline_scopes,omitempty"`
-	EPDComponents     []servingSnapshotEPDComponent     `json:"epd_components,omitempty"`
-	EPDPipelineScopes []servingSnapshotEPDPipelineScope `json:"epd_pipeline_scopes,omitempty"`
+	Version           uint64                                       `json:"version"`
+	Models            []servingSnapshotModel                       `json:"models"`
+	Admission         map[string]inferencev1alpha1.AdmissionConfig `json:"admission"`
+	Groups            []servingSnapshotGroup                       `json:"groups"`
+	PDComponents      []servingSnapshotPDComponent                 `json:"pd_components,omitempty"`
+	PDPipelineScopes  []servingSnapshotPDPipelineScope             `json:"pd_pipeline_scopes,omitempty"`
+	EPDComponents     []servingSnapshotEPDComponent                `json:"epd_components,omitempty"`
+	EPDPipelineScopes []servingSnapshotEPDPipelineScope            `json:"epd_pipeline_scopes,omitempty"`
 }
 
 type servingSnapshotModel struct {
