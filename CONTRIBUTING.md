@@ -2,52 +2,88 @@
 
 English | [简体中文](CONTRIBUTING_zh.md)
 
-Code, documentation, bug reports, and design discussions are welcome. All participants must follow the [Community Code of Conduct](CODE_OF_CONDUCT.md).
+Thank you for contributing code, documentation, tests, bug reports, or design discussions to Foretoken. Every merged change should have a clear boundary and remain explainable, verifiable, and maintainable.
 
-## Submit a change
+All participants must follow the [Foretoken Community Code of Conduct](CODE_OF_CONDUCT.md). Before changing code, configuration, tests, or user documentation, read the [Foretoken Code Style](docs/development/code-style.md).
 
-1. Read the [code style](docs/development/code-style.md), the affected component's README, and its relevant guides. For changes requiring discussion, obtain agreement before implementation as described below.
-2. Work on a short, purpose-named branch. External contributors use a fork; maintainers with write access may use one short-lived branch in the main repository per PR. Do not create bridge or refresh branches. Delete the head branch after merge or closure; other main-repository branches are reserved for explicit long-term work spanning related PRs.
-3. Keep the change focused on one responsibility. Update English and Chinese documentation and maintained examples when user-visible behavior, commands, configuration, or status changes.
-4. Run the [checks for the affected area](docs/development/testing.md#run-the-relevant-checks) and review the final change twice: first for correctness, then independently for simplicity and maintenance cost.
-5. Open a PR with the [template](.github/PULL_REQUEST_TEMPLATE.md), keeping applicable sections. Use Draft status until it is ready for full review. Before merge, the PR must pass relevant checks and receive approval from at least one maintainer other than its author.
+## Before You Start
 
-Use Conventional Commit-style messages that describe the actual change:
+The following focused changes can be submitted directly:
+
+- documentation, spelling, and link fixes;
+- bug fixes with clear reproduction steps;
+- local cleanup that does not change external behavior;
+- tests for existing behavior.
+
+Open an issue or design proposal before implementing changes that:
+
+- add or modify a CRD, CLI, configuration format, or public Go/Python API;
+- add a controller, router, autoscaler, runtime backend, or hardware backend;
+- change the protocol between the control plane and data plane;
+- introduce an external dependency, testing methodology, or permanent CI job;
+- reorganize components or change the deployment model;
+- may affect compatibility, performance results, or resource cost.
+
+A bug issue should include reproduction steps, expected and actual behavior, environment details, and minimal relevant logs.
+
+For a major change, first open an issue whose title starts with `[Proposal]`. Include:
+
+- the problem, context, and user scenarios;
+- goals, non-goals, and affected components;
+- the proposed interface or data flow;
+- alternatives considered and why they were rejected;
+- compatibility, upgrade, and rollback plans;
+- validation, observability, and success criteria;
+- dependencies, CI cost, and long-term maintenance responsibility.
+
+Obtain agreement from the maintainers of affected components before implementation. Proposal approval confirms the direction; the resulting code still requires normal review.
+
+## Repository Areas
+
+- `data-plane/`: request handling, routing, inference-engine integration, and runtime data paths;
+- `control-plane/`: desired state, instance lifecycle, scaling decisions, Kubernetes resources, and failure recovery;
+- `cli/`: user-facing deployment submission, service status inspection, and top-level command dispatch;
+- `benchmarks/`: correctness, workloads, performance, SLO evaluation, and simulation;
+- `deploy/`: deployment composition, hardware configuration, and release artifacts.
+
+Keep module-level unit tests next to their source. Do not use a root `tests/` directory for tests that belong to one module.
+
+## Pull Requests
+
+External contributors should open pull requests from a fork. Maintainers with write access may use one short-lived branch in the main repository for each pull request. Do not create additional bridge or refresh branches; delete the head branch when the pull request is merged or closed. Other branches in the main repository are reserved for explicit long-term development efforts that span multiple related pull requests.
+
+Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md), keeping only applicable sections. Keep each PR focused on one responsibility.
+
+When user-visible behavior, commands, configuration, or status changes, update the relevant English and Chinese documentation and examples. Keep the PR in Draft status until it is ready for full review.
+
+Do not commit secrets, tokens, server addresses, private kubeconfigs, model credentials, personal absolute paths, or local experiment data.
+
+Contributors are responsible for all submitted code, including AI-assisted changes. Review every changed line, verify provenance and licensing, and report only commands and validation that actually ran. Never send private code, credentials, server configuration, or unpublished data to external models.
+
+Before merge, a PR must pass the checks relevant to its changes and receive approval from at least one maintainer other than its author.
+
+## Branches and Commit Messages
+
+Use short branch names that describe their purpose, for example:
+
+```text
+feature/control-plane-baseline
+fix/router-timeout
+docs/contributing-guide
+benchmark/slo-simulation
+```
+
+Use Conventional Commit-style messages:
 
 ```text
 feat(control-plane): add inference group reconciliation
 fix(router): handle unavailable backends
-docs: clarify deployment prerequisites
+test(bench): cover SLO search boundaries
+docs: add development guidelines
 ```
 
-Common prefixes are `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `ci`, and `chore`; avoid vague messages such as `update` or `fix issues`.
+Common prefixes include `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `ci`, and `chore`. Describe the actual change instead of using vague messages such as `update` or `fix issues`.
 
-## Discuss scope before implementation
+## License
 
-Documentation, spelling and link fixes, reproducible bug fixes, and local cleanup without external behavior changes can be submitted directly. Tests for existing behavior do not require a design proposal, but additions still require the approval described in the [testing guidelines](docs/development/testing.md#choose-and-implement-a-scenario).
-
-Open an issue or design proposal for changes to public interfaces (CRDs, CLI, configuration formats, or public Go/Python APIs), control-plane/data-plane protocols, components or deployment models. Also discuss new controllers, routers, autoscalers, runtime or hardware backends, external dependencies, testing methodologies, permanent CI jobs, and changes that may affect compatibility, performance results, or resource cost.
-
-A bug report should include reproduction steps, expected and actual behavior, environment details, and minimal relevant logs.
-
-For a major change, open an issue titled `[Proposal] ...`. Describe the problem and user scenarios, goals and non-goals, affected components, proposed interfaces or data flow, and alternatives. Include compatibility, upgrade and rollback plans, validation and observability, success criteria, dependencies, CI cost, and long-term ownership. Obtain agreement from the affected component maintainers before implementation; approval of the direction does not replace code review.
-
-## Find the owning component
-
-| Area | Responsibility |
-| --- | --- |
-| `data-plane/` | Request handling, routing, inference-engine integration, runtime data paths |
-| `control-plane/` | Desired state, instance lifecycle, scaling, Kubernetes resources, recovery |
-| `cli/` | Deployment submission, service status inspection, top-level command dispatch |
-| `benchmarks/` | Correctness, workloads, performance, SLO evaluation, simulation |
-| `deploy/` | Deployment composition, hardware configuration, release artifacts |
-
-Tests belong to their owning package, not a repository-root `tests/` directory for module-specific behavior; see [test placement](docs/development/testing.md#choose-and-implement-a-scenario).
-
-## Protect private information and provenance
-
-Do not commit secrets, tokens, server addresses, private infrastructure details or kubeconfigs, model credentials, personal absolute paths, local caches, temporary outputs, or experiment data. Never send private code, credentials, server configuration, or unpublished data to external models.
-
-Contributors are responsible for all submitted code, including AI-assisted changes. Review every changed line, verify provenance and licensing, and report only commands and validation that actually ran, with important unverified areas stated directly.
-
-Contributions are published under [Apache License 2.0](LICENSE). Ensure you have the right to submit all included code, documentation, data, and test material.
+Contributions to Foretoken are published under the repository's [Apache License 2.0](LICENSE). Make sure you have the right to submit all code, documentation, data, and test material included in your contribution.

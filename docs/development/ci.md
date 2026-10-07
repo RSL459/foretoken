@@ -7,55 +7,94 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](ci_zh.md)
 
-CI prepares execution environments, invokes existing repository checks and selected feature tests, and reports results. For example, the data-plane workflow calls `make verify-data-plane`; it does not maintain another Rust verification implementation.
+Continuous integration (CI) schedules existing repository checks and selected key-feature tests, provides their execution environments, and reports their results. It does not own a second implementation of building, deploying, or testing Foretoken. Feature selection and real execution follow the [testing guidelines](testing.md).
 
-Start with the [local checks](testing.md#run-the-relevant-checks), then validate changed CI wiring in an authorized run. Syntax checks alone do not establish that triggers, runner permissions, or artifact transfer work; report any unexecuted part.
+For example, the data-plane workflow calls `make verify-data-plane` rather than maintaining a separate list of Rust verification commands. A deployed-feature scenario should likewise have one owning entrypoint that developers and CI can both invoke. A documentation edit should not require a GPU run merely because the repository serves models.
 
-## Agree on automation before adding it
+## Separate responsibilities
 
-Inspect the current workflow and its owning commands. Identify the basic check, key feature, or release artifact, what existing execution misses, the automation's value, runtime and resource cost, and who will diagnose failures. Prefer adjusting an existing task. Obtain maintainer approval before adding permanent jobs, workflows, matrix dimensions, or scheduled runs. Features, bug fixes, temporary incidents, and one-time migrations do not automatically justify permanent infrastructure.
+| Responsibility | Purpose | Execution scope |
+| --- | --- | --- |
+| Basic checks | Formatting, static analysis, compilation, and generated-artifact consistency | Relevant changes, with fast feedback |
+| Key-feature E2E | Real product behavior through the maintained entrypoints | Selected features and their actual environment requirements |
+| Release automation | Build, validate, and publish distributable artifacts | The release being prepared, reusing existing build and validation paths |
+| Notifications | Deliver workflow or repository activity | Report results without implementing checks or controlling product behavior |
 
-Keeping a test, scheduling it in CI, and making it a required merge check are separate decisions. A merge requirement needs explicit agreement on necessity, reliability, cost, failure ownership, and skipped behavior. Do not silently expand branch protection when adding a job.
+A test's existence, its CI schedule, and its status as a required merge check are separate decisions. Do not add permanent jobs, workflows, matrix dimensions, scheduled runs, or merge gates by default. A feature, bug fix, temporary incident, or one-time migration does not automatically justify any of them.
 
-| Responsibility | Scope |
+## Design principles
+
+### Keep workflows thin and reproducible
+
+Workflows prepare the environment, invoke the owning repository commands, collect diagnostics, and ensure cleanup. Keep feature assertions and deployment lifecycle logic in their owning validation entrypoint, not in long YAML shell blocks. Developers must be able to reproduce the same operation outside the CI provider with its documented dependencies.
+
+Reuse setup and build paths already owned by the repository. Reuse a build artifact between compatible jobs when it represents the same evaluated source and dependency combination; do not rebuild it independently in every test job or run a stale cached binary. Cache dependencies and compilation work, not successful test outcomes.
+
+### Select work by impact and cost
+
+Choose tasks from the affected feature and its dependencies. Path filters must account for shared protocols, dependency manifests and locks, build configuration, deployment configuration, and the validation entrypoint itself—not only the nearest source directory. When impact is uncertain, select the broader relevant existing task rather than silently omitting it.
+
+Keep fast checks distinct from expensive cluster, GPU, multi-node, and performance runs. Select representative combinations instead of the Cartesian product of models, hardware, topology, and parameters. Use on-demand execution where appropriate; add a periodic run only for a specific need that existing execution does not meet. Hardware used for one validation is an execution condition, not a universal user requirement.
+
+Cancel superseded verification runs when their results are no longer needed, while preserving cleanup. Do not apply the same cancellation policy blindly to release publication or shared-environment operations.
+
+### Verify the delivered artifacts
+
+Run the package or image built from the change under evaluation. Check that installation, startup, and the selected feature actually consume that artifact through the normal product path. Source execution alone does not validate a wheel or image; manual repair inside a running container does not validate the distributed image.
+
+Real E2E requires the feature's actual dependencies and hardware. If those are unavailable, report that execution did not occur. Do not replace it with mocks, turn an error into an empty result, or report a skipped scenario as passed.
+
+### Make failures actionable and runs isolated
+
+Report what ran, its source/artifact identity, relevant environment conditions, and its outcome. Separate product failures from setup failures and skipped execution. Keep useful command output and component diagnostics; exclude credentials, sensitive payloads, and private infrastructure details from public logs.
+
+Each run owns its mutable resources and cleans them up on success, failure, and cancellation. Shared runners must not let one run change another run's state or delete another workload. Use existing identity and lifecycle mechanisms rather than introducing content hashes, frozen baselines, or a new resource-management framework.
+
+Do not use blanket retries, unconditional success, or swallowed exit codes to make a job green. Diagnose flaky behavior; explicitly disable or isolate an unreliable check while it is repaired rather than presenting it as a reliable pass.
+
+### Keep execution permissions narrow
+
+Use only the credentials and permissions required by the job. Untrusted pull-request code must not run with publishing credentials or unrestricted access to shared GPU runners and clusters. Select a trusted execution context or an isolated environment; do not use a privileged event merely to bypass fork restrictions.
+
+## Adding or changing CI
+
+1. Identify the responsibility. State the basic check, selected key feature, or release artifact being validated. Inspect the current workflow and its owning commands first.
+2. Establish necessity. Explain what existing execution misses, why automation is useful, expected runtime and resource use, and who will diagnose failures. Prefer adjusting an existing task. Obtain maintainer approval before adding a permanent job, workflow, matrix dimension, or scheduled run.
+3. Choose triggers and environments. Include shared dependencies in the impact selection. Specify actual hardware requirements, trust boundaries, concurrency, timeouts, and resource cleanup. Decide whether on-demand execution is sufficient.
+4. Reuse the repository entrypoint. Keep the workflow as orchestration. If an approved scenario needs an entrypoint, place it with its owning validation rather than writing a second implementation in CI.
+5. Validate the execution. Run the owning command in the intended environment and inspect actual outputs and cleanup. Exercise the changed CI wiring in an authorized run; local syntax checks alone do not establish that runner permissions, artifact transfer, or triggers work. Report any part not executed.
+6. Review and decide merge requirements separately. Follow the review below. A required check needs explicit agreement on its necessity, reliability, cost, failure owner, and behavior when skipped. Do not silently expand branch protection as part of adding a job.
+
+## Reviewing CI
+
+First trace execution and correctness:
+
+- Follow event and change selection through setup, build, artifact transfer, invocation, result reporting, and cleanup. Check that relevant changes reach the intended tasks.
+- Confirm the tested artifact is the intended one, required dependencies are real, and permissions match the event's trust level.
+- Inspect failure and cancellation behavior, timeouts, logs, and cleanup. A missing environment, skipped dependency, or failed setup must not appear as a successful feature test.
+- Verify required-check behavior when jobs are filtered, skipped, or cancelled so it neither misrepresents validation nor leaves an expected check indefinitely pending.
+
+Then independently review necessity and simplicity:
+
+- Remove duplicate builds, copied deployment lifecycles, assertions embedded in workflow YAML, and obsolete jobs or matrix combinations.
+- Ask whether each task has a current purpose distinct from existing checks. Do not create permanent infrastructure for a temporary investigation.
+- Check whether representative feature runs provide the needed evidence without a larger matrix, another scheduler, or a new merge gate.
+- Preserve the responsibilities of release and notification workflows; do not remove them merely because they share the workflow directory with tests.
+
+## Common mistakes to avoid
+
+| Mistake | Preferred approach |
 | --- | --- |
-| Basic checks | Fast formatting, static analysis, compilation, generated-artifact consistency for relevant changes |
-| Key-feature E2E | Selected real product features and their actual dependencies and hardware, following the [testing guidelines](testing.md) |
-| Release automation | Build, validate, and publish the release's artifacts through existing paths |
-| Notifications | Report workflow or repository activity, without implementing checks or controlling product behavior |
-
-## Keep one reproducible execution path
-
-Workflows own environment preparation, command invocation, diagnostics, and cleanup. Keep assertions and deployment lifecycle logic in the owning repository validation entrypoint, not long YAML shell blocks. Developers with the documented dependencies must be able to run the same operation outside the CI provider. An approved scenario needing an entrypoint belongs with its feature's validation, not in a second CI implementation.
-
-Reuse setup and build paths. Compatible jobs evaluating the same source and dependencies may share an artifact instead of rebuilding it independently. Cache dependencies and compilation work, not successful test outcomes or stale binaries.
-
-Run the package or image built from the change and verify that normal installation, startup, and the selected feature consume it. Source execution does not validate a wheel or image, and manual container repair does not validate the distributed image. Assert semantic resource fields in the owning validation, not counts of rendered text. Compilation, rendering, and dry runs are not E2E; missing real dependencies or hardware means execution did not occur, not a mocked or skipped pass.
-
-## Select triggers, resources, and permissions
-
-Choose work by affected features and dependencies. Path filters must include shared protocols, dependency manifests and locks, build and deployment configuration, and validation entrypoints—not only nearby source. When impact is uncertain, choose the broader relevant existing task rather than silently omit it.
-
-Separate fast checks from expensive cluster, GPU, multi-node, and performance runs. Use representative combinations rather than a Cartesian product of models, hardware, topology, and parameters. Prefer on-demand execution when sufficient; periodic execution needs a specific unmet need. A run's hardware is an execution condition, not a universal user requirement.
-
-Define concurrency and timeouts, and cancel superseded verification runs while preserving cleanup. Release publication and shared-environment operations need their own cancellation policy.
-
-Each run owns and cleans up its mutable resources on success, failure, and cancellation. Shared runners must neither change another run's state nor delete another workload. Reuse existing identity and lifecycle mechanisms rather than adding content hashes, frozen baselines, or a resource-management framework.
-
-Use only required permissions and credentials. Untrusted PR code must not receive publishing credentials or unrestricted access to shared GPU runners and clusters. Use a trusted execution context or isolated environment, not a privileged event to bypass fork restrictions.
-
-## Review execution and maintenance cost
-
-First trace correctness from event and change selection through setup, build, artifact transfer, invocation, reporting, and cleanup. Run the owning command in the intended environment, inspect outputs and cleanup, and exercise the changed CI wiring in an authorized run.
-
-Verify artifact identity, real dependencies, event trust, timeouts, and failure and cancellation paths. Check required-check states after filtering, skipping, and cancellation: they must not misrepresent validation or remain indefinitely pending.
-
-Report what ran, its source or artifact identity, relevant environment conditions, and outcome. Distinguish product failures, setup failures, and skipped execution. Preserve useful command output and component diagnostics without credentials, sensitive payloads, or private infrastructure details.
-
-Do not hide failures with blanket retries, unconditional success, swallowed exit codes, or empty results. Diagnose flaky behavior; explicitly disable or isolate an unreliable check during repair instead of presenting it as a reliable pass.
-
-Then independently review necessity and simplicity. Remove duplicate builds, copied deployment lifecycles, workflow-embedded assertions, obsolete jobs, and unused matrix combinations. Each task must have a current purpose distinct from existing checks; prefer representative feature runs over another matrix, scheduler, or gate. Preserve the separate responsibilities of release and notification workflows rather than removing them because they share the tests' directory.
+| A new workflow or matrix dimension for every change | Reuse existing tasks and justify permanent additions |
+| Long YAML scripts containing product assertions and deployment logic | Invoke the repository entrypoint that owns the operation |
+| Checking rendered resources with text counts | Use semantic assertions in the owning validation path |
+| Rebuilding the same artifact in each job | Reuse the artifact for the same evaluated combination |
+| Running only the changed source directory's checks | Include affected shared dependencies and delivery configuration |
+| Calling compilation, rendering, or dry-run output E2E | Report that check's actual scope and run the real feature path |
+| Skipping GPU execution while reporting the feature passed | Report the missing execution explicitly |
+| Adding retries or ignoring exit codes to stabilize CI | Diagnose the failure and keep its outcome visible |
+| Automatically making each new job a required check | Decide merge requirements separately with explicit approval |
 
 ## Further reading
 
-[Dynamo's PR workflow](https://github.com/ai-dynamo/dynamo/blob/main/.github/workflows/pr.yaml) illustrates change-based selection, hardware-specific execution, and cancellation of superseded runs. [vLLM's contribution guide](https://docs.vllm.ai/en/latest/contributing/) describes selective CI under limited compute resources. Borrow the responsibility boundaries, not their infrastructure size or complete matrices.
+[Dynamo's PR workflow](https://github.com/ai-dynamo/dynamo/blob/main/.github/workflows/pr.yaml) illustrates change-based selection, hardware-specific execution, and cancellation of superseded runs. [vLLM's contribution guide](https://docs.vllm.ai/en/latest/contributing/) describes selective CI execution under limited compute resources. Borrow their separation of responsibilities, not their infrastructure size or complete job matrices.

@@ -1,27 +1,19 @@
-# 维护沐曦 GLM-5.3 支持
+# 沐曦源码运行环境中的 GLM-5.3
 
 [English](README.md) | 简体中文
 
-本补丁包将 GLM-5.3 适配到沐曦源码运行时。平台源码安装会自动应用补丁，入口见[沐曦平台准备](../../../../../../docs/development/metax-platform_zh.md#从源码安装)。
+构建沐曦推理引擎时，会自动将本补丁包应用到 [`source-environment.json`](../../../source-environment.json) 指定的 vLLM 核心与沐曦插件版本。该清单也定义了各补丁的应用目标和顺序。
 
-## 更新源码组合
+共享的[兼容性补丁](../metax-compatibility.patch) 将插件的导入路径和依赖适配到核心版本，并保留核心自动选择模型执行器的行为。GLM 补丁覆盖带类型的 KV 缓存布局、稀疏注意力、序列并行层、多 Token 预测（MTP）和 mHC 归一化。
 
-[`source-environment.json`](../../../source-environment.json) 指定 vLLM 核心、沐曦插件及各目标的补丁顺序。更新源码组合时，同步调整补丁。核心和插件补丁在 wheel 构建前应用；已安装包的补丁修改 DeepGEMM，因此在依赖安装后应用。
+对于 compressed-tensors 格式的模型权重，MLA 补丁将量化配置传给投影层，并让量化权重使用各自的加载器。INT8 MoE 补丁将专家并行的过滤参数传给原生 GEMM，使其跳过分配给非本地专家的计算块。
 
-在具备 Docker BuildKit 的机器上，从仓库根目录构建运行时：
+源码补丁在构建引擎 wheel 包之前应用。DeepGEMM 补丁修改的是已安装的内核包，因此在依赖安装后应用。更新核心与插件版本时，应一并更新对应补丁。
 
-```bash
-make image-vllm-metax VLLM_METAX_IMAGE=foretoken-vllm-metax:latest
-```
+MTP 保留完整的稀疏索引器和独立的缓存组。执行配置满足条件时，核心会选择 Model Runner V2；GLM-5.3 BF16 配置属于这一范围。
 
-构建 model-server 时使用该镜像作为推理运行时；如何在集群中选用它，见[源码部署指南](../../../../../../docs/custom-deployment_zh.md#更换运行环境)。
+沐曦通过编译上游 PyTorch 运算实现 mHC 残差流混合，保留 FP32 混合运算、中间结果的 BF16 舍入、配置指定的 Sinkhorn 迭代次数和输入归一化。CUDA Graph 捕获仍由模型执行器负责。核心的归一化补丁也避免了 HIP 回退路径重复归一化。相关上游工作见 [vLLM #56856](https://github.com/vllm-project/vllm/pull/56856)。
 
-## 验证模型执行
+沐曦 KDA 适配层为重计算内核选择 8 个 warp、3 个流水线阶段的启动配置。2 阶段配置可能导致 W 变换计算错误，使长输入的预填充阶段产生非有限的递归状态；仅根据耗时自动调优无法检测这种数值错误。
 
-在沐曦设备上运行受影响的模型与权重格式。修改量化加载时，验证 compressed-tensors 投影层及专家并行执行；修改稀疏注意力或推测解码时，覆盖长输入预填充、解码和所用草稿方法。模型参数可参考[上游 GLM-5.3 配方](https://recipes.vllm.ai/zai-org/GLM-5.3-Flash)，模型执行器仍由核心自动选择。
-
-修改 mHC 残差混合时，保持上游的 FP32 运算、中间结果 BF16 舍入、配置指定的 Sinkhorn 迭代次数，以及一次输入归一化。图捕获仍由模型执行器负责。相关上游工作见 [vLLM #56856](https://github.com/vllm-project/vllm/pull/56856)。
-
-KDA 重计算内核使用 8 个 warp、3 个流水线阶段。2 阶段配置可能使 W 变换计算错误，导致长输入预填充期间出现非有限递归状态；修改该配置时，同时检查数值结果和耗时。
-
-修改数据并行草稿路径时，检查活跃与空闲成员。运行时占位批次跳过稠密 DFlash/DSpark 候选生成，但保留目标模型同步，以及性能剖析、预热和图捕获期间的草稿执行。
+运行时的数据并行（DP）占位批次不执行稠密 DFlash/DSpark 草稿模型的候选生成，因为这些批次没有候选输出的使用方，也不涉及跨 DP 的草稿集体通信。目标模型同步仍保留，性能剖析、预热和图捕获阶段也仍执行草稿模型。

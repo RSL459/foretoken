@@ -13,7 +13,7 @@ foretoken perf examples/quickstart \
   --max-concurrency 4 --num-prompts 20 --output local,wandb
 ```
 
-随机负载使用所选 tokenizer 生成目标长度的输入，最终 token 数以服务报告的输入用量为准。`--prefix-length` 增加共享前缀。tokenizer 从模型服务推导；使用服务别名或单独存放 tokenizer 时，用 `--tokenizer-path` 指定。会复用本地模型文件和缓存的 tokenizer，`FORETOKEN_HF_ENDPOINT` 可选择 Hugging Face 地址。
+随机负载使用所选 tokenizer 生成指定长度的输入。`--prefix-length` 增加共享前缀，随机负载不支持 `--apply-chat-template`。tokenizer 默认从模型服务推导；服务使用模型别名或本地没有 tokenizer 文件时，通过 `--tokenizer-path` 指定 tokenizer。
 
 输出范围包含上下界，并覆盖 `--max-tokens`。服务需要支持 `min_tokens`、`ignore_eos` 并返回输出用量；未达到目标长度的请求记为失败。不传这两个参数时，普通生成允许提前结束。
 

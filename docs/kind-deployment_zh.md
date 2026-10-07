@@ -9,17 +9,15 @@ kind 适合创建本地 Kubernetes 开发集群。kind 的 Kubernetes 节点运�
 
 ## 1. 安装工具并创建集群
 
-安装 Docker、kind、kubectl、Python 3.11+ 和 Helm，再获取源码：
+安装 Docker、kind、kubectl、Python 3.11+ 和 Helm，并从 Foretoken 仓库根目录执行：
 
 ```bash
-git clone https://github.com/shiweijiezero/foretoken.git
-cd foretoken
 pip install -e .
 foretoken cluster create kind --name foretoken-dev
 kubectl get nodes
 ```
 
-新集群会成为当前 Kubernetes context。
+该命令会创建 kind 集群、刷新 kubeconfig context，并等待控制面就绪。
 
 ## 2. 构建并安装 Foretoken
 
@@ -34,6 +32,8 @@ foretoken install -e .
 ## 3. 删除集群
 
 ```bash
+foretoken delete examples/quickstart
+foretoken uninstall
 foretoken cluster delete kind --name foretoken-dev
 ```
 

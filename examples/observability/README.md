@@ -29,7 +29,7 @@ From the repository root:
 foretoken deploy examples/observability --timeout 20m
 ```
 
-Send a request using the [Quick Start request example](../quickstart/README.md#deploy-and-request). Open Foretoken System Overview in [Grafana](../../observability/README.md#view-dashboards), select `foretoken-demo`, and check the selected rules in Prometheus Alerts. Configure a [notification receiver](../../observability/README.md#alerts) to receive firing and resolved messages.
+Send a request using the [Quick Start request example](../quickstart/README.md). Open Foretoken System Overview in [Grafana](../../observability/README.md#view-dashboards), select `foretoken-demo`, and check the selected rules in Prometheus Alerts. Configure a [notification receiver](../../observability/README.md#alerts) to receive firing and resolved messages.
 
 ## Disable alerts or remove the service
 

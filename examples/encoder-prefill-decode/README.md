@@ -15,15 +15,6 @@ This example uses a source installation and four NVIDIA GPUs. From the repositor
 docker build -f examples/encoder-prefill-decode/runtime.Dockerfile -t foretoken-vllm:epd .
 ```
 
-For local k3d, import the base image into the active cluster before installation:
-
-```bash
-K3D_CLUSTER="$(kubectl config current-context)"
-k3d image import foretoken-vllm:epd --cluster "${K3D_CLUSTER#k3d-}"
-```
-
-For a remote cluster, push this image to your registry and use its full reference in the runtime values below.
-
 The cluster needs a StorageClass that supports `ReadWriteMany`. Set `storageClassName` in `encoder-cache.yaml` if the default StorageClass does not provide shared storage. RDMA transport also needs allocated RDMA devices with GPUDirect RDMA enabled; choose TCP below if these are unavailable.
 
 Save the runtime choice and shared encoder cache settings as `deploy/platform-values.yaml`:
@@ -53,7 +44,7 @@ Install from this checkout:
 foretoken install -e . --values deploy/platform-values.yaml
 ```
 
-For a remote cluster, also pass `--registry` with the registry prefix prepared in the [Kubernetes guide](../../docs/kubernetes-deployment.md#deploy-current-source-to-this-cluster).
+For a remote cluster, also pass `--registry REGISTRY` with a container registry accessible to its nodes. See the [CLI guide](../../cli/README.md#current-source) for installation options.
 
 ## Deploy
 
@@ -99,7 +90,7 @@ PY
 
 Each stage has one Pool; its `replicas`, resource requests and `engineArgs` can be adjusted independently. A Pool-level `engineArgs` replaces the service-level dictionary; the YAML anchor preserves shared settings in the example. Match GPU requests to the chosen parallelism as described in [Inference parameters](../../docs/inference-parameters.md).
 
-Reapply the directory with `foretoken deploy` after editing it. Use `foretoken status examples/encoder-prefill-decode` to inspect readiness.
+Reapply the directory with `foretoken deploy` after editing it. Use `foretoken status examples/encoder-prefill-decode` to inspect readiness. Encoder output travels through the shared volume, while Prefill transfers KV cache to Decode over the platform-selected Mooncake transport; clients do not supply transfer addresses or intermediate results.
 
 ## Clean up
 
@@ -107,4 +98,4 @@ Reapply the directory with `foretoken deploy` after editing it. Use `foretoken s
 foretoken delete examples/encoder-prefill-decode
 ```
 
-This deletes the example namespace and cache claim; the volume's reclaim policy determines whether its data is retained. The shared platform remains installed.
+This deletes the example namespace and cache claim. Encoder files are shared cache entries rather than per-request temporary files; the volume's reclaim policy determines whether their storage is retained. The shared Foretoken platform remains installed.

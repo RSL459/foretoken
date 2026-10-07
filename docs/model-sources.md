@@ -5,30 +5,25 @@
 
 [中文](model-sources_zh.md)
 
-A `ModelService` downloads its model from Hugging Face Hub by default:
+Each `ModelService` selects the source for its model, tokenizer, config, and chat template. Hugging Face Hub is the default.
 
 ```yaml
 spec:
   model: Qwen/Qwen3-0.6B
+  source: hf # Supported sources: local, hf, modelscope. Defaults to hf.
 ```
 
-To download from ModelScope, add `source: modelscope` and use the model's ModelScope identifier. Each model service can choose its own source. After editing `model.yaml`, deploy the example:
-
-```bash
-foretoken deploy examples/quickstart --timeout 20m
-```
-
-Use the configured `model` value in API requests.
+Use `source: modelscope` with the same model identifier to load it from ModelScope. Different model services behind one frontend may use different sources.
 
 ## Use a local model directory
 
-Place a complete checkpoint, including its tokenizer and configuration, below the [model storage](model-storage.md) root:
+Place a complete model below the configured model root:
 
 ```text
 data/models/checkpointA/A3/
 ```
 
-Set these fields in `model.yaml`:
+Select the local source and keep the relative identifier as the public model name:
 
 ```yaml
 spec:
@@ -36,19 +31,12 @@ spec:
   source: local
 ```
 
-The public model name remains `checkpointA/A3`. An absolute directory mounted in both frontend and model Pods is also supported. The directory must contain all files needed by the engine.
+An absolute directory already mounted in both frontend and model-server Pods is also supported. A missing local directory or a failed remote download stops that model from becoming ready; Foretoken does not switch sources.
 
-## Use a Hugging Face-compatible endpoint
+Deploy the configuration normally:
 
-Set the download URL in platform values, such as `deploy/platform-values.yaml`:
-
-```yaml
-runtime:
-  vllm:
-    modelSource:
-      endpoint: https://your-huggingface-compatible-mirror.example
+```bash
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
-Replace the example URL, then reapply your installation command with `--values deploy/platform-values.yaml` and redeploy the model services. Keep other runtime settings in the same file. This endpoint applies to Hugging Face downloads, not ModelScope or local models.
-
-For authenticated Hugging Face access, create a Secret containing the token in each workload namespace and set `runtime.vllm.modelSource.tokenSecret` to `{name: hf-token, key: token}`, using your Secret name and key.
+See [Model storage](model-storage.md) for directory-backed and PVC-backed storage.

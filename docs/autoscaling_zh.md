@@ -5,47 +5,38 @@
 
 [English](autoscaling.md) | [中文](autoscaling_zh.md)
 
-根据请求队列负载调整模型副本数。在 `examples/quickstart/model.yaml` 已有的 `spec` 下加入 `autoscaling`：
+在 `ModelService.spec.autoscaling` 中配置自动扩缩容。Controller 使用已编译的内置算法，用户不需要修改 CRD 或注册算法。
+
+## 最小配置
+
+将以下配置加入 `ModelService`：
 
 ```yaml
 spec:
   replicas: 1
   autoscaling:
     minReplicas: 1
-    maxReplicas: 3
+    maxReplicas: 8
     decision:
       algorithm: queue
 ```
 
-服务从 1 个副本开始，每 5 秒评估一次负载。默认每次最多增减 1 个副本，缩容稳定窗口为 5 分钟。快速开始每增加一个模型副本，需要 1 张 GPU、4 核 CPU 和 48 GiB 内存。
+该配置每 5 秒评估一次队列负载，每次最多调整一个副本。未填写时，触发阶段默认使用 `periodic`，调整阶段默认使用 `step`。
 
-```bash
-foretoken deploy examples/quickstart --timeout 20m
-```
+## 可选参数
 
-需要直接运行产生队列压力的负载时，使用[多模型示例](../examples/multi-model-quickstart/README_zh.md)。
+每个阶段都使用 `algorithm` 和可选的 `parameters` 对象。省略参数时使用算法默认值。
 
-## 查看容量
+| 阶段 | 算法 | 参数与默认值 |
+| --- | --- | --- |
+| Decision | `queue` | `targetAverageQueuedRequests: 1` |
+| Decision | `queue_threshold` | `scaleUpQueuedRequests: 1`、`scaleDownQueuedRequests: 0` |
+| Decision | `aimd` | `additiveIncrease: 1`、`multiplicativeDecreasePercent: 50`、`scaleUpQueuedRequests: 0` |
+| Trigger | `periodic` | `interval: 5s` |
+| Adjustment | `step` | `scaleUpStabilizationWindow: 0s`、`scaleDownStabilizationWindow: 300s` |
+| Adjustment | `direct` | 不接受参数 |
 
-```bash
-kubectl get modelservice quickstart-qwen3-0.6b -n foretoken-demo -o json \
-  | jq '.status.autoscaling[] | {
-      direction,
-      desiredReplicas: .decision.desiredReplicas,
-      appliedReplicas,
-      constraint: .constraint.reason
-    }'
-```
-
-`desiredReplicas` 是算法建议，`appliedReplicas` 是经过稳定窗口和服务约束后选定的容量。无效算法或参数会显示为 ModelService 的 `ScalingFailed` condition。
-
-## 调整对流量的响应
-
-默认 `queue` 算法的目标是每个副本对应 1 个等待请求。`queue_threshold` 按显式队列阈值扩缩容，`aimd` 则采用加法扩容、乘法缩容。
-
-队列超过 `scaleUpQueuedRequests` 时，AIMD 增加 `additiveIncrease` 个副本；没有等待或活跃请求时，保留当前容量的 `multiplicativeDecreasePercent`。最终容量仍受调整设置和最小、最大副本数限制。
-
-如需修改评估间隔或稳定窗口，在 `spec.autoscaling` 的 `decision` 同级添加：
+例如，修改轮询间隔和缩容稳定窗口：
 
 ```yaml
 trigger:
@@ -58,13 +49,35 @@ adjustment:
     scaleDownStabilizationWindow: 60s
 ```
 
-`step` 将每次容量变化限制为 1 个副本；`direct` 不做步长调整，直接应用建议。两者都遵守服务的最小、最大副本数。未填写参数时使用以下默认值：
+未知算法或无效参数会使 `ModelService` 出现 `ScalingFailed` condition。
 
-| 设置 | 算法 | 参数与默认值 |
-| --- | --- | --- |
-| 副本建议 | `queue` | `targetAverageQueuedRequests: 1` |
-| 副本建议 | `queue_threshold` | `scaleUpQueuedRequests: 1`、`scaleDownQueuedRequests: 0` |
-| 副本建议 | `aimd` | `additiveIncrease: 1`、`multiplicativeDecreasePercent: 50`、`scaleUpQueuedRequests: 0` |
-| 评估间隔 | `periodic` | `interval: 5s` |
-| 容量调整 | `step` | `scaleUpStabilizationWindow: 0s`、`scaleDownStabilizationWindow: 300s` |
-| 容量调整 | `direct` | 无参数 |
+## 使用 AIMD
+
+使用以下配置选择 AIMD：
+
+```yaml
+decision:
+  algorithm: aimd
+```
+
+当队列超过 `scaleUpQueuedRequests` 时，AIMD 增加 `additiveIncrease` 个副本；没有等待请求和活跃请求时，保留当前容量的 `multiplicativeDecreasePercent`。最终容量仍受调整算法以及服务最小、最大副本数限制。
+
+## 查看自动扩缩容结果
+
+结果发布在 `.status.autoscaling[]` 中：
+
+```bash
+kubectl get modelservice <name> -o json \
+  | jq '.status.autoscaling[] | {
+      id,
+      direction,
+      desiredReplicas: .decision.desiredReplicas,
+      adjustedReplicas: .adjustment.adjustedReplicas,
+      appliedReplicas,
+      constraint: .constraint.reason
+    }'
+```
+
+`desiredReplicas` 是算法建议，`adjustedReplicas` 包含调整规则的结果，`appliedReplicas` 是应用服务约束后实际写入的容量。
+
+完整的维护示例见[多模型示例](../examples/multi-model-quickstart/README_zh.md)，实现边界见[自动扩缩容架构指南](../control-plane/internal/autoscaling/README_zh.md)。

@@ -15,15 +15,6 @@
 docker build -f examples/encoder-prefill-decode/runtime.Dockerfile -t foretoken-vllm:epd .
 ```
 
-本地 k3d 在安装前，将基底镜像导入当前集群：
-
-```bash
-K3D_CLUSTER="$(kubectl config current-context)"
-k3d image import foretoken-vllm:epd --cluster "${K3D_CLUSTER#k3d-}"
-```
-
-远程集群需先将镜像推送到自己的仓库，并在下方运行时 values 中使用完整镜像地址。
-
 集群需要支持 `ReadWriteMany` 的 StorageClass。默认 StorageClass 不支持共享存储时，在 `encoder-cache.yaml` 中填写适用的 `storageClassName`。RDMA 传输还需要启用 GPUDirect RDMA 并分配 RDMA 设备；不具备该条件时，可按下文选择 TCP。
 
 将镜像选择和共享编码缓存设置保存为 `deploy/platform-values.yaml`：
@@ -53,7 +44,7 @@ TCP 不需要 RDMA 设备，GPU KV 数据会经过主机内存暂存。
 foretoken install -e . --values deploy/platform-values.yaml
 ```
 
-远程集群还需通过 `--registry` 传入 [Kubernetes 指南](../../docs/kubernetes-deployment_zh.md#将当前源码部署到集群)中准备的仓库前缀。
+远程集群还需通过 `--registry REGISTRY` 指定节点能够访问的容器仓库。其他安装选项见 [CLI 指南](../../cli/README_zh.md#当前源码)。
 
 ## 部署
 
@@ -99,7 +90,7 @@ PY
 
 每个阶段各有一个 Pool，其 `replicas`、资源请求和 `engineArgs` 可以独立调整。Pool 的 `engineArgs` 会整体替换服务级字典，示例通过 YAML anchor 复用共同设置。GPU 请求数量与并行参数的对应关系见[推理参数](../../docs/inference-parameters_zh.md)。
 
-修改后重新运行 `foretoken deploy`，通过 `foretoken status examples/encoder-prefill-decode` 查看就绪状态。
+修改后重新运行 `foretoken deploy`，通过 `foretoken status examples/encoder-prefill-decode` 查看就绪状态。编码结果经共享卷传递，Prefill 的 KV Cache 通过平台选择的 Mooncake 传输交给 Decode；客户端不需要填写传输地址或传递中间结果。
 
 ## 清理
 
@@ -107,4 +98,4 @@ PY
 foretoken delete examples/encoder-prefill-decode
 ```
 
-命令会删除示例命名空间和缓存卷声明，数据是否保留取决于卷的回收策略。共享平台继续保留。
+命令会删除示例命名空间和缓存卷声明。编码文件是跨请求复用的缓存，不在单次请求结束时删除；底层存储是否保留取决于卷的回收策略。共享 Foretoken 平台继续保留。

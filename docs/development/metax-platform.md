@@ -13,7 +13,7 @@ Install the Foretoken platform on a MetaX GPU cluster. For model deployment and 
 
 The cluster needs Kubernetes 1.29 or later, MetaX drivers, and a device plugin publishing `metax-tech.com/gpu`. Prepare a model directory visible to the target nodes or a StorageClass for the model cache; see [Model storage](../model-storage.md). The frontend also needs a reachable LoadBalancer address, or a Gateway when using Gateway mode.
 
-Install the [Foretoken CLI](../../cli/README.md#install) and make sure `kubectl` points to the target cluster. The CLI needs Helm and cluster permissions to install the platform and its shared dependencies.
+Install the [Foretoken CLI](../../cli/README.md#install-the-command-line-tool) and make sure `kubectl` points to the target cluster. The CLI needs Helm and cluster permissions to install the platform and its shared dependencies.
 
 ## Install release images
 
@@ -21,7 +21,7 @@ Install the [Foretoken CLI](../../cli/README.md#install) and make sure `kubectl`
 foretoken install
 ```
 
-The CLI selects MetaX-compatible release images and installs the platform and required shared dependencies. It reports when the platform is ready. For Gateway access or custom settings, see [CLI installation](../../cli/README.md#customize-installation).
+The CLI selects MetaX-compatible release images and installs the platform and required shared dependencies. It reports when the platform is ready. For Gateway access or custom settings, see [CLI installation](../../cli/README.md#install-the-kubernetes-platform).
 
 ## Install from source
 

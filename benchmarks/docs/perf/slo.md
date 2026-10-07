@@ -1,4 +1,4 @@
-# Measure SLO attainment and concurrency
+# SLO concurrency search
 
 English | [简体中文](slo_zh.md) · [Performance examples](README.md)
 
@@ -23,10 +23,10 @@ For traces, use `--max-concurrency` for the in-flight request limit; arrivals fo
 
 ## Measure attainment at fixed conversation rates
 
-The [conversation rate configuration](../../scripts/common/conversation-rate.jsonl) compares 2, 4, 8, and 16 conversations/s on ShareGPT:
+The [conversation rate configuration](../../scripts/common/conversation-rate.jsonl) scans a starting range of 2, 4, 8, and 16 conversations/s. Replace the URL and model below with your service's Chat Completions endpoint and model:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf --url http://host/v1/chat/completions --model Qwen/Qwen3-0.6B \
   --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --temperature 0 --random-seed 0 --max-concurrency -1 \

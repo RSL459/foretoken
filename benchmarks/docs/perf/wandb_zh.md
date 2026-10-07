@@ -1,36 +1,23 @@
-# 在 W&B 中比较性能
+# W&B 输出
 
 [English](wandb.md) | 简体中文 · [性能评测示例](README_zh.md)
 
-用 W&B 对比运行，并查看性能随时间的变化。首次执行 `wandb login`，再选择项目和分组：
+完成[准备步骤](README_zh.md#准备)后，指定项目、分组和运行名称：
 
 ```bash
 foretoken perf examples/quickstart \
-  --num-prompts 20 --max-tokens 128 --output local,wandb \
-  --wandb-project foretoken-bench --wandb-group qwen-comparison \
+  --num-prompts 20 --output local,wandb \
+  --wandb-project foretoken-bench \
+  --wandb-group qwen-comparison \
   --wandb-run-name quickstart
 ```
 
-`--wandb-entity` 选择账号或团队。同组运行可在 group 的 Workspace 中对比。扫描和多数据集运行未指定 group 时自动分组，单次运行默认不分组；子运行在指定名称前缀后追加标识。
+`--wandb-entity` 选择账号或团队。group 和运行名分别设置。扫描、多数据集在未指定 group 时自动分组，各子运行会在名称后追加标识。单次评测默认不分组。
 
-## 选择视图
+W&B 页面会展示最终汇总指标、P50/P95/P99 百分位指标，以及按时间、累计结果和逐请求统计的曲线。设置 `--warmup-requests` 后，Warmup 区域会单独展示预热请求曲线和预热与正式测量的对比；预热仍不计入正式性能指标。混合负载另外展示共用时间轴的数据集、模型和请求类别汇总表与时间曲线，以及包含逐请求标签和目标/实际输出 token 数的请求表。Kustomize 评测还会展示副本数变化；当控制器状态覆盖完整评测窗口时，还会按设备资源名展示 GPU-seconds 和 GPU-hours。覆盖率单独展示，部分样本仅用于诊断，不会当作总成本。可在 group 的 Workspace 中对比各次运行，Summary 保留最终值。窗口定义见[结果指标](../../metrics_zh.md#曲线)。
 
-| 视图 | 查看什么 |
-| --- | --- |
-| Time | 按一秒完成窗口展示吞吐量、并发、失败率和延迟分位数 |
-| Cumulative | 按经过时间平均的吞吐量 |
-| Request index | 按发送顺序查看逐请求耗时、token 数和输出目标 |
-| Summary | 最终汇总值，包括 P50/P95/P99 |
-| Warmup | 启用预热时的预热曲线及其与正式测量的对比 |
+使用 Kustomize 模型服务且集群提供 Prometheus 时，猜测解码运行还会显示[接受率和阶段耗时观测](../../metrics_zh.md#猜测解码观测)。参数扫描的对比运行绘制相同的测量窗口汇总值。
 
-预热不计入正式指标。混合负载在同一时间轴上展示数据集、模型和请求类别的分组结果，请求表保留对应标签。窗口和单位见[指标定义](../../metrics_zh.md#曲线)。
+![逐请求耗时与 token 数](../imgs/request-order-wandb.png)
 
-![按请求顺序查看耗时和 token 数](../imgs/request-order-wandb.png)
-
-## 比较部署
-
-Kustomize 运行还展示副本变化和 GPU 分配量。观测覆盖整次运行时，按设备资源名报告 GPU-seconds 和 GPU-hours；部分覆盖单独展示，见 [GPU 分配量](../../metrics_zh.md#gpu-分配量)。
-
-集群提供 Prometheus 时，推测解码运行会展示[接受率和阶段耗时](../../metrics_zh.md#猜测解码观测)。扫描的对比运行汇总各参数点与重复测量的结果。
-
-通过[输出设置](../../README_zh.md#查看和保存结果)同时保留本地文件或导出图表。W&B 发布失败时命令报错，已生成的产物会保留。
+输出位置通过通用[结果设置](../../README_zh.md#查看和保存结果)选择。显式选择 W&B 后，初始化、发布或结束运行失败会使命令失败，并保留已经生成的评测产物。

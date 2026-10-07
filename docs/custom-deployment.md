@@ -9,7 +9,7 @@ Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl, Helm, and a cluster with a default StorageClass. For a remote cluster, also prepare a registry using the [Kubernetes guide](kubernetes-deployment.md#deploy-current-source-to-this-cluster).
+Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and publishing Jobs, with a default StorageClass for compiler caches and published application files. To override their storage classes, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -29,7 +29,7 @@ For a local kind or k3d cluster, build and install without a registry:
 foretoken install -e .
 ```
 
-Builds run in the cluster. For GPU setup, see [k3d deployment](k3d-deployment.md). To use non-default build or application storage, set `development.build.storageClassName` or `applicationFiles.storageClassName` in a values file and pass it with `--values`.
+Builds run in the cluster. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
 
 ## Deploy and update code
 
@@ -39,7 +39,9 @@ Deploy the maintained [Quick Start](../README.md#quick-start) on a GPU-enabled c
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-After editing the checkout, repeat the deploy command. It keeps your installation settings and updates affected workloads, which may reload model weights. Unchanged workloads remain running. Send a request using the [single-model example](../examples/quickstart/README.md#deploy-and-request); cleanup is shown in the [Quick Start](../README.md#stop-and-uninstall).
+After editing the checkout, run the same command again. It uses the saved installation settings and reuses the runtime environment for code updates. Changes to runtime dependencies or image build settings update the platform installation.
+
+Affected workloads restart and may reload model weights. The command waits for the selected code and serving routes to become active. Unchanged source and deployment configuration leave existing workloads running. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
 
 Changes to CLI Python files take effect directly from the editable checkout; rerun `pip install -e .` when its Python dependencies change.
 
@@ -89,7 +91,7 @@ make image-model-server-omni \
 For k3d, set `CLUSTER` to the existing cluster name and import the image:
 
 ```bash
-CLUSTER=foretoken-dev
+CLUSTER=foretoken-qwen-test
 k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
 ```
 

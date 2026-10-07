@@ -2,34 +2,36 @@
 
 English | [简体中文](multi-dataset_zh.md) · [Performance examples](README.md)
 
-Mix conversation sources to measure a service under several kinds of traffic at once. After [setup](README.md#setup), separate selectors with commas:
+After [setup](README.md#setup), separate dataset selectors with commas:
 
 ```bash
 foretoken perf examples/quickstart \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
-  --max-concurrency 4 --num-prompts 20 --output local
+  --max-concurrency 4 --num-prompts 20 --output local,wandb
 ```
 
-The datasets share one arrival rate, concurrency limit, and request budget. Local JSONL files or JSON conversation arrays can replace the remote selectors. Use random inputs as a separate workload.
+The datasets share the configured arrival rate, concurrency limit, and request budget. `--num-prompts` is divided evenly by default; `--dataset-weights 3,1` allocates three quarters to the first dataset. With `--duration` instead of `--num-prompts`, the weights control conversation sampling. Multi-turn conversations stop when their dataset's request budget is exhausted.
 
-## Set the traffic mix
+Local JSONL files or JSON conversation arrays can replace the remote datasets. Random inputs are used separately from other datasets.
 
-`--num-prompts` is divided evenly by default. Add `--dataset-weights 3,1` to assign three quarters of the request budget to the first dataset and one quarter to the second. Each dataset stops when its turn budget is exhausted.
+A JSONL row with an integer token array, such as `{"prompt":[1,42,73],"output_length":32}`, is one pre-tokenized Completions request, not a conversation. The IDs must use the served model's tokenizer; no chat template is added. A string `prompt` retains its Chat Completions behavior. Recorded text answers supply per-turn output targets using the selected request model's tokenizer; see [conversation output lengths](conversations.md).
 
-For a duration-bounded workload, replace `--num-prompts` with `--duration 5min`. Weights then control conversation sampling rather than fixed request shares.
+JSONL and Hugging Face rows can set `model`, `priority` (integer), `request_class` (benchmark label), and a positive integer `output_length`. For example, `{"prompt":"Hello","model":"Qwen/Qwen3-0.6B","request_class":"interactive","output_length":32}` sends that model and requests exactly 32 output tokens. Without `model`, the service selection applies. Rows with `model` can supply it instead of `--model` for URL or multi-model deployment workloads. `priority` is sent to the service and requires its priority-scheduling support; `request_class` labels requests for result breakdowns.
 
-A row can select a model and label its request class. For example:
+Results are grouped by dataset, model, and request class. Each group's throughput and goodput use the full experiment duration. See [parameter sweeps](sweep.md) to compare load settings or [SLO search](slo.md) to find a passing concurrency level.
 
-```json
-{"prompt":"Hello","model":"Qwen/Qwen3-0.6B","request_class":"interactive","output_length":32}
-```
+## Example output
 
-This selects the model, labels the request `interactive`, and targets 32 output tokens. Use different labels to compare interactive and batch traffic. [Conversation data](conversations.md#prepare-your-data) defines the input formats, per-row controls, and output-length rules.
+A short run over two local datasets:
 
-## Compare traffic classes
+![Combined CLI output](../imgs/multi-dataset-benchmark-output.png)
 
-Results include breakdowns by dataset, model, and request class, using the full experiment duration for each group's throughput and goodput. W&B displays their curves on the same elapsed-time axis and retains labels and output targets in the request table.
+![Dataset curves compared in one W&B group](../imgs/multi-dataset-wandb.png)
 
-![P95 response latency by request class](../imgs/mixed-workload-wandb.png)
+Request-class p95 latency from a 3:1 interactive/batch workload against an existing endpoint:
 
-Use [SLO measurement](slo.md) to compare attainment across classes, or [parameter sweeps](sweep.md) to vary load settings.
+![P95 end-to-end latency by request class](../imgs/mixed-workload-wandb.png)
+
+The same workload requests 16 or 32 output tokens per dataset row; target and actual counts line up in send order:
+
+![Per-request target and actual output tokens in W&B](../imgs/output-length-wandb.png)

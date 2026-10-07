@@ -29,7 +29,7 @@ spec:
 foretoken deploy examples/observability --timeout 20m
 ```
 
-按[快速开始的请求示例](../quickstart/README_zh.md#部署并调用)发送请求。在 [Grafana](../../observability/README_zh.md#查看指标) 打开 Foretoken 系统概览并选择 `foretoken-demo`，再到 Prometheus Alerts 页面确认所选规则。配置[通知接收器](../../observability/README_zh.md#告警)后，可接收触发和解除消息。
+按[快速开始的请求示例](../quickstart/README_zh.md)发送请求。在 [Grafana](../../observability/README_zh.md#查看指标) 打开 Foretoken 系统概览并选择 `foretoken-demo`，再到 Prometheus Alerts 页面确认所选规则。配置[通知接收器](../../observability/README_zh.md#告警)后，可接收触发和解除消息。
 
 ## 关闭告警或删除服务
 

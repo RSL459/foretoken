@@ -1,21 +1,63 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# Publish a Foretoken release
+# Release Versioning
 
 English | [简体中文](release_zh.md)
 
-A Foretoken release includes the Python package, NVIDIA and MetaX runtime environment images, an application archive, and a Helm Chart. Run the build commands from the repository root.
+Foretoken publishes a Python distribution, runtime environment images, an application `.tar.gz` asset, and a Helm Chart. Python packages follow PEP 440, while OCI images and Helm Charts use SemVer. A release keeps the same stage and sequence number across both formats even though their spelling differs.
 
-## Prepare the version
+## Version stages
 
-Choose a [release stage](#version-stages). Set the Python version in `pyproject.toml` and the corresponding OCI/Helm version in both `version` and `appVersion` in `deploy/charts/foretoken/Chart.yaml`. GitHub Release tags use the Python version prefixed with `v`.
+| Stage | Purpose | Python version | OCI and Helm version |
+| --- | --- | --- | --- |
+| Development | Identifiable local or CI snapshot | `0.0.1.dev1` | `0.0.1-dev.1` |
+| Alpha | Early integration and interface testing | `0.0.1a1` | `0.0.1-alpha.1` |
+| Beta | Feature-complete compatibility and deployment testing | `0.0.1b1` | `0.0.1-beta.1` |
+| Release candidate | Final validation before a stable release | `0.0.1rc1` | `0.0.1-rc.1` |
+| Stable | Supported release for normal installation | `0.0.1` | `0.0.1` |
+| Python post-release | Correction to an already published Python artifact or its metadata | `0.0.1.post1` | Normally reuse `0.0.1`; use the next patch if platform artifacts change |
 
-Published versions are immutable. For another publication, increment the appropriate pre-release, post-release, or patch number rather than replacing existing artifacts.
+Increment the final number when publishing another build in the same stage: `0.0.1a2`, `0.0.1b2`, or `0.0.1rc2`. Move to the next stage only when the release meets that stage's purpose.
 
-## Build and validate
+Python orders these versions as follows:
 
-Use a build host with Python 3.11+, the repository's CLI dependencies, Docker BuildKit, Make, Helm, and a rustup-managed Rust toolchain. Prepare compatible NVIDIA and MetaX inference-runtime images. Replace the registry prefix and image references below with the publication destination and those runtime images:
+```text
+0.0.1.dev1 < 0.0.1a1 < 0.0.1b1 < 0.0.1rc1 < 0.0.1 < 0.0.1.post1
+```
+
+Development snapshots are not GitHub Releases and are not published to PyPI. OCI images may additionally maintain `latest` as a mutable alias for normal source iteration; `latest` is not a Helm Chart version or a release version.
+
+## Installing Python releases
+
+Alpha, Beta, and Release Candidate versions are pre-releases. `pip` excludes them from normal version selection unless a pre-release is requested:
+
+```bash
+pip install --pre foretoken
+pip install foretoken==0.0.1a1
+```
+
+A `.postN` release normally reuses the matching Stable platform artifacts because it only corrects the published Python package or its metadata. Do not use it for normal code changes. If runtime behavior or platform artifacts must change, publish the next patch version, such as `0.0.2`, instead of placing those changes in `.postN`.
+
+## Tags and version ownership
+
+GitHub Release tags use the Python version with a `v` prefix.
+
+Each artifact has one authoritative version source:
+
+- `pyproject.toml` owns the Python distribution version.
+- `deploy/charts/foretoken/Chart.yaml` owns the Helm `version` and `appVersion`.
+- Foretoken OCI images and the Helm Chart package use the SemVer value for the same release stage.
+
+Published versions are immutable. Never rebuild and overwrite a version already present on PyPI or in an OCI registry. Increment the development, pre-release, post-release, or patch number as appropriate.
+
+## Release descriptions
+
+Use the [Release Description Template](release-template.md) when creating a GitHub Release.
+
+## Build and push the release artifacts
+
+Prepare compatible NVIDIA and MetaX inference-runtime images, then replace the registry prefix and runtime image names below with your own:
 
 ```bash
 export REGISTRY=ghcr.io/your-org/foretoken
@@ -23,22 +65,19 @@ export INFERENCE_ENGINE_IMAGE=your-nvidia-runtime:version
 export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 
 deploy/release-artifacts build --registry "$REGISTRY"
-python -m build
 ```
 
-The first command builds the environment images and saves `foretoken-applications-<version>-linux-amd64.tar.gz` and the Chart package in `/tmp/foretoken-release`. MetaX image tags end in `-metax`. `python -m build` requires the Python `build` package and writes the wheel and source distribution to `dist/`.
+The command builds the runtime images and saves `foretoken-applications-<version>-linux-amd64.tar.gz` and the matching Helm Chart in `/tmp/foretoken-release`. MetaX image tags use the `-metax` suffix.
 
-Validate the Python distribution, application archive, Chart, and affected images. Validate the NVIDIA and MetaX runtimes on their respective devices; artifact construction does not run GPU validation. Use the [deployment guides](../../README.md#quick-start) to exercise installation and requests.
-
-To export only the application archive without rebuilding environment images:
+To export the application archive without rebuilding environments:
 
 ```bash
 deploy/release-artifacts export --output-dir /tmp/foretoken-release
 ```
 
-## Publish
+Upload the validated archive as a GitHub Release asset. The `push` command below publishes the environment images and Helm Chart, not the archive.
 
-After validation, log in to the destination registry and push the environment images and Chart:
+After validating the artifacts, log in to the registry and push them:
 
 ```bash
 docker login ghcr.io
@@ -46,38 +85,13 @@ helm registry login ghcr.io
 deploy/release-artifacts push --registry "$REGISTRY"
 ```
 
-The command skips existing tags, so it can resume an incomplete publication. It does not upload the application archive. Other destinations and component selection are described by `deploy/release-artifacts --help`.
+Existing tags are not overwritten, so the same command can retry an incomplete publication. See `deploy/release-artifacts --help` for the complete command reference.
 
-Tag the commit used to build and validate the artifacts. Create the GitHub Release at that tag and attach the validated application archive. Use the [release description template](release-template.md) to describe changes by area, required upgrade actions, and named acknowledgements of contributors and their support.
+## Release sequence
 
-Publishing the GitHub Release triggers the [Python publication workflow](../../.github/workflows/publish-python-package.yaml), which builds from the tag and uploads to PyPI. Verify the published package, environment images, application archive, Chart, and a clean installation from those artifacts.
-
-## Version stages
-
-Python uses PEP 440; OCI images and Helm use SemVer. Keep the stage and sequence number aligned across both spellings.
-
-| Stage | Purpose | Python version | OCI and Helm version |
-| --- | --- | --- | --- |
-| Development | Local or CI snapshot | `0.0.1.dev1` | `0.0.1-dev.1` |
-| Alpha | Early integration and interface testing | `0.0.1a1` | `0.0.1-alpha.1` |
-| Beta | Feature-complete compatibility and deployment testing | `0.0.1b1` | `0.0.1-beta.1` |
-| Release candidate | Final validation before a stable release | `0.0.1rc1` | `0.0.1-rc.1` |
-| Stable | Release for normal installation | `0.0.1` | `0.0.1` |
-| Python post-release | Correction to a published Python artifact or its metadata | `0.0.1.post1` | Normally reuse `0.0.1` |
-
-Increment the final number for another release in the same stage, such as `0.0.1a2`. Move to the next stage when the release meets that stage's purpose. Python orders these versions as follows:
-
-```text
-0.0.1.dev1 < 0.0.1a1 < 0.0.1b1 < 0.0.1rc1 < 0.0.1 < 0.0.1.post1
-```
-
-Development snapshots are not published to GitHub Releases or PyPI. OCI images may use `latest` as a mutable alias for source iteration; it is not a release or Chart version.
-
-A `.postN` release corrects only the published Python package or metadata and normally reuses the Stable platform artifacts. Runtime behavior or platform changes require the next patch version, such as `0.0.2`.
-
-Alpha, Beta, and Release Candidate versions require an explicit pre-release or exact version selection in pip:
-
-```bash
-pip install --pre foretoken
-pip install foretoken==0.0.1a1
-```
+1. Choose the release stage and update `pyproject.toml` and `Chart.yaml` using the mapping above.
+2. Build and verify the Python distribution, application archive, Helm Chart, and affected OCI images.
+3. Push the matching OCI image and Helm Chart tags.
+4. Tag the commit used to build and validate the artifacts, then publish the GitHub Release with the application archive attached, concise highlights, and named acknowledgements of contributors and their support.
+5. Let the release workflow publish the Python distribution to PyPI.
+6. Verify the published package, images, application archive, Chart, and a clean installation path.
