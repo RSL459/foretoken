@@ -117,7 +117,7 @@ Cancellation and deletion continue after the HTTP `202` response. The configurat
 
 ## Configure admission rules
 
-Admission rules determine whether requests proceed, wait, or are rejected. The default, `allow_all`, adds no admission limit. Select `concurrency` in a `FrontendService` to enable concurrency-based flow control:
+Admission controls concurrency and queuing for text generation and tokenization. The default is unrestricted (`allow_all`). To limit each frontend replica to 64 concurrent candidates, add this to its `FrontendService` configuration:
 
 ```yaml
 spec:
@@ -127,13 +127,10 @@ spec:
       maxConcurrentRequests: 64
 ```
 
-This example allows 64 concurrent output candidates per frontend replica; choose the limit from measurements of your workload. Batched completions count each candidate separately: four prompts with `n: 2` use eight slots.
+Choose the limit for your workload; batches count each output candidate separately. To allow queuing, add `maxQueuedRequests` and optionally `queueTimeout` under `parameters`.
 
-For short bursts, add `maxQueuedRequests: 128` and `queueTimeout: 2s` under `parameters`. By default, requests do not queue; when queueing is enabled without a timeout, the remaining request budget applies. Full capacity without queue space and queue expiry return HTTP 503. A batch larger than the concurrency limit returns HTTP 400.
+See [Observability](../../observability/README.md) to inspect admission results, or [Implementing admission rules](../../docs/development/admission-rules.md) to add an algorithm.
 
-Limits are shared across models on each frontend replica, not across the cluster. Text generation and tokenization use these rules; video requests do not. Health probes remain available. Generation occupies capacity until the request ends, including streaming output.
-
-Configure [routing](src/router/README.md) separately under `spec.routerPipeline`. To implement a custom rule, see the [admission-rule development guide](../../docs/development/admission-rules.md).
 
 ## Operations
 

@@ -7,17 +7,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Send Foretoken service alerts to a Lark group through its custom bot.
+Send Foretoken service alerts to a Lark group through its custom bot. Use an installed [Foretoken monitoring stack](../../README.md), or connect an existing stack as described below.
 
 ## Connect the bot
-
-For CLI-managed monitoring, update the platform using its original installation mode. For a source installation, run this from the Foretoken repository root and retain its registry and engine-source options:
-
-```bash
-foretoken install
-# For a source-installed platform:
-# foretoken install -e .
-```
 
 Obtain the group's bot webhook. Run from the repository root, replacing the URL placeholder. For an existing monitoring stack, use its Alertmanager namespace:
 
