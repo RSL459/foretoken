@@ -23,7 +23,7 @@ type ApplicationFiles struct {
 }
 
 // Ref resolves a service's selected component version at the trusted platform origin.
-// An absent revision leaves the workload on its image runtime.
+// An absent revision produces no source override.
 func (files ApplicationFiles) Ref(component, revision string) string {
 	if revision == "" {
 		return ""

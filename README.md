@@ -63,7 +63,7 @@ foretoken cluster create k3d --name foretoken-dev --gpus 0
 # Build from the current source checkout:
 foretoken install -e .
 
-# Use published images instead:
+# Use the published platform instead:
 # foretoken install
 ```
 

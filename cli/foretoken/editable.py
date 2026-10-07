@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from foretoken.application_files import ApplicationFiles
+from foretoken.application_files import SOURCE_REVISION, ApplicationFiles
 from foretoken.arguments import InstallCommand
 from foretoken.cluster_build import (
     ClusterBuilder,
@@ -35,7 +35,6 @@ from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
 from foretoken.source import (
     _INSTALL_SOURCE,
-    SOURCE_REVISION,
     _has_server_binding,
     _inputs,
     _local_candidates,
@@ -110,7 +109,6 @@ class EditableDeployment:
 
     def _prepare(self, timeout: str) -> None:
         """Capture a runtime update or reuse installation for build-environment changes."""
-
         if not self.state.get("build") or self.state["build"]["arguments"].get(
             "VLLM_REVISION"
         ) != pinned_rust_revision(self.root):
@@ -144,17 +142,6 @@ class EditableDeployment:
                 if Path(name).suffix in {".md", ".png", ".svg"}:
                     continue
                 parts = Path(name).parts
-                native_source = (
-                    "vllm-metax"
-                    if self.state["build"]["backend"] == "metax"
-                    else "vllm"
-                )
-                if parts[1] == native_source and (
-                    parts[2] in {"csrc", "cmake", "CMakeLists.txt"}
-                    or Path(name).suffix
-                    in {".cu", ".cuh", ".cpp", ".cc", ".c", ".h", ".hpp", ".cmake"}
-                ):
-                    self.state["build"]["engine_native"] = True
                 if len(parts) > 2 and (
                     parts[2]
                     in {
@@ -208,7 +195,10 @@ class EditableDeployment:
         )
         bundles = dict(self.state["bundles"])
         for component in components:
-            prior = bundles.get(component, {})
+            prior = bundles.get(
+                component,
+                self.state["build"].get("applications", {}).get(component, {}),
+            )
             bundles[component] = {
                 "revision": str(uuid.uuid4()),
                 "previous": prior.get("revision", ""),
@@ -218,7 +208,6 @@ class EditableDeployment:
 
     def _rebuild(self, timeout: str) -> None:
         """Let platform installation own environment images and retain installed values."""
-
         settings = dict(self.state["command"])
         settings.update(values=(), timeout=timeout)
         command = InstallCommand(**settings)
@@ -287,7 +276,6 @@ class EditableDeployment:
 
     def _publish_applications(self, components: set[str], timeout: str) -> None:
         """Publish selected components once, independently of their model namespaces and caches."""
-
         platforms = self.kubectl.list_all_resources(
             ("deployments",),
             label_selector="app.kubernetes.io/name=foretoken-control-plane",
@@ -344,6 +332,17 @@ class EditableDeployment:
                 "uid": origin.claim_uid,
             },
         )
+        if (
+            "model-server" in pending
+            and self.state.get("engines")
+            and not build["registry"]
+            and origin.node not in build["engine_caches"]
+        ):
+            # A newly prepared origin node needs a cold cache, not another node's native outputs.
+            build["engine_caches"][origin.node] = (
+                build["binding"] + "-" + uuid.uuid4().hex
+            )
+            _write_json(self.directory / "install.json", self.state)
         snapshot = self.directory / self.state["inputs"]
         inputs = {
             str(path.relative_to(snapshot)): path
@@ -351,7 +350,11 @@ class EditableDeployment:
             if path.is_file()
         }
         helm = Helm(default_platform_config(self.state["command"]["oci_registry"]))
-        references = self._application_references(helm)
+        references = origin.references(helm.application_history())
+        if references is not None:
+            references.update(
+                bundle["revision"] for bundle in self.state["bundles"].values()
+            )
         print("Preparing application files: " + ", ".join(sorted(pending)), flush=True)
         with ClusterBuilder(
             self.kubectl,
@@ -399,52 +402,29 @@ class EditableDeployment:
                     destination=payload,
                     arguments=build["arguments"],
                 )
-                if component == "model-server":
-                    builder.run(
-                        [
-                            "cp",
-                            "-R",
-                            builder.workspace + "/data-plane/model-server/python",
-                            payload + "/python",
-                        ]
+                if component == "model-server" and self.state.get("engines"):
+                    builder.build(
+                        "deploy/inference-engines/source-build.Dockerfile",
+                        target="source-export",
+                        destination=staging + "/engine",
+                        arguments={
+                            **build["arguments"],
+                            "RUNTIME_IMAGE": self.state["runtime"]["model_image"],
+                            "CACHE_ID": build["engine_caches"][
+                                "" if build["registry"] else origin.node
+                            ],
+                            "BUILD_NATIVE": str(build["engine_native"]).lower(),
+                        },
                     )
-                    if self.state.get("engines"):
-                        builder.build(
-                            "deploy/inference-engines/source-build.Dockerfile",
-                            target="source-export",
-                            destination=staging + "/engine",
-                            arguments={
-                                **build["arguments"],
-                                "RUNTIME_IMAGE": self.state["runtime"]["model_image"],
-                                "CACHE_ID": build["binding"]
-                                + "-"
-                                + build["environment"],
-                                "BUILD_NATIVE": str(
-                                    build.get("engine_native", False)
-                                ).lower(),
-                            },
-                        )
-                        builder.run(
-                            [
-                                "sh",
-                                "-ec",
-                                'cp -R "$1/." "$2/"',
-                                "assemble",
-                                staging + "/engine",
-                                payload,
-                            ]
-                        )
-                if component != "control-plane":
-                    descriptor = json.dumps({"component": component})
                     builder.run(
                         [
                             "sh",
                             "-ec",
-                            'printf %s "$1" > "$2/complete.json"',
-                            "describe",
-                            descriptor,
+                            'cp -R "$1/." "$2/"',
+                            "assemble",
+                            staging + "/engine",
                             payload,
-                        ],
+                        ]
                     )
                 validate_build_inputs(
                     self.root, snapshot, self.state.get("engines", {})
@@ -455,7 +435,13 @@ class EditableDeployment:
                 ):
                     previous = active_control.rsplit("/", 1)[-1]
                 origin.publish(
-                    builder, payload, component, revision, previous, references
+                    builder,
+                    payload,
+                    component,
+                    revision,
+                    previous,
+                    references,
+                    timeout=timeout,
                 )
                 builder.run(["rm", "-rf", "--", staging])
         if "control-plane" in pending:
@@ -464,63 +450,6 @@ class EditableDeployment:
                 ResourceRef("Deployment", platform["metadata"]["name"], namespace),
                 timeout,
             )
-
-    def _application_references(self, helm: Any) -> set[str] | None:
-        """Retain source intent, immutable cohorts, rollback history and pending file consumers."""
-        references = helm.control_plane_application_history()
-        if references is None:
-            return None
-        references.update(
-            bundle["revision"] for bundle in self.state["bundles"].values()
-        )
-        objects = list(
-            self.kubectl.list_all_resources(
-                (
-                    "modelservice",
-                    "frontendservice",
-                    "modelpool",
-                    "modelgroup",
-                    "videotask",
-                )
-            )
-        )
-        for label in (
-            "inference.foretoken.io/model-group",
-            "inference.foretoken.io/frontend-service",
-            "inference.foretoken.io/model-preparation-group",
-            "foretoken.io/application-files=consumer",
-        ):
-            objects.extend(
-                self.kubectl.list_all_resources(
-                    ("pods", "jobs", "replicasets", "deployments"), label_selector=label
-                )
-            )
-        for obj in objects:
-            spec = obj.get("spec", {})
-            template = spec.get("template", {})
-            metadata = obj["metadata"]
-            template_metadata = template.get("metadata", {})
-            references.update(
-                filter(
-                    None,
-                    (
-                        metadata.get("annotations", {}).get(SOURCE_REVISION),
-                        template_metadata.get("annotations", {}).get(SOURCE_REVISION),
-                        metadata.get("annotations", {}).get(
-                            "inference.foretoken.io/application-url"
-                        ),
-                        template_metadata.get("annotations", {}).get(
-                            "inference.foretoken.io/application-url"
-                        ),
-                        template.get("sourceRevision"),
-                        spec.get("runtime", {}).get("sourceRevision"),
-                        obj.get("status", {})
-                        .get("plan", {})
-                        .get("workerApplicationURL"),
-                    ),
-                )
-            )
-        return references
 
     def _ready_containers(
         self, namespace: str, component: str, service: str, revision: str
@@ -537,6 +466,20 @@ class EditableDeployment:
                 p["poolUID"]: p["revision"]
                 for p in current.get("status", {}).get("servingPoolRevisions", [])
             }
+        else:
+            current = self.kubectl.get("frontendservice", service, namespace)
+            application = current.get("status", {}).get("application")
+            if application is not None:
+                frontend_image = application["image"]
+            else:
+                deployment = self.kubectl.get_if_exists(
+                    "deployment", service, namespace
+                )
+                if deployment is None:
+                    return []
+                frontend_image = deployment["spec"]["template"]["spec"]["containers"][
+                    0
+                ]["image"]
         for pod in self.kubectl.list_resources(("pods",), namespace):
             metadata = pod["metadata"]
             if (
@@ -550,7 +493,7 @@ class EditableDeployment:
             ):
                 continue
             labels = metadata.get("labels", {})
-            expected_image = self.state["runtime"]["image"]
+            expected_image = frontend_image if component == "frontend" else ""
             route_target = ""
             if component == "frontend":
                 if labels.get("inference.foretoken.io/frontend-service") != service:
@@ -578,16 +521,7 @@ class EditableDeployment:
                     or runtime.get("sourceRevision", "") != revision
                 ):
                     continue
-                image_key = (
-                    "omni_image"
-                    if runtime["backend"] == "vllm-omni"
-                    else "nsight_image"
-                    if runtime.get("profiling", {}).get("engine") == "nsight"
-                    else "model_image"
-                )
-                expected_image = self.state["runtime"][image_key]
-                if runtime["image"] != expected_image:
-                    continue
+                expected_image = runtime["image"]
                 pool_uid = pool["metadata"]["uid"]
                 pool_sizes[pool_uid] = pool["spec"]["desiredGroups"]
                 route_target = group["metadata"]["uid"]
@@ -706,20 +640,23 @@ class EditableDeployment:
         routes: dict[str, set[str]] = {}
         consumers = dict(self.selected)
         # Unchanged frontend code still needs to consume a new backend cohort.
-        if any(kind == "ModelService" for kind, _, _ in self.selected):
-            for obj in deployment.objects:
-                if obj.get("kind") == "FrontendService":
-                    metadata = obj["metadata"]
-                    key = (
-                        "FrontendService",
-                        deployment.namespace or "default",
-                        metadata["name"],
-                    )
+        namespaces = {
+            namespace for kind, namespace, _ in self.selected if kind == "ModelService"
+        }
+        for namespace in namespaces:
+            for frontend in self.kubectl.list_resources(
+                ("frontendservices",), namespace
+            ):
+                metadata = frontend["metadata"]
+                if (
+                    not metadata.get("deletionTimestamp")
+                    and frontend["spec"].get("replicas", 1) > 0
+                ):
                     consumers.setdefault(
-                        key, metadata.get("annotations", {}).get(SOURCE_REVISION, "")
+                        ("FrontendService", namespace, metadata["name"]),
+                        metadata.get("annotations", {}).get(SOURCE_REVISION, ""),
                     )
-        # Source annotations do not advance Service generation. Verify committed
-        # backend code first, then the routing consumers of that exact cohort.
+        # Verify committed backend code first, then the routing consumers of that cohort.
         selected = sorted(
             consumers.items(), key=lambda item: item[0][0] == "FrontendService"
         )
@@ -761,7 +698,9 @@ class EditableDeployment:
                 continue
             for pod, container, directory, _ in writers:
                 expected = (
-                    f"FORETOKEN_ACTIVE_SOURCE_DIRECTORY={directory}" if revision else ""
+                    f"FORETOKEN_ACTIVE_SOURCE_DIRECTORY={directory}"
+                    if directory
+                    else ""
                 )
                 output = self.kubectl.run(
                     [

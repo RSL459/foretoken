@@ -181,6 +181,11 @@ func (r *VideoTaskReconciler) verifyVideoTaskFrontend(ctx context.Context, task 
 	if !videoTaskNamePattern.MatchString(task.Name) {
 		return nil, fmt.Errorf("VideoTask name must be a video-prefixed UUID")
 	}
+	workerImage := r.WorkerImage
+	if task.Status.Plan != nil {
+		// Admission already selected this worker before the platform defaults changed.
+		workerImage = task.Status.Plan.WorkerImage
+	}
 	var frontends api.FrontendServiceList
 	if err := r.APIReader.List(ctx, &frontends, client.InNamespace(task.Namespace)); err != nil {
 		return nil, err
@@ -192,7 +197,7 @@ func (r *VideoTaskReconciler) verifyVideoTaskFrontend(ctx context.Context, task 
 		}
 		worker := task.Spec.Worker
 		endpoint := fmt.Sprintf("http://%s.%s.svc:%d", frontend.Name, frontend.Namespace, r.FrontendPort)
-		if task.Labels[videoFrontendUIDLabel] != task.Spec.FrontendUID || worker.Image != r.WorkerImage || worker.Endpoint != endpoint || worker.OutputClaimName != frontend.Spec.VideoTasks.ClaimName || worker.OutputPath != fmt.Sprintf("tasks/%s/result.mp4", task.Name) {
+		if task.Labels[videoFrontendUIDLabel] != task.Spec.FrontendUID || worker.Image != workerImage || worker.Endpoint != endpoint || worker.OutputClaimName != frontend.Spec.VideoTasks.ClaimName || worker.OutputPath != fmt.Sprintf("tasks/%s/result.mp4", task.Name) {
 			return nil, fmt.Errorf("VideoTask worker does not match its FrontendService configuration")
 		}
 		return frontend, nil

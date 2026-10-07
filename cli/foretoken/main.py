@@ -5,11 +5,15 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
+import uuid
 from collections.abc import Sequence
 from urllib.parse import urlsplit
+
+import yaml
 
 from foretoken.arguments import (
     ClusterCommand,
@@ -38,7 +42,7 @@ from foretoken.kubernetes import (
     timeout_seconds,
     wait_for_resources,
 )
-from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.manifest import DeploymentError, ResourceRef, parse_deployment
 from foretoken.platform import PlatformLifecycle
 from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
@@ -91,7 +95,6 @@ def _deploy(
     if profile is not None:
         # Resolve the selected model before changing the deployment.
         capture = ProfileRun(profile, deployment=deployment)
-
     source = EditableDeployment.discover(kubectl)
     if source is not None:
         source.prepare(timeout)
@@ -100,6 +103,27 @@ def _deploy(
             f"Source preparation completed in {time.monotonic() - started:.1f}s",
             flush=True,
         )
+    # A deployment explicitly selects current platform applications; reconciliation and
+    # capacity changes retain the controller's persisted selection.
+    schema = json.loads(
+        kubectl.get_raw("/openapi/v3/apis/inference.foretoken.io/v1alpha1", timeout)
+    )
+    selection_kinds = set()
+    for definition in schema["components"]["schemas"].values():
+        for identity in definition.get("x-kubernetes-group-version-kind", []):
+            if (
+                identity["kind"] in {"ModelService", "FrontendService"}
+                and "deploymentRevision"
+                in definition["properties"]["spec"]["properties"]
+            ):
+                selection_kinds.add(identity["kind"])
+    revision = uuid.uuid4().hex
+    for obj in deployment.objects:
+        if obj.get("kind") in selection_kinds:
+            obj["spec"]["deploymentRevision"] = revision
+    deployment = parse_deployment(
+        deployment.path, yaml.safe_dump_all(deployment.objects, sort_keys=False)
+    )
     namespace = deployment.namespace or "<current>"
     print(f"Applying {deployment.path} to namespace {namespace}")
     DirectoryVolumes(kubectl).apply(deployment, timeout)

@@ -57,6 +57,10 @@ spec:
             description: FrontendServiceSpec defines the desired state of a frontend
               service.
             properties:
+              deploymentRevision:
+                description: DeploymentRevision requests current platform applications
+                  on an explicit deployment.
+                type: string
               hostname:
                 description: Hostname is required when the platform exposes frontends
                   through a Gateway.
@@ -399,6 +403,27 @@ spec:
             description: FrontendServiceStatus defines the observed state of a frontend
               service.
             properties:
+              application:
+                description: Application retains the selected frontend environment
+                  and files across workload recovery.
+                properties:
+                  applicationURL:
+                    type: string
+                  deploymentRevision:
+                    type: string
+                  image:
+                    type: string
+                  imageProfile:
+                    description: ImageProfile distinguishes serving, Omni and diagnostic
+                      environments during selection.
+                    type: string
+                  sourceRevision:
+                    description: SourceRevision retains the admitted source intent
+                      independently of source-mode defaults.
+                    type: string
+                required:
+                - image
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

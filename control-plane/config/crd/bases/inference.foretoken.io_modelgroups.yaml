@@ -586,6 +586,10 @@ spec:
                 description: ModelGroupRuntime defines the resolved inference-engine
                   runtime.
                 properties:
+                  applicationURL:
+                    description: ApplicationURL pins the controller-selected executable
+                      publication for this cohort.
+                    type: string
                   backend:
                     enum:
                     - vllm
