@@ -193,9 +193,41 @@ pub struct DataParallelTelemetry {
     pub kv_cache_usage: Option<f64>,
 }
 
+/// Cumulative first moment and sample count read from an engine-owned histogram.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistogramMoments {
+    pub sum: f64,
+    pub count: u64,
+}
+
+impl HistogramMoments {
+    /// Returns the cumulative mean, preserving an empty histogram's zero value.
+    pub fn mean(self) -> f64 {
+        if self.count == 0 {
+            0.0
+        } else {
+            self.sum / self.count as f64
+        }
+    }
+}
+
+/// Engine-owned request distributions used by request-cost routing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestCostTelemetry {
+    pub prompt_tokens: Option<HistogramMoments>,
+    pub generation_tokens: Option<HistogramMoments>,
+    pub queue_seconds: Option<HistogramMoments>,
+    pub prefill_seconds: Option<HistogramMoments>,
+    pub decode_seconds: Option<HistogramMoments>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TelemetryResponse {
+    #[serde(default)]
+    pub request_cost: RequestCostTelemetry,
     pub version: u8,
     pub collected_at_unix_ms: u64,
     pub accepting: bool,

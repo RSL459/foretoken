@@ -21,6 +21,13 @@ pub struct RouteTargetLatencyStats {
 pub struct RouteTargetStats {
     /// Rank-local scheduler observations carried by the same route-target snapshot.
     pub data_parallel_ranks: Vec<foretoken_model_protocol::DataParallelTelemetry>,
+    /// Latest cumulative request-cost histograms collected from the backend.
+    pub request_cost: foretoken_model_protocol::RequestCostTelemetry,
+    /// Mean prompt tokens from local counter increases over the last 24 hours.
+    /// Two samples are required; an idle range has an undefined (NaN) mean.
+    pub prompt_tokens_per_request: Option<f64>,
+    /// Mean generation tokens over the same daily range as prompt lengths.
+    pub generation_tokens_per_request: Option<f64>,
     /// Collection time of the latest cumulative snapshot.
     pub collected_at_unix_ms: u64,
     /// Actual counter interval, or zero until history covers the requested observation window.
