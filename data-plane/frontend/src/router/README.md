@@ -34,7 +34,7 @@ Choose a scorer for the workload:
 | Prefer reusable prompt prefixes | `prefix` |
 | Spread cold requests toward less recently selected targets | `no_hit_lru` |
 | Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
-| Balance prefill work and active prompt blocks after cache credits | `kv_cost`; load is local to this frontend and excludes generated output blocks |
+| Balance prefill work and active prompt blocks after cache credits | `kv_cost` |
 | Give every target an equal score | `uniform` |
 
 Scorer-specific options go under `scorer.parameters`. For example, give matched prefix length more weight:
@@ -49,8 +49,6 @@ spec:
 ```
 
 When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
-
-For `kv_cost`, set `overlap_score_credit`, `prefill_load_scale`, or `decode_active_request_weight` under `scorer.parameters` to tune cache credit and load costs. Decode runs after Prefill and does not receive another cache discount. Use `picker.algorithm: max` to select the lowest cost.
 
 ## Choose from the scores
 
