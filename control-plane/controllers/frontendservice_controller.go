@@ -127,11 +127,7 @@ func (reconciler *FrontendServiceReconciler) frontendsInNamespace(ctx context.Co
 
 // servingCacheReady lets frontends share a cache only after a serving workload has bound it.
 // Every selected cohort must use that cache before the frontend changes its mount.
-func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding) (bool, error) {
-	var services inferencev1alpha1.ModelServiceList
-	if err := reconciler.List(ctx, &services, client.InNamespace(namespace)); err != nil {
-		return false, fmt.Errorf("list ModelServices for frontend runtime cache: %w", err)
-	}
+func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, services []inferencev1alpha1.ModelService) (bool, error) {
 	var pools inferencev1alpha1.ModelPoolList
 	if err := reconciler.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
 		return false, fmt.Errorf("list ModelPools for frontend runtime cache: %w", err)
@@ -141,8 +137,8 @@ func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Conte
 		return false, fmt.Errorf("list ModelGroups for frontend runtime cache: %w", err)
 	}
 	selectedRevision := false
-	for serviceIndex := range services.Items {
-		service := &services.Items[serviceIndex]
+	for serviceIndex := range services {
+		service := &services[serviceIndex]
 		if !service.DeletionTimestamp.IsZero() {
 			continue
 		}
@@ -225,15 +221,16 @@ func (reconciler *FrontendServiceReconciler) sourceSelectionAllowed(ctx context.
 	if selected := frontend.Status.Application; selected != nil {
 		return selected.DeploymentRevision == frontend.Spec.DeploymentRevision && (selected.SourceRevision == revision || (selected.SourceRevision == "" && selected.ApplicationURL == profile.ApplicationFiles.Ref("frontend", revision))), nil
 	}
-	if frontend.Spec.DeploymentRevision != "" {
-		return false, nil
-	}
 	deployment := new(appsv1.Deployment)
 	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), deployment); err != nil {
 		return false, client.IgnoreNotFound(err)
 	}
 	return metav1.IsControlledBy(deployment, frontend) && deployment.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation] == revision && deployment.Spec.Template.Annotations["inference.foretoken.io/application-url"] == profile.ApplicationFiles.Ref("frontend", revision), nil
 }
+
+// Serving configuration protocol selected with the frontend application.
+const frontendServingConfigVersion uint32 = 1
+const frontendServingConfigAnnotation = "inference.foretoken.io/serving-config-protocol"
 
 // reconcileFrontend keeps serving state independent of optional alert configuration failures.
 func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Context, frontend *inferencev1alpha1.FrontendService) (ctrl.Result, error) {
@@ -251,10 +248,78 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
 	}
+	profile := reconciler.RuntimeProfile
+	profile.SourceRevision = sourceRevision
+	deploymentRevision := frontend.Spec.DeploymentRevision
+	selection := frontend.Status.Application
+	deploymentRequired := frontendState{
+		FailureReason:  "FrontendDeploymentRequired",
+		FailureMessage: "Redeploy the frontend with the current platform application before applying its serving configuration",
+	}
+	if selection == nil {
+		current := new(appsv1.Deployment)
+		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), current); err == nil {
+			if !metav1.IsControlledBy(current, frontend) {
+				return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: "The existing frontend Deployment belongs to another owner"})
+			}
+			selection = &inferencev1alpha1.ApplicationSelection{
+				Image:              current.Spec.Template.Spec.Containers[0].Image,
+				ApplicationURL:     current.Spec.Template.Annotations["inference.foretoken.io/application-url"],
+				SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
+				DeploymentRevision: deploymentRevision,
+			}
+			base := frontend.DeepCopy()
+			frontend.Status.Application = selection
+			frontend.Status.ServingConfigVersion = 0
+			if current.Spec.Template.Annotations[frontendServingConfigAnnotation] == fmt.Sprint(frontendServingConfigVersion) {
+				frontend.Status.ServingConfigVersion = frontendServingConfigVersion
+			}
+			if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+				return ctrl.Result{}, fmt.Errorf("retain frontend application configuration: %w", err)
+			}
+			if frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
+				return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, deploymentRequired)
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+	}
+	retained := selection != nil && selection.DeploymentRevision == deploymentRevision && (selection.SourceRevision == sourceRevision || (selection.SourceRevision == "" && sourceRevision != "" && selection.ApplicationURL == profile.ApplicationFiles.Ref("frontend", sourceRevision)))
+	if !retained {
+		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision}
+		if sourceRevision != "" {
+			selection.ApplicationURL = profile.ApplicationFiles.Ref("frontend", sourceRevision)
+		}
+	} else {
+		selection = selection.DeepCopy()
+		selection.SourceRevision = sourceRevision
+	}
+	// Application selection and its serving protocol advance together. A platform update
+	// leaves an explicitly retained application and its existing configuration untouched.
+	if frontend.Status.Application != nil && frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
+		previous := frontend.Status.Application
+		sameApplication := previous.ApplicationURL == selection.ApplicationURL && (selection.ApplicationURL != "" || previous.Image == selection.Image)
+		if retained || sameApplication {
+			return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, deploymentRequired)
+		}
+	}
+	if !reflect.DeepEqual(frontend.Status.Application, selection) || frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
+		base := frontend.DeepCopy()
+		frontend.Status.Application = selection
+		frontend.Status.ServingConfigVersion = frontendServingConfigVersion
+		if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return ctrl.Result{}, fmt.Errorf("persist frontend application selection: %w", err)
+		}
+	}
+	profile.Image, profile.ApplicationURL = selection.Image, selection.ApplicationURL
+	var services inferencev1alpha1.ModelServiceList
+	if err := reconciler.List(ctx, &services, client.InNamespace(frontend.Namespace)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list ModelServices for frontend: %w", err)
+	}
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, frontend.Namespace); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
 	}
-	servingSnapshotInstalled, err := reconciler.reconcileServingSnapshot(ctx, frontend)
+	servingSnapshotInstalled, err := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ServingSnapshotProjectionFailed", FailureMessage: err.Error()})
 	}
@@ -264,44 +329,13 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
 	if cacheReady {
-		cacheReady, err = reconciler.servingCacheReady(ctx, frontend.Namespace, runtimeCache)
+		cacheReady, err = reconciler.servingCacheReady(ctx, frontend.Namespace, runtimeCache, services.Items)
 		if err != nil {
 			statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
 			return ctrl.Result{}, errors.Join(err, statusErr)
 		}
 	}
-	profile := reconciler.RuntimeProfile
 	profile.RuntimeCache = runtimeCache
-	profile.SourceRevision = sourceRevision
-	deploymentRevision := frontend.Spec.DeploymentRevision
-	selection := frontend.Status.Application
-	retained := selection != nil && selection.DeploymentRevision == deploymentRevision && (selection.SourceRevision == sourceRevision || (selection.SourceRevision == "" && sourceRevision != "" && selection.ApplicationURL == profile.ApplicationFiles.Ref("frontend", sourceRevision)))
-	if !retained {
-		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision}
-		if sourceRevision != "" {
-			selection.ApplicationURL = profile.ApplicationFiles.Ref("frontend", sourceRevision)
-		}
-		if frontend.Status.Application == nil && deploymentRevision == "" {
-			current := new(appsv1.Deployment)
-			if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), current); err == nil {
-				selection.Image = current.Spec.Template.Spec.Containers[0].Image
-				selection.ApplicationURL = current.Spec.Template.Annotations["inference.foretoken.io/application-url"]
-			} else if !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, err
-			}
-		}
-	} else {
-		selection = selection.DeepCopy()
-		selection.SourceRevision = sourceRevision
-	}
-	if !reflect.DeepEqual(frontend.Status.Application, selection) {
-		base := frontend.DeepCopy()
-		frontend.Status.Application = selection
-		if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-			return ctrl.Result{}, fmt.Errorf("persist frontend application selection: %w", err)
-		}
-	}
-	profile.Image, profile.ApplicationURL = selection.Image, selection.ApplicationURL
 	applyDeployment := true
 	if !cacheReady {
 		current := new(appsv1.Deployment)

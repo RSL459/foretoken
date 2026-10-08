@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use foretoken_admission::{
-    Admission, AdmissionApi, AdmissionAttempt, AdmissionContext, AdmissionError,
-    AdmissionModelState, AdmissionModelStatus, AdmissionPermit, AdmissionRequest, AdmissionService,
-    AdmissionStateReader, AdmissionTargetState, mark_request_deadline,
+    Admission, AdmissionApi, AdmissionError, AdmissionModelState, AdmissionModelStatus,
+    AdmissionPermit, AdmissionRegistry, AdmissionRequest, AdmissionService, AdmissionStateReader,
+    AdmissionTargetState, PreparedAdmissions, mark_request_deadline,
 };
 use foretoken_chat::{
     ChatRequest, ChatRequestProcessor, DynChatOutputProcessor, NewChatOutputProcessorOptions,
@@ -219,11 +219,6 @@ pub trait RuntimeControl: Send + Sync {
 
 #[async_trait]
 pub trait Generation: Send + Sync {
-    /// Returns the admission owner shared by HTTP and generation consumers, when supplied.
-    fn admission(&self) -> Option<Arc<Admission>> {
-        None
-    }
-
     /// Exposes the existing total budget to HTTP intake before body extraction.
     fn request_timeout(&self) -> Option<Duration> {
         None
@@ -457,7 +452,7 @@ pub struct RuntimeGeneration {
     publication_updates: tokio::sync::watch::Sender<u64>,
     accepting: AtomicBool,
     request_timeout: Duration,
-    admission: Arc<Admission>,
+    admission: Arc<AdmissionRegistry>,
 }
 
 impl RuntimeGeneration {
@@ -465,7 +460,7 @@ impl RuntimeGeneration {
     ///
     /// The frontend process retains the returned owner for its full lifetime; snapshot watchers
     /// publish into it and HTTP handlers load its current immutable state per request.
-    pub fn new(request_timeout: Duration, admission: Arc<Admission>) -> Self {
+    pub fn new(request_timeout: Duration, admission: Arc<AdmissionRegistry>) -> Self {
         let (publication_updates, _) = tokio::sync::watch::channel(0);
         Self {
             slot: ArcSwapOption::empty(),
@@ -483,6 +478,7 @@ impl RuntimeGeneration {
         version: u64,
         state: Arc<RuntimeState>,
         control: Arc<dyn RuntimeControl>,
+        admission: PreparedAdmissions,
     ) -> bool {
         let _publication = self
             .publication
@@ -495,6 +491,10 @@ impl RuntimeGeneration {
         {
             return false;
         }
+        if !self.accepting.load(Ordering::Acquire) {
+            return false;
+        }
+        self.admission.publish(admission);
         self.slot.store(Some(Arc::new(RuntimeSlot {
             version,
             state,
@@ -510,7 +510,7 @@ impl RuntimeGeneration {
     /// then return unavailable while requests already holding a runtime can finish.
     pub fn close_admission(&self) {
         self.accepting.store(false, Ordering::Release);
-        self.admission.rule().close();
+        self.admission.close();
         self.publication_updates
             .send_replace(self.slot.load_full().map_or(0, |slot| slot.version));
     }
@@ -546,17 +546,33 @@ impl RuntimeGeneration {
         request: &AdmissionRequest,
     ) -> Result<AdmissionPermit, GenerationError> {
         let deadline = tokio::time::Instant::from_std(request.received_at + self.request_timeout);
-        let attempt = AdmissionAttempt::work(deadline);
-        let context = AdmissionContext {
-            deadline,
-            service: AdmissionService::default(),
-            state: self,
-            queue: attempt.queue(),
-        };
-        attempt
-            .run(self.admission.rule().admit(request, &context))
+        let admission = self.model_admission(&request.model)?;
+        admission
+            .admit(request, deadline, AdmissionService::default(), self)
             .await
             .map_err(GenerationError::from)
+    }
+
+    /// Selects a configured model's rule without creating state from request-supplied names.
+    fn model_admission(&self, model: &str) -> Result<Arc<Admission>, GenerationError> {
+        let _publication = self
+            .publication
+            .lock()
+            .expect("runtime publication lock poisoned");
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(GenerationError::Unavailable);
+        }
+        self.admission.model(model).ok_or_else(|| {
+            if self
+                .configured_models()
+                .iter()
+                .any(|configured| configured == model)
+            {
+                GenerationError::Unavailable
+            } else {
+                GenerationError::ModelNotFound
+            }
+        })
     }
 
     fn ready_state(&self) -> Result<Arc<RuntimeSlot>, GenerationError> {
@@ -571,11 +587,7 @@ impl RuntimeGeneration {
         }
     }
 
-    async fn generation_slot(
-        &self,
-        model: &str,
-        wait_for_ready: bool,
-    ) -> Result<Arc<RuntimeSlot>, GenerationError> {
+    async fn generation_slot(&self, model: &str) -> Result<Arc<RuntimeSlot>, GenerationError> {
         // A configured model without a prepared processor is admission-only: keep its targets
         // queued while waiting, then reload the complete slot across each generation boundary.
         let mut publication_updates = self.publication_updates.subscribe();
@@ -592,14 +604,19 @@ impl RuntimeGeneration {
             {
                 return Ok(slot);
             }
-            let Some(targets) = slot.state.select_admission_targets(model) else {
+            if !slot
+                .control
+                .configured_models()
+                .iter()
+                .any(|configured| configured == model)
+            {
                 return Err(GenerationError::ModelNotFound);
-            };
-            if !wait_for_ready {
-                return Err(GenerationError::Unavailable);
             }
             if queued.is_none() {
-                queued = Some(foretoken_metrics::QueueGuard::runtime_preparation(&targets));
+                queued = slot
+                    .state
+                    .select_admission_targets(model)
+                    .map(|targets| foretoken_metrics::QueueGuard::runtime_preparation(&targets));
             }
             if publication_updates.changed().await.is_err()
                 || !self.accepting.load(Ordering::Acquire)
@@ -800,10 +817,6 @@ impl AdmissionStateReader for RuntimeGeneration {
 
 #[async_trait]
 impl Generation for RuntimeGeneration {
-    fn admission(&self) -> Option<Arc<Admission>> {
-        Some(self.admission.clone())
-    }
-
     fn request_timeout(&self) -> Option<Duration> {
         Some(self.request_timeout)
     }
@@ -811,11 +824,14 @@ impl Generation for RuntimeGeneration {
     async fn admit(&self, request: &AdmissionRequest) -> Result<AdmissionPermit, GenerationError> {
         // Validate the model without retaining its runtime while waiting. Admission
         // limits are frontend pressure, not additional ModelPool scheduler demand.
-        if self.admission.rule().requires_ready_runtime() {
+        if self
+            .model_admission(&request.model)?
+            .requires_ready_runtime()
+        {
             let slot = self.ready_state()?;
             if !slot.state.models.contains_key(&request.model) {
                 return Err(
-                    if slot.state.admission_targets.contains_key(&request.model) {
+                    if slot.control.configured_models().contains(&request.model) {
                         GenerationError::Unavailable
                     } else {
                         GenerationError::ModelNotFound
@@ -830,7 +846,7 @@ impl Generation for RuntimeGeneration {
         &self,
         request: crate::VideoRequest,
     ) -> Result<axum::response::Response, GenerationError> {
-        let slot = self.generation_slot(&request.model, true).await?;
+        let slot = self.generation_slot(&request.model).await?;
         let video = slot
             .state
             .video
@@ -866,12 +882,7 @@ impl Generation for RuntimeGeneration {
                 Some(permit) => permit,
                 None => self.admit(&admission::generation(&request, None)).await?,
             };
-            let slot = self
-                .generation_slot(
-                    &request.model,
-                    !self.admission.rule().requires_ready_runtime(),
-                )
-                .await?;
+            let slot = self.generation_slot(&request.model).await?;
             let runtime = slot.state.model(&request.model)?;
             let text_request = TextRequest {
                 request_id: request.request_id.clone(),
@@ -912,12 +923,7 @@ impl Generation for RuntimeGeneration {
                         .await?
                 }
             };
-            let slot = self
-                .generation_slot(
-                    &request.model,
-                    !self.admission.rule().requires_ready_runtime(),
-                )
-                .await?;
+            let slot = self.generation_slot(&request.model).await?;
             let runtime = slot.state.model(&request.model)?;
             let bundle = runtime.bundle.clone();
             let tool_parser = request.tool_call_parser.clone();
