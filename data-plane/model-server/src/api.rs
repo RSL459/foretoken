@@ -305,7 +305,8 @@ async fn close_admission(State(state): State<AppState>) -> Json<TelemetryRespons
 fn telemetry_response(state: &AppState) -> TelemetryResponse {
     let telemetry = state.backend.telemetry();
     TelemetryResponse {
-        version: 2,
+        version: 3,
+        request_cost: telemetry.request_cost,
         collected_at_unix_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()

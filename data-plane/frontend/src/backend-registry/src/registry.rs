@@ -425,7 +425,7 @@ async fn telemetry(client: &reqwest::Client, endpoint: &str) -> Option<Telemetry
         return None;
     }
     let response: TelemetryResponse = response.json().await.ok()?;
-    (response.version == 2).then_some(response)
+    matches!(response.version, 2 | 3).then_some(response)
 }
 async fn ready(client: &reqwest::Client, endpoint: &str) -> bool {
     matches!(client.get(format!("{}/readyz",endpoint.trim_end_matches('/'))).send().await,Ok(response) if response.status().is_success())

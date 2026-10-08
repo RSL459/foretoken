@@ -15,6 +15,7 @@ use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 // `kv_least_loaded_scorer.rs`, the `KvLeastLoadedScorer` type, and the user-facing name.
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
+    throughput_scorer => ThroughputScorer = "throughput",
     active_request_scorer => ActiveRequestScorer = "active_request",
     token_load_scorer => TokenLoadScorer = "token_load",
     prefix_scorer => PrefixScorer = "prefix",
@@ -48,6 +49,14 @@ impl From<Vec<RouteScore>> for ScoringOutcome {
             scores,
             on_selected: None,
         }
+    }
+}
+
+/// Converts a lower-is-better cost to Router preference; missing costs rank last.
+pub(super) fn cost_score(cost: Option<f64>) -> RouteScore {
+    RouteScore {
+        preference: cost.map_or(f64::NEG_INFINITY, |cost| -cost),
+        ..RouteScore::default()
     }
 }
 

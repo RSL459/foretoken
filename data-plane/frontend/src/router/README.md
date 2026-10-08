@@ -34,6 +34,7 @@ Choose a scorer for the workload:
 | Prefer reusable prompt prefixes | `prefix` |
 | Spread cold requests toward less recently selected targets | `no_hit_lru` |
 | Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
+| Prefer lower weighted request lengths | `throughput`; twice mean prompt tokens plus mean generated tokens, not tokens per second |
 | Give every target an equal score | `uniform` |
 
 Scorer-specific options go under `scorer.parameters`. For example, give matched prefix length more weight:
@@ -48,6 +49,8 @@ spec:
 ```
 
 When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
+
+`throughput` estimates request lengths over the last 24 hours of local observations. Missing or undefined means rank last. Use `picker.algorithm: max` to select the lowest cost.
 
 ## Choose from the scores
 

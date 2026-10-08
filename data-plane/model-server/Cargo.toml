@@ -11,6 +11,7 @@ license.workspace = true
 description = "Group-local managed EngineCore and typed streaming API"
 
 [dependencies]
+prometheus-client.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
 axum.workspace = true

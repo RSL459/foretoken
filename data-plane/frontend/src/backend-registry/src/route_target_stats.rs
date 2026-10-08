@@ -1,27 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+// SPDX-FileCopyrightText: Copyright The Prometheus Authors
 
 //! Bounded cumulative route-target snapshots and arbitrary-window statistics.
 
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use foretoken_model_protocol::{CumulativeHistogram, TelemetryResponse};
+use foretoken_model_protocol::{CumulativeHistogram, HistogramMoments, TelemetryResponse};
 use foretoken_router::{RouteTargetLatencyStats, RouteTargetStats};
 
 pub(crate) struct RouteTargetStatsHistory {
     retention: Duration,
     snapshots: VecDeque<TelemetryResponse>,
+    prompt_lengths: RequestLengthHistory,
+    generation_lengths: RequestLengthHistory,
 }
 
 impl RouteTargetStatsHistory {
-    /// Creates empty telemetry history retained for at most `retention`.
+    /// Creates short-window telemetry history and a separate 24-hour request-length history.
     ///
     /// `BackendRegistry` owns the history for one physical route target and appends successful probes.
     pub(crate) fn new(retention: Duration) -> Self {
         Self {
             retention,
             snapshots: VecDeque::new(),
+            prompt_lengths: RequestLengthHistory::default(),
+            generation_lengths: RequestLengthHistory::default(),
         }
     }
 
@@ -29,6 +34,24 @@ impl RouteTargetStatsHistory {
     ///
     /// Backend readiness refresh supplies the snapshot, which is stored in this bounded history.
     pub(crate) fn push(&mut self, snapshot: TelemetryResponse) {
+        // Keep only compact length counters for the daily window, not full telemetry snapshots.
+        // Unlike short-window latency statistics, these histories account for counter resets.
+        if self
+            .snapshots
+            .back()
+            .is_some_and(|previous| snapshot.collected_at_unix_ms <= previous.collected_at_unix_ms)
+        {
+            self.prompt_lengths = RequestLengthHistory::default();
+            self.generation_lengths = RequestLengthHistory::default();
+        }
+        self.prompt_lengths.push(
+            snapshot.collected_at_unix_ms,
+            snapshot.request_cost.prompt_tokens,
+        );
+        self.generation_lengths.push(
+            snapshot.collected_at_unix_ms,
+            snapshot.request_cost.generation_tokens,
+        );
         if self.snapshots.back().is_some_and(|previous| {
             snapshot.collected_at_unix_ms <= previous.collected_at_unix_ms
                 || counters_reset(previous, &snapshot)
@@ -72,6 +95,8 @@ impl RouteTargetStatsHistory {
 
         Some(RouteTargetStats {
             data_parallel_ranks: current.data_parallel_ranks.clone(),
+            prompt_tokens_per_request: self.prompt_lengths.mean,
+            generation_tokens_per_request: self.generation_lengths.mean,
             collected_at_unix_ms: current.collected_at_unix_ms,
             observed_window: Duration::from_millis(observed_ms.unwrap_or(0)),
             running_requests: current.running_requests,
@@ -116,6 +141,75 @@ impl RouteTargetStatsHistory {
             e2e_latency: baseline
                 .and_then(|baseline| latency(&baseline.e2e_seconds, &current.e2e_seconds)),
         })
+    }
+}
+
+/// Registry-owned compact counters and their last calculated daily mean.
+/// Updating on telemetry arrival keeps history scans off the request path.
+#[derive(Default)]
+struct RequestLengthHistory {
+    samples: VecDeque<(u64, HistogramMoments)>,
+    mean: Option<f64>,
+}
+
+impl RequestLengthHistory {
+    /// Retains the open-left 24-hour range and derives increase(sum) / increase(count).
+    fn push(&mut self, now: u64, value: Option<HistogramMoments>) {
+        const WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
+        if let Some(value) = value {
+            self.samples.push_back((now, value));
+        }
+        while self
+            .samples
+            .front()
+            .is_some_and(|(at, _)| now - at >= WINDOW_MS)
+        {
+            self.samples.pop_front();
+        }
+        self.mean = if self.samples.len() < 2 {
+            None
+        } else {
+            Some(
+                self.increase(now, WINDOW_MS, |value| value.sum)
+                    / self.increase(now, WINDOW_MS, |value| value.count as f64),
+            )
+        };
+    }
+
+    /// Applies PromQL float-counter reset correction and boundary extrapolation to local samples.
+    /// Telemetry has no counter start timestamps; only observed decreases identify resets.
+    fn increase(
+        &self,
+        now: u64,
+        window_ms: u64,
+        counter: impl Fn(&HistogramMoments) -> f64,
+    ) -> f64 {
+        let (first_at, first) = self.samples.front().expect("at least two counter samples");
+        let (last_at, last) = self.samples.back().expect("at least two counter samples");
+        let first_value = counter(first);
+        let mut delta = counter(last) - first_value;
+        let mut previous = first_value;
+        for (_, value) in self.samples.iter().skip(1) {
+            let current = counter(value);
+            if current < previous {
+                delta += previous;
+            }
+            previous = current;
+        }
+        let interval = (last_at - first_at) as f64 / 1_000.0;
+        let spacing = interval / (self.samples.len() - 1) as f64;
+        let mut to_start = (window_ms - (now - first_at)) as f64 / 1_000.0;
+        let mut to_end = (now - last_at) as f64 / 1_000.0;
+        if to_start >= spacing * 1.1 {
+            to_start = spacing / 2.0;
+        }
+        if delta > 0.0 && first_value >= 0.0 {
+            to_start = to_start.min(interval * (first_value / delta));
+        }
+        if to_end >= spacing * 1.1 {
+            to_end = spacing / 2.0;
+        }
+        delta * ((interval + to_start + to_end) / interval)
     }
 }
 

@@ -34,6 +34,7 @@ spec:
 | 优先复用输入前缀缓存 | `prefix` |
 | 将冷请求分散到较久未选中的目标 | `no_hit_lru` |
 | 在负载均衡与缓存复用之间折中 | `two_tier`，必须搭配 `picker.algorithm: max` |
+| 优先选择加权请求长度较小的目标 | `throughput`；两倍输入 token 均值加生成 token 均值，并非每秒 token 数 |
 | 所有目标得分相同 | `uniform` |
 
 评分算法的选项放在 `scorer.parameters` 下。例如，提高匹配前缀长度的权重：
@@ -48,6 +49,8 @@ spec:
 ```
 
 KV 索引不可用时，目标仍可参与路由，只是不享有缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+
+`throughput` 使用本地最近 24 小时观测估计请求长度；均值缺失或未定义时排在最后。使用 `picker.algorithm: max` 选择最低成本。
 
 ## 根据得分选择目标
 
