@@ -34,7 +34,7 @@ Choose a scorer for the workload:
 | Prefer reusable prompt prefixes | `prefix` |
 | Spread cold requests toward less recently selected targets | `no_hit_lru` |
 | Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
-| Prefer the target and rank bound to the request body's `session_id` | `session_affinity` | 
+| Prefer the target and rank bound to the request body's `session_id` | `session_affinity` |
 | Give every target an equal score | `uniform` |
 
 Scorer-specific options go under `scorer.parameters`. For example, give matched prefix length more weight:
