@@ -5,8 +5,7 @@
 
 use crate::{RouteCandidate, RouteTargetId, RouterRequest, RoutingLoadSnapshot};
 use foretoken_kv_indexer::KvPrefixIndexer;
-use foretoken_model_protocol::ModelServerRole;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 /// Shared routing reservations retained by RuntimeBuilder across serving-snapshot updates.
@@ -26,9 +25,16 @@ impl RoutingLoadState {
 
 pub(crate) type ReservationKey = (RouteTargetId, u32);
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ActivePrompt {
+    tokens: Arc<[u32]>,
+    identity: String,
+    prefill_tokens: usize,
+}
+
 #[derive(Default)]
 pub(crate) struct RoutingReservations {
-    requests: BTreeMap<ReservationKey, BTreeMap<String, usize>>,
+    requests: BTreeMap<ReservationKey, BTreeMap<String, ActivePrompt>>,
 }
 
 impl RoutingReservations {
@@ -40,9 +46,17 @@ impl RoutingReservations {
         RoutingLoadSnapshot {
             requests: requests.len() as i64,
             tokens: requests.values().fold(0_i64, |tokens, request| {
-                tokens.wrapping_add(*request as i64)
+                tokens.wrapping_add(request.prefill_tokens as i64)
             }),
         }
+    }
+
+    /// Copies active prompts for the scorer's block projection while the routing lock is held.
+    pub(crate) fn active_prompts(&self, key: &ReservationKey) -> Vec<ActivePrompt> {
+        self.requests
+            .get(key)
+            .map(|requests| requests.values().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Reserves a selected stage before dispatch; the owning session or stream must release it.
@@ -50,23 +64,20 @@ impl RoutingReservations {
         &mut self,
         request: &RouterRequest,
         candidate: &RouteCandidate,
-        kv: &dyn KvPrefixIndexer,
+        prefill_tokens: usize,
     ) {
         let key = (
             candidate.route_target_id.clone(),
             candidate.data_parallel_rank,
         );
-        // Reserve uncached prompt tokens for each generation stage until its first response.
-        // Encoder has no token-generation workload.
-        let uncached_tokens = if candidate.role == ModelServerRole::Encoder {
-            0
-        } else {
-            uncached_tokens(request, candidate, kv)
-        };
-        self.requests
-            .entry(key)
-            .or_default()
-            .insert(request.request_id().to_owned(), uncached_tokens);
+        self.requests.entry(key).or_default().insert(
+            request.request_id().to_owned(),
+            ActivePrompt {
+                tokens: Arc::from(request.prompt_token_ids()),
+                identity: cache_identity(request),
+                prefill_tokens,
+            },
+        );
     }
 
     /// Releases prompt-token load when the first response reaches the frontend.
@@ -76,7 +87,7 @@ impl RoutingReservations {
             .get_mut(key)
             .and_then(|requests| requests.get_mut(id))
         {
-            *request = 0;
+            request.prefill_tokens = 0;
         }
     }
 
@@ -89,6 +100,75 @@ impl RoutingReservations {
             }
         }
     }
+}
+
+/// Projects complete prompt blocks after admission, deduplicating only when reuse is assumed.
+/// Ordinary disaggregated Decode accounts for each request's prompt independently.
+pub(crate) fn potential_decode_blocks(
+    prompts: &[ActivePrompt],
+    request: &RouterRequest,
+    block_size: usize,
+    assume_kv_reuse: bool,
+) -> usize {
+    if !assume_kv_reuse {
+        return prompts
+            .iter()
+            .map(|prompt| prompt.tokens.len() / block_size)
+            .sum::<usize>()
+            + request.token_count() / block_size;
+    }
+    let mut blocks = BTreeSet::new();
+    for prompt in prompts {
+        add_prompt_blocks(&mut blocks, &prompt.tokens, &prompt.identity, block_size);
+    }
+    add_prompt_blocks(
+        &mut blocks,
+        request.prompt_token_ids(),
+        &cache_identity(request),
+        block_size,
+    );
+    blocks.len()
+}
+
+/// Adds complete prefix identities to the projection; partial tails consume prefill work only.
+fn add_prompt_blocks(
+    blocks: &mut BTreeSet<[u8; 32]>,
+    tokens: &[u32],
+    identity: &str,
+    block_size: usize,
+) {
+    let mut hash = blake3::Hasher::new();
+    hash.update(&(identity.len() as u64).to_le_bytes());
+    hash.update(identity.as_bytes());
+    for block in tokens.chunks_exact(block_size) {
+        for token in block {
+            hash.update(&token.to_le_bytes());
+        }
+        blocks.insert(*hash.finalize().as_bytes());
+    }
+}
+
+/// Separates active prefixes by model and cache identity, treating an empty salt as absent.
+fn cache_identity(request: &RouterRequest) -> String {
+    let Some(generate_request) = &request.generate_request else {
+        return request.request_id().to_owned();
+    };
+    serde_json::to_string(&(
+        &request.model,
+        generate_request
+            .cache_salt
+            .as_deref()
+            .filter(|salt| !salt.is_empty()),
+        generate_request
+            .lora_request
+            .as_ref()
+            .map(|lora| lora.lora_int_id),
+        generate_request
+            .mm_features
+            .as_ref()
+            .map(|_| generate_request.request_id.as_str()),
+    ))
+    .expect("cache identity contains only strings")
 }
 
 /// Returns uncached indexed tokens and the partial prompt tail for routing load accounting.

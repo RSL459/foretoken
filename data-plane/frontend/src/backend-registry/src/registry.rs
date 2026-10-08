@@ -358,6 +358,10 @@ impl RouteInventory for BackendRegistry {
             .is_some_and(|v| v.load(Ordering::Acquire))
     }
 
+    fn kv_block_size(&self, id: &RouteTargetId) -> Option<std::num::NonZeroU32> {
+        self.metadata(id)?.kv_block_size
+    }
+
     fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {
         let Some(declared) = self
             .model_routes

@@ -25,6 +25,12 @@ pub trait RouteInventory: Send + Sync {
         None
     }
 
+    /// Returns the engine-reported KV block size for a routing snapshot, if metadata provides it.
+    /// The inventory owns this request-independent observation; cache availability does not gate it.
+    fn kv_block_size(&self, _route_target_id: &RouteTargetId) -> Option<std::num::NonZeroU32> {
+        None
+    }
+
     /// Returns the capabilities currently trusted for one route target.
     fn effective_capabilities(&self, route_target_id: &RouteTargetId) -> BTreeSet<String> {
         self.model_routes()

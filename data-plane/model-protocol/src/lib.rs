@@ -161,6 +161,9 @@ pub struct RuntimeMetadataResponse {
     #[serde(default)]
     pub model_dtype: Option<ModelDtype>,
     pub effective_max_model_len: u32,
+    /// Engine-reported KV allocation block size, independent of prefix observations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_block_size: Option<std::num::NonZeroU32>,
     /// Engine-configured logprob limit; -1 permits the complete model vocabulary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_logprobs: Option<i32>,

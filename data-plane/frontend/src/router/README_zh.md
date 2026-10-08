@@ -34,6 +34,7 @@ spec:
 | 优先复用输入前缀缓存 | `prefix` |
 | 将冷请求分散到较久未选中的目标 | `no_hit_lru` |
 | 在负载均衡与缓存复用之间折中 | `two_tier`，必须搭配 `picker.algorithm: max` |
+| 平衡缓存抵扣后的预填充工作量与活跃输入块负载 | `kv_cost`；负载按前端副本统计，不跟踪生成的输出块 |
 | 所有目标得分相同 | `uniform` |
 
 评分算法的选项放在 `scorer.parameters` 下。例如，提高匹配前缀长度的权重：
@@ -48,6 +49,8 @@ spec:
 ```
 
 KV 索引不可用时，目标仍可参与路由，只是不享有缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+
+使用 `kv_cost` 时，在 `scorer.parameters` 下设置 `overlap_score_credit`、`prefill_load_scale` 或 `decode_active_request_weight`，调整缓存抵扣与负载成本。Decode 在 Prefill 后执行，不再重复抵扣缓存。使用 `picker.algorithm: max` 选择最低成本。
 
 ## 根据得分选择目标
 

@@ -15,6 +15,7 @@ use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 // `kv_least_loaded_scorer.rs`, the `KvLeastLoadedScorer` type, and the user-facing name.
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
+    kv_cost_scorer => KvCostScorer = "kv_cost",
     active_request_scorer => ActiveRequestScorer = "active_request",
     token_load_scorer => TokenLoadScorer = "token_load",
     prefix_scorer => PrefixScorer = "prefix",
@@ -48,6 +49,14 @@ impl From<Vec<RouteScore>> for ScoringOutcome {
             scores,
             on_selected: None,
         }
+    }
+}
+
+/// Converts a lower-is-better cost to Router preference; missing costs rank last.
+pub(super) fn cost_score(cost: Option<f64>) -> RouteScore {
+    RouteScore {
+        preference: cost.map_or(f64::NEG_INFINITY, |cost| -cost),
+        ..RouteScore::default()
     }
 }
 
@@ -96,6 +105,21 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     /// Requests live shared-prefix observations before the synchronous routing round.
     fn needs_kv_prefix(&self) -> bool {
         false
+    }
+
+    /// Returns prompt work to reserve after selection; Router releases it on the first response.
+    /// Scorers with weighted cache credits override the ordinary uncached-token accounting.
+    fn prefill_token_load(
+        &self,
+        request: &RouterRequest,
+        candidate: &RouteCandidate,
+        kv_prefix_indexer: &dyn KvPrefixIndexer,
+    ) -> usize {
+        if candidate.role == ModelServerRole::Encoder {
+            0
+        } else {
+            crate::routing_load::uncached_tokens(request, candidate, kv_prefix_indexer)
+        }
     }
 
     /// Applies algorithm-owned parameters once while building the configured pipeline.

@@ -181,13 +181,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .ok_or_else(|| std::io::Error::other("EngineCore max_num_seqs sum overflowed"))
             })?;
     let metadata = RuntimeMetadataResponse {
-        version: 1,
+        version: 2,
         model: RuntimeModelIdentity {
             model: config.launch.artifacts.model.clone(),
             revision: config.launch.artifacts.revision.clone(),
         },
         model_dtype: client.reported_model_dtype(),
         effective_max_model_len: client.max_model_len(),
+        kv_block_size: client
+            .ready_responses()
+            .first()
+            .and_then(|ready| ready.block_size)
+            .and_then(|size| u32::try_from(size).ok())
+            .and_then(std::num::NonZeroU32::new),
         max_logprobs: client
             .ready_responses()
             .first()

@@ -106,6 +106,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 )
             })
             .flat_map(|route| {
+                let kv_block_size = self.inventory.kv_block_size(&route.route_target_id);
                 // Read the group's aggregate and rank-local gauges once, then share the immutable
                 // observation across candidates; scorers select the candidate's exact DP rank.
                 let stats = self
@@ -121,9 +122,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     revision: route.revision.clone(),
                     pipeline_scope_id: route.pipeline_scope_id.clone(),
                     data_parallel_rank,
+                    kv_block_size,
                     route_target_stats: stats.clone(),
                     local_load: reservations
                         .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),
+                    active_prompts: reservations
+                        .active_prompts(&(route.route_target_id.clone(), data_parallel_rank)),
                     stage_eligible: false,
                 })
             })
@@ -131,7 +135,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
     }
 
     // Runs the complete Filter-Scorer-Picker stage, validating extension-produced indexes and
-    // delaying stage-specific eligibility until every candidate has been scored.
+    // computing stage eligibility before scoring; only eligible candidates reach Picker.
     fn select(
         &self,
         request: &RouterRequest,
@@ -147,8 +151,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
         // Keep every early return inside the round so failed candidate discovery or invalid
         // algorithm output is counted as well as successful selections.
         let result = (|| {
-            // Filter and Scorer see the complete compatible, healthy snapshot. Stage and connector
-            // eligibility are applied after scoring and before Picker.
+            // Filter sees the complete compatible, healthy snapshot. Scorer sees all filtered
+            // candidates with stage and connector eligibility marked; Picker sees only eligible ones.
             // Snapshot, scoring, and reservation share one lock so concurrent selections see load.
             let mut reservations = self
                 .routing_load
@@ -272,7 +276,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
             if let Some(on_selected) = on_selected {
                 on_selected(&candidate);
             }
-            reservations.reserve(request, &candidate, self.kv_prefix_indexer.as_ref());
+            let prefill_tokens = self.pipeline.scorer.prefill_token_load(
+                request,
+                &candidate,
+                self.kv_prefix_indexer.as_ref(),
+            );
+            reservations.reserve(request, &candidate, prefill_tokens);
             Ok(candidate)
         })();
         metrics.selection(&request.model, round, started.elapsed(), result.as_ref());

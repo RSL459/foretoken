@@ -185,13 +185,14 @@ async fn runtime_healthy(state: &AppState) -> bool {
 
 async fn metadata(State(state): State<AppState>) -> Json<RuntimeMetadataResponse> {
     Json(RuntimeMetadataResponse {
-        version: 1,
+        version: 2,
         model: RuntimeModelIdentity {
             model: state.model,
             revision: state.revision,
         },
         model_dtype: None,
         effective_max_model_len: 0,
+        kv_block_size: None,
         max_logprobs: None,
         ec_transfer: None,
         prepared_tokenizer: None,

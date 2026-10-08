@@ -35,11 +35,15 @@ pub struct RouteCandidate {
     pub pipeline_scope_id: Option<String>,
     /// Exact data-parallel replica selected within the route target.
     pub data_parallel_rank: u32,
+    /// Engine-reported allocation block size, independent of prefix observations.
+    pub kv_block_size: Option<std::num::NonZeroU32>,
     /// Latest route-target gauges and available windowed statistics for this routing round.
     /// Group totals and rank-local gauges share one observation without duplicate polling.
     pub route_target_stats: Option<Arc<RouteTargetStats>>,
     /// Requests reserved by this frontend for the exact target and DP rank.
     pub local_load: crate::RoutingLoadSnapshot,
+    /// Router-owned active prompts for block projections; not shared with admission.
+    pub(crate) active_prompts: Vec<crate::routing_load::ActivePrompt>,
     /// Router-owned stage eligibility for this scoring round.
     pub stage_eligible: bool,
 }
