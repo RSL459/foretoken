@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-// SPDX-FileCopyrightText: Copyright 2024 The Aibrix Team
 
 //! Scoring daily mean request lengths with twice the weight on prompt tokens.
 
