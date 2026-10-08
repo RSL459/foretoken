@@ -50,6 +50,8 @@ spec:
 
 KV 索引不可用时，目标仍可参与路由，只是不享有缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
+会话亲和绑定保存在各个前端副本内，不同模型和路由阶段分别维护。在 `scorer.parameters` 下，`evictionTtlSeconds` 设置空闲过期时间（默认 300 秒），`evictionSweepSeconds` 设置清理间隔（默认 10 秒）。每次成功选出路由目标都会刷新会话的空闲计时，即使选择算法选中了其他目标。
+
 ## 根据得分选择目标
 
 通过 `routerPipeline.picker.algorithm` 选择：

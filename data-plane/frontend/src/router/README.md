@@ -50,6 +50,8 @@ spec:
 
 When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 
+Session affinity keeps independent bindings per model and routing stage within each frontend replica. Under `scorer.parameters`, `evictionTtlSeconds` controls the idle timeout (default 300 seconds), and `evictionSweepSeconds` controls the cleanup interval (default 10 seconds). Each successful routing selection refreshes the session's idle timeout, even when the picker chooses another target.
+
 ## Choose from the scores
 
 Set `routerPipeline.picker.algorithm` to control selection:

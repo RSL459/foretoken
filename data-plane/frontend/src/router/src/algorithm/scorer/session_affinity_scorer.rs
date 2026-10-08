@@ -21,8 +21,8 @@ struct Binding {
     last_seen: Instant,
 }
 
-// Initial, Prefill, and Decode have independent bindings, as separate scheduling profiles do.
-type Bindings = [BTreeMap<String, Binding>; 3];
+// A frontend pipeline serves multiple models; each stage keeps model-scoped session bindings.
+type Bindings = [BTreeMap<(String, String), Binding>; 3];
 
 /// Prefers the session's bound target and rank; a pipeline owns bindings across request lifetimes.
 #[derive(Default)]
@@ -32,33 +32,17 @@ pub struct SessionAffinityScorer {
     eviction_stop: Option<mpsc::Sender<()>>,
 }
 
-#[derive(Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Strategy {
-    #[default]
-    SessionId,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-struct SessionIdConfig {
-    eviction_ttl_seconds: f64,
-    eviction_sweep_seconds: f64,
-}
-
 impl RouteScorer for SessionAffinityScorer {
-    /// Validates the session-ID strategy and starts eviction for this pipeline's lifetime.
+    /// Applies idle eviction parameters and starts cleanup for this pipeline's lifetime.
     fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
         #[derive(Default, Deserialize)]
         #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
         struct Parameters {
-            #[serde(rename = "strategy")]
-            _strategy: Strategy,
-            session_id_config: SessionIdConfig,
+            eviction_ttl_seconds: f64,
+            eviction_sweep_seconds: f64,
         }
-        let parameters: Parameters =
+        let config: Parameters =
             serde_json::from_value(parameters).map_err(|error| error.to_string())?;
-        let config = parameters.session_id_config;
         let mut durations = [Duration::ZERO; 2];
         for (duration, (name, value, default)) in durations.iter_mut().zip([
             ("evictionTtlSeconds", config.eviction_ttl_seconds, 300.0),
@@ -141,8 +125,9 @@ impl RouteScorer for SessionAffinityScorer {
             RoutingStage::Prefill => 1,
             RoutingStage::Decode => 2,
         };
+        let session_key = (request.model.clone(), session_id.to_owned());
         let bound = self.bindings.lock().expect("session binding lock poisoned")[profile]
-            .get(session_id)
+            .get(&session_key)
             .map(|binding| binding.target.clone());
         let target = bound.as_ref().and_then(|(id, rank)| {
             candidates.iter().rposition(|candidate| {
@@ -155,7 +140,6 @@ impl RouteScorer for SessionAffinityScorer {
             scores[row].preference = 1.0;
         }
         let present = bound.map(|_| target.is_some());
-        let session_id = session_id.to_owned();
         let bindings = self.bindings.clone();
         ScoringOutcome {
             scores,
@@ -168,13 +152,17 @@ impl RouteScorer for SessionAffinityScorer {
                     ),
                     last_seen: Instant::now(),
                 };
-                match bindings[profile].entry(session_id) {
+                match bindings[profile].entry(session_key) {
                     Entry::Vacant(entry) => {
                         entry.insert(fresh);
                     }
                     Entry::Occupied(mut entry) => {
-                        if entry.get().target == fresh.target || present == Some(false) {
-                            entry.insert(fresh);
+                        let binding = entry.get_mut();
+                        // A different picker choice still counts as session activity, but only
+                        // an unavailable bound target permits migration.
+                        binding.last_seen = fresh.last_seen;
+                        if present == Some(false) {
+                            binding.target = fresh.target;
                         }
                     }
                 }
