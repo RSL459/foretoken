@@ -34,6 +34,7 @@ Choose a scorer for the workload:
 | Prefer reusable prompt prefixes | `prefix` |
 | Spread cold requests toward less recently selected targets | `no_hit_lru` |
 | Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
+| Prefer a configured endpoint observation | `endpoint_attribute`; set `attributeKey` and `algorithm.type` (`linear_lower_is_better` or `linear_higher_is_better`) |
 | Give every target an equal score | `uniform` |
 
 Scorer-specific options go under `scorer.parameters`. For example, give matched prefix length more weight:
@@ -48,6 +49,8 @@ spec:
 ```
 
 When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
+
+For `endpoint_attribute`, use a rank-local gauge (`scheduler_waiting_requests`, `scheduler_running_requests`, `kv_cache_usage`) or a target statistic (`prompt_tokens_per_second`, `generation_tokens_per_second`, `ttft_average_ms`, `ttft_p95_ms`, `tpot_average_ms`, `tpot_p95_ms`, `e2e_latency_average_ms`, `e2e_latency_p95_ms`). Missing attributes score zero. Normalization uses the observed range by default; set `algorithm.normalization.fixedRange: {min: 0, max: 1}` for a fixed, clamped range.
 
 ## Choose from the scores
 

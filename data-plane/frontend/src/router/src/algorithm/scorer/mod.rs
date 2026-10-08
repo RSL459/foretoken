@@ -15,6 +15,7 @@ use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 // `kv_least_loaded_scorer.rs`, the `KvLeastLoadedScorer` type, and the user-facing name.
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
+    endpoint_attribute_scorer => EndpointAttributeScorer = "endpoint_attribute",
     active_request_scorer => ActiveRequestScorer = "active_request",
     token_load_scorer => TokenLoadScorer = "token_load",
     prefix_scorer => PrefixScorer = "prefix",

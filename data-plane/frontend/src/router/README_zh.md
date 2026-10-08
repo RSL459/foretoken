@@ -34,6 +34,7 @@ spec:
 | 优先复用输入前缀缓存 | `prefix` |
 | 将冷请求分散到较久未选中的目标 | `no_hit_lru` |
 | 在负载均衡与缓存复用之间折中 | `two_tier`，必须搭配 `picker.algorithm: max` |
+| 按指定端点观测值排序 | `endpoint_attribute`；设置 `attributeKey` 和 `algorithm.type`（`linear_lower_is_better` 或 `linear_higher_is_better`） |
 | 所有目标得分相同 | `uniform` |
 
 评分算法的选项放在 `scorer.parameters` 下。例如，提高匹配前缀长度的权重：
@@ -48,6 +49,8 @@ spec:
 ```
 
 KV 索引不可用时，目标仍可参与路由，只是不享有缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+
+`endpoint_attribute` 可选择 rank 指标（`scheduler_waiting_requests`、`scheduler_running_requests`、`kv_cache_usage`）或目标统计（`prompt_tokens_per_second`、`generation_tokens_per_second`、`ttft_average_ms`、`ttft_p95_ms`、`tpot_average_ms`、`tpot_p95_ms`、`e2e_latency_average_ms`、`e2e_latency_p95_ms`）。缺失属性记零分；默认按实测范围归一化，设置 `algorithm.normalization.fixedRange: {min: 0, max: 1}` 可改为固定范围并截断越界值。
 
 ## 根据得分选择目标
 
