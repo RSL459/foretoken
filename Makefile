@@ -14,12 +14,15 @@ MOONCAKE_VERSION ?=
 OCI_REGISTRY := $(patsubst %/,%,$(strip $(FORETOKEN_OCI_REGISTRY)))
 OCI_SOURCE ?= https://github.com/shiweijiezero/foretoken
 OCI_REVISION ?= $(shell git rev-parse HEAD)
+IMAGE_TARGET ?= runtime
+IMAGE_OUTPUT ?=
+VLLM_REVISION ?= $(shell git ls-files --stage -- data-plane/third_party/vllm | cut -d' ' -f2)
 
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:dev
 
 GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GITHUB_MIRROR))/.insteadOf=https://github.com/,)
 
-.PHONY: vllm-source build-data-plane format verify-data-plane dev-build dev-deploy \
+.PHONY: vllm-source build-data-plane format verify-data-plane dev-build \
 	image-control-plane image-frontend image-vllm-metax image-model-server image-model-server-omni \
 	image-model-server-metax image-vllm-omni image-benchmark dashboard alert-receivers
 
@@ -49,9 +52,6 @@ verify-data-plane: vllm-source
 dev-build:
 	./deploy/dev-build
 
-dev-deploy:
-	./deploy/dev-deploy
-
 image-control-plane:
 	docker build \
 		$(if $(OCI_REGISTRY),--build-arg GO_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
@@ -60,9 +60,10 @@ image-control-plane:
 		--build-arg GOSUMDB \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
 		-f control-plane/Dockerfile -t "$(CONTROL_PLANE_IMAGE)" .
 
-image-frontend: vllm-source
+image-frontend:
 	docker build \
 		$(if $(OCI_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
 		--build-arg FORETOKEN_GITHUB_MIRROR \
@@ -70,6 +71,8 @@ image-frontend: vllm-source
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
+		--build-arg VLLM_REVISION="$(VLLM_REVISION)" \
 		-f data-plane/frontend/Dockerfile -t "$(FRONTEND_IMAGE)" .
 
 image-vllm-metax: mooncake-source
@@ -87,7 +90,7 @@ image-vllm-metax: mooncake-source
 		-f deploy/inference-engines/vllm-metax/Dockerfile \
 		-t "$(VLLM_METAX_IMAGE)" .
 
-image-model-server: vllm-source
+image-model-server:
 	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \
 		(printf '%s\n' 'Set INFERENCE_ENGINE_IMAGE to a compatible inference engine image.' >&2; exit 1)
 	docker build --build-arg INFERENCE_ENGINE_IMAGE="$(INFERENCE_ENGINE_IMAGE)" \
@@ -101,6 +104,8 @@ image-model-server: vllm-source
 		--build-arg UV_DEFAULT_INDEX \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
+		--build-arg VLLM_REVISION="$(VLLM_REVISION)" \
 		-f data-plane/model-server/Dockerfile -t "$(MODEL_SERVER_IMAGE)" .
 
 image-vllm-omni:
@@ -147,4 +152,5 @@ image-mooncake: mooncake-source
 		$(if $(MOONCAKE_GO_IMAGE),--build-arg GO_IMAGE="$(MOONCAKE_GO_IMAGE)",) \
 		--build-arg GOPROXY \
 		--build-arg GOSUMDB \
+		--build-arg FORETOKEN_GITHUB_MIRROR \
 		-f deploy/mooncake/Dockerfile -t "$(MOONCAKE_IMAGE)" .

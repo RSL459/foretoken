@@ -85,6 +85,20 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
 		{Name: "FORETOKEN_ROUTER_PIPELINE", Value: string(routerPipeline)},
 	}
+	if frontend.Spec.Admission != nil {
+		admission, err := json.Marshal(frontend.Spec.Admission)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("encode frontend admission: %w", err)
+		}
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "FORETOKEN_ADMISSION", Value: string(admission)})
+	}
+	var annotations map[string]string
+	if profile.ApplicationURL != "" {
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: profile.ApplicationFiles.Directory()})
+	}
+	if profile.SourceRevision != "" {
+		annotations = map[string]string{runtimeconfig.SourceRevisionAnnotation: profile.SourceRevision}
+	}
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
@@ -137,7 +151,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: maps.Clone(labels)},
+				ObjectMeta: metav1.ObjectMeta{Labels: maps.Clone(labels), Annotations: annotations},
 				Spec: corev1.PodSpec{
 					ServiceAccountName:            serviceAccountName,
 					AutomountServiceAccountToken:  &automountToken,
@@ -170,6 +184,12 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			},
 		},
 	}
+	if cache := profile.RuntimeCache; cache != nil && cache.DirectoryOwner != nil {
+		securityContext := deployment.Spec.Template.Spec.SecurityContext
+		securityContext.RunAsUser = &cache.DirectoryOwner.UID
+		securityContext.RunAsGroup = &cache.DirectoryOwner.GID
+	}
+	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationURL, "foretoken-frontend")
 	serviceType := corev1.ServiceTypeClusterIP
 	if profile.Gateway == nil {
 		serviceType = corev1.ServiceTypeLoadBalancer

@@ -135,6 +135,11 @@ spec:
                 - vllm
                 - vllm-omni
                 type: string
+              deploymentRevision:
+                description: |-
+                  DeploymentRevision requests current platform applications on an explicit deployment.
+                  It carries no executable, image or external URL supplied by model intent.
+                type: string
               ecProfile:
                 description: ECProfile selects the platform-maintained EC runtime
                   for a complete E/P/D topology.
@@ -175,8 +180,9 @@ spec:
                       enum:
                       - jsonObject
                       - jsonSchema
+                      - structuralTag
                       type: string
-                    maxItems: 2
+                    maxItems: 3
                     type: array
                     x-kubernetes-list-type: set
                   tools:
@@ -292,8 +298,9 @@ spec:
                             enum:
                             - jsonObject
                             - jsonSchema
+                            - structuralTag
                             type: string
-                          maxItems: 2
+                          maxItems: 3
                           type: array
                           x-kubernetes-list-type: set
                         tools:
@@ -370,6 +377,13 @@ spec:
                       minLength: 1
                       pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
                       type: string
+                    nodeSelector:
+                      additionalProperties:
+                        type: string
+                      description: NodeSelector constrains this Pool's member Pods
+                        to matching Kubernetes nodes.
+                      maxProperties: 16
+                      type: object
                     nodes:
                       default: 1
                       description: Nodes is the number of distinct Kubernetes Nodes
@@ -486,6 +500,14 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NodeSelector constrains the default Pool's member Pods to matching Kubernetes nodes.
+                  A Pool-level selector replaces this service-level selector when specified.
+                maxProperties: 16
+                type: object
               nodes:
                 description: Nodes is the number of distinct Kubernetes Nodes used
                   by each ModelGroup; the compiler defaults it to 1.
@@ -911,6 +933,33 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              poolApplications:
+                additionalProperties:
+                  description: |-
+                    ApplicationSelection pins trusted platform execution settings until an explicit deployment.
+                    Controllers persist it before creating consumers so recovery never reselects platform defaults.
+                  properties:
+                    applicationURL:
+                      type: string
+                    deploymentRevision:
+                      type: string
+                    image:
+                      type: string
+                    imageProfile:
+                      description: ImageProfile distinguishes serving, Omni and diagnostic
+                        environments during selection.
+                      type: string
+                    sourceRevision:
+                      description: SourceRevision retains the admitted source intent
+                        independently of source-mode defaults.
+                      type: string
+                  required:
+                  - image
+                  type: object
+                description: |-
+                  PoolApplications retains controller-selected execution settings when a Pool is recreated.
+                  The controller publishes selections before materializing their Pool and Group contracts.
+                type: object
               servingGeneration:
                 description: ServingGeneration is the ModelService generation whose
                   complete Pool revision set is admitted to routing.

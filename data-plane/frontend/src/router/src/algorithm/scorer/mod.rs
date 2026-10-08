@@ -21,6 +21,7 @@ declare_router_algorithms! {
     no_hit_lru_scorer => NoHitLruScorer = "no_hit_lru",
     load_aware_scorer => LoadAwareScorer = "load_aware",
     session_affinity_scorer => SessionAffinityScorer = "session_affinity",
+    two_tier_scorer => TwoTierScorer = "two_tier",
     kv_cache_utilization_scorer => KvCacheUtilizationScorer = "kv_cache_utilization",
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
     least_loaded_scorer => LeastLoadedScorer = "least_loaded",

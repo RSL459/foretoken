@@ -15,12 +15,12 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 
 ## 安装命令行工具
 
-使用 pip 安装已经发布的 Foretoken 命令行工具包：
+使用 pip 安装发布的命令行工具：
 
 ```bash
 pip install foretoken
 
-# 如果使用源码安装：
+# 从源码目录安装：
 # pip install -e .
 ```
 
@@ -32,15 +32,40 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-运行 `foretoken --version` 查看已安装的命令行工具版本。
+运行 `foretoken --version` 查看已安装的 CLI 版本。
+
+## 创建本地集群
+
+在已安装 Docker、NVIDIA Container Toolkit 和 k3d 的 Linux GPU 主机上创建本地 GPU 集群：
+
+```bash
+# 为本地集群命名，并使用 nvidia-smi 显示的 GPU 编号 0。
+# 若使用两张 GPU，传入 --gpus 0,1。
+foretoken cluster create k3d --name foretoken-dev --gpus 0
+```
+
+创建本地 kind 开发集群时，安装 Docker、kind、kubectl 和 Helm：
+
+```bash
+foretoken cluster create kind --name foretoken-dev
+```
+
+删除由 CLI 创建的集群：
+
+```bash
+foretoken cluster delete k3d --name foretoken-dev
+foretoken cluster delete kind --name foretoken-dev
+```
 
 ## 安装 Kubernetes 平台
 
-`foretoken install` 会在当前 Kubernetes context 中安装 Foretoken CRD 和控制器。平台资源固定使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。模型服务通过 `foretoken deploy` 单独部署。
+`foretoken install` 会在当前 Kubernetes context 中安装或更新 Foretoken CRD 和控制器。平台资源固定使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。模型服务通过 `foretoken deploy` 单独部署。
+
+平台更新后，新服务使用更新后的版本；已有模型和前端服务保持原运行版本，重新部署时才更新。
 
 ### 默认安装
 
-默认使用发布镜像，并通过 `LoadBalancer` Service 提供本地访问入口：
+默认安装已发布的平台，并通过 `LoadBalancer` Service 提供本地访问入口：
 
 ```bash
 foretoken install
@@ -71,24 +96,27 @@ foretoken install \
 
 ### 当前源码
 
-按[源码部署指南](../docs/custom-deployment_zh.md)准备构建工具，再从仓库根目录安装：
+从仓库根目录构建并安装。集群需有保存编译缓存的默认存储类（StorageClass）；自定义存储设置见[源码部署指南](../docs/custom-deployment_zh.md)。
 
 ```bash
 foretoken install -e .
 ```
 
-当前 context 是标准 kind 或 k3d 时，命令会构建并导入本地镜像；其他 Kubernetes context 需要提供节点可访问的 registry。安装前先使用有目标仓库推送权限的账户登录 registry：
+命令将源码目录与目标集群关联，后续从该目录更新服务。
+
+修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
+
+当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 
 ```bash
-docker login ghcr.io
-foretoken install -e . --registry ghcr.io/example/foretoken
+foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-登录 registry 用于授权本机推送镜像。私有 registry 还需要通过 `--values` 配置 `imagePullSecrets` 和 `workload.imagePullSecrets`，让节点能够拉取镜像，详见[从源码部署 Foretoken](../docs/custom-deployment_zh.md)。
+如果仓库需要认证，安装前按[源码部署指南](../docs/kubernetes-deployment_zh.md)配置拉取 Secret。
 
 ### 模型分发
 
-使用 Dragonfly 在节点间共享公开模型文件时，在 `platform-values.yaml` 中配置：
+使用 Dragonfly 在节点间共享公开模型文件时，在 `deploy/platform-values.yaml` 中配置：
 
 ```yaml
 modelDistribution:
@@ -96,9 +124,13 @@ modelDistribution:
     enabled: true
 ```
 
+使用已发布平台时，执行：
+
 ```bash
-foretoken install --values platform-values.yaml
+foretoken install --values deploy/platform-values.yaml
 ```
+
+源码安装从仓库根目录执行 `foretoken install -e . --values deploy/platform-values.yaml`，保留原镜像仓库和引擎源码选项。
 
 安装命令会准备 Dragonfly，或复用已有安装。需要身份认证的模型及自定义模型源仍直接从源站下载。要选择特定的 Dragonfly Helm release，在 `modelDistribution.dragonfly` 下设置 `existingRelease: {name: dragonfly, namespace: dragonfly-system}`。
 
@@ -136,7 +168,9 @@ loadBalancer:
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-命令会应用配置；等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。所有服务 Ready 且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
+命令会应用配置，使用当前平台提供的运行版本部署服务，并更新已有服务。
+
+等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。所有服务 Ready 且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
 
 不应用配置，直接查看同一部署的状态：
 

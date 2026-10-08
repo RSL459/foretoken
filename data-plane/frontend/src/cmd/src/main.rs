@@ -17,12 +17,12 @@ use serving_snapshot::{refresh_active_generation, watch_serving_snapshot};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    foretoken_artifacts::source::activate("foretoken-frontend")?;
     foretoken_tracing::init_tracing("ForetokenFrontend");
 
     // Establish the long-lived generation owner before starting background refreshes.
     // Snapshot updates publish atomically, so an invalid update cannot replace active routing.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
-    let generation = Arc::new(RuntimeGeneration::new(config.request_timeout));
 
     // KV locality is optional routing input. Credential failures degrade its score instead
     // of preventing otherwise healthy model routes from serving requests.
@@ -41,10 +41,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             KvIndexCredential::Degraded(reason)
         }
     };
-    let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential));
+    let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential)?);
+    let generation = Arc::new(RuntimeGeneration::new(
+        config.request_timeout,
+        Arc::new(config.admission.build()?),
+    ));
 
     // Bind the HTTP listener before launching the refresh loops. The process can remain
-    // live while readiness stays false until a complete serving generation is available.
+    // live while readiness stays false until a valid routing snapshot is published.
     let listener = tokio::net::TcpListener::bind(config.listen_address).await?;
     tokio::spawn(refresh_active_generation(generation.clone()));
     tokio::spawn(watch_serving_snapshot(

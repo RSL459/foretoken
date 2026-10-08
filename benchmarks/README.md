@@ -4,6 +4,8 @@ English | [简体中文](README_zh.md)
 
 Measure service latency and throughput with `foretoken perf`, score model answers with `foretoken eval`, and inspect execution bottlenecks with profiling.
 
+[Experiment commands](docs/recipes.md)
+
 ## Get started
 
 Install Foretoken with Python 3.11 or later:
@@ -15,7 +17,7 @@ pip install foretoken
 # pip install -e .
 ```
 
-Run the examples from the repository checkout prepared by the [Quick Start](../README.md#quick-start). They save results locally and to W&B; run `wandb login` once before using W&B.
+Run the examples from the repository checkout prepared by the [Quick Start](../README.md#quick-start). Run `wandb login` before first using W&B. Random workloads reuse local model/cache tokenizers when available; set `FORETOKEN_HF_ENDPOINT` to choose a Hugging Face endpoint explicitly.
 
 Pass a Kustomize directory to use its model service. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models. To measure an existing endpoint, replace the directory with `--url` and provide its model name.
 
@@ -30,7 +32,9 @@ foretoken perf examples/quickstart \
 
 The summary reports request success, latency, and throughput. Streamed requests also report time to first token (TTFT) and time per output token (TPOT).
 
-[Performance examples](docs/perf/README.md) cover datasets, conversations, arrival rates, trace replay, parameter sweeps, SLO searches, and video generation. Definitions and units are in [Performance metrics](metrics.md).
+Performance time values may include a unit such as `s`, `min`, or `h`; unitless values use seconds.
+
+[Performance examples](docs/perf/README.md) cover datasets, conversations, arrival rates, trace replay, parameter sweeps, SLO searches, and video generation. Definitions and units are in [Performance metrics](docs/metrics.md).
 
 ## Evaluate model quality
 
@@ -56,6 +60,7 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | `local` | Print results and save local files |
 | `wandb` | Print results and upload to W&B |
 | `plot` | Retain results and export PDF, SVG, PNG, and CSV |
+| `experiment` | Organize the run under an experiment iteration and capture its source and command context |
 | `local,wandb,plot` | Save results, export figures, and upload to W&B |
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
@@ -63,6 +68,16 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 `quiet` saves preparation and execution logs in `run.log` instead of printing progress; errors remain visible. With W&B selected, this log is also uploaded as an artifact.
 
 Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs.
+
+Use `experiment` to group measurements under a named iteration. Run from the checkout containing the code changes:
+
+```bash
+foretoken perf examples/quickstart --num-prompts 20 \
+  --output experiment --output-dir results/reduce-ttft/queue-aware-routing \
+  --iteration baseline
+```
+
+`perf`, `eval`, and `perf video` share these recording options. Commands with the same directory and iteration name add separate runs; omitting `--iteration` creates a new numbered iteration per command. `experiment` includes local storage and can be combined with `wandb`, `plot`, and `quiet`. See the [playbook guide](../agent-playbooks/README.md#organize-the-records) for the layout, source records, and author-written notes.
 
 See [performance results](docs/perf/wandb.md) for latency and throughput charts, [quality results](docs/eval/README.md#read-scores) for task scores and native reports, and [profile viewing](docs/profile/README.md#inspect-results) for retained execution captures.
 

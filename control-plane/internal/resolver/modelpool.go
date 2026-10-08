@@ -14,6 +14,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 )
@@ -108,6 +109,12 @@ type resolvedModelRuntime struct {
 
 // ResolveModelPool resolves one supported vLLM execution profile into a Group contract.
 func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
+	if err := runtimeconfig.ValidateSourceRevision(template.SourceRevision); err != nil {
+		return ModelGroupTemplate{}, err
+	}
+	if template.SourceRevision != "" && template.Backend != "vllm" {
+		return ModelGroupTemplate{}, fmt.Errorf("source bundles support the vLLM model-server only")
+	}
 	if template.Backend == vllmomniconfig.Backend {
 		return resolveVLLMOmniPool(template, profile)
 	}
@@ -120,7 +127,11 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if template.NodeCount < 1 || template.MemberCount != template.NodeCount {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM Groups require one member per node")
 	}
-	if profile.Image == "" {
+	image := profile.Image
+	if template.Application != nil {
+		image = template.Application.Image
+	}
+	if image == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("inference engine image is not configured")
 	}
 	if err := validateRuntimeProfile(profile, 65535); err != nil {
@@ -148,12 +159,13 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
 		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
 	}
-	image := profile.Image
 	if template.Profiling != nil && template.Profiling.Engine == "nsight" {
-		if profile.NsightImage == "" {
-			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems image is not configured; set runtime.vllm.nsightImage")
+		if template.Application == nil {
+			if profile.NsightImage == "" {
+				return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems image is not configured; set runtime.vllm.nsightImage")
+			}
+			image = profile.NsightImage
 		}
-		image = profile.NsightImage
 		if profile.DeviceResourceName != "nvidia.com/gpu" {
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires NVIDIA GPUs")
 		}
@@ -193,7 +205,11 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("mcTracer requires a persistent RuntimeCache")
 		}
 	}
-	resolved := projectModelGroupTemplate(template, profile, resolvedModelRuntime{
+	nodeSelector, err := mergeNodeSelectors(template.NodeSelector, profile)
+	if err != nil {
+		return ModelGroupTemplate{}, err
+	}
+	resolved := projectModelGroupTemplate(template, profile, nodeSelector, resolvedModelRuntime{
 		Image: image, Model: effective.Model, Source: effective.Source,
 		Revision: effective.Revision, Tokenizer: effective.Tokenizer,
 		TokenizerRevision: effective.TokenizerRevision,
@@ -207,7 +223,11 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 }
 
 func resolveVLLMOmniPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
-	if profile.OmniImage == "" {
+	image := profile.OmniImage
+	if template.Application != nil {
+		image = template.Application.Image
+	}
+	if image == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM-Omni inference engine image is not configured")
 	}
 	if err := validateRuntimeProfile(profile, 65533); err != nil {
@@ -220,12 +240,34 @@ func resolveVLLMOmniPool(template inferencev1alpha1.NormalizedPoolTemplate, prof
 	if effective.Revision == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM-Omni modelRevision is required before ModelGroup creation")
 	}
-	return projectModelGroupTemplate(template, profile, resolvedModelRuntime{
-		Image: profile.OmniImage, Model: effective.Model, Source: effective.Source,
+	nodeSelector, err := mergeNodeSelectors(template.NodeSelector, profile)
+	if err != nil {
+		return ModelGroupTemplate{}, err
+	}
+	return projectModelGroupTemplate(template, profile, nodeSelector, resolvedModelRuntime{
+		Image: image, Model: effective.Model, Source: effective.Source,
 		Revision: effective.Revision, Tokenizer: effective.Tokenizer,
 		TokenizerRevision: effective.TokenizerRevision,
 		EngineArgs:        effective.EngineArgs, Parallelism: effective.Parallelism,
 	}), nil
+}
+
+func mergeNodeSelectors(userSelector map[string]string, profile RuntimeProfile) (map[string]string, error) {
+	selector := make(map[string]string, len(userSelector)+1)
+	for key, value := range userSelector {
+		selector[key] = value
+	}
+	if profile.NodeSelectorKey == "" {
+		if len(selector) == 0 {
+			return nil, nil
+		}
+		return selector, nil
+	}
+	if value, exists := selector[profile.NodeSelectorKey]; exists && value != profile.NodeSelectorValue {
+		return nil, fmt.Errorf("nodeSelector %q=%q conflicts with platform accelerator selector %q=%q", profile.NodeSelectorKey, value, profile.NodeSelectorKey, profile.NodeSelectorValue)
+	}
+	selector[profile.NodeSelectorKey] = profile.NodeSelectorValue
+	return selector, nil
 }
 
 func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
@@ -241,10 +283,10 @@ func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
 	return nil
 }
 
-func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, runtime resolvedModelRuntime) ModelGroupTemplate {
-	var nodeSelector map[string]string
-	if profile.NodeSelectorKey != "" {
-		nodeSelector = map[string]string{profile.NodeSelectorKey: profile.NodeSelectorValue}
+func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
+	applicationURL := ""
+	if template.Application != nil {
+		applicationURL = template.Application.ApplicationURL
 	}
 	return ModelGroupTemplate{
 		Role: template.Role,
@@ -254,7 +296,9 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 			Cache: template.RuntimeCache.DeepCopy(), HuggingFaceAccess: template.HuggingFaceAccess.DeepCopy(),
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
-			Backend: template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
+			SourceRevision: template.SourceRevision,
+			ApplicationURL: applicationURL,
+			Backend:        template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
 			EngineArgs:                            runtime.EngineArgs,
 			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache),
 			Profiling:                             template.Profiling.DeepCopy(),

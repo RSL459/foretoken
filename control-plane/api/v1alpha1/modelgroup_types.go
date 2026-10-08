@@ -193,6 +193,14 @@ type ModelGroupRuntime struct {
 	// +kubebuilder:validation:Maximum=1
 	PreparationVersion int32 `json:"preparationVersion,omitempty"`
 
+	// SourceRevision selects the immutable source bundle at the platform application origin.
+	// +optional
+	SourceRevision string `json:"sourceRevision,omitempty"`
+
+	// ApplicationURL pins the controller-selected executable publication for this cohort.
+	// +optional
+	ApplicationURL string `json:"applicationURL,omitempty"`
+
 	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 
