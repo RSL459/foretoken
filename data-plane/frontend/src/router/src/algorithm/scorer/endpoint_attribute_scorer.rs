@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-// SPDX-FileCopyrightText: Copyright 2026 The llm-d Authors.
 
 //! Linear scoring of an observed endpoint attribute.
 
