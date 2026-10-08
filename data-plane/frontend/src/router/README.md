@@ -34,7 +34,7 @@ Choose a scorer for the workload:
 | Prefer reusable prompt prefixes | `prefix` |
 | Spread cold requests toward less recently selected targets | `no_hit_lru` |
 | Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
-| Prefer lower expected queue, prefill, and decode latency | `least_latency`; uses daily request-length means and cumulative execution times |
+| Prefer lower expected queue, prefill, and decode latency | `least_latency` |
 | Give every target an equal score | `uniform` |
 
 Scorer-specific options go under `scorer.parameters`. For example, give matched prefix length more weight:
@@ -49,8 +49,6 @@ spec:
 ```
 
 When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
-
-`least_latency` needs at least two local observations to estimate request lengths. Missing required metrics rank last. Use `picker.algorithm: max` to select the lowest cost.
 
 ## Choose from the scores
 
