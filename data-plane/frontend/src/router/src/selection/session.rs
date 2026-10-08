@@ -25,6 +25,9 @@ pub enum RoutingStage {
 /// mutate routing progress or treat it as client input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RoutingProgress<'a> {
+    /// Serving-snapshot version retained by this session; zero denotes an unversioned inventory.
+    /// Shared algorithm state must not let older snapshots supersede newer observations.
+    pub snapshot_version: u64,
     /// Selection round currently being executed.
     pub current_stage: RoutingStage,
     /// Execution roles completed before this selection round.

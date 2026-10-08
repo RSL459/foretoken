@@ -25,6 +25,7 @@ const ROUTE_TARGET_STATS_WINDOW: Duration = Duration::from_secs(60);
 /// Router implementation that runs one Filter-Scorer-Picker pipeline per selection round.
 pub struct PipelineRouter<C: Send + 'static = ()> {
     inventory: Arc<dyn RouteInventory>,
+    snapshot_version: u64,
     kv_prefix_indexer: Arc<dyn KvPrefixIndexer>,
     route_target_stats_reader: Arc<dyn RouteTargetStatsReader>,
     pipeline: Arc<RouterPipeline<C>>,
@@ -44,12 +45,20 @@ impl<C: Send + 'static> PipelineRouter<C> {
         ));
         Self {
             inventory,
+            snapshot_version: 0,
             kv_prefix_indexer: Arc::new(NoopKvPrefixIndexer),
             route_target_stats_reader: Arc::new(NoopRouteTargetStatsReader),
             pipeline,
             routing_load: Arc::new(Mutex::new(RoutingReservations::default())),
             metrics,
         }
+    }
+
+    /// Associates this inventory with its serving-snapshot version for shared algorithm state.
+    /// RuntimeBuilder supplies the version; sessions retain it with their original inventory.
+    pub fn with_snapshot_version(mut self, version: u64) -> Self {
+        self.snapshot_version = version;
+        self
     }
 
     /// Shares frontend-owned request load across runtime generations built by RuntimeBuilder.
@@ -443,6 +452,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
 
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError> {
         let routing_progress = RoutingProgress {
+            snapshot_version: self.router.snapshot_version,
             current_stage: RoutingStage::Initial,
             completed_stages: &[],
             pipeline_scope_id: None,
@@ -481,6 +491,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             return Err(RouteError::PrefillBeforeEncoder);
         };
         let routing_progress = RoutingProgress {
+            snapshot_version: self.router.snapshot_version,
             current_stage: RoutingStage::Prefill,
             completed_stages: &[ModelServerRole::Encoder],
             pipeline_scope_id: Some(pipeline_scope_id),
@@ -518,6 +529,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             &[ModelServerRole::Prefill]
         };
         let routing_progress = RoutingProgress {
+            snapshot_version: self.router.snapshot_version,
             current_stage: RoutingStage::Decode,
             completed_stages,
             pipeline_scope_id: Some(pipeline_scope_id),
@@ -574,6 +586,7 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
         Box::new(Session {
             router: Self {
                 inventory: self.inventory.clone(),
+                snapshot_version: self.snapshot_version,
                 kv_prefix_indexer,
                 route_target_stats_reader: self.route_target_stats_reader.clone(),
                 pipeline: self.pipeline.clone(),

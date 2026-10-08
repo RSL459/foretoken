@@ -19,6 +19,7 @@ use crate::{
 struct Binding {
     target: (RouteTargetId, u32),
     last_seen: Instant,
+    snapshot_version: u64,
 }
 
 // A frontend pipeline serves multiple models; each stage keeps model-scoped session bindings.
@@ -101,7 +102,7 @@ impl RouteScorer for SessionAffinityScorer {
         .scores
     }
 
-    /// Captures bound-target presence for the commit callback; only confirmed absence permits migration.
+    /// Captures bound-target eligibility and the snapshot version for the selection commit.
     fn score_for_selection(
         &self,
         request: &RouterRequest,
@@ -140,6 +141,7 @@ impl RouteScorer for SessionAffinityScorer {
             scores[row].preference = 1.0;
         }
         let present = bound.map(|_| target.is_some());
+        let snapshot_version = routing_progress.snapshot_version;
         let bindings = self.bindings.clone();
         ScoringOutcome {
             scores,
@@ -151,6 +153,7 @@ impl RouteScorer for SessionAffinityScorer {
                         candidate.data_parallel_rank,
                     ),
                     last_seen: Instant::now(),
+                    snapshot_version,
                 };
                 match bindings[profile].entry(session_key) {
                     Entry::Vacant(entry) => {
@@ -158,11 +161,14 @@ impl RouteScorer for SessionAffinityScorer {
                     }
                     Entry::Occupied(mut entry) => {
                         let binding = entry.get_mut();
-                        // A different picker choice still counts as session activity, but only
-                        // an unavailable bound target permits migration.
+                        // Every selection counts as activity. Retiring snapshots cannot move a
+                        // binding established or confirmed by a newer snapshot.
                         binding.last_seen = fresh.last_seen;
-                        if present == Some(false) {
-                            binding.target = fresh.target;
+                        if snapshot_version >= binding.snapshot_version {
+                            binding.snapshot_version = snapshot_version;
+                            if present == Some(false) {
+                                binding.target = fresh.target;
+                            }
                         }
                     }
                 }
