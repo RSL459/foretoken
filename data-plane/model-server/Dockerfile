@@ -135,6 +135,7 @@ RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
+# Precompile installed packages to avoid repeated bytecode compilation at startup.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     python_path=$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
       'import sys; print(sys.executable)') \
@@ -147,6 +148,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
       --constraint /tmp/foretoken-engine-constraints.txt \
       --default-index "${UV_DEFAULT_INDEX}" "$@" \
     && uv pip check --python "$python_path" \
+    && "$python_path" -c 'import compileall, site; raise SystemExit(not all(compileall.compile_dir(path, quiet=1) for path in site.getsitepackages()))' \
     && rm /tmp/foretoken-engine-constraints.txt
 
 FROM engine-runtime AS environment
