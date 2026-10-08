@@ -34,7 +34,7 @@ spec:
 | 优先复用输入前缀缓存 | `prefix` |
 | 将冷请求分散到较久未选中的目标 | `no_hit_lru` |
 | 在负载均衡与缓存复用之间折中 | `two_tier`，必须搭配 `picker.algorithm: max` |
-| 优先选择请求体 `session_id` 绑定的目标及 rank | `session_affinity` |
+| 按请求体中的 `session_id`，优先将同一会话的请求发往同一模型副本 | `session_affinity` |
 | 所有目标得分相同 | `uniform` |
 
 评分算法的选项放在 `scorer.parameters` 下。例如，提高匹配前缀长度的权重：
@@ -49,8 +49,6 @@ spec:
 ```
 
 KV 索引不可用时，目标仍可参与路由，只是不享有缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
-
-会话亲和绑定保存在各个前端副本内，不同模型和路由阶段分别维护。在 `scorer.parameters` 下，`evictionTtlSeconds` 设置空闲过期时间（默认 300 秒），`evictionSweepSeconds` 设置清理间隔（默认 10 秒）。每次成功选出路由目标都会刷新会话的空闲计时，即使选择算法选中了其他目标。
 
 ## 根据得分选择目标
 
