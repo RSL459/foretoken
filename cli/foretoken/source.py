@@ -30,7 +30,7 @@ from foretoken.cluster_build import (
 )
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
-from foretoken.network_sources import select_source_build_sources
+from foretoken.network_sources import select_build_sources
 
 _BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 _INSTALL_SOURCE = "foretoken.io/install-source"
@@ -503,9 +503,13 @@ def pinned_rust_revision(root: Path) -> str:
     return fields[1]
 
 
-def image_tools_image(arguments: dict[str, str]) -> str:
+def image_tools_image(
+    arguments: dict[str, str],
+    registry_mirrors: dict[str, list[str]] | None = None,
+) -> str:
     """Select Bash and GNU tar for node image operations using the build's Docker mirror."""
-    registry = arguments.get("BASE_IMAGE_REGISTRY", "docker.io").rstrip("/")
+    automatic = (registry_mirrors or {}).get("docker.io", ["docker.io"])[0]
+    registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
     return f"{registry}/library/debian:bookworm-slim"
 
 
@@ -717,10 +721,12 @@ def prepare_source_images(
     environment = os.environ.copy()
     if command.oci_registry:
         environment["FORETOKEN_OCI_REGISTRY"] = command.oci_registry
+    registry_mirrors = build.get("registry_mirrors", {})
     if saved_arguments is None:
-        selected, selections, _ = select_source_build_sources(environment)
-        environment.update(selected)
-        for selection in selections:
+        selected = select_build_sources(environment)
+        registry_mirrors = selected.registry_mirrors
+        environment.update(selected.environment)
+        for selection in selected.messages:
             print(f"Source mirror selected: {selection}", flush=True)
         arguments = build_arguments(environment)
     else:
@@ -739,7 +745,9 @@ def prepare_source_images(
             )
     arguments["VLLM_REVISION"] = pinned_rust_revision(root)
     configuration = build_configuration(
-        root, values, arguments.get("BASE_IMAGE_REGISTRY", "")
+        root,
+        values,
+        arguments.get("BASE_IMAGE_REGISTRY", registry_mirrors.get("docker.io", [""])[0]),
     )
     registry = (command.registry or "").rstrip("/")
     prefix = registry if registry else "docker.io/library/foretoken-dev"
@@ -764,6 +772,7 @@ def prepare_source_images(
             "docker.io",
             "gcr.io",
             "ghcr.io",
+            *(endpoint for endpoints in registry_mirrors.values() for endpoint in endpoints),
             *(value for key, value in arguments.items() if key.endswith("REGISTRY")),
         ]
     )
@@ -826,11 +835,12 @@ def prepare_source_images(
                     configuration["image"],
                     binding,
                     command.timeout,
-                    tools_image=image_tools_image(arguments),
+                    tools_image=image_tools_image(arguments, registry_mirrors),
                     node=node,
                     containerd_socket=socket,
                     pull_secrets=secret_names,
                     credentials=credentials,
+                    registry_mirrors=registry_mirrors,
                 )
             )
             builders.append(builder)
@@ -1013,6 +1023,7 @@ def prepare_source_images(
                 "digests": digests,
                 "images": references,
                 "arguments": arguments,
+                "registry_mirrors": registry_mirrors,
                 "registry": registry,
                 "containerd_socket": nodes[0][1],
                 "engine_caches": engine_caches,

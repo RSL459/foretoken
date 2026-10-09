@@ -117,7 +117,7 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
 
 ## 配置准入规则
 
-准入规则控制文本生成和 tokenization 的并发与排队，默认不限流（`allow_all`）。例如，在 `FrontendService` 中配置每个前端副本最多同时处理 64 个候选：
+准入规则控制文本生成和 tokenization 的并发与排队，默认不限流（`allow_all`）。通过 `FrontendService.spec.admission` 为各模型设置默认规则，例如：
 
 ```yaml
 spec:
@@ -127,7 +127,17 @@ spec:
       maxConcurrentRequests: 64
 ```
 
-并发上限按实际负载选择，批量请求按输出候选数计数。需要排队时，在 `parameters` 下添加 `maxQueuedRequests`，并可用 `queueTimeout` 设置等待时限。
+限额在每个前端副本内按模型独立生效，各模型不共享前端总上限或队列。并发上限按实际负载选择，批量请求按输出候选数计数。需要排队时，在 `parameters` 下添加 `maxQueuedRequests`，并可用 `queueTimeout` 设置等待时限。
+
+模型的 `ModelService.spec.admission` 整块替换前端默认规则，不合并参数。例如，让某个模型保持不限流：
+
+```yaml
+spec:
+  admission:
+    algorithm: allow_all
+```
+
+重新部署服务配置后生效。准入规则更新和模型增删不会重启前端 Pod；模型更换规则期间，新请求可能返回 HTTP 503。
 
 查看准入结果见[可观测性](../../observability/README_zh.md)，新增算法见[开发准入规则](../../docs/development/admission-rules_zh.md)。
 

@@ -60,7 +60,7 @@ Do not commit secrets, tokens, server addresses, private kubeconfigs, model cred
 
 Contributors are responsible for all submitted code, including AI-assisted changes. Review every changed line, verify provenance and licensing, and report only commands and validation that actually ran. Never send private code, credentials, server configuration, or unpublished data to external models.
 
-Before merge, a PR must pass the checks relevant to its changes and receive approval from at least one maintainer other than its author.
+Run the checks relevant to your changes and include the results in your PR. Address review feedback and resolve failing checks before asking a maintainer to merge.
 
 ## Branches and Commit Messages
 
