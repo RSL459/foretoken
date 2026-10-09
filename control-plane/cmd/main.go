@@ -311,6 +311,8 @@ func main() {
 		HealthProbeBindAddress: probeAddress,
 		LeaderElection:         leaderElection,
 		LeaderElectionID:       "inference.foretoken.io",
+		// Main exits when the manager stops, so a normal shutdown can release the lease.
+		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
 		ctrl.Log.Error(err, "unable to create manager")

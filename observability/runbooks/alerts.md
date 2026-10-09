@@ -38,7 +38,7 @@ Connect a [Lark](../integrations/lark/README.md), [Slack](../integrations/slack/
 | [ForetokenNVIDIAGPUTemperatureHigh](#foretokennvidiagputemperaturehigh) | Model | NVIDIA GPU temperature reaches the threshold for 2 minutes; default 85°C. |
 | [ForetokenNVIDIAGPUPowerUsageHigh](#foretokennvidiagpupowerusagehigh) | Model | NVIDIA GPU power reaches the configured threshold for 5 minutes. |
 
-Admission thresholds go under `spec.observability.alerts.thresholds.admission`. The three ratio/latency rules require explicit thresholds and positive minimum rates. Optional `scope` defaults to `service` and can be `pod`; `window` defaults to `1m` and `for` to `5m`. Durations accept whole seconds, minutes, or hours. These settings control the aggregation, calculation window, and time the condition must persist before the alert fires.
+Admission thresholds go under `spec.observability.alerts.thresholds.admission`. The three ratio/latency rules require explicit thresholds and positive minimum rates. Optional `scope` defaults to `service`, aggregating each model across the selected frontend's Pods; `pod` evaluates each model separately in each Pod. `window` defaults to `1m` and `for` to `5m`. Durations accept whole seconds, minutes, or hours. These settings control the aggregation, calculation window, and time the condition must persist before the alert fires.
 
 ## Investigate an alert
 
@@ -54,13 +54,13 @@ Inspect frontend status-code trends and logs. Use the Admission section to ident
 
 ### ForetokenAdmissionCapacityRejectionRatioHigh
 
-Set `capacityRejectionRatio` from 0 to 1 and `minResultRate` in completed calls/s under the admission thresholds. The ratio counts capacity rejections among completed calls, separately for each admission stage.
+Set `capacityRejectionRatio` from 0 to 1 and `minResultRate` in completed calls/s under the admission thresholds. The ratio counts capacity rejections among completed HTTP admission calls for each model.
 
-Compare each frontend Pod's traffic, occupancy, and configured limits. `intake` identifies HTTP residency limits; `work` identifies work admission. Check backend load before adjusting frontend limits.
+Select the affected model and compare its traffic, occupancy, and configured limits across frontend Pods. Check backend load before adjusting that model's limits.
 
 ### ForetokenAdmissionTimeoutRatioHigh
 
-Set `timeoutRatio` from 0 to 1 and `minResultRate` in completed calls/s under the admission thresholds. The ratio counts `queue_timeout` and `deadline_exceeded` among completed work-admission calls.
+Set `timeoutRatio` from 0 to 1 and `minResultRate` in completed calls/s under the admission thresholds. The ratio counts `queue_timeout` and `deadline_exceeded` among each model's completed HTTP admission calls.
 
 Compare queue occupancy and waiting time with `queueTimeout` and the request timeout. The result breakdown separates queue expiry from the request budget expiring before admission.
 
@@ -68,11 +68,11 @@ Compare queue occupancy and waiting time with `queueTimeout` and the request tim
 
 Set positive `admittedQueueP95Seconds` in seconds and `minQueuedAdmissionRate` in calls/s under the admission thresholds. This rule measures only requests that actually queued and were admitted, not immediate admissions or timed-out requests.
 
-Inspect the admitted-wait curve alongside queue occupancy and model capacity. Use timeout results to see whether requests are also leaving the queue without admission.
+Select the affected model and inspect its admitted-wait curve alongside queue occupancy and model capacity. Use timeout results to see whether requests are also leaving the queue without admission.
 
 ### ForetokenAdmissionTelemetryMissing
 
-Inspect the Admission replica table for incomplete reporting and compare Pod runtime versions. Check monitoring configuration if the issue persists after an upgrade completes.
+Inspect the Admission replica table for the affected model and Pod with incomplete reporting, and compare Pod runtime versions. Check monitoring configuration if the issue persists after an upgrade completes.
 
 ### ForetokenNVIDIAGPUTemperatureHigh
 

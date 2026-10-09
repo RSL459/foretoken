@@ -9,8 +9,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::telemetry::AdmissionMetricsScope;
-use crate::{Admission, AdmissionRule};
+use crate::AdmissionRule;
+use crate::registry::PreparedRule;
 
 /// A compiled admission rule that accepts its own configuration parameters.
 pub struct AdmissionDescriptor {
@@ -25,9 +25,9 @@ inventory::collect!(AdmissionDescriptor);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AdmissionConfig {
-    /// Compiled rule selected for intake and work admission.
+    /// Compiled rule selected for this model.
     pub algorithm: String,
-    /// Parameters interpreted by the selected rule at startup.
+    /// Parameters interpreted when preparing a rule.
     #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     pub parameters: serde_json::Map<String, serde_json::Value>,
 }
@@ -42,8 +42,8 @@ impl Default for AdmissionConfig {
 }
 
 impl AdmissionConfig {
-    /// Constructs the configured rule and metric owner for the frontend's lifetime.
-    pub fn build(&self) -> Result<Admission, AdmissionConfigError> {
+    /// Prepares a validated rule without publishing metrics or changing active reservations.
+    pub(crate) fn prepare(&self) -> Result<PreparedRule, AdmissionConfigError> {
         let mut names = HashSet::new();
         let mut selected = None;
         for descriptor in inventory::iter::<AdmissionDescriptor> {
@@ -66,10 +66,10 @@ impl AdmissionConfig {
                 algorithm: self.algorithm.clone(),
                 message,
             })?;
-        let metrics = AdmissionMetricsScope::new(descriptor.name, rule.capacity());
-        Ok(Admission {
+        Ok(PreparedRule {
+            config: self.clone(),
+            name: descriptor.name,
             rule,
-            _metrics: metrics,
         })
     }
 }
