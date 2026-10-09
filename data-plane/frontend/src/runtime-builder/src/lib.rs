@@ -168,6 +168,7 @@ impl RuntimeBuilder {
         }
         let router: Arc<dyn Router> = Arc::new(
             PipelineRouter::with_pipeline(registry.clone(), self.router_pipeline.clone())
+                .with_snapshot_version(version)
                 .with_load_state(self.routing_load.clone())
                 .with_kv_prefix_indexer(kv_indexer)
                 .with_route_target_stats_reader(registry.clone()),
