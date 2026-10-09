@@ -27,6 +27,7 @@ from foretoken.manifest import DeploymentError
 
 _BUILD_POD_LABEL = "inference.foretoken.io/source-builder"
 _BUILD_BINDING_LABEL = "inference.foretoken.io/source-build-binding"
+_BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
 
 
 def _pod_ready(pod: dict[str, Any]) -> bool:
@@ -208,6 +209,7 @@ class ClusterBuilder(AbstractContextManager):
         containerd_socket: str = "",
         pull_secrets: tuple[str, ...] = (),
         credentials: dict[str, Any] | None = None,
+        registry_mirrors: dict[str, list[str]] | None = None,
     ) -> None:
         self.kubectl = kubectl
         self.namespace = namespace
@@ -222,6 +224,7 @@ class ClusterBuilder(AbstractContextManager):
         self.containerd_client = "/usr/local/bin/ctr"
         self.pull_secrets = pull_secrets
         self.credentials = credentials or {}
+        self.registry_mirrors = registry_mirrors or {}
         self.name = "foretoken-build-" + uuid.uuid4().hex[:12]
         self.root = f"{self.mount}/build/{binding}"
         self.workspace = f"{self.root}/workspace"
@@ -249,6 +252,10 @@ class ClusterBuilder(AbstractContextManager):
             if not _pod_ready(pod) or pod.get("metadata", {}).get("deletionTimestamp"):
                 continue
             if self.node and pod.get("spec", {}).get("nodeName") != self.node:
+                continue
+            if pod["metadata"].get("annotations", {}).get(
+                _BUILD_MIRRORS_ANNOTATION, "{}"
+            ) != json.dumps(self.registry_mirrors, sort_keys=True):
                 continue
             containers = pod.get("spec", {}).get("containers", [])
             builder = next(
@@ -336,6 +343,12 @@ class ClusterBuilder(AbstractContextManager):
             .get("storage", pvc["spec"]["resources"]["requests"]["storage"])
         )
         gc_limits = _cache_gc_limits(capacity)
+        # Keep canonical image names so BuildKit can fall back from a mirror to the origin.
+        # An image-supplied daemon configuration remains authoritative.
+        mirrors = "".join(
+            f"\n[registry.{json.dumps(host)}]\nmirrors = {json.dumps(endpoints)}\n"
+            for host, endpoints in sorted(self.registry_mirrors.items())
+        )
         spec: dict[str, Any] = {
             "restartPolicy": "Never",
             "hostNetwork": True,
@@ -359,10 +372,25 @@ class ClusterBuilder(AbstractContextManager):
                     "command": [
                         "sh",
                         "-ec",
-                        'mount="$(dirname "$(dirname "$1")")"; mkdir -p "$mount" "$1"; chown 1000:1000 "$mount" "$mount/build" "$(dirname "$1")" "$1"; chmod 2775 "$mount" "$mount/build" "$(dirname "$1")" "$1"; configuration="${XDG_CONFIG_HOME:-$HOME/.config}/buildkit/buildkitd.toml"; if test -f "$configuration"; then cp "$configuration" "$1/buildkit.toml"; else printf "[worker.oci]\\nreservedSpace = %s\\nminFreeSpace = %s\\nmaxUsedSpace = %s\\n" "$2" "$3" "$4" > "$1/buildkit.toml"; fi; chown 1000:1000 "$1/buildkit.toml"; chmod 600 "$1/buildkit.toml"',
+                        '''mount="$(dirname "$(dirname "$1")")"
+mkdir -p "$mount" "$1"
+chown 1000:1000 "$mount" "$mount/build" "$(dirname "$1")" "$1"
+chmod 2775 "$mount" "$mount/build" "$(dirname "$1")" "$1"
+configuration="${XDG_CONFIG_HOME:-$HOME/.config}/buildkit/buildkitd.toml"
+if test -f "$configuration"; then
+    cp "$configuration" "$1/buildkit.toml"
+else
+    printf "[worker.oci]\\nreservedSpace = %s\\nminFreeSpace = %s\\nmaxUsedSpace = %s\\n" \\
+        "$2" "$3" "$4" > "$1/buildkit.toml"
+    printf "%s" "$5" >> "$1/buildkit.toml"
+fi
+chown 1000:1000 "$1/buildkit.toml"
+chmod 600 "$1/buildkit.toml"
+''',
                         "prepare",
                         self.root,
                         *gc_limits,
+                        mirrors,
                     ],
                     "securityContext": {"runAsUser": 0},
                     "volumeMounts": [{"name": "cache", "mountPath": self.mount}],
@@ -487,6 +515,11 @@ class ClusterBuilder(AbstractContextManager):
             "metadata": {
                 "name": self.name,
                 "namespace": self.namespace,
+                "annotations": {
+                    _BUILD_MIRRORS_ANNOTATION: json.dumps(
+                        self.registry_mirrors, sort_keys=True
+                    ),
+                },
                 "labels": {
                     _BUILD_POD_LABEL: "true",
                     _BUILD_BINDING_LABEL: self.binding,
