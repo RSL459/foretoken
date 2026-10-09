@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
-use crate::telemetry::METRICS;
+use prometheus_client::metrics::gauge::Gauge;
 
 use crate::{
     AdmissionCapacity, AdmissionContext, AdmissionError, AdmissionPermit, AdmissionRequest,
@@ -25,14 +25,13 @@ struct Parameters {
     queue_timeout: Option<String>,
 }
 
-/// Runtime state for one frontend's concurrency admission rule.
+/// Concurrency and FIFO queue capacity for one model in a frontend.
 /// The frontend retains this owner across serving-snapshot replacements.
 pub struct ConcurrencyAdmission {
     capacity: u32,
     queue_capacity: u32,
     active: Arc<Semaphore>,
     queued: Arc<Semaphore>,
-    resident: Arc<Semaphore>,
     queue_timeout: Option<Duration>,
 }
 
@@ -45,10 +44,11 @@ impl ConcurrencyAdmission {
         if capacity == 0 {
             return Err("admission.parameters.maxConcurrentRequests must be positive".into());
         }
-        let resident = (capacity as usize)
-            .checked_add(parameters.max_queued_requests as usize)
-            .filter(|total| *total <= Semaphore::MAX_PERMITS)
-            .ok_or("admission request limits exceed supported capacity")?;
+        if capacity as usize > Semaphore::MAX_PERMITS
+            || parameters.max_queued_requests as usize > Semaphore::MAX_PERMITS
+        {
+            return Err("admission request limits exceed supported capacity".into());
+        }
         let queue_timeout = parameters
             .queue_timeout
             .map(|value| {
@@ -68,7 +68,6 @@ impl ConcurrencyAdmission {
             queue_capacity: parameters.max_queued_requests,
             active: Arc::new(Semaphore::new(capacity as usize)),
             queued: Arc::new(Semaphore::new(parameters.max_queued_requests as usize)),
-            resident: Arc::new(Semaphore::new(resident)),
             queue_timeout,
         })
     }
@@ -80,23 +79,11 @@ impl AdmissionRule for ConcurrencyAdmission {
         Some(AdmissionCapacity {
             concurrent_work_units: self.capacity,
             queued_work_units: self.queue_capacity,
-            resident_requests: u64::from(self.capacity) + u64::from(self.queue_capacity),
         })
     }
 
     fn requires_ready_runtime(&self) -> bool {
         true
-    }
-
-    fn try_reserve_request(&self) -> Result<AdmissionPermit, AdmissionError> {
-        self.resident
-            .clone()
-            .try_acquire_owned()
-            .map(|permit| Reservation::counted(permit, PermitKind::Resident))
-            .map_err(|error| match error {
-                TryAcquireError::Closed => AdmissionError::Closed,
-                TryAcquireError::NoPermits => AdmissionError::Overloaded,
-            })
     }
 
     async fn admit(
@@ -113,7 +100,7 @@ impl AdmissionRule for ConcurrencyAdmission {
             return Err(AdmissionError::DeadlineExceeded);
         }
         match self.active.clone().try_acquire_many_owned(units) {
-            Ok(permit) => return Ok(Reservation::counted(permit, PermitKind::Active)),
+            Ok(permit) => return Ok(Reservation::counted(permit, context.metrics.active.clone())),
             Err(TryAcquireError::Closed) => return Err(AdmissionError::Closed),
             Err(TryAcquireError::NoPermits) => {}
         }
@@ -126,7 +113,7 @@ impl AdmissionRule for ConcurrencyAdmission {
                     TryAcquireError::NoPermits => AdmissionError::Overloaded,
                 })?;
         let started = tokio::time::Instant::now();
-        let _queued = Reservation::counted(queued, PermitKind::Queued);
+        let _queued = Reservation::counted(queued, context.metrics.queued.clone());
         let _waiting = context.queue.begin_wait();
         let expires = self
             .queue_timeout
@@ -142,7 +129,7 @@ impl AdmissionRule for ConcurrencyAdmission {
         // A ready semaphore can win before the timer driver observes an elapsed deadline.
         match permit {
             Some(permit) if tokio::time::Instant::now() < expires => {
-                Ok(Reservation::counted(permit, PermitKind::Active))
+                Ok(Reservation::counted(permit, context.metrics.active.clone()))
             }
             _ if expires == deadline => Err(AdmissionError::DeadlineExceeded),
             _ => Err(AdmissionError::QueueTimeout),
@@ -150,40 +137,24 @@ impl AdmissionRule for ConcurrencyAdmission {
     }
 
     fn close(&self) {
-        self.resident.close();
         self.queued.close();
         self.active.close();
     }
 }
 
-#[derive(Clone, Copy)]
-enum PermitKind {
-    Active,
-    Queued,
-    Resident,
-}
-
 // Each guard accounts only for its remaining units; split transfers already-counted ownership.
 struct Reservation {
     permit: OwnedSemaphorePermit,
-    kind: PermitKind,
+    gauge: Gauge,
 }
 
 impl Reservation {
-    fn counted(permit: OwnedSemaphorePermit, kind: PermitKind) -> AdmissionPermit {
-        let reservation = Self { permit, kind };
+    fn counted(permit: OwnedSemaphorePermit, gauge: Gauge) -> AdmissionPermit {
+        let reservation = Self { permit, gauge };
         reservation
-            .gauge()
+            .gauge
             .inc_by(reservation.permit.num_permits() as i64);
         AdmissionPermit::new(reservation)
-    }
-
-    fn gauge(&self) -> &prometheus_client::metrics::gauge::Gauge {
-        match self.kind {
-            PermitKind::Active => &METRICS.active,
-            PermitKind::Queued => &METRICS.queued,
-            PermitKind::Resident => &METRICS.resident,
-        }
     }
 }
 
@@ -194,13 +165,13 @@ impl AdmissionReservation for Reservation {
                 .permit
                 .split(1)
                 .expect("generation batch has a reserved unit for each child"),
-            kind: self.kind,
+            gauge: self.gauge.clone(),
         })
     }
 }
 
 impl Drop for Reservation {
     fn drop(&mut self) {
-        self.gauge().dec_by(self.permit.num_permits() as i64);
+        self.gauge.dec_by(self.permit.num_permits() as i64);
     }
 }

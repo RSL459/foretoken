@@ -261,6 +261,11 @@ type ModelServiceSpec struct {
 	// +optional
 	Observability *ModelObservability `json:"observability,omitempty"`
 
+	// Admission replaces the frontend's entire admission block for this model.
+	// Limits apply independently in each frontend replica; omission uses its defaults.
+	// +optional
+	Admission *AdmissionConfig `json:"admission,omitempty"`
+
 	// Autoscaling is evaluated by the ModelService controller. Algorithms remain
 	// side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
 	// +optional

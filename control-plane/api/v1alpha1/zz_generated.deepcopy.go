@@ -1925,6 +1925,11 @@ func (in *ModelServiceSpec) DeepCopyInto(out *ModelServiceSpec) {
 		*out = new(ModelObservability)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.Admission != nil {
+		in, out := &in.Admission, &out.Admission
+		*out = new(AdmissionConfig)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Autoscaling != nil {
 		in, out := &in.Autoscaling, &out.Autoscaling
 		*out = new(ModelAutoscalingConfig)
