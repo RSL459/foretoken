@@ -13,7 +13,7 @@ Use Grafana to inspect serving performance, query persistent logs, and investiga
 
 Open Grafana through your cluster's monitoring entry point. The CLI-managed Grafana Service is `foretoken-prometheus-grafana` in `foretoken-platform`, on port 80. It defaults to `ClusterIP`; access from outside the cluster requires an entry point configured by the cluster administrator. Reused Grafana installations keep their existing access settings.
 
-Open Foretoken System Overview, or Foretoken 系统概览 for Chinese. Select a namespace, then a model for inference metrics or a frontend for HTTP traffic and admission. Instance, execution-role, and engine-rank filters narrow backend details; whole-model totals remain visible.
+Open Foretoken System Overview, or Foretoken 系统概览 for Chinese. Select a namespace and model for inference and admission metrics, and a frontend for HTTP traffic. Instance, execution-role, and engine-rank filters narrow backend details; whole-model totals remain visible.
 
 The dashboard starts with the last 15 minutes. Change the time range to inspect historical trends; overview values correspond to the range's end.
 
@@ -24,11 +24,11 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 | Is speculative decoding helping? | Compare draft acceptance, output throughput, latency, and automatically collected draft/target GPU time. |
 | Are caches or devices under pressure? | Cache occupancy and hit rates, filesystem space, GPU utilization and memory, and CPU/memory usage. |
 | How are requests and replicas distributed? | Routing selection shares within each model and role, and autoscaling recommendations versus applied replicas. |
-| Why are requests waiting or being rejected? | Admission results, queue wait, and each frontend replica's occupancy and limits. |
+| Why are requests waiting or being rejected? | Per-model admission results, queue wait, and occupancy and limits in each frontend replica. |
 
 TTFT is first-token latency; E2EL is completion latency. TPOT is the average output-token interval per request; ITL measures individual intervals. Units are shown on each panel.
 
-In Admission, select a frontend Pod for replica details and expand the results or resources rows.
+In Admission, select a model and optionally a frontend Pod for replica details, then expand the results or resources rows. Limits and queues are independent per model in each replica; an all-model view does not represent a shared quota.
 
 ## Query logs
 
@@ -50,7 +50,7 @@ To receive notifications, connect a [Lark](integrations/lark/README.md), [Slack]
 
 ## Platform settings
 
-For a source installation, run platform updates from the checkout root with `-e .`, retaining registry settings and any `--engine-source` bindings. Reapply the original install command after upgrading Foretoken to update dashboards and telemetry together.
+Reapply the original `foretoken install` command to update dashboards and collection settings. Then run `foretoken deploy` with your deployment directory to update the serving applications. For source installations, run from the checkout root and retain `-e .`, registry settings, and any `--engine-source` bindings.
 
 ### Grafana login
 

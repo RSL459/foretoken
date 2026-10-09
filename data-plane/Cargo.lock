@@ -1188,6 +1188,7 @@ dependencies = [
 name = "foretoken-backend-registry"
 version = "0.0.1"
 dependencies = [
+ "foretoken-admission",
  "foretoken-artifacts",
  "foretoken-engine-core-client",
  "foretoken-kv-indexer",

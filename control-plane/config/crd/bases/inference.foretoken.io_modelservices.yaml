@@ -56,6 +56,47 @@ spec:
           spec:
             description: ModelServiceSpec defines the desired state of a model service.
             properties:
+              admission:
+                description: |-
+                  Admission replaces the frontend's entire admission block for this model.
+                  Limits apply independently in each frontend replica; omission uses its defaults.
+                properties:
+                  algorithm:
+                    default: allow_all
+                    minLength: 1
+                    type: string
+                  parameters:
+                    description: AdmissionParameters sets per-model concurrency and
+                      queue limits in each frontend process.
+                    properties:
+                      maxConcurrentRequests:
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 1
+                        type: integer
+                      maxQueuedRequests:
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 0
+                        type: integer
+                      queueTimeout:
+                        description: QueueTimeout limits queueing within the remaining
+                          request budget.
+                        minLength: 2
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive duration
+                          rule: duration(self) > duration('0s')
+                    required:
+                    - maxConcurrentRequests
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: concurrency admission requires parameters
+                  rule: self.algorithm != 'concurrency' || has(self.parameters)
+                - message: allow_all admission accepts no parameters
+                  rule: self.algorithm != 'allow_all' || !has(self.parameters)
               autoscaling:
                 description: |-
                   Autoscaling is evaluated by the ModelService controller. Algorithms remain
