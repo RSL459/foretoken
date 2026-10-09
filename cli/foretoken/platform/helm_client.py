@@ -152,6 +152,8 @@ class HelmClient:
         if include_defaults:
             args.append("--all")
         values = _decode_json(self.run([*args, "--output", "json"]).stdout)
+        if values is None and not include_defaults:
+            return {}
         if not isinstance(values, dict):
             raise DeploymentError("helm get values returned an unexpected JSON value")
         return values

@@ -364,7 +364,10 @@ class EditableDeployment:
             build["configuration"]["image"],
             build["binding"],
             timeout,
-            tools_image=image_tools_image(build["arguments"]),
+            tools_image=image_tools_image(
+                build["arguments"], build.get("registry_mirrors", {})
+            ),
+            registry_mirrors=build.get("registry_mirrors", {}),
             node=origin.node,
             containerd_socket=socket
             if self.state.get("engines") and "model-server" in pending
@@ -378,6 +381,11 @@ class EditableDeployment:
                     "docker.io",
                     "gcr.io",
                     "ghcr.io",
+                    *(
+                        endpoint
+                        for endpoints in build.get("registry_mirrors", {}).values()
+                        for endpoint in endpoints
+                    ),
                     *(
                         value
                         for key, value in build["arguments"].items()
