@@ -240,6 +240,11 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 
+	// PrefixCacheIsolation selects caller-bound caching when true and unsalted sharing when false.
+	// Omission preserves the request's cache_salt. The setting applies to every Pool and frontend.
+	// +optional
+	PrefixCacheIsolation *bool `json:"prefixCacheIsolation,omitempty"`
+
 	// InstanceAdmission limits accepted unfinished work in each instance; omission is unrestricted.
 	// +optional
 	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`

@@ -182,6 +182,10 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxProperties=16
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
+	// PrefixCacheIsolation pins the model's cache policy for this execution cohort.
+	// +optional
+	PrefixCacheIsolation *bool `json:"prefixCacheIsolation,omitempty"`
+
 	// InstanceAdmission retains the immutable startup limit of a protocol-zero application.
 	// Live-file applications use ModelPoolSpec.InstanceAdmission instead.
 	// +optional

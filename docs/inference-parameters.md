@@ -87,6 +87,27 @@ spec:
 
 Redeploy the model's configuration directory with `foretoken deploy`. Limits update online and accepted work continues. A full instance stops accepting new work until occupancy falls below the limit. Omit `instanceAdmission` for unlimited acceptance.
 
+## Prefix cache isolation
+
+Prefix caching reuses computation for repeated prompt prefixes. To separate this cache by authenticated caller, add the following to the ModelService YAML:
+
+```yaml
+spec:
+  prefixCacheIsolation: true
+```
+
+The setting applies to all Pools and frontends serving this model, across Chat Completions, text completions, Responses and Messages. It supports vLLM text and image generation.
+
+| Value | Cache sharing |
+| --- | --- |
+| `true` | Isolate prefixes by authenticated caller, ignoring the request body's `cache_salt`. |
+| `false` | Share unsalted prefixes across callers, ignoring the request body's `cache_salt`. |
+| Omitted or `null` | Use the request body's `cache_salt`; omission, `null` or an empty string uses unsalted prefixes. |
+
+Isolation requires an authentication gateway. Changing isolation leaves prefix caching and admission settings unchanged.
+
+Apply the model and frontend configuration directory with `foretoken deploy <directory>`. Changing this setting replaces model instances and switches to a separate cache domain, including for persistent shared caches.
+
 ## Common vLLM options
 
 | Engine option | Purpose |

@@ -604,6 +604,11 @@ spec:
                         ''ForetokenNVIDIAGPUPowerUsageHigh'') || (has(self.thresholds)
                         && has(self.thresholds.nvidiaPowerWatts))'
                 type: object
+              prefixCacheIsolation:
+                description: |-
+                  PrefixCacheIsolation selects caller-bound caching when true and unsalted sharing when false.
+                  Omission preserves the request's cache_salt. The setting applies to every Pool and frontend.
+                type: boolean
               profiling:
                 description: |-
                   Profiling prepares a profiler for every model Pool; omission preserves PyTorch support.

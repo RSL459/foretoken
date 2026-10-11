@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -174,7 +175,7 @@ func (reconciler *FrontendServiceReconciler) frontendsForPod(ctx context.Context
 			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}})
 			continue
 		}
-		if configuration.Name == frontendServingConfigMapName(frontend) && routingControllerOwnerMatches(configuration, inferencev1alpha1.GroupVersion.String(), "FrontendService", frontend.Name, frontend.UID) {
+		if (configuration.Name == frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion) || configuration.Name == frontendServingConfigMapName(frontend, frontendAdmissionConfigVersion)) && routingControllerOwnerMatches(configuration, inferencev1alpha1.GroupVersion.String(), "FrontendService", frontend.Name, frontend.UID) {
 			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(frontend)})
 		}
 	}
@@ -305,7 +306,8 @@ func (reconciler *FrontendServiceReconciler) sourceSelectionAllowed(ctx context.
 }
 
 // Serving configuration protocol selected with the frontend application.
-const frontendServingConfigVersion uint32 = 3
+const frontendServingConfigVersion uint32 = 4
+const frontendAdmissionConfigVersion uint32 = 3
 const frontendServingConfigAnnotation = "inference.foretoken.io/serving-config-protocol"
 
 // reconcileFrontend keeps serving state independent of optional alert configuration failures.
@@ -382,14 +384,11 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 				base := frontend.DeepCopy()
 				frontend.Status.Application = selection
 				frontend.Status.ServingConfigVersion = 0
-				if current.Spec.Template.Annotations[frontendServingConfigAnnotation] == fmt.Sprint(frontendServingConfigVersion) {
-					frontend.Status.ServingConfigVersion = frontendServingConfigVersion
+				if version, err := strconv.ParseUint(current.Spec.Template.Annotations[frontendServingConfigAnnotation], 10, 32); err == nil && version >= uint64(frontendAdmissionConfigVersion) && version <= uint64(frontendServingConfigVersion) {
+					frontend.Status.ServingConfigVersion = uint32(version)
 				}
 				if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 					return ctrl.Result{}, fmt.Errorf("retain frontend application configuration: %w", err)
-				}
-				if frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
-					return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, deploymentRequired)
 				}
 			}
 		} else if !apierrors.IsNotFound(err) {
@@ -408,13 +407,19 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	// Application selection and its serving protocol advance together. A platform update
 	// leaves an explicitly retained application and its existing configuration untouched.
-	if retained && frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, deploymentRequired)
+	if retained && frontend.Status.ServingConfigVersion < frontendAdmissionConfigVersion {
+		_, membershipErr := reconciler.reconcileServingSnapshot(ctx, frontend, nil, true)
+		statusErr := reconciler.updateStatus(ctx, frontend, deploymentRequired)
+		return ctrl.Result{}, errors.Join(membershipErr, statusErr)
 	}
-	if !reflect.DeepEqual(frontend.Status.Application, selection) || frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
+	selectedVersion := frontend.Status.ServingConfigVersion
+	if !retained {
+		selectedVersion = frontendServingConfigVersion
+	}
+	if !reflect.DeepEqual(frontend.Status.Application, selection) || frontend.Status.ServingConfigVersion != selectedVersion {
 		base := frontend.DeepCopy()
 		frontend.Status.Application = selection
-		frontend.Status.ServingConfigVersion = frontendServingConfigVersion
+		frontend.Status.ServingConfigVersion = selectedVersion
 		if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 			return ctrl.Result{}, fmt.Errorf("persist frontend application selection: %w", err)
 		}
@@ -424,7 +429,12 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, frontend.Namespace); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
 	}
-	_, projectionErr := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items, false)
+	published, projectionErr := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items, false)
+	if !published && projectionErr != nil {
+		// Rejected serving intent must not prevent retirement of terminated execution members.
+		_, membershipErr := reconciler.reconcileServingSnapshot(ctx, frontend, nil, true)
+		projectionErr = errors.Join(projectionErr, membershipErr)
+	}
 
 	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, frontend.Namespace)
 	if err != nil {
@@ -529,6 +539,9 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		var backendRequired *backendDeploymentRequiredError
 		if errors.As(projectionErr, &backendRequired) {
 			configuration.Reason = "BackendDeploymentRequired"
+		}
+		if errors.Is(projectionErr, errFrontendCacheIsolationUnsupported) {
+			configuration.Reason = "FrontendDeploymentRequired"
 		}
 	}
 	state := frontendState{

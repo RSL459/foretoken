@@ -57,6 +57,8 @@ pub struct SnapshotModel {
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_cache_isolation: Option<bool>,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
     pub admission_target_sets: Vec<RouteTargetSet>,
@@ -77,6 +79,8 @@ pub struct SnapshotEpdComponent {
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_cache_isolation: Option<bool>,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
     #[serde(default)]
@@ -114,6 +118,8 @@ pub struct SnapshotPdComponent {
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_cache_isolation: Option<bool>,
     pub profile_name: String,
     pub profile_revision: String,
     pub connector: String,
@@ -152,6 +158,8 @@ pub struct SnapshotGroup {
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_cache_isolation: Option<bool>,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
     #[serde(default)]
@@ -168,6 +176,7 @@ pub struct ModelIdentity {
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
+    pub prefix_cache_isolation: Option<bool>,
     pub capabilities: BTreeSet<String>,
 }
 impl ServingSnapshot {
@@ -220,7 +229,15 @@ impl ServingSnapshot {
     /// Registry projection uses this validation before materializing routes; the returned map is derived for the caller.
     pub fn model_identities(&self) -> Result<BTreeMap<String, ModelIdentity>, SnapshotError> {
         let mut identities = BTreeMap::<String, ModelIdentity>::new();
-        for (model, source, revision, tokenizer, tokenizer_revision, capabilities) in self
+        for (
+            model,
+            source,
+            revision,
+            tokenizer,
+            tokenizer_revision,
+            prefix_cache_isolation,
+            capabilities,
+        ) in self
             .models
             .iter()
             .map(|model| {
@@ -230,6 +247,7 @@ impl ServingSnapshot {
                     &model.revision,
                     &model.tokenizer,
                     &model.tokenizer_revision,
+                    model.prefix_cache_isolation,
                     &model.capabilities,
                 )
             })
@@ -240,6 +258,7 @@ impl ServingSnapshot {
                     &g.revision,
                     &g.tokenizer,
                     &g.tokenizer_revision,
+                    g.prefix_cache_isolation,
                     &g.capabilities,
                 )
             }))
@@ -250,6 +269,7 @@ impl ServingSnapshot {
                     &c.revision,
                     &c.tokenizer,
                     &c.tokenizer_revision,
+                    c.prefix_cache_isolation,
                     &c.capabilities,
                 )
             }))
@@ -260,6 +280,7 @@ impl ServingSnapshot {
                     &c.revision,
                     &c.tokenizer,
                     &c.tokenizer_revision,
+                    c.prefix_cache_isolation,
                     &c.capabilities,
                 )
             }))
@@ -276,6 +297,7 @@ impl ServingSnapshot {
                 revision: revision.clone(),
                 tokenizer: tokenizer.clone(),
                 tokenizer_revision: tokenizer_revision.clone(),
+                prefix_cache_isolation,
                 capabilities: capabilities.clone(),
             };
             match identities.get_mut(model) {
@@ -283,7 +305,8 @@ impl ServingSnapshot {
                     if existing.source != value.source
                         || existing.revision != value.revision
                         || existing.tokenizer != value.tokenizer
-                        || existing.tokenizer_revision != value.tokenizer_revision =>
+                        || existing.tokenizer_revision != value.tokenizer_revision
+                        || existing.prefix_cache_isolation != value.prefix_cache_isolation =>
                 {
                     return Err(SnapshotError::ConflictingIdentity(model.clone()));
                 }
@@ -326,7 +349,9 @@ pub enum SnapshotError {
     InvalidPdPipelineScope(String),
     #[error("routing snapshot model {0:?} cannot mix aggregate and P/D routes")]
     MixedModelRoles(String),
-    #[error("routing snapshot model {0:?} has conflicting revision or tokenizer identity")]
+    #[error(
+        "routing snapshot model {0:?} has conflicting model, tokenizer or prefix-cache settings"
+    )]
     ConflictingIdentity(String),
     #[error("routing snapshot endpoint {endpoint:?} is invalid: {message}")]
     InvalidEndpoint { endpoint: String, message: String },

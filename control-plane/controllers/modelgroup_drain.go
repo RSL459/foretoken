@@ -221,7 +221,7 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 			continue
 		}
 		configMap := new(corev1.ConfigMap)
-		key := client.ObjectKey{Namespace: frontend.Namespace, Name: frontendServingConfigMapName(frontend)}
+		key := client.ObjectKey{Namespace: frontend.Namespace, Name: frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion)}
 		if err := reconciler.Get(ctx, key, configMap); err != nil {
 			if apierrors.IsNotFound(err) {
 				return false, nil
@@ -258,6 +258,19 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 			if generation < snapshot.Version {
 				return false, nil
 			}
+		}
+		// A legacy write may succeed before the current protocol's publication. Check the
+		// durable floor after Pod observation, including versions not yet loaded by any Pod.
+		reader := reconciler.APIReader
+		if reader == nil {
+			reader = reconciler.Client
+		}
+		latest := new(inferencev1alpha1.FrontendService)
+		if err := reader.Get(ctx, client.ObjectKeyFromObject(frontend), latest); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		if latest.UID != frontend.UID || latest.Status.ServingSnapshotVersion != snapshot.Version || latest.Status.ServingConfigVersion != frontend.Status.ServingConfigVersion {
+			return false, nil
 		}
 	}
 	return true, nil

@@ -229,7 +229,8 @@ def install_mooncake_dependencies() -> None:
             check=True,
         )
         command.extend(["--reinstall-package", package])
-    subprocess.run(command + [f"{package}==0.3.12.post1"], check=True)
+    version = Path(__file__).with_name("mooncake.version").read_text().strip()
+    subprocess.run(command + [f"{package}=={version}"], check=True)
 
 
 def check_installed_dependencies() -> None:

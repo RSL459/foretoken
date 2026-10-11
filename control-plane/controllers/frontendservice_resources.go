@@ -23,12 +23,16 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-func frontendServingConfigMapName(frontend *inferencev1alpha1.FrontendService) string {
+// frontendServingConfigMapName keeps each application's immutable Pod volume on its supported protocol.
+func frontendServingConfigMapName(frontend *inferencev1alpha1.FrontendService, version uint32) string {
 	name := frontend.Name + "-serving"
-	if len(name) <= 63 {
-		return name
+	if len(name) > 63 {
+		name = kvChildName(name, string(frontend.UID))
 	}
-	return kvChildName(name, string(frontend.UID))
+	if version > frontendAdmissionConfigVersion {
+		name += fmt.Sprintf("-v%d", version)
+	}
+	return name
 }
 
 // Derive the frontend workload, stable Service, and optional gateway route as one desired-state
@@ -59,7 +63,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	allowPrivilegeEscalation := false
 	readOnlyRootFilesystem := true
 	terminationGracePeriodSeconds := drainSeconds + 5
-	servingConfigMap := frontendServingConfigMapName(frontend)
+	servingConfigMap := frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion)
 	if frontend.Spec.RouterPipeline.Filter.Algorithm == "" ||
 		frontend.Spec.RouterPipeline.Scorer.Algorithm == "" ||
 		frontend.Spec.RouterPipeline.Picker.Algorithm == "" {
@@ -80,7 +84,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_DRAIN_SECONDS", Value: strconv.FormatInt(drainSeconds, 10)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
 	}
-	annotations := map[string]string{frontendServingConfigAnnotation: fmt.Sprint(frontendServingConfigVersion)}
+	annotations := map[string]string{frontendServingConfigAnnotation: fmt.Sprint(frontend.Status.ServingConfigVersion)}
 	if profile.ApplicationURL != "" {
 		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: profile.ApplicationFiles.Directory()})
 	}

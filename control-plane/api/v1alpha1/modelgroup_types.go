@@ -239,6 +239,10 @@ type ModelGroupRuntime struct {
 	// +listType=atomic
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
+	// PrefixCacheIsolation pins the cache namespace and request policy for this instance.
+	// +optional
+	PrefixCacheIsolation *bool `json:"prefixCacheIsolation,omitempty"`
+
 	// InstanceAdmissionProtocol pins the configuration interface of the selected executable.
 	// Zero retains startup-only limits; one selects live file configuration.
 	// +optional
