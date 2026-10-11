@@ -19,7 +19,7 @@ spec:
     gpu-memory-utilization: 0.85
 ```
 
-值直接使用 YAML 布尔值、数字、字符串、列表或对象。未填写的选项沿用引擎默认值，`null` 表示不传该原生选项。具体取值需与引擎镜像、模型及硬件匹配。
+值直接使用 YAML 布尔值、数字、字符串、列表或对象。省略选项或填写 `null` 即使用默认值。具体取值需与引擎镜像、模型及硬件匹配。
 
 ## 模型环境变量
 
@@ -98,8 +98,8 @@ spec:
 | `gpu-memory-utilization` | 每个引擎实例可使用的显存比例 |
 | `max-num-seqs` | 每轮调度的最大序列数 |
 | `max-num-batched-tokens` | 每轮调度的最大 token 数 |
-| `enforce-eager` | `true` 时禁用计算图捕获 |
-| `enable-prefix-caching` | `true` 开启前缀缓存，`false` 关闭；Encoder Pool 始终关闭 |
+| `enforce-eager` | `true` 时禁用计算图捕获；Encoder Pool 默认为 `true` |
+| `enable-prefix-caching` | `true` 开启 KV 前缀缓存，`false` 关闭；Encoder Pool 固定为 `false` |
 | `speculative-config` | 推测解码的原生配置字典 |
 | `tensor-parallel-size` | 张量并行度（TP） |
 | `pipeline-parallel-size` | 流水线并行度（PP） |
@@ -136,4 +136,6 @@ spec:
 
 ## 平台管理的选项
 
-模型标识、启动端点、传输连接器和性能剖析由 Foretoken 管理，其余原生选项交给所选引擎解释。完整选项见 [vLLM 参数文档](https://docs.vllm.ai/en/latest/configuration/engine_args/)；当前已实现的 backend 为 vLLM。
+模型、tokenizer、节点数量和缓存传输分别通过 `spec.model`、`spec.tokenizer`、`nodes`、`kvCache` 和 `ecProfile` 配置，Foretoken 据此设置启动参数。启用运行时缓存时，原生 profiler 配置由性能剖析功能管理；mcTracer 还会选择对应的 worker。多节点副本使用 `mp` executor。
+
+其余原生选项交给 vLLM，包括 `ec-manager-config`，以及未使用 mcTracer 时的自定义 worker。完整选项见 [vLLM 参数文档](https://docs.vllm.ai/en/latest/configuration/engine_args/)。
