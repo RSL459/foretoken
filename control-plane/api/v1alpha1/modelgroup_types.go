@@ -370,7 +370,7 @@ type ModelGroupStatus struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=type
-	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:MaxItems=9
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
