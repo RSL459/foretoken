@@ -198,4 +198,4 @@ foretoken plot results/baseline results/candidate \
   --output-dir results/comparison
 ```
 
-重复 `--metric` 可选择多个指标，`--method` 可选择已命名的方法。性能对照按相同负载分组，具体数值、样本数和运行状态可查看 CSV。评分口径与评测报告见[质量结果](eval/README_zh.md#查看评分)。
+重复 `--metric` 可选择多个指标，`--method` 可选择已命名的方法。通过图表比较结果，在对应 CSV 中查看具体数值和条件差异。评分说明见[质量结果](eval/README_zh.md#查看评分)。

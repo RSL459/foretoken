@@ -198,4 +198,4 @@ foretoken plot results/baseline results/candidate \
   --output-dir results/comparison
 ```
 
-Repeat `--metric` to select more metrics, or use `--method` to select named methods. Performance comparisons group matching workloads; use the CSV tables to inspect values, sample counts and run status. For score definitions and evaluator reports, see [quality results](eval/README.md#read-scores).
+Repeat `--metric` to select more metrics, or use `--method` to select named methods. Compare results in the figures and inspect values and condition differences in the accompanying CSV files. For score definitions, see [quality results](eval/README.md#read-scores).

@@ -69,6 +69,78 @@ def _conditions(config: dict[str, Any]) -> dict[str, Any]:
     return conditions
 
 
+def _environment_settings(directory: Path) -> dict[str, Any] | None:
+    """Read existing serving declarations for comparison CSVs, excluding runtime instance identities."""
+    environment_path = directory / "environment.json"
+    serving_path = directory / "serving_environments.json"
+    if not environment_path.is_file() and not serving_path.is_file():
+        return None
+    environment = json.loads(environment_path.read_text(encoding="utf-8")) if environment_path.is_file() else {}
+    settings = {"client": environment.get("client")}
+    phases = {phase: environment[phase] for phase in ("before", "after") if phase in environment}
+    if serving_path.is_file():
+        comparison = json.loads(serving_path.read_text(encoding="utf-8"))
+        phases = {"reference": comparison.get("reference", {})}
+        phases.update({row["label"]: row for row in comparison.get("candidates", [])})
+    for phase, snapshot in phases.items():
+        services = []
+        for service in snapshot.get("services", []):
+            spec = service["spec"]
+            service_settings = {key: spec[key] for key in (
+                "model", "backend", "engineArgs", "env", "resources", "replicas", "nodes",
+            ) if key in spec}
+            if "modelPools" in spec:
+                service_settings["modelPoolNames"] = sorted(pool["name"] for pool in spec["modelPools"])
+                service_settings["modelPools"] = {pool["name"]: {key: pool[key] for key in (
+                    "role", "engineArgs", "env", "resources", "replicas", "nodes",
+                ) if key in pool} for pool in spec["modelPools"]}
+            services.append(service_settings)
+        groups = [{
+            "artifacts": group.get("artifacts"), "resources": group.get("resources"),
+            "parallelism": group.get("parallelism"),
+            "runtime": {key: group["runtime"][key] for key in (
+                "backend", "engineArgs", "env", "image", "applicationURL",
+            ) if key in group["runtime"]},
+        } for group in snapshot.get("groups", [])]
+        settings[phase] = {
+            "source": snapshot.get("source"),
+            "declared_gpu_count": snapshot.get("declared_gpu_count"),
+            "services": sorted(services, key=lambda value: json.dumps(value, sort_keys=True)) or None,
+            "groups": sorted(groups, key=lambda value: json.dumps(value, sort_keys=True)) or None,
+        }
+    return settings
+
+
+def _comparison_changes(records: list[dict[str, Any]]) -> None:
+    """Add only differing recorded settings to run-level CSV records, leaving scores and summaries intact."""
+    def fields(value: Any, prefix: str = "") -> dict[str, Any]:
+        if isinstance(value, dict) and value:
+            return {field: item for key, child in value.items()
+                    for field, item in fields(child, f"{prefix}.{key}" if prefix else key).items()}
+        if isinstance(value, list) and value:
+            return {field: item for index, child in enumerate(value)
+                    for field, item in fields(child, f"{prefix}.{index + 1}").items()}
+        return {prefix: value}
+
+    for section in ("conditions", "environment_settings"):
+        values = []
+        for record in records:
+            value = record.get(section)
+            if section == "conditions" and value is not None and value.get("mode") == "evaluation" and value.get("evaluation") is None:
+                value = None
+            values.append(fields(value) if value is not None else None)
+        observed = [value for value in values if value is not None]
+        keys = {key for value in observed for key in value}
+        changed = {key for key in keys if len({
+            (key in value, json.dumps(value.get(key), sort_keys=True)) for value in observed
+        }) > 1}
+        output = "conditions_changes" if section == "conditions" else "environment_changes"
+        for record, value in zip(records, values):
+            record[output] = {key: value[key] for key in sorted(changed) if value is not None and key in value}
+            if section == "environment_settings":
+                record.pop(section, None)
+
+
 def _leaf(
     directory: Path, configuration: Path, conditions: dict[str, Any], method: str,
     exit_code: int | None, started: bool,
@@ -302,6 +374,17 @@ def read_saved_results(
                 continue
             observed.add(result_path)
             measured = saved.metrics or {}
+            quality = saved.conditions.get("mode") == "evaluation"
+            if quality:
+                from benchmarks.results.evaluation import read_quality_conditions
+
+                saved.conditions["evaluation"] = read_quality_conditions(
+                    saved.conditions["evaluator"], saved.directory / "native",
+                )
+            for kind in ("distribution_comparison", "greedy_comparison"):
+                if kind in measured:
+                    saved.conditions["protocol"] = measured[kind].get("protocol")
+                    saved.conditions["reference_model"] = measured[kind].get("reference_model")
             comparison = comparison_charts(measured)
             charts = []
             if comparison is not None:
@@ -322,15 +405,16 @@ def read_saved_results(
             label = labels[source.group] + (f" / {saved.method}" if saved.method != "default" else "")
             # Missing workload configuration is unknown, not equal to another run's.
             fixed = (json.dumps(saved.conditions, sort_keys=True),
-                     saved.directory if saved.configuration is None else None)
+                     saved.directory if saved.configuration is None or quality and saved.conditions["evaluation"] is None else None)
             combination = combinations.setdefault(fixed, f"workload-{len(combinations) + 1}")
             runs.append({**identity, "method": saved.method, "methods": chosen,
                          "result": str(saved.directory), "measured": saved.metrics is not None or bool(charts),
                          "started": saved.started, "measurement_exit_code": saved.exit_code,
                          "config": str(saved.configuration) if saved.configuration is not None else None,
                          "conditions": saved.conditions,
-                         "environment": str(saved.directory / "environment.json")
-                         if (saved.directory / "environment.json").is_file() else None,
+                         "environment": next((str(path) for name in ("environment.json", "serving_environments.json")
+                                              if (path := saved.directory / name).is_file()), None),
+                         "environment_settings": _environment_settings(saved.directory),
                          **{key: measured.get(key) for key in ("request_num", "success_num", "failed_num")}})
             if charts:
                 for chart in charts:
@@ -372,6 +456,7 @@ def read_saved_results(
         raise ValueError("Unknown plot methods: " + ", ".join(sorted(unknown)))
     from benchmarks.sweeps.core import summarize_sweep
 
+    _comparison_changes(runs)
     summary = summarize_sweep(points)
     for row in summary:
         row.update(repetition_counts[row["method"], row["combination"]])

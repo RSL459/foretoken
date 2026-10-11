@@ -547,6 +547,9 @@ def render_results(
             charts += gpu_allocation_charts(source)
         out.mkdir(parents=True, exist_ok=True)
         result = {}
+        if "evaluation_comparison" in run_metrics:
+            file = _table(out / "comparison-runs", read_saved_results((source,), methods=methods).runs)
+            result[file.name] = file
         if "scores" in run_metrics:
             file = _table(out / "quality-scores", run_metrics["scores"])
             result[file.name] = file
