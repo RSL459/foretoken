@@ -5,8 +5,7 @@
 
 from __future__ import annotations
 
-import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -523,47 +522,43 @@ class PlatformLifecycle:
             else (),
         )
 
-        source_executor = (
-            ThreadPoolExecutor(max_workers=1) if command.editable is not None else None
-        )
+        source_executor = None
         source_future = None
-        source_result = None
+        dependencies: Future[None] = Future()
+        # Only the worker enters source contexts. Join it before the outer stack
+        # closes them, preserving installation errors through normal context exit.
+        source_artifacts = artifacts.enter_context(ExitStack())
         try:
-            if source_executor is not None:
-                source_values = (*stored_values, *values)
-                source_root = Path(command.editable).expanduser().resolve()
-                installed_images = (
-                    helm.platform_image_references(platform)
-                    if platform_exists
-                    else None
+            if command.editable is not None:
+                # Bootstrap shared storage and its namespace before Helm releases
+                # can concurrently create resources in that namespace.
+                origin = helm.prepare_source_origin(
+                    Path(command.editable).expanduser().resolve(),
+                    (*stored_values, *values),
+                    command.timeout,
                 )
-
-                def prepare_source() -> tuple[Any, Any]:
-                    """Prepare source artifacts while independent platform releases reconcile."""
-                    source_helm = Helm(default_platform_config(self._oci_registry))
-                    origin = source_helm.prepare_source_origin(
-                        source_root, source_values, command.timeout
-                    )
-                    context = prepare_source_images(
-                        command,
-                        platform.namespace,
-                        source_values,
-                        source_runtime_image,
-                        origin=origin,
-                        installed_images=installed_images,
-                        build_metax_runtime=build_metax_runtime,
-                        runtime_backend=runtime_selection.backend
-                        if runtime_selection
-                        else "nvidia",
-                        saved_arguments=source_build_arguments,
-                    )
-                    try:
-                        return context, context.__enter__()
-                    except BaseException:
-                        context.__exit__(*sys.exc_info())
-                        raise
-
-                source_future = source_executor.submit(prepare_source)
+                context = prepare_source_images(
+                    command,
+                    platform.namespace,
+                    (*stored_values, *values),
+                    source_runtime_image,
+                    origin=origin,
+                    installed_images=(
+                        helm.platform_image_references(platform)
+                        if platform_exists
+                        else None
+                    ),
+                    build_metax_runtime=build_metax_runtime,
+                    runtime_backend=runtime_selection.backend
+                    if runtime_selection
+                    else "nvidia",
+                    saved_arguments=source_build_arguments,
+                    before_delivery=dependencies.result,
+                )
+                source_executor = ThreadPoolExecutor(max_workers=1)
+                source_future = source_executor.submit(
+                    source_artifacts.enter_context, context
+                )
 
             if install_managed_prometheus:
                 helm.install_prometheus(
@@ -638,24 +633,17 @@ class PlatformLifecycle:
             log_endpoint, log_storage_statefulset = self._logs.install(
                 log_config, command.timeout
             )
-            source_images = None
-            if source_future is not None:
-                source_result = source_future.result()
-                source_context, source_images = source_result
-                artifacts.callback(source_context.__exit__, None, None, None)
-        except BaseException:
-            failure = sys.exc_info()
-            if source_executor is not None:
-                source_executor.shutdown(wait=True)
-                if (
-                    source_future is not None
-                    and source_result is None
-                    and source_future.exception() is None
-                ):
-                    orphan_context, _ = source_future.result()
-                    orphan_context.__exit__(*failure)
+            dependencies.set_result(None)
+            source_images = (
+                source_future.result() if source_future is not None else None
+            )
+        except BaseException as error:
+            if not dependencies.done():
+                dependencies.set_exception(error)
             raise
-        else:
+        finally:
+            # Resolve dependency success or failure before joining: the source
+            # worker may be waiting to deliver node images immediately before Helm.
             if source_executor is not None:
                 source_executor.shutdown(wait=True)
 
