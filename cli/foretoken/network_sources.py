@@ -288,6 +288,31 @@ def platform_image_reference(
     return select_platform_oci_reference(reference, previous)
 
 
+def select_platform_image_sources(
+    references: Mapping[str, str],
+    registry: str | None = None,
+    *,
+    previous: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Resolve a chart's image defaults concurrently, preserving its keys and prior choices."""
+    previous = previous or {}
+    with ThreadPoolExecutor() as executor:
+        # Coalesce shared images before submission; the per-image cache does not
+        # prevent duplicate probes when concurrent callers both miss it.
+        pending = {}
+        for key, reference in references.items():
+            prior = previous.get(key)
+            selection = (reference, prior)
+            if selection not in pending:
+                pending[selection] = executor.submit(
+                    platform_image_reference, reference, registry, previous=prior
+                )
+        return {
+            key: pending[(reference, previous.get(key))].result()
+            for key, reference in references.items()
+        }
+
+
 @cache
 def select_platform_oci_reference(reference: str, previous: str | None = None) -> str:
     """Select an anonymous source for a CLI-owned public image or OCI chart default.
