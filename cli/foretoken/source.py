@@ -362,11 +362,14 @@ def _local_candidates(directory: Path) -> Iterator[None]:
 
 
 def has_source_state(kubectl: Kubectl) -> bool:
-    """Identify installed or interrupted source builds belonging to this actual cluster."""
-    if not _has_server_binding(kubectl):
-        return False
-    directory = _state_directory(kubectl)
-    return any((directory / name).is_file() for name in ("install.json", "build.json"))
+    """Identify source builds for uninstall from local records or owned cluster caches."""
+    if _has_server_binding(kubectl):
+        directory = _state_directory(kubectl)
+        if any((directory / name).is_file() for name in ("install.json", "build.json")):
+            return True
+    return bool(kubectl.list_all_resources(
+        ("persistentvolumeclaims",), label_selector=_BUILD_CACHE_LABEL + "=true"
+    ))
 
 
 def forget_install(kubectl: Kubectl) -> None:
