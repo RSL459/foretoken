@@ -391,17 +391,18 @@ class Helm(HelmClient):
             self._config.leader_worker.release_name, self._config.namespace
         )
 
-    def leader_worker_crds(self) -> str:
-        """Read the CRDs shipped with the selected LeaderWorkerSet chart for upgrades."""
-        chart = self._config.leader_worker
-        with self._prepared_chart(chart.source, chart.version) as prepared:
-            return self.run(["show", "crds", str(prepared)]).stdout
-
-    def install_leader_worker(self, release: ReleaseRef, timeout: str) -> None:
-        """Install or upgrade the CLI-owned LeaderWorkerSet controller."""
+    def install_leader_worker(
+        self, release: ReleaseRef, timeout: str,
+        *, apply_crds: Callable[[str], None] | None = None,
+    ) -> None:
+        """Install the owned LWS release, updating CRDs from the same chart on upgrade."""
         chart = self._config.leader_worker
         values = self._stored_chart_values(release)
         with self._prepared_chart(chart.source, chart.version) as prepared:
+            if apply_crds is not None:
+                # Helm leaves CRDs unchanged on upgrade. The lifecycle applies
+                # this chart's definitions through its existing cluster client.
+                apply_crds(self.run(["show", "crds", str(prepared)]).stdout)
             args = self._upgrade_install_args(release, str(prepared))
             self._set_chart_image_sources(
                 prepared, ("image.manager",), release=release, overrides=values
