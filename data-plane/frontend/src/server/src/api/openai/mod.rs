@@ -118,7 +118,7 @@ async fn tokenize(
     };
     let Json(request) = match request {
         Ok(request) => request,
-        Err(_) => return client_error(),
+        Err(error) => return json_error(error),
     };
     let result = match request {
         TokenizeRequest::Completion(request) => {
@@ -143,10 +143,12 @@ async fn tokenize(
                 Err(error) => return openai_error(error),
             };
             if request.add_generation_prompt && request.continue_final_message {
-                return client_error();
+                return client_error(
+                    "add_generation_prompt and continue_final_message cannot both be true",
+                );
             }
-            if validate_multimodal_input(&request.messages).is_err() {
-                return client_error();
+            if let Err(error) = validate_multimodal_input(&request.messages) {
+                return client_error(error);
             }
             let messages = match request
                 .messages
@@ -155,7 +157,7 @@ async fn tokenize(
                 .collect::<Result<Vec<_>, _>>()
             {
                 Ok(messages) => messages,
-                Err(error) => return openai_error(error),
+                Err(error) => return client_error(error),
             };
             let tools = match request
                 .tools
@@ -164,11 +166,11 @@ async fn tokenize(
                 .collect::<Result<Vec<_>, _>>()
             {
                 Ok(tools) => tools,
-                Err(error) => return openai_error(error),
+                Err(error) => return client_error(error),
             };
             let tool_context = match ResolvedToolContext::new(&messages, tools, None, true) {
                 Ok(tool_context) => tool_context,
-                Err(_) => return client_error(),
+                Err(error) => return client_error(error.to_string()),
             };
             let generation_prompt_mode = if request.continue_final_message {
                 GenerationPromptMode::ContinueFinalAssistant
@@ -199,6 +201,9 @@ async fn tokenize(
                 session_id: None,
                 lora_request: None,
             };
+            if let Err(error) = chat.validate() {
+                return client_error(error.to_string());
+            }
             state
                 .generation
                 .tokenize_chat(&model, chat, request.return_token_strs, origin)
@@ -228,7 +233,7 @@ async fn detokenize(
     };
     let Json(request) = match request {
         Ok(request) => request,
-        Err(_) => return client_error(),
+        Err(error) => return json_error(error),
     };
     let model = match resolve_model(&state, request.model) {
         Ok(model) => model,
@@ -656,19 +661,32 @@ fn decode_options(stop: Option<Stop>) -> TextDecodeOptions {
         ..Default::default()
     }
 }
-fn client_error() -> Response {
-    openai_error(GenerationError::InvalidRequest)
+/// Returns a request-validation diagnostic in the OpenAI error envelope.
+fn client_error(message: impl Into<String>) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": {
+            "message": message.into(), "type": "invalid_request_error", "code": "invalid_request"
+        }})),
+    )
+        .into_response()
+}
+
+/// Preserves extractor diagnostics and transport statuses; JSON content errors remain HTTP 400.
+fn json_error(error: JsonRejection) -> Response {
+    let status = match error.status() {
+        StatusCode::UNPROCESSABLE_ENTITY => StatusCode::BAD_REQUEST,
+        status => status,
+    };
+    let mut response = client_error(error.body_text());
+    *response.status_mut() = status;
+    response
 }
 
 /// Maps every typed pre-response generation failure to a fixed OpenAI error.
 pub(crate) fn openai_error(error: GenerationError) -> Response {
     let (status, message, kind, code) = match error {
-        GenerationError::InvalidRequest => (
-            StatusCode::BAD_REQUEST,
-            "invalid request",
-            "invalid_request_error",
-            "invalid_request",
-        ),
+        GenerationError::InvalidRequest => return client_error("invalid request"),
         GenerationError::ModelNotFound => (
             StatusCode::NOT_FOUND,
             "model not found",
@@ -746,21 +764,32 @@ async fn completions(
     let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let Json(request) = match request {
         Ok(request) => request,
-        Err(_) => return client_error(),
+        Err(error) => return json_error(error),
     };
     let stream = request.stream;
     let include_usage = request.stream_options.include_usage;
     let mut sampling_params = completion_sampling(&request);
     let prompts = request.prompt.into_prompts();
     let best_of = request.best_of.unwrap_or(request.n);
-    if include_usage && !stream
-        || prompts.is_empty()
-        || request.n == 0
-        || best_of < request.n
-        || prompts.len().saturating_mul(best_of as usize) > MAX_COMPLETION_FAN_OUT
-        || (stream && (prompts.len() != 1 || request.best_of.is_some()))
-    {
-        return client_error();
+    if include_usage && !stream {
+        return client_error("stream_options.include_usage requires stream=true");
+    }
+    if request.n == 0 {
+        return client_error("n must be at least 1");
+    }
+    if best_of < request.n {
+        return client_error("best_of must be greater than or equal to n");
+    }
+    if prompts.len().saturating_mul(best_of as usize) > MAX_COMPLETION_FAN_OUT {
+        return client_error(format!(
+            "prompt count multiplied by best_of cannot exceed {MAX_COMPLETION_FAN_OUT}"
+        ));
+    }
+    if stream && prompts.len() != 1 {
+        return client_error("streaming completions require exactly one prompt");
+    }
+    if stream && request.best_of.is_some() {
+        return client_error("best_of is not supported with stream=true");
     }
 
     // `best_of` needs sampled-token probabilities for ranking even when the public response
@@ -838,11 +867,11 @@ async fn chat_completions(
     let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let Json(request) = match request {
         Ok(request) => request,
-        Err(_) => return client_error(),
+        Err(error) => return json_error(error),
     };
     let id = server_request_id("chatcmpl");
-    if validate_multimodal_input(&request.messages).is_err() {
-        return client_error();
+    if let Err(error) = validate_multimodal_input(&request.messages) {
+        return client_error(error);
     }
     let messages = match request
         .messages
@@ -851,7 +880,7 @@ async fn chat_completions(
         .collect::<Result<Vec<_>, _>>()
     {
         Ok(messages) => messages,
-        Err(_) => return client_error(),
+        Err(error) => return client_error(error),
     };
     let tools = match request
         .tools
@@ -860,7 +889,7 @@ async fn chat_completions(
         .collect::<Result<Vec<_>, _>>()
     {
         Ok(tools) => tools,
-        Err(_) => return client_error(),
+        Err(error) => return client_error(error),
     };
     let tool_choice = match request
         .tool_choice
@@ -872,19 +901,20 @@ async fn chat_completions(
         // OpenAI's omitted tool_choice defaults to auto when tools are supplied.
         Ok(None) if !tools.is_empty() => ChatToolChoice::Auto,
         Ok(None) => ChatToolChoice::None,
-        Err(_) => return client_error(),
+        Err(error) => return client_error(error),
     };
 
     // Lower sampling and rendering options before entering the shared generation lifecycle.
     let stream = request.stream;
     let include_usage = request.stream_options.include_usage;
     if include_usage && !stream {
-        return client_error();
+        return client_error("stream_options.include_usage requires stream=true");
     }
-    if request.top_logprobs.is_some_and(|value| value > 20)
-        || (!request.logprobs && request.top_logprobs.is_some())
-    {
-        return client_error();
+    if request.top_logprobs.is_some_and(|value| value > 20) {
+        return client_error("top_logprobs must be at most 20");
+    }
+    if !request.logprobs && request.top_logprobs.is_some() {
+        return client_error("top_logprobs requires logprobs=true");
     }
     let mut sampling_params = sampling(request.temperature, request.top_p, request.max_tokens);
     sampling_params.top_k = request.top_k;
@@ -904,7 +934,7 @@ async fn chat_completions(
         .then_some(request.top_logprobs.unwrap_or_default() as i32);
     let (response_format, structured_output) = match response_format(request.response_format) {
         Ok(format) => format,
-        Err(_) => return client_error(),
+        Err(error) => return client_error(error),
     };
     if let Some(constraint) = structured_output {
         sampling_params.structured_outputs = Some(constraint);
@@ -917,7 +947,7 @@ async fn chat_completions(
         request.parallel_tool_calls,
     ) {
         Ok(tool_context) => tool_context,
-        Err(_) => return client_error(),
+        Err(error) => return client_error(error.to_string()),
     };
     let chat = ChatRequest {
         request_id: id.clone(),
@@ -939,8 +969,8 @@ async fn chat_completions(
         session_id: request.session_id.clone(),
         lora_request: None,
     };
-    if chat.validate().is_err() {
-        return client_error();
+    if let Err(error) = chat.validate() {
+        return client_error(error.to_string());
     }
     let generated = match state
         .generate_chat(request.model, chat, include_reasoning, timing)
@@ -956,18 +986,19 @@ async fn chat_completions(
     }
 }
 
-fn validate_image_data_url(value: &str) -> Result<(), GenerationError> {
-    let (metadata, payload) = value
-        .split_once(',')
-        .ok_or(GenerationError::InvalidRequest)?;
-    if !metadata.starts_with("data:image/") || !metadata.ends_with(";base64") || payload.is_empty()
-    {
-        return Err(GenerationError::InvalidRequest);
+/// Checks the supported image URL form without echoing media data.
+fn validate_image_data_url(value: &str) -> Result<(), &'static str> {
+    if value.split_once(',').is_some_and(|(metadata, payload)| {
+        metadata.starts_with("data:image/") && metadata.ends_with(";base64") && !payload.is_empty()
+    }) {
+        Ok(())
+    } else {
+        Err("image_url.url must be a non-empty base64 image data URL")
     }
-    Ok(())
 }
 
-fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<(), GenerationError> {
+/// Applies the same image URL requirements to chat generation and token counting.
+fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<(), &'static str> {
     for part in messages
         .iter()
         .filter_map(|message| match &message.content {
@@ -986,7 +1017,7 @@ fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<(), Generatio
 /// Returns the renderer format and grammar constraint to lower.
 fn response_format(
     format: Option<OpenAiResponseFormat>,
-) -> Result<LoweredResponseFormat, GenerationError> {
+) -> Result<LoweredResponseFormat, &'static str> {
     match format {
         None => Ok((None, None)),
         Some(OpenAiResponseFormat::Text) => Ok((Some(json!({"type":"text"})), None)),
@@ -995,10 +1026,12 @@ fn response_format(
             Some(StructuredOutputsParams::json_object()),
         )),
         Some(OpenAiResponseFormat::JsonSchema { json_schema }) => {
-            // The the local vLLM build source type accepts a JSON value. Restrict the public shape to
-            // OpenAI's named schema envelope and require an object before lowering it.
-            if json_schema.name.is_empty() || !json_schema.schema.is_object() {
-                return Err(GenerationError::InvalidRequest);
+            // Preserve OpenAI's named schema envelope when lowering the grammar.
+            if json_schema.name.is_empty() {
+                return Err("response_format.json_schema.name must not be empty");
+            }
+            if !json_schema.schema.is_object() {
+                return Err("response_format.json_schema.schema must be a JSON object");
             }
             let mut envelope = serde_json::Map::from_iter([
                 ("name".into(), Value::String(json_schema.name)),
@@ -1019,13 +1052,17 @@ fn response_format(
     }
 }
 
-fn openai_tool(tool: &OpenAiTool) -> Result<ChatTool, GenerationError> {
+/// Validates and lowers an OpenAI function tool.
+fn openai_tool(tool: &OpenAiTool) -> Result<ChatTool, &'static str> {
     let OpenAiTool {
         kind: OpenAiFunctionType::Function,
         function,
     } = tool;
-    if function.name.is_empty() || !function.parameters.is_object() {
-        return Err(GenerationError::InvalidRequest);
+    if function.name.is_empty() {
+        return Err("tools[].function.name must not be empty");
+    }
+    if !function.parameters.is_object() {
+        return Err("tools[].function.parameters must be a JSON object");
     }
     Ok(ChatTool {
         name: function.name.clone(),
@@ -1034,7 +1071,9 @@ fn openai_tool(tool: &OpenAiTool) -> Result<ChatTool, GenerationError> {
         strict: function.strict,
     })
 }
-fn openai_tool_choice(choice: &OpenAiToolChoice) -> Result<ChatToolChoice, GenerationError> {
+
+/// Resolves an OpenAI tool selection, rejecting empty function names.
+fn openai_tool_choice(choice: &OpenAiToolChoice) -> Result<ChatToolChoice, &'static str> {
     Ok(match choice {
         OpenAiToolChoice::Mode(OpenAiToolChoiceMode::None) => ChatToolChoice::None,
         OpenAiToolChoice::Mode(OpenAiToolChoiceMode::Auto) => ChatToolChoice::Auto,
@@ -1045,10 +1084,12 @@ fn openai_tool_choice(choice: &OpenAiToolChoice) -> Result<ChatToolChoice, Gener
         }) if !function.name.is_empty() => ChatToolChoice::Function {
             name: function.name.clone(),
         },
-        OpenAiToolChoice::Function(_) => return Err(GenerationError::InvalidRequest),
+        OpenAiToolChoice::Function(_) => return Err("tool_choice.function.name must not be empty"),
     })
 }
-fn openai_content(content: &OpenAiChatContent) -> Result<ChatContent, GenerationError> {
+
+/// Converts public content parts while retaining their deserialization diagnostics.
+fn openai_content(content: &OpenAiChatContent) -> Result<ChatContent, String> {
     match content {
         OpenAiChatContent::Text(text) => Ok(ChatContent::Text(text.clone())),
         OpenAiChatContent::Parts(parts) => parts
@@ -1060,35 +1101,36 @@ fn openai_content(content: &OpenAiChatContent) -> Result<ChatContent, Generation
                     "image_url": image_url.url.clone(),
                     "detail": image_url.detail.clone(),
                 }))
-                .map_err(|_| GenerationError::InvalidRequest),
+                .map_err(|error| format!("messages[].content: {error}")),
             })
             .collect::<Result<Vec<_>, _>>()
             .map(ChatContent::Parts),
     }
 }
 
-fn openai_message(message: &OpenAiMessage) -> Result<ChatMessage, GenerationError> {
+/// Enforces role-specific fields before constructing the shared chat representation.
+fn openai_message(message: &OpenAiMessage) -> Result<ChatMessage, String> {
     let content = message.content.as_ref().map(openai_content).transpose()?;
     Ok(match message.role.as_str() {
         "system" if message.tool_calls.is_empty() && message.tool_call_id.is_none() => {
             ChatMessage::System {
-                content: content.ok_or(GenerationError::InvalidRequest)?,
+                content: content.ok_or("messages[].content is required for this role")?,
             }
         }
         "developer" if message.tool_calls.is_empty() && message.tool_call_id.is_none() => {
             ChatMessage::Developer {
-                content: content.ok_or(GenerationError::InvalidRequest)?,
+                content: content.ok_or("messages[].content is required for this role")?,
                 tools: None,
             }
         }
         "user" if message.tool_calls.is_empty() && message.tool_call_id.is_none() => {
             ChatMessage::User {
-                content: content.ok_or(GenerationError::InvalidRequest)?,
+                content: content.ok_or("messages[].content is required for this role")?,
             }
         }
         "assistant" => {
             if message.tool_call_id.is_some() {
-                return Err(GenerationError::InvalidRequest);
+                return Err("assistant messages must not include tool_call_id".into());
             }
             let mut blocks = content
                 .map(|content| {
@@ -1097,7 +1139,7 @@ fn openai_message(message: &OpenAiMessage) -> Result<ChatMessage, GenerationErro
                         .map(|text| AssistantContentBlock::Text { text })
                 })
                 .transpose()
-                .map_err(|_| GenerationError::InvalidRequest)?
+                .map_err(|error| format!("assistant content: {error}"))?
                 .into_iter()
                 .collect::<Vec<_>>();
             blocks.extend(message.tool_calls.iter().map(|call| match call {
@@ -1112,17 +1154,28 @@ fn openai_message(message: &OpenAiMessage) -> Result<ChatMessage, GenerationErro
                 }),
             }));
             if blocks.is_empty() {
-                return Err(GenerationError::InvalidRequest);
+                return Err("assistant messages must include content or tool_calls".into());
             }
             ChatMessage::assistant_blocks(blocks)
         }
         "tool" if message.tool_calls.is_empty() => ChatMessage::tool_response(
-            content.ok_or(GenerationError::InvalidRequest)?,
+            content.ok_or("messages[].content is required for this role")?,
             message
                 .tool_call_id
                 .clone()
-                .ok_or(GenerationError::InvalidRequest)?,
+                .ok_or("tool messages require tool_call_id")?,
         ),
-        _ => return Err(GenerationError::InvalidRequest),
+        "system" | "developer" | "user" => {
+            return Err(
+                "system, developer, and user messages must not include tool_calls or tool_call_id"
+                    .into(),
+            );
+        }
+        "tool" => return Err("tool messages must not include tool_calls".into()),
+        _ => {
+            return Err(
+                "messages[].role must be system, developer, user, assistant, or tool".into(),
+            );
+        }
     })
 }

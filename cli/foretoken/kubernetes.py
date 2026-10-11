@@ -533,6 +533,13 @@ def resource_progress(
         )
 
     condition_status = str(ready_condition.get("status") or "Unknown")
+    if resource.kind == "ModelService":
+        target = next((item for item in conditions if item.get("type") == "TargetReady"), None)
+        if target is not None and int(target.get("observedGeneration") or 0) == generation and target.get("status") == "False":
+            message = str(target["message"])
+            if condition_status == "True" and int(status.get("servingGeneration") or 0) != generation:
+                message += "\nThe previous generation remains available."
+            return ResourceProgress(resource, "Failed", str(target["reason"]), message, False)
     if condition_status == "True":
         if (
             resource.kind == "ModelService"
@@ -558,6 +565,9 @@ def resource_progress(
     if condition_status == "False" and reason in {
         "InvalidIntent", "ConfigurationRejected", "DeploymentRequired",
     }:
+        compiled = next((item for item in conditions if item.get("type") == "IntentCompiled"), None)
+        if compiled is not None and int(compiled.get("observedGeneration") or 0) == generation and compiled.get("status") == "False":
+            message = str(compiled["message"])
         return ResourceProgress(resource, "Failed", reason, message, False)
     return ResourceProgress(resource, "Progressing", reason, message, False)
 
