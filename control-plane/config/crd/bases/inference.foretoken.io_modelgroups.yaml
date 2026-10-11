@@ -596,7 +596,7 @@ spec:
                       topology is stored in Parallelism.
                     type: object
                   env:
-                    description: Env retains the selected runtime environment in declaration
+                    description: Env retains the compiled runtime environment in dependency
                       order.
                     items:
                       description: EnvVar represents an environment variable present

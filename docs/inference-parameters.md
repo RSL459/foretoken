@@ -23,27 +23,37 @@ Values are YAML booleans, numbers, strings, lists or objects. Omitted options re
 
 ## Model environment variables
 
-Use `spec.env` for runtime environment variables, separately from `engineArgs`:
+Set each model's runtime environment in `spec.env`, separately from `engineArgs`:
 
 ```yaml
 spec:
   env:
-    - name: VLLM_LOGGING_LEVEL
-      value: "DEBUG"
-    - name: AWS_ACCESS_KEY_ID
+    OMP_NUM_THREADS: 8
+    VLLM_LOGGING_LEVEL: DEBUG
+    TOKENIZERS_PARALLELISM: false
+```
+
+Values accept strings, numbers and booleans and become environment strings: `8` becomes `"8"` and `false` becomes `"false"`. Quoted values also work; use quotes to preserve exact text such as `"001"`. Strings can reference other variables with `$(NAME)` without depending on declaration order; circular references are rejected.
+
+Each Pool inherits its model's `spec.env`. Set `modelPools[].env` to replace the complete mapping for one Pool, or `env: {}` to clear its inherited custom variables. Omission or `null` inherits the model's settings.
+
+For credentials, use a Secret reference rather than a literal value:
+
+```yaml
+spec:
+  env:
+    AWS_ACCESS_KEY_ID:
       valueFrom:
         secretKeyRef:
           name: model-storage
           key: access-key-id
 ```
 
-Entries use Kubernetes `EnvVar` syntax: `value` is a string; `valueFrom` can reference a Secret, ConfigMap, Pod field or container resource. Referenced Secrets and ConfigMaps must exist in the service namespace. Use Secret references for credentials; literal values are included in saved deployment and experiment configuration.
+`valueFrom` uses Kubernetes references to Secrets, ConfigMaps, Pod fields or container resources. Secrets and ConfigMaps must exist in the service namespace. Deployment and experiment configuration retain literal values and references, not the referenced Secret contents.
 
-Every model Pool inherits `spec.env`. Set `modelPools[].env` to replace the entire list for one Pool, or `env: []` to clear its inherited custom variables. Omission or `null` inherits the service list. Entries retain their order, so `$(NAME)` can reference a preceding entry; names must be unique within each effective list.
+Each model's variables apply only to its runtime containers and child processes, including all members of a multi-node replica. They do not configure image builds, separate model-preparation Jobs, init containers or frontend services. Foretoken-managed startup, topology and cache variables cannot be overridden through `env`.
 
-The variables apply to each model runtime container and its child processes, including all members of a multi-node replica. They do not configure image builds, separate model-preparation Jobs, init containers or frontend services. Foretoken-managed startup, topology and cache variables cannot be overridden through `env`.
-
-Apply changes through the usual `foretoken deploy` command. Changes to the effective list replace the affected model instances. Updating a referenced Secret or ConfigMap alone does not restart them: existing processes keep their environment, while newly started containers read the updated values. To roll out new values immediately, use a new reference and deploy it.
+Apply changes through the usual `foretoken deploy` command. Changes to the effective environment replace the affected model instances. Updating a referenced Secret or ConfigMap alone does not restart them: existing processes keep their environment, while newly started containers read the updated values. To roll out new values immediately, use a new reference and deploy it.
 
 ## Select serving nodes
 

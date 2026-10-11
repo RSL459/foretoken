@@ -23,27 +23,37 @@ spec:
 
 ## 模型环境变量
 
-通过 `spec.env` 设置运行时环境变量，与 `engineArgs` 分开配置：
+在各模型的 `spec.env` 中设置运行时环境变量，与 `engineArgs` 分开配置：
 
 ```yaml
 spec:
   env:
-    - name: VLLM_LOGGING_LEVEL
-      value: "DEBUG"
-    - name: AWS_ACCESS_KEY_ID
+    OMP_NUM_THREADS: 8
+    VLLM_LOGGING_LEVEL: DEBUG
+    TOKENIZERS_PARALLELISM: false
+```
+
+值可以直接填写字符串、数字或布尔值，最终统一转成环境字符串：`8` 变为 `"8"`，`false` 变为 `"false"`。加引号的写法也支持；需要保留 `"001"` 这样的精确文本时使用引号。字符串可通过 `$(NAME)` 引用其他变量，无需调整声明顺序；循环引用会被拒绝。
+
+各 Pool 默认继承所属模型的 `spec.env`。填写 `modelPools[].env` 会整体替换该 Pool 的映射，`env: {}` 清空继承的自定义变量，省略或填写 `null` 则继续继承。
+
+凭据使用 Secret 引用，不直接填写明文值：
+
+```yaml
+spec:
+  env:
+    AWS_ACCESS_KEY_ID:
       valueFrom:
         secretKeyRef:
           name: model-storage
           key: access-key-id
 ```
 
-每项沿用 Kubernetes `EnvVar` 格式：`value` 使用字符串，`valueFrom` 可以引用 Secret、ConfigMap、Pod 字段或容器资源。Secret 和 ConfigMap 需位于服务所在命名空间。凭据使用 Secret 引用；直接填写的值会随部署配置和实验配置保存。
+`valueFrom` 沿用 Kubernetes 的 Secret、ConfigMap、Pod 字段或容器资源引用。Secret 和 ConfigMap 需位于服务所在命名空间。部署与实验配置保存直接填写的值及引用，不展开 Secret 内容。
 
-各模型 Pool 默认继承 `spec.env`。填写 `modelPools[].env` 会整体替换该 Pool 的列表，`env: []` 清空继承的自定义变量，省略或填写 `null` 则继续继承。变量保持声明顺序，可用 `$(NAME)` 引用前面的变量；每个生效列表中的名称需唯一。
+每个模型的变量仅作用于自己的运行容器及子进程，多节点副本的所有成员均生效；不作用于镜像构建、独立模型准备 Job、初始化容器或 frontend 服务。Foretoken 管理的启动、拓扑和缓存变量不能通过 `env` 覆盖。
 
-变量作用于模型运行容器及其子进程，多节点副本的所有成员均生效；不作用于镜像构建、独立模型准备 Job、初始化容器或 frontend 服务。Foretoken 管理的启动、拓扑和缓存变量不能通过 `env` 覆盖。
-
-修改后照常执行 `foretoken deploy`。生效列表变化会替换受影响的模型实例。仅更新所引用的 Secret 或 ConfigMap 不会重启实例：已有进程保留原环境，新启动的容器读取更新后的值。如需立即切换，改用新的引用并重新部署。
+修改后照常执行 `foretoken deploy`。生效环境变化会替换受影响的模型实例。仅更新所引用的 Secret 或 ConfigMap 不会重启实例：已有进程保留原环境，新启动的容器读取更新后的值。如需立即切换，改用新的引用并重新部署。
 
 ## 选择模型服务节点
 

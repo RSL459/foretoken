@@ -29,6 +29,12 @@ type NonNegativeDuration string
 // +kubebuilder:validation:Type=object
 type EngineArguments map[string]apiextensionsv1.JSON
 
+// ModelEnvironment holds model runtime literals or native Kubernetes valueFrom references.
+// Public fields preserve raw entries so invalid values reach compiler diagnostics instead of being pruned.
+// +kubebuilder:validation:Type=object
+// +mapType=atomic
+type ModelEnvironment map[string]apiextensionsv1.JSON
+
 // StructuredOutputFormat identifies a structured response format supported by a model.
 // +enum
 // +kubebuilder:validation:Enum=jsonObject;jsonSchema;structuralTag

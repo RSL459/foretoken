@@ -207,7 +207,7 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 
-	// Env retains the selected runtime environment in declaration order.
+	// Env retains the compiled runtime environment in dependency order.
 	// +optional
 	// +listType=atomic
 	Env []corev1.EnvVar `json:"env,omitempty"`
