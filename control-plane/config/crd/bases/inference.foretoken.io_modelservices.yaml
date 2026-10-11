@@ -179,6 +179,13 @@ spec:
                 description: EngineArgs uses the selected backend's native option
                   names without leading --.
                 type: object
+              env:
+                description: Env configures model runtime containers and their child
+                  processes.
+                nullable: true
+                type: object
+                x-kubernetes-map-type: atomic
+                x-kubernetes-preserve-unknown-fields: true
               features:
                 description: Features declares explicit opt-in capabilities for the
                   default Pool.
@@ -311,6 +318,13 @@ spec:
                       description: EngineArgs replaces service-level native options
                         for this Pool when supplied.
                       type: object
+                    env:
+                      description: Env replaces the service environment when supplied;
+                        an empty map clears inheritance.
+                      nullable: true
+                      type: object
+                      x-kubernetes-map-type: atomic
+                      x-kubernetes-preserve-unknown-fields: true
                     features:
                       description: Features declares explicit opt-in capabilities
                         for this Pool.

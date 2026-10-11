@@ -135,6 +135,15 @@ type ModelPoolTemplate struct {
 	// +optional
 	EngineArgs *EngineArguments `json:"engineArgs,omitempty"`
 
+	// Env replaces the service environment when supplied; an empty map clears inheritance.
+	// +optional
+	// +nullable
+	// +mapType=atomic
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Env *ModelEnvironment `json:"env,omitempty"`
+
 	// MaxInputTokens is the prompt admission limit for requests routed to this Pool.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
@@ -317,6 +326,15 @@ type ModelServiceSpec struct {
 	// EngineArgs uses the selected backend's native option names without leading --.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
+
+	// Env configures model runtime containers and their child processes.
+	// +optional
+	// +nullable
+	// +mapType=atomic
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Env ModelEnvironment `json:"env,omitempty"`
 }
 
 // AutoscalingStageStatus describes one named pipeline stage result.

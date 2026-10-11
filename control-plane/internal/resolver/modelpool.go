@@ -312,6 +312,7 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 			ApplicationURL: applicationURL,
 			Backend:        template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
 			EngineArgs:                            runtime.EngineArgs,
+			Env:                                   template.DeepCopy().Env,
 			AdmissionStore:                        admissionStore,
 			InstanceAdmissionProtocol:             instanceAdmissionProtocol,
 			InstanceAdmission:                     startupAdmission,

@@ -21,6 +21,40 @@ spec:
 
 Values are YAML booleans, numbers, strings, lists or objects. Omitted options retain engine defaults; `null` omits a native option. Supported values depend on the backend image, model and hardware.
 
+## Model environment variables
+
+Use `spec.env` to set environment variables for one model's runtime processes:
+
+```yaml
+spec:
+  env:
+    OMP_NUM_THREADS: 8
+    VLLM_LOGGING_LEVEL: DEBUG
+    TOKENIZERS_PARALLELISM: false
+```
+
+Values accept strings, numbers and booleans, converted to strings for the process. Use quotes to preserve text such as `"001"`. `$(NAME)` references another variable regardless of declaration order; references must not form a cycle.
+
+Each Pool inherits its model's `spec.env`. Set `modelPools[].env` to replace the complete mapping for one Pool, or `env: {}` to clear its inherited custom variables. Omission or `null` inherits the model's settings.
+
+For credentials, use a Secret reference rather than a literal value:
+
+```yaml
+spec:
+  env:
+    AWS_ACCESS_KEY_ID:
+      valueFrom:
+        secretKeyRef:
+          name: model-storage
+          key: access-key-id
+```
+
+`valueFrom` supports Kubernetes Secret, ConfigMap, Pod-field and container-resource references. In this example, create Secret `model-storage` with key `access-key-id` in the model's namespace. Literal values are saved with deployment and experiment configuration.
+
+These settings are local to the model, including all members of a multi-node replica. Build and separate model-download settings use their existing configuration. Foretoken-managed startup, topology and cache variables remain platform-controlled.
+
+Redeploy the configuration directory with `foretoken deploy <directory>` to replace instances whose environment changed. Updating Secret or ConfigMap contents alone takes effect when a new container starts; to apply it immediately, change the reference and redeploy.
+
 ## Select serving nodes
 
 Use a Kubernetes label to place a service or Pool on a machine group. Assign the same key/value to every node in the group:

@@ -6,12 +6,17 @@
 package compiler
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"path"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 )
@@ -76,7 +81,7 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if len(spec.ModelPools) == 0 {
 		replicas := valueOrDefault(spec.Replicas, 1)
 		nodes := valueOrDefault(spec.Nodes, 1)
-		pool, err := compilePool(spec, source, artifactRevision, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, spec.NodeSelector, spec.EngineArgs, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
+		pool, err := compilePool(spec, source, artifactRevision, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, spec.NodeSelector, spec.EngineArgs, spec.Env, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
 		if err != nil {
 			return nil, err
 		}
@@ -104,11 +109,15 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		if entry.EngineArgs != nil {
 			engineArgs = *entry.EngineArgs
 		}
+		environment := spec.Env
+		if entry.Env != nil {
+			environment = *entry.Env
+		}
 		nodeSelector := spec.NodeSelector
 		if entry.NodeSelector != nil {
 			nodeSelector = entry.NodeSelector
 		}
-		pool, err := compilePool(spec, source, artifactRevision, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, nodeSelector, engineArgs, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
+		pool, err := compilePool(spec, source, artifactRevision, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, nodeSelector, engineArgs, environment, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
 		if err != nil {
 			return nil, fmt.Errorf("modelPools %q: %w", entry.Name, err)
 		}
@@ -150,9 +159,13 @@ func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
 	return nil
 }
 
-func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, nodeSelector map[string]string, engineArgs inferencev1alpha1.EngineArguments, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
+func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, nodeSelector map[string]string, engineArgs inferencev1alpha1.EngineArguments, environment inferencev1alpha1.ModelEnvironment, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
 	if nodes < 1 {
 		return ModelPool{}, fmt.Errorf("nodes must be positive")
+	}
+	env, err := normalizeEnvironment(environment)
+	if err != nil {
+		return ModelPool{}, err
 	}
 	normalizedResources, err := normalizeResources(resources)
 	if err != nil {
@@ -203,9 +216,103 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			KVCache:                               normalizedKVCache,
 			Features:                              normalizedFeatures,
 			EngineArgs:                            engineArgs.DeepCopy(),
+			Env:                                   env,
 			Profiling:                             normalizeProfiling(spec.Profiling),
 		},
 	}, nil
+}
+
+// normalizeEnvironment compiles public values into native EnvVars for Pool consumers.
+// Dependencies are ordered before their users; kubelet remains responsible for expansion.
+func normalizeEnvironment(input inferencev1alpha1.ModelEnvironment) ([]corev1.EnvVar, error) {
+	names := make([]string, 0, len(input))
+	for name := range input {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	variables := make(map[string]corev1.EnvVar, len(input))
+	for _, name := range names {
+		if errors := utilvalidation.IsRelaxedEnvVarName(name); len(errors) > 0 {
+			return nil, fmt.Errorf("env name %q is invalid: %s", name, errors[0])
+		}
+		decoder := json.NewDecoder(bytes.NewReader(input[name].Raw))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("env %q must be a string, number, boolean, or valueFrom reference", name)
+		}
+		variable := corev1.EnvVar{Name: name}
+		switch value := value.(type) {
+		case string:
+			variable.Value = value
+		case json.Number:
+			variable.Value = value.String()
+		case bool:
+			variable.Value = strconv.FormatBool(value)
+		case map[string]any:
+			var reference struct {
+				ValueFrom *corev1.EnvVarSource `json:"valueFrom"`
+			}
+			decoder = json.NewDecoder(bytes.NewReader(input[name].Raw))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&reference); err != nil || reference.ValueFrom == nil {
+				return nil, fmt.Errorf("env %q must contain a native Kubernetes valueFrom reference", name)
+			}
+			variable.ValueFrom = reference.ValueFrom
+		default:
+			return nil, fmt.Errorf("env %q must be a string, number, boolean, or valueFrom reference", name)
+		}
+		variables[name] = variable
+	}
+
+	// Recognize only kubelet references, including its $$ escape, without expanding values.
+	// Sorted roots and left-to-right dependencies make the result independent of map iteration.
+	var output []corev1.EnvVar
+	state := make(map[string]uint8, len(input))
+	var visit func(string) error
+	visit = func(name string) error {
+		switch state[name] {
+		case 1:
+			return fmt.Errorf("env %q has a cyclic variable reference", name)
+		case 2:
+			return nil
+		}
+		state[name] = 1
+		variable := variables[name]
+		for remaining := variable.Value; remaining != ""; {
+			i := strings.IndexByte(remaining, '$')
+			if i < 0 || i+1 == len(remaining) {
+				break
+			}
+			remaining = remaining[i+1:]
+			switch remaining[0] {
+			case '$':
+				remaining = remaining[1:]
+			case '(':
+				end := strings.IndexByte(remaining, ')')
+				if end < 0 {
+					remaining = ""
+					continue
+				}
+				dependency := remaining[1:end]
+				if _, exists := variables[dependency]; exists {
+					if err := visit(dependency); err != nil {
+						return err
+					}
+				}
+				remaining = remaining[end+1:]
+			}
+		}
+		state[name] = 2
+		output = append(output, variable)
+		return nil
+	}
+	for _, name := range names {
+		if err := visit(name); err != nil {
+			return nil, err
+		}
+	}
+	return output, nil
 }
 
 func normalizeNodeSelector(input map[string]string) (map[string]string, error) {

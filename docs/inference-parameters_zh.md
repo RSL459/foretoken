@@ -21,6 +21,40 @@ spec:
 
 值直接使用 YAML 布尔值、数字、字符串、列表或对象。未填写的选项沿用引擎默认值，`null` 表示不传该原生选项。具体取值需与引擎镜像、模型及硬件匹配。
 
+## 模型环境变量
+
+通过 `spec.env` 为单个模型的运行进程设置环境变量：
+
+```yaml
+spec:
+  env:
+    OMP_NUM_THREADS: 8
+    VLLM_LOGGING_LEVEL: DEBUG
+    TOKENIZERS_PARALLELISM: false
+```
+
+值可以填写字符串、数字或布尔值，传给进程时统一转为字符串。保留 `"001"` 这样的文本时使用引号。`$(NAME)` 可以引用其他变量，无需调整声明顺序，但不能循环引用。
+
+各 Pool 默认继承所属模型的 `spec.env`。填写 `modelPools[].env` 会整体替换该 Pool 的映射，`env: {}` 清空继承的自定义变量，省略或填写 `null` 则继续继承。
+
+凭据使用 Secret 引用，不直接填写明文值：
+
+```yaml
+spec:
+  env:
+    AWS_ACCESS_KEY_ID:
+      valueFrom:
+        secretKeyRef:
+          name: model-storage
+          key: access-key-id
+```
+
+`valueFrom` 支持 Kubernetes 的 Secret、ConfigMap、Pod 字段和容器资源引用。上例需在模型所在命名空间创建 Secret `model-storage`，并提供 `access-key-id` 键。直接填写的值会随部署和实验配置保存。
+
+变量按模型隔离，多节点副本的所有成员均生效。构建和独立模型下载仍使用各自的配置；启动、拓扑和缓存等平台管理的变量由 Foretoken 设置。
+
+修改后执行 `foretoken deploy <配置目录>`，替换环境发生变化的模型实例。仅更新 Secret 或 ConfigMap 内容，要等新容器启动才生效；如需立即切换，改用新的引用并重新部署。
+
 ## 选择模型服务节点
 
 通过 Kubernetes 节点 label，将整个服务或某个 Pool 固定到指定机器组。为组内每台节点设置相同的 key/value：

@@ -234,6 +234,11 @@ type ModelGroupRuntime struct {
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 
+	// Env retains the compiled runtime environment in dependency order.
+	// +optional
+	// +listType=atomic
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
 	// InstanceAdmissionProtocol pins the configuration interface of the selected executable.
 	// Zero retains startup-only limits; one selects live file configuration.
 	// +optional
