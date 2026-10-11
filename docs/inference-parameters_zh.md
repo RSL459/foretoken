@@ -99,6 +99,7 @@ spec:
 | `max-num-seqs` | 每轮调度的最大序列数 |
 | `max-num-batched-tokens` | 每轮调度的最大 token 数 |
 | `enforce-eager` | `true` 时禁用计算图捕获 |
+| `enable-prefix-caching` | `true` 开启前缀缓存，`false` 关闭；Encoder Pool 始终关闭 |
 | `speculative-config` | 推测解码的原生配置字典 |
 | `tensor-parallel-size` | 张量并行度（TP） |
 | `pipeline-parallel-size` | 流水线并行度（PP） |

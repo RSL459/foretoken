@@ -99,6 +99,7 @@ Redeploy the model's configuration directory with `foretoken deploy`. Limits upd
 | `max-num-seqs` | Maximum sequences scheduled per iteration |
 | `max-num-batched-tokens` | Maximum tokens scheduled per iteration |
 | `enforce-eager` | Disable graph capture when `true` |
+| `enable-prefix-caching` | Enable with `true` or disable with `false`; always disabled for Encoder Pools |
 | `speculative-config` | Native speculative decoding configuration |
 | `tensor-parallel-size` | Tensor parallelism (TP) |
 | `pipeline-parallel-size` | Pipeline parallelism (PP) |

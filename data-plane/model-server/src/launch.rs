@@ -449,7 +449,10 @@ impl LaunchPlanV1 {
         // Keep argument values intact: this command never goes through a shell.
         for (name, value) in &self.engine_args {
             if matches!(self.ec.role, Some(EcRole::Producer))
-                && matches!(name.as_str(), "mm-encoder-only" | "enforce-eager")
+                && matches!(
+                    name.as_str(),
+                    "mm-encoder-only" | "enforce-eager" | "enable-prefix-caching"
+                )
             {
                 continue;
             }

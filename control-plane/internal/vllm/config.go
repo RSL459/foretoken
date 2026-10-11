@@ -369,7 +369,7 @@ var controllerOwnedArgs = []string{
 	"--data-parallel-rank", "--data-parallel-rpc-port",
 	"--data-parallel-size-local", "--data-parallel-start-rank",
 	"--distributed-executor-backend", "--download-dir", "--ec-manager-config", "--ec-transfer-config",
-	"--enable-elastic-ep", "--enable-prefix-caching",
+	"--enable-elastic-ep",
 	"--grpc", "--headless", "--hf-token", "--host", "--kv-events-config", "--kv-transfer-config",
 	"--master-addr", "--master-port", "--mm-device-do-normalize", "--model", "--nnodes", "--node-rank",
 	"--port", "--profiler-config", "--revision",
