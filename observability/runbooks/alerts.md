@@ -27,61 +27,21 @@ Connect a [Lark](../integrations/lark/README.md), [Slack](../integrations/slack/
 
 ## Choose rules
 
-| Rule | Service | Trigger |
-| --- | --- | --- |
-| [ForetokenMetricsTargetDown](#foretokenmetricstargetdown) | Frontend or model | A metrics endpoint cannot be scraped for 1 minute. |
-| [ForetokenFrontendHTTPResponseStart5xxRatioHigh](#foretokenfrontendhttpresponsestart5xxratiohigh) | Frontend | HTTP response-start 5xx exceeds 5% for 2 minutes, with at least 0.1 responses/s over a 5-minute window. |
-| [ForetokenAdmissionCapacityRejectionRatioHigh](#foretokenadmissioncapacityrejectionratiohigh) | Frontend | Admission capacity rejections exceed the configured fraction. |
-| [ForetokenAdmissionTimeoutRatioHigh](#foretokenadmissiontimeoutratiohigh) | Frontend | Admission timeouts exceed the configured fraction. |
-| [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | Frontend | Waiting-time p95 before backend acceptance exceeds the configured duration. |
-| [ForetokenAdmissionTelemetryMissing](#foretokenadmissiontelemetrymissing) | Frontend | Scraping succeeds but required admission metrics are missing for 5 minutes. |
-| [ForetokenNVIDIAGPUTemperatureHigh](#foretokennvidiagputemperaturehigh) | Model | NVIDIA GPU temperature reaches the threshold for 2 minutes; default 85°C. |
-| [ForetokenNVIDIAGPUPowerUsageHigh](#foretokennvidiagpupowerusagehigh) | Model | NVIDIA GPU power reaches the configured threshold for 5 minutes. |
+For investigation, open Foretoken System Overview in [Grafana](../README.md#view-dashboards) and select the notification's namespace and frontend or model.
 
-Admission thresholds go under `spec.observability.alerts.thresholds.admission`. The three ratio/latency rules require explicit thresholds and positive minimum rates. Optional `scope` defaults to `service`, aggregating each model across the selected frontend's Pods; `pod` evaluates each model separately in each Pod. `window` defaults to `1m` and `for` to `5m`. Durations accept whole seconds, minutes, or hours. These settings control the aggregation, calculation window, and time the condition must persist before the alert fires.
+Threshold fields below are relative to `spec.observability.alerts.thresholds`; admission fields are under `admission`. The three admission ratio/latency rules require explicit thresholds and positive minimum rates, with no defaults. Their optional `scope` defaults to `service`, aggregating each model across the selected frontend's Pods; `pod` evaluates each model in each Pod. `window` sets the calculation window (default `1m`), and `for` sets how long the condition must persist before firing (default `5m`). Durations accept whole seconds, minutes, or hours.
 
-## Investigate an alert
+Both admission ratios use all completed HTTP admission calls for the model as their denominator, including failures and CPU-only preparation. Calls finish at first backend acceptance, preparation completion, or terminal failure—not at generation completion. They count calls, not candidate work units, and exclude internal calls.
 
-Open Foretoken System Overview in [Grafana](../README.md#view-dashboards) and select the notification's namespace and frontend or model.
+| Rule | Service | Trigger and thresholds | First action |
+| --- | --- | --- | --- |
+| `ForetokenMetricsTargetDown` | Frontend or model | A metrics endpoint cannot be scraped for 1 minute; no configurable threshold. | Check the error in Prometheus Targets, then the affected Pod and network access to its metrics endpoint. |
+| `ForetokenFrontendHTTPResponseStart5xxRatioHigh` | Frontend | HTTP response-start 5xx exceeds 5% for 2 minutes, with at least 0.1 response starts/s over a 5-minute window; no configurable threshold. | Inspect status-code trends and frontend logs, then admission rejections/timeouts, model availability, and backend errors. |
+| `ForetokenAdmissionCapacityRejectionRatioHigh` | Frontend | Capacity rejection fraction exceeds `admission.capacityRejectionRatio` (0–1), with completed-call rate ≥ `admission.minResultRate` (calls/s, positive). | Compare Pod dispatch results, shared waiting occupancy, caller limits, and backend load before adjusting limits. |
+| `ForetokenAdmissionTimeoutRatioHigh` | Frontend | Combined `queue_timeout` and `deadline_exceeded` fraction exceeds `admission.timeoutRatio` (0–1), with completed-call rate ≥ `admission.minResultRate` (calls/s, positive). | Compare occupancy and waiting time with `queueTimeout` and the request timeout; distinguish queue expiry from request-budget expiry before admission. |
+| `ForetokenAdmissionAdmittedQueueP95High` | Frontend | Waiting-time p95 exceeds `admission.admittedQueueP95Seconds` (seconds, positive), with sampled-call rate ≥ `admission.minQueuedAdmissionRate` (calls/s, positive). | Compare waiting time with shared waiting occupancy and limits; inspect timeout results for requests leaving before backend acceptance. |
+| `ForetokenAdmissionTelemetryMissing` | Frontend | Scraping succeeds but required admission metrics are missing or model inventory is inconsistent for 5 minutes; always evaluated per Pod. | Check the Admission replica table, Pod runtime versions, and monitoring configuration. |
+| `ForetokenNVIDIAGPUTemperatureHigh` | Model | NVIDIA GPU temperature ≥ `nvidiaTemperatureCelsius` (°C, default 85) for 2 minutes. | Check the notification's device temperature, cooling, and workload. |
+| `ForetokenNVIDIAGPUPowerUsageHigh` | Model | NVIDIA GPU power ≥ `nvidiaPowerWatts` (watts, positive, required; no default) for 5 minutes. | Compare device power and workload with its intended operating envelope and the alert threshold. |
 
-### ForetokenMetricsTargetDown
-
-Check the scrape error in Prometheus Targets, then inspect the affected Pod and network access to its metrics endpoint.
-
-### ForetokenFrontendHTTPResponseStart5xxRatioHigh
-
-Inspect frontend status-code trends and logs. Use the Admission section to identify capacity rejection or timeout responses, then check model availability and backend errors.
-
-### ForetokenAdmissionCapacityRejectionRatioHigh
-
-Set `capacityRejectionRatio` from 0 to 1 and `minResultRate` in completed calls/s under the admission thresholds. The ratio counts capacity rejections among completed HTTP admission calls for each model.
-
-Select the affected model and compare dispatch results across frontend Pods with shared waiting occupancy and caller limits. Check backend load before adjusting limits.
-
-### ForetokenAdmissionTimeoutRatioHigh
-
-Set `timeoutRatio` from 0 to 1 and `minResultRate` in completed calls/s under the admission thresholds. The ratio counts `queue_timeout` and `deadline_exceeded` among each model's completed HTTP admission calls.
-
-Compare queue occupancy and waiting time with `queueTimeout` and the request timeout. The result breakdown separates queue expiry from the request budget expiring before admission.
-
-### ForetokenAdmissionAdmittedQueueP95High
-
-Set positive `admittedQueueP95Seconds` in seconds and `minQueuedAdmissionRate` in calls/s under the admission thresholds. This rule measures requests that acquired waiting ownership and reached first backend acceptance. Waiting includes input preparation and submission; unrestricted requests and timed-out requests are excluded.
-
-Select the affected model and inspect its waiting curve alongside shared waiting occupancy and limits. Use timeout results to see whether requests are also leaving without backend acceptance.
-
-### ForetokenAdmissionTelemetryMissing
-
-Inspect the Admission replica table for the affected model and Pod, then compare Pod runtime versions and monitoring configuration.
-
-### ForetokenNVIDIAGPUTemperatureHigh
-
-To change the default threshold, set `spec.observability.alerts.thresholds.nvidiaTemperatureCelsius` in °C.
-
-Check temperature, cooling, and workload on the device named in the notification.
-
-### ForetokenNVIDIAGPUPowerUsageHigh
-
-Set a positive `spec.observability.alerts.thresholds.nvidiaPowerWatts` threshold in watts; this rule has no default threshold.
-
-Compare the device's power draw and workload with its intended operating envelope and configured alert threshold.
+Waiting-time p95 measures HTTP calls from acquiring waiting ownership to first backend acceptance, including input preparation and submission. Unrestricted, CPU-only, and timed-out calls are excluded; `minQueuedAdmissionRate` applies to this same sample set.

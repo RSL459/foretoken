@@ -117,13 +117,27 @@ Cancellation and deletion continue after the HTTP `202` response. The configurat
 
 ## Configure admission rules
 
-Admission bounds waiting work and caller concurrency for text generation. Add these fields under `spec` in the deployment's `frontend.yaml`:
+To limit waiting text requests, add `admission` under `spec` in the deployment's `frontend.yaml`:
 
 ```yaml
 spec:
   admission:
     maxWaitingRequests: 128
     queueTimeout: 30s
+```
+
+The waiting limit is shared across all FrontendService replicas, separately for each model, and includes input preparation. `queueTimeout` bounds waiting and preparation before backend acceptance. Batched prompts and `best_of` count each generated sequence. These rules do not apply to video APIs.
+
+Apply the YAML through [Update serving settings](#update-serving-settings). Before a response starts, a full queue or expired admission wait returns 503, the total request timeout returns 504, and a batch exceeding capacity returns 400. Enabling limits can reject requests already waiting.
+
+For limits on accepted work at each model instance, see [Instance concurrency](../../docs/inference-parameters.md#instance-concurrency). Queue and dispatch metrics are described in [Observability](../../observability/README.md).
+
+### Caller limits and priorities
+
+To give callers different limits, add `roleRules` alongside the waiting limit:
+
+```yaml
+spec:
   roleRules:
     - role: role1
       priority: 10
@@ -137,45 +151,24 @@ spec:
         maxConcurrentRequests: 8
 ```
 
-For each model, limits are shared across all replicas of the FrontendService; each caller has a separate allowance. Role rules require a waiting-capacity limit.
+Each caller has separate waiting and concurrency allowances shared across frontend replicas. `maxConcurrentRequests` counts dispatched work until execution ends, including cancelled requests still finishing. Tokenization, token counting, and detokenization use waiting capacity only.
 
-| Setting | Meaning |
-| --- | --- |
-| `admission.maxWaitingRequests` | Total waiting capacity, including input preparation |
-| `admission.queueTimeout` | Waiting and preparation time allowed before backend acceptance |
-| `perCaller.maxWaitingRequests` | Waiting capacity for one caller |
-| `perCaller.maxConcurrentRequests` | Dispatched work for one caller, counted until execution ends |
+Higher `priority` values dispatch first among eligible requests. At equal priority, each frontend rotates between callers and preserves their request order; a caller at its concurrency limit does not block others. To prioritize the vLLM queue as well, set `scheduling-policy: priority` in the model's `engineArgs`.
 
-Batched prompts and `best_of` count each generated sequence. Higher `priority` values dispatch first among eligible requests. At equal priority, each frontend rotates between callers and preserves their request order. A caller at its concurrency limit does not block others. To prioritize the vLLM queue as well, set `scheduling-policy: priority` in the model's `engineArgs`.
-
-The trusted gateway overwrites these headers with the authenticated caller's role and a stable identifier, such as a key identifier:
+Configure the trusted gateway to overwrite these headers for every text request with the authenticated role and a stable caller identifier:
 
 ```http
 x-role: role1
 x-caller-id: caller-a
 ```
 
-All text APIs use these headers. With role rules enabled, requests without a caller identifier or matching role are rejected. Configure authentication, authorization, and RPM/token quotas at the gateway, and restrict frontend access to that trusted gateway. Tokenization and detokenization use waiting capacity only; these rules do not apply to video APIs.
+Requests without a caller identifier or matching role are rejected. Authentication, authorization, and RPM/token quotas belong at the gateway; restrict frontend access to that gateway.
 
-`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults as whole blocks. To leave frontend admission unrestricted for one model, set both `admission: {}` and `roleRules: []`. Omitting both settings at the frontend leaves admission unrestricted by default.
+### Override one model
+
+`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults as whole blocks. Set both `admission: {}` and `roleRules: []` to leave one model unrestricted at the frontend; omitting both at the frontend leaves admission unrestricted by default.
 
 A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPools`. A disaggregated model must retain a Pool for every required execution stage.
-
-To limit how many unfinished requests each text model-server instance accepts, add `instanceAdmission` to the model YAML. This includes requests waiting in the engine queue. Omit it for unlimited acceptance:
-
-```yaml
-spec:
-  instanceAdmission:
-    maxConcurrentRequests: 32
-```
-
-After upgrading the platform, run `foretoken deploy` once to select the current model application. Later limit changes apply online. Existing work continues; when the limit is full, new requests receive `503` until occupancy falls below it.
-
-Apply changes using [Update serving settings](#update-serving-settings). Before a response starts, a full queue or expired admission wait returns 503, the total request timeout returns 504, and a batch exceeding capacity returns 400. Enabling limits can reject requests already waiting. Cancelled requests count toward concurrency until execution ends.
-
-When upgrading from `admission.algorithm` and `admission.parameters`, replace those fields with the settings above and redeploy the frontend and models together. Old fields are rejected; platform installation alone does not replace running applications.
-
-See [Observability](../../observability/README.md) for queue and dispatch results. Maintainers extending request processing or backend integration can refer to [Admission lifecycle](../../docs/development/admission-rules.md).
 
 ## Update serving settings
 

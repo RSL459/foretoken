@@ -41,6 +41,18 @@ spec:
 
 `ModelService.spec.nodeSelector` selects the default Pool. `modelPools[].nodeSelector` selects a different group for one Pool. The cluster scheduler places serving and runtime-preparation Pods on nodes carrying the selected label.
 
+## Instance concurrency
+
+To bound accepted, unfinished work at each text model-server instance, including its engine queue, add this setting to the model YAML:
+
+```yaml
+spec:
+  instanceAdmission:
+    maxConcurrentRequests: 32
+```
+
+Redeploy the model's configuration directory with `foretoken deploy`. Limits update online and accepted work continues. A full instance stops accepting new work until occupancy falls below the limit. Omit `instanceAdmission` for unlimited acceptance.
+
 ## Common vLLM options
 
 | Engine option | Purpose |

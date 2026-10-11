@@ -27,61 +27,21 @@ spec:
 
 ## 选择规则
 
-| 规则 | 配置在哪类服务 | 触发条件 |
-| --- | --- | --- |
-| [ForetokenMetricsTargetDown](#foretokenmetricstargetdown) | 前端或模型服务 | 指标端点连续 1 分钟无法抓取。 |
-| [ForetokenFrontendHTTPResponseStart5xxRatioHigh](#foretokenfrontendhttpresponsestart5xxratiohigh) | 前端服务 | 5 分钟窗口内，每秒至少 0.1 次 HTTP 响应开始时，5xx 比例连续 2 分钟超过 5%。 |
-| [ForetokenAdmissionCapacityRejectionRatioHigh](#foretokenadmissioncapacityrejectionratiohigh) | 前端服务 | 准入容量拒绝比例超过配置阈值。 |
-| [ForetokenAdmissionTimeoutRatioHigh](#foretokenadmissiontimeoutratiohigh) | 前端服务 | 准入超时比例超过配置阈值。 |
-| [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | 前端服务 | 后端接受前的等待时间 p95 超过配置时长。 |
-| [ForetokenAdmissionTelemetryMissing](#foretokenadmissiontelemetrymissing) | 前端服务 | 抓取成功，但必要准入指标连续缺失 5 分钟。 |
-| [ForetokenNVIDIAGPUTemperatureHigh](#foretokennvidiagputemperaturehigh) | 模型服务 | NVIDIA GPU 温度连续 2 分钟达到阈值，默认 85°C。 |
-| [ForetokenNVIDIAGPUPowerUsageHigh](#foretokennvidiagpupowerusagehigh) | 模型服务 | NVIDIA GPU 功耗连续 5 分钟达到配置阈值。 |
+定位告警时，在 [Grafana](../README_zh.md#查看指标) 打开 Foretoken 系统概览，选择通知中的命名空间和前端或模型服务。
 
-准入阈值写在 `spec.observability.alerts.thresholds.admission` 下。三条比例或延迟告警需要显式填写阈值和正数最小速率。可选 `scope` 默认 `service`，按模型汇总所选前端的各 Pod；设为 `pod` 时，按模型与 Pod 分别评估。`window` 默认 `1m`，`for` 默认 `5m`。时长支持整数秒、分钟或小时，分别控制聚合范围、计算窗口及触发告警前条件须持续的时间。
+下表中的阈值字段均位于 `spec.observability.alerts.thresholds` 下，准入字段放在其中的 `admission` 下。三条准入比例／延迟规则需要显式填写阈值和正数最小速率，没有默认值。它们共用可选的 `scope`、`window` 和 `for`：`scope` 默认 `service`，按模型汇总所选前端的各 Pod；设为 `pod` 时，按模型与 Pod 分别评估。`window` 是计算窗口，默认 `1m`；`for` 是触发前条件须持续的时间，默认 `5m`。时长支持整数秒、分钟或小时。
 
-## 定位告警原因
+两条准入比例均以该模型所有已结束的 HTTP 准入调用为分母，包括失败和仅做 CPU 输入准备的调用。调用在首次后端接受、输入准备完成或最终失败时结束，不是生成完成时。统计按调用次数计，不按候选工作单元计，也不包含内部调用。
 
-在 [Grafana](../README_zh.md#查看指标) 打开 Foretoken 系统概览，选择通知中的命名空间和前端或模型服务。
+| 规则 | 配置在哪类服务 | 触发条件与阈值 | 优先检查 |
+| --- | --- | --- | --- |
+| `ForetokenMetricsTargetDown` | 前端或模型服务 | 指标端点连续 1 分钟无法抓取；无可配置阈值。 | 查看 Prometheus Targets 中的错误，再检查对应 Pod 和指标端点的网络访问。 |
+| `ForetokenFrontendHTTPResponseStart5xxRatioHigh` | 前端服务 | 5 分钟窗口内，每秒至少 0.1 次 HTTP 响应开始时，5xx 比例连续 2 分钟超过 5%；无可配置阈值。 | 查看状态码趋势和前端日志，再检查准入拒绝／超时、模型可用性及后端错误。 |
+| `ForetokenAdmissionCapacityRejectionRatioHigh` | 前端服务 | 容量拒绝比例超过 `admission.capacityRejectionRatio`（0–1），且已结束调用速率 ≥ `admission.minResultRate`（调用次数/秒，正数）。 | 对照各 Pod 的派发结果、共享等待占用、调用方限额和后端负载，再决定是否调整限额。 |
+| `ForetokenAdmissionTimeoutRatioHigh` | 前端服务 | `queue_timeout` 与 `deadline_exceeded` 合计比例超过 `admission.timeoutRatio`（0–1），且已结束调用速率 ≥ `admission.minResultRate`（调用次数/秒，正数）。 | 对照占用、等待时间、`queueTimeout` 和请求超时，区分队列等待到期与获准前请求预算耗尽。 |
+| `ForetokenAdmissionAdmittedQueueP95High` | 前端服务 | 等待时间 p95 超过 `admission.admittedQueueP95Seconds`（秒，正数），且样本调用速率 ≥ `admission.minQueuedAdmissionRate`（调用次数/秒，正数）。 | 结合等待时间、共享等待占用和上限定位延迟；查看超时结果，判断请求是否在后端接受前退出。 |
+| `ForetokenAdmissionTelemetryMissing` | 前端服务 | 抓取成功，但必要准入指标缺失或模型清单不一致，持续 5 分钟；始终按 Pod 评估。 | 查看“准入”副本表，核对 Pod 运行版本和监控配置。 |
+| `ForetokenNVIDIAGPUTemperatureHigh` | 模型服务 | NVIDIA GPU 温度 ≥ `nvidiaTemperatureCelsius`（°C，默认 85），持续 2 分钟。 | 按通知中的设备检查温度、散热和当前负载。 |
+| `ForetokenNVIDIAGPUPowerUsageHigh` | 模型服务 | NVIDIA GPU 功耗 ≥ `nvidiaPowerWatts`（瓦，必填正数，无默认值），持续 5 分钟。 | 比较设备功耗、负载、预期运行范围及告警阈值。 |
 
-### ForetokenMetricsTargetDown
-
-查看 Prometheus Targets 中的抓取错误，再检查对应 Pod 和指标端点的网络访问。
-
-### ForetokenFrontendHTTPResponseStart5xxRatioHigh
-
-查看前端状态码趋势和日志。通过“准入”区域定位容量拒绝、超时响应，再检查模型可用性和后端错误。
-
-### ForetokenAdmissionCapacityRejectionRatioHigh
-
-在准入阈值下填写 0 至 1 的 `capacityRejectionRatio`，以及以已结束调用次数/秒为单位的 `minResultRate`。拒绝比例按模型分别计算，以该模型已结束的 HTTP 准入调用为分母。
-
-选择受影响的模型，对照各前端 Pod 的派发结果、共享等待占用与调用方限额。调整限额前，同时查看后端负载。
-
-### ForetokenAdmissionTimeoutRatioHigh
-
-在准入阈值下填写 0 至 1 的 `timeoutRatio`，以及以已结束调用次数/秒为单位的 `minResultRate`。按模型分别计算，分子为 `queue_timeout` 和 `deadline_exceeded`，分母为该模型已结束的 HTTP 准入调用。
-
-对照队列占用、等待时间、`queueTimeout` 和请求超时。结果分类可区分队列等待到期与获准前请求预算耗尽。
-
-### ForetokenAdmissionAdmittedQueueP95High
-
-在准入阈值下填写正数 `admittedQueueP95Seconds`（秒）和 `minQueuedAdmissionRate`（调用次数/秒）。此规则统计取得等待名额至首次后端接受的耗时，包括输入准备和提交；不包含无限流请求或超时请求。
-
-选择受影响的模型，结合等待曲线、共享等待占用和上限定位延迟，同时查看超时结果，判断是否有请求在后端接受前退出。
-
-### ForetokenAdmissionTelemetryMissing
-
-在准入副本表中定位指标不完整的模型与 Pod，并核对运行版本和监控配置。
-
-### ForetokenNVIDIAGPUTemperatureHigh
-
-修改默认阈值时，设置 `spec.observability.alerts.thresholds.nvidiaTemperatureCelsius`，单位为 °C。
-
-按通知中的设备检查温度、散热和当前负载。
-
-### ForetokenNVIDIAGPUPowerUsageHigh
-
-设置正数 `spec.observability.alerts.thresholds.nvidiaPowerWatts`，单位为瓦；此规则没有默认阈值。
-
-比较设备功耗、当前负载、预期运行范围及配置的告警阈值。
+等待时间 p95 统计 HTTP 调用从取得等待名额至首次后端接受的耗时，包括输入准备和提交；不包含无限流、仅做 CPU 输入准备或超时的调用。`minQueuedAdmissionRate` 也按这一样本范围计算。

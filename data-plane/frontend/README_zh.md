@@ -117,13 +117,27 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
 
 ## 配置准入规则
 
-准入为文本生成设置等待容量和调用方并发上限。在部署的 `frontend.yaml` 已有 `spec` 下添加：
+要限制等待中的文本请求，在部署的 `frontend.yaml` 已有 `spec` 下添加 `admission`：
 
 ```yaml
 spec:
   admission:
     maxWaitingRequests: 128
     queueTimeout: 30s
+```
+
+同一 FrontendService 的所有副本按模型共享等待上限，正在准备输入的请求也计入其中。`queueTimeout` 限制后端接收前的等待与准备时长。批量输入和 `best_of` 按生成序列计数；这些规则不适用于视频接口。
+
+按[修改服务配置](#修改服务配置)应用 YAML。响应开始前，队列已满或准入等待超时返回 503，请求总超时返回 504，批次超过容量返回 400。启用限额时，已在等待的请求可能被拒绝。
+
+限制单个模型实例已接收的工作，见[实例并发上限](../../docs/inference-parameters_zh.md#实例并发上限)；查看等待和派发指标，见[可观测性](../../observability/README_zh.md)。
+
+### 调用方限额与优先级
+
+需要区分调用方时，在等待上限之外添加 `roleRules`：
+
+```yaml
+spec:
   roleRules:
     - role: role1
       priority: 10
@@ -137,45 +151,24 @@ spec:
         maxConcurrentRequests: 8
 ```
 
-同一 FrontendService 的所有副本按模型共享限额，每个调用方分别计数。使用角色规则时，需同时设置等待容量上限。
+每个调用方分别计量等待和并发数量，跨前端副本共享。`maxConcurrentRequests` 统计已派发但尚未结束的工作，取消后仍在执行的请求也计入其中。分词、token 计数和 token ID 转文本只占等待容量。
 
-| 设置 | 含义 |
-| --- | --- |
-| `admission.maxWaitingRequests` | 总等待容量，包括正在准备输入的请求 |
-| `admission.queueTimeout` | 后端接收前允许的等待与准备时长 |
-| `perCaller.maxWaitingRequests` | 单个调用方的等待容量 |
-| `perCaller.maxConcurrentRequests` | 单个调用方已派发的工作数量，计至执行结束 |
+可派发请求中，`priority` 越大越先派发；同优先级在各前端内按调用方轮转，保持调用方内部的请求顺序。并发已满的调用方不阻塞其他调用方。如需同时启用 vLLM 队列的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
 
-批量输入和 `best_of` 按实际生成序列计数。可派发请求中，`priority` 越大越先派发；同优先级在各前端内按调用方轮转，保持每个调用方的请求顺序。一个调用方并发已满时，不阻塞其他调用方。如需同时启用 vLLM 队列的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
-
-可信网关根据已认证的调用方覆盖以下请求头，使用稳定标识区分调用方，例如认证密钥的标识：
+配置可信网关，为每个文本请求覆盖以下请求头，填入已认证的角色和稳定的调用方标识：
 
 ```http
 x-role: role1
 x-caller-id: caller-a
 ```
 
-所有文本接口共用这两个请求头。启用角色规则后，缺少调用方标识或角色不匹配的请求会被拒绝。请在网关配置身份认证、授权和 RPM/token 配额，并将前端访问限制为该可信网关。文本与 token ID 转换只占等待容量；这些规则不适用于视频接口。
+缺少调用方标识或角色不匹配的请求会被拒绝。身份认证、授权和 RPM/token 配额由网关负责；前端仅向该可信网关开放。
 
-模型的 `ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应前端默认配置。要让一个模型在前端不限流，同时设置 `admission: {}` 和 `roleRules: []`；前端省略这两项时默认不限流。
+### 为单个模型覆盖配置
+
+`ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应的前端默认配置。要让一个模型在前端不限流，同时设置 `admission: {}` 和 `roleRules: []`；前端省略这两项时默认不限流。
 
 模型角色规则中的 `roleRules[].allowedPools` 通过 `spec.modelPools` 的名称限制可用 Pool。分离式部署必须为每个必需执行阶段保留一个 Pool。
-
-要限制每个文本模型服务实例可以接收的未完成请求数，请在模型 YAML 中加入 `instanceAdmission`。引擎内排队的请求也计入此上限；省略此项表示不限流：
-
-```yaml
-spec:
-  instanceAdmission:
-    maxConcurrentRequests: 32
-```
-
-升级平台后，先执行一次 `foretoken deploy` 选择当前模型程序。之后修改实例限额会在线生效。已有工作继续完成；达到上限时，新请求返回 `503`，直到占用降到上限以下。
-
-按[修改服务配置](#修改服务配置)应用变更。响应开始前，队列已满或等待超时返回 503，请求总超时返回 504，批次超过容量返回 400。启用限额时，已在等待的请求可能被拒绝。取消的请求在执行结束前仍计入并发。
-
-从旧版升级时，将 `admission.algorithm` 和 `admission.parameters` 替换为上面的配置，再一起部署前端和模型服务。旧字段会被拒绝；仅升级平台不会替换运行中的应用。
-
-查看等待和派发结果见[可观测性](../../observability/README_zh.md)。维护者扩展请求处理或后端接入时，可参考[准入生命周期](../../docs/development/admission-rules_zh.md)。
 
 ## 修改服务配置
 

@@ -13,8 +13,6 @@ Reserve waiting capacity → wait for readiness and prepare input
 → backend acceptance → execution → confirmed completion
 ```
 
-Model waiting capacity and per-caller limits are shared across replicas of one FrontendService, separately for each public model. Dispatch order remains local to each frontend: highest eligible priority first, round-robin between callers at the same priority, and FIFO within each caller. A blocked caller does not prevent other eligible callers from progressing. The gateway owns caller authentication and usage quotas.
-
 ## Capacity ownership
 
 | Phase | Waiting capacity | Caller concurrency |

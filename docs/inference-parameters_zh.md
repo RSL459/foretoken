@@ -41,6 +41,18 @@ spec:
 
 `ModelService.spec.nodeSelector` 选择默认 Pool，`modelPools[].nodeSelector` 为单个 Pool 选择另一组节点。Kubernetes 会把模型服务和运行时准备 Pod 调度到带有该 label 的节点。
 
+## 实例并发上限
+
+要限制每个文本模型服务实例已接收但尚未完成的工作，包括引擎内排队的请求，在模型 YAML 中添加：
+
+```yaml
+spec:
+  instanceAdmission:
+    maxConcurrentRequests: 32
+```
+
+修改后，用 `foretoken deploy` 重新部署模型所在的配置目录。限额在线生效，已接收的工作继续执行；满额时停止接收新工作，直到占用降到上限以下。省略 `instanceAdmission` 表示不限流。
+
 ## vLLM 常用参数
 
 | 引擎参数 | 用途 |
