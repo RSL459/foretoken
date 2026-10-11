@@ -66,7 +66,123 @@ def _conditions(config: dict[str, Any]) -> dict[str, Any]:
     for field in ("timeout", "max_retries"):
         if field in config.get("service", {}):
             conditions[field] = config["service"][field]
+    if config.get("mode") in {"evaluation", "evaluation_comparison"}:
+        resolved = conditions.pop("evaluation_conditions", None)
+        if resolved is None:
+            conditions["unknown"] = ["evaluation_conditions"]
+        else:
+            conditions.update(resolved)
+            conditions["unknown"] = [*resolved.get("unknown", ()), *(
+                field for field in ("tasks", "limit", "seed") if field not in resolved
+            )]
     return conditions
+
+
+def _flatten(values: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    """Name recorded leaf choices so differences identify the changed field, not whole snapshots."""
+    fields = {}
+    for key, value in values.items():
+        name = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict) and value:
+            fields.update(_flatten(value, name))
+        else:
+            fields[name] = value
+    return fields
+
+
+def _environment_fields(path: Path) -> tuple[dict[str, Any], set[str]]:
+    """Select serving declarations and identify unavailable observations for comparison tables."""
+    if not path.is_file():
+        return {}, set()
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    fields = _flatten({"client": snapshot.get("client")})
+    declarations: set[str] = set()
+    serving_path = path.parent / "serving_environments.json"
+    phases = {phase: snapshot.get(phase) or {} for phase in ("before", "after")}
+    if serving_path.is_file():
+        compared = json.loads(serving_path.read_text(encoding="utf-8"))
+        phases = {"reference": compared.get("reference") or {}}
+        phases.update({f"candidate.{row['label']}": row for row in compared.get("candidates", [])})
+    for phase, serving in phases.items():
+        values = {key: serving.get(key) for key in ("source", "declared_gpu_count")}
+        for kind, keys in (
+            ("services", ("model", "backend", "engineArgs", "env", "resources", "replicas", "nodes")),
+            ("groups", ("role", "artifacts", "runtime", "resources", "parallelism")),
+            ("pods", ()),
+            ("nodes", ("node_info", "allocatable")),
+        ):
+            records = []
+            for record in serving.get(kind, []):
+                selected = record.get("spec", {}) if kind == "services" else record
+                values_by_key = {key: selected[key] for key in keys if key in selected}
+                if kind == "services" and "modelPools" in selected:
+                    values_by_key["modelPoolNames"] = sorted(pool["name"] for pool in selected["modelPools"])
+                    values_by_key["modelPools"] = {pool["name"]: {
+                        key: pool[key] for key in ("role", "engineArgs", "env", "resources", "replicas", "nodes")
+                        if key in pool
+                    } for pool in selected["modelPools"]}
+                if kind == "groups":
+                    values_by_key["role"] = selected.get("role")
+                if kind == "pods":
+                    values_by_key = {"images": {
+                        container["name"]: container.get("imageID")
+                        for container in record.get("container_statuses", [])
+                    } or None}
+                if kind in {"services", "groups"}:
+                    engine = selected.get("runtime", selected).get("engineArgs") or {}
+                    values_by_key["precision"] = {key: engine.get(key) for key in ("dtype", "quantization")}
+                if "runtime" in values_by_key:
+                    values_by_key["runtime"] = {key: selected["runtime"][key] for key in (
+                        "backend", "engineArgs", "image", "applicationURL",
+                    ) if key in selected["runtime"]}
+                    if "env" in selected["runtime"]:
+                        values_by_key["runtime"]["env"] = {variable["name"]: {
+                            key: variable[key] for key in ("value", "valueFrom") if key in variable
+                        } for variable in selected["runtime"]["env"]}
+                records.append(values_by_key)
+            records.sort(key=lambda record: json.dumps(record, sort_keys=True))
+            if not records:
+                values[kind] = None
+            for index, record in enumerate(records, 1):
+                prefix = f"{phase}.{kind}.{index}"
+                # Explicit nullable declarations are choices; observed nulls are unavailable evidence.
+                if kind == "services":
+                    declarations.update(_flatten({key: value for key, value in record.items() if key != "precision"}, prefix))
+                elif kind == "groups" and "runtime" in record:
+                    declarations.update(_flatten({"runtime": record["runtime"]}, prefix))
+                values[f"{kind}.{index}"] = record
+        fields.update(_flatten(values, phase))
+    return fields, {key for key, value in fields.items() if value is None and key not in declarations}
+
+
+def _comparison_details(runs: list[dict[str, Any]]) -> None:
+    """Annotate comparisons with differing recorded values and unavailable evidence only."""
+    for section in ("conditions", "environment"):
+        values = []
+        unavailable = []
+        for run in runs:
+            if section == "conditions":
+                fields = _flatten({key: value for key, value in run.get(section, {}).items() if key != "unknown"})
+                missing = set()
+            else:
+                fields, missing = _environment_fields(Path(run[section])) if run.get(section) else ({}, set())
+            values.append(fields)
+            unavailable.append(missing)
+        keys = sorted({key for record in values for key in record})
+        changed = {key for key in keys if len({
+            json.dumps(record[key], sort_keys=True) for record, missing in zip(values, unavailable)
+            if key in record and key not in missing
+        }) > 1}
+        for run, record, missing in zip(runs, values, unavailable):
+            unknown = [key for key in keys if key not in record or key in missing]
+            if section == "conditions":
+                unknown.extend(run.get(section, {}).get("unknown", ()))
+            elif record.get("client.source.dirty"):
+                unknown.append("client.source")
+            if not record:
+                unknown.append(section)
+            run[f"{section}_changes"] = {key: record[key] for key in keys if key in changed and key in record}
+            run[f"{section}_unknown"] = sorted(set(unknown))
 
 
 def _leaf(
@@ -277,7 +393,7 @@ def read_saved_results(
     points: list[dict[str, Any]] = []
     native: dict[tuple[Any, ...], Chart] = {}
     combinations: dict[tuple[str, Path | None], str] = {}
-    repetition_counts: dict[tuple[str, str], dict[str, int]] = {}
+    repetitions: dict[tuple[str, str], list[dict[str, Any]]] = {}
     available_methods: set[str] = set()
     method_filters: dict[Path, tuple[str, ...]] = {}
     observed: set[Path] = set()
@@ -302,6 +418,17 @@ def read_saved_results(
                 continue
             observed.add(result_path)
             measured = saved.metrics or {}
+            for kind in ("distribution_comparison", "greedy_comparison"):
+                if kind in measured:
+                    protocol = measured[kind].get("protocol")
+                    if protocol is not None:
+                        saved.conditions["protocol"] = protocol
+                    else:
+                        saved.conditions.setdefault("unknown", []).append("protocol")
+                    if measured[kind].get("reference_model") is not None:
+                        saved.conditions["reference_model"] = measured[kind]["reference_model"]
+                    else:
+                        saved.conditions.setdefault("unknown", []).append("reference_model")
             comparison = comparison_charts(measured)
             charts = []
             if comparison is not None:
@@ -322,15 +449,15 @@ def read_saved_results(
             label = labels[source.group] + (f" / {saved.method}" if saved.method != "default" else "")
             # Missing workload configuration is unknown, not equal to another run's.
             fixed = (json.dumps(saved.conditions, sort_keys=True),
-                     saved.directory if saved.configuration is None else None)
+                     saved.directory if saved.configuration is None or saved.conditions.get("unknown") else None)
             combination = combinations.setdefault(fixed, f"workload-{len(combinations) + 1}")
             runs.append({**identity, "method": saved.method, "methods": chosen,
                          "result": str(saved.directory), "measured": saved.metrics is not None or bool(charts),
                          "started": saved.started, "measurement_exit_code": saved.exit_code,
                          "config": str(saved.configuration) if saved.configuration is not None else None,
                          "conditions": saved.conditions,
-                         "environment": str(saved.directory / "environment.json")
-                         if (saved.directory / "environment.json").is_file() else None,
+                         "environment": next((str(path) for name in ("environment.json", "serving_environments.json")
+                                              if (path := saved.directory / name).is_file()), None),
                          **{key: measured.get(key) for key in ("request_num", "success_num", "failed_num")}})
             if charts:
                 for chart in charts:
@@ -357,10 +484,7 @@ def read_saved_results(
                     else:
                         native[key] = replace(chart, name=f"comparison-{combination}-{chart.name}", series=tuple(series))
             else:
-                counts = repetition_counts.setdefault((label, combination), {"runs": 0, "requested_runs": 0, "failed_runs": 0})
-                counts["runs"] += int(saved.started)
-                counts["requested_runs"] += 1
-                counts["failed_runs"] += int(bool(saved.exit_code) or bool(measured.get("failed_num")))
+                repetitions.setdefault((label, combination), []).append(runs[-1])
                 points.append({**measured, "combination": combination,
                                "parameter_group": str(saved.conditions.get("mode", "performance")),
                                "bench": {**saved.conditions, "service": {"name": label}},
@@ -372,7 +496,26 @@ def read_saved_results(
         raise ValueError("Unknown plot methods: " + ", ".join(sorted(unknown)))
     from benchmarks.sweeps.core import summarize_sweep
 
+    _comparison_details(runs)
+    details = {run["result"]: {key: value for key, value in run.items() if key in (
+        "conditions_changes", "conditions_unknown", "environment_changes", "environment_unknown",
+    )} for run in runs if run.get("result")}
+    for key, chart in native.items():
+        native[key] = replace(chart, series=tuple(replace(series, records=tuple(
+            {**record, **details[record["result"]]} for record in series.records
+        )) for series in chart.series))
     summary = summarize_sweep(points)
     for row in summary:
-        row.update(repetition_counts[row["method"], row["combination"]])
+        repeated = repetitions[row["method"], row["combination"]]
+        row.update(
+            runs=sum(record["started"] for record in repeated), requested_runs=len(repeated),
+            failed_runs=sum(bool(record["measurement_exit_code"]) or bool(record.get("failed_num")) for record in repeated),
+        )
+        for section in ("conditions", "environment"):
+            row[f"{section}_changes"] = {
+                record["result"]: record[f"{section}_changes"] for record in repeated if record[f"{section}_changes"]
+            }
+            row[f"{section}_unknown"] = sorted({
+                field for record in repeated for field in record[f"{section}_unknown"]
+            })
     return SavedResults(runs, points, summary, list(native.values()), method_filters)

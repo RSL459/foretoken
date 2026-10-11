@@ -102,6 +102,7 @@ def serving_environment(service: ModelService) -> dict[str, Any]:
             "uid": r["metadata"]["uid"],
             "revision": r["spec"]["revision"],
             "phase": r.get("status", {}).get("phase"),
+            "role": r["spec"]["role"],
             "artifacts": {key: r["spec"]["artifacts"][key] for key in (
                 "model", "source", "modelRevision", "tokenizer", "tokenizerRevision",
             ) if key in r["spec"]["artifacts"]},

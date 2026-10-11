@@ -215,6 +215,7 @@ class ServiceEvaluation(ServiceAuthentication, LocalChatCompletion):
                 "prompt_format": "chat_messages" if chat_task else (
                     "chat_template" if templated else "raw_text"
                 ),
+                "fewshot_as_multiturn": options["fewshot_as_multiturn"],
                 **({"chat_template": self.config.apply_chat_template} if templated and not chat_task else {}),
             },
         })

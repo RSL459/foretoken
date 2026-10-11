@@ -62,7 +62,16 @@ def _table(path: Path, rows: list[dict[str, Any]]) -> Path:
     return csv_path
 
 
-def _style(axis: Any, title: str, xlabel: str, ylabel: str) -> None:
+def _style(axis: Any, title: str, xlabel: str, ylabel: str, records: list[dict[str, Any]]) -> None:
+    """Style a figure and identify differing or unavailable comparison evidence beside its axis."""
+    notes = [label for field, label in (
+        ("conditions_changes", "Conditions differ"),
+        ("conditions_unknown", "Conditions unknown"),
+        ("environment_changes", "Environment differs"),
+        ("environment_unknown", "Environment unknown"),
+    ) if any(record.get(field) for record in records)]
+    if notes:
+        xlabel += "\n" + textwrap.fill(" · ".join(notes), width=45 if axis.figure.get_figwidth() < 5 else 85)
     axis.set_title(
         textwrap.fill(title, width=46), loc="left", fontsize=9, color="#0b0b0b", pad=9
     )
@@ -214,7 +223,8 @@ def _charts(
                 "Probe average",
             }:
                 figure_title += f" · {series_list[0].name}"
-            _style(axis, figure_title, chart.xlabel, chart.ylabel)
+            evidence = [record for series in series_list for record in series.records]
+            _style(axis, figure_title, chart.xlabel, chart.ylabel, evidence)
             if chart.metric in {
                 "slo_slo_attainment", "exact_match_rate", "Time/SLO attainment (%)",
                 "speculative_decoding_acceptance_ratio", "speculative_decoding_draft_time_share_ratio",
@@ -323,6 +333,9 @@ def _pareto(
                 "failed_runs": row.get("failed_runs"),
                 "requested_runs": row.get("requested_runs"),
                 "error_type": "run stddev",
+                **{key: row[key] for key in (
+                    "conditions_changes", "conditions_unknown", "environment_changes", "environment_unknown",
+                ) if key in row},
                 "max_concurrency": bench.get(
                     "max_concurrency", point.get("max_concurrency")
                 ),
@@ -411,6 +424,7 @@ def _pareto(
                 title,
                 "Output throughput per user (tokens/s)",
                 "Output throughput per GPU (tokens/s)",
+                plotted,
             )
             if len({row["method"] for row in plotted}) > 1:
                 _legend(figure, axis, columns)
@@ -520,6 +534,15 @@ def render_results(
         run_metrics = json.loads((source / "metrics.json").read_text(encoding="utf-8"))
         warmup_metrics_path = source / "warmup_metrics.json"
         warmup_metrics = json.loads(warmup_metrics_path.read_text(encoding="utf-8")) if warmup_metrics_path.is_file() else None
+        comparison_runs = []
+        if "evaluation_comparison" in run_metrics:
+            comparison_runs = read_saved_results((source,), methods=methods).runs
+            details = {row["method"]: {key: row[key] for key in (
+                "conditions_changes", "conditions_unknown", "environment_changes", "environment_unknown",
+            )} for row in comparison_runs}
+            for rows in (run_metrics["scores"], run_metrics["evaluation_comparison"]["scores"]):
+                for row in rows:
+                    row.update(details.get(row["method"], {}))
         comparison = comparison_charts(run_metrics)
         if comparison is not None:
             charts, identities = comparison
@@ -547,6 +570,9 @@ def render_results(
             charts += gpu_allocation_charts(source)
         out.mkdir(parents=True, exist_ok=True)
         result = {}
+        if comparison_runs:
+            file = _table(out / "comparison-runs", comparison_runs)
+            result[file.name] = file
         if "scores" in run_metrics:
             file = _table(out / "quality-scores", run_metrics["scores"])
             result[file.name] = file

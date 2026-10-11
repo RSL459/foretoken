@@ -107,6 +107,9 @@ def run_evaluation(
         )
         started = time.monotonic()
         code = _execute(config, service, directory)
+        saved_config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
+        if "evaluation_conditions" in saved_config:
+            record["evaluation_conditions"] = saved_config["evaluation_conditions"]
         metrics = read_quality_metrics(config.evaluator, directory / "native")
         run = BenchmarkRun(
             record=record,
@@ -162,6 +165,17 @@ def run_evaluation_comparison(config: EvaluationConfig) -> None:
                 if method["status"] == "running":
                     method["status"] = "incomplete"
             failure = not complete or any(method["exit_code"] for method in methods)
+            if scores:
+                from benchmarks.results.plots.saved_results import read_saved_results
+
+                children = {str((directory / method["directory"]).resolve()): method["label"]
+                            for method in methods if (directory / method["directory"] / "config.json").is_file()}
+                compared = read_saved_results(tuple(Path(path) for path in children))
+                details = {children[row["result"]]: {key: row[key] for key in (
+                    "conditions_changes", "conditions_unknown", "environment_changes", "environment_unknown",
+                )} for row in compared.runs}
+                for row in scores:
+                    row.update(details[row["method"]])
             metrics = {
                 "duration_seconds": time.monotonic() - started,
                 "scores": scores,

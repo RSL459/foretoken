@@ -27,6 +27,29 @@ from benchmarks.results.output import (
 logger = logging.getLogger(__name__)
 
 
+def generation_conditions(options: Any) -> dict[str, Any]:
+    """Project native generation choices for saved comparisons without exporting opaque extras."""
+    projected = {}
+    for key in (
+        "max_tokens", "max_new_tokens", "max_gen_toks", "temperature", "top_p", "top_k",
+        "do_sample", "n", "num_beams", "seed", "stop", "stop_seqs", "until", "repetition_penalty",
+        "frequency_penalty", "presence_penalty", "min_tokens", "min_new_tokens",
+        "reasoning_effort", "reasoning_tokens",
+    ):
+        value = options.get(key) if isinstance(options, dict) else getattr(options, key, None)
+        if value is not None:
+            projected[key] = value
+    return projected
+
+
+def save_evaluation_conditions(directory: str, conditions: dict[str, Any]) -> None:
+    """Publish adapter-resolved task choices into the enclosing run's existing configuration."""
+    parent = Path(directory).parent
+    path = parent / "config.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    write_json(str(parent), "config.json", {**record, "evaluation_conditions": conditions})
+
+
 def read_quality_metrics(evaluator: str, directory: Path) -> dict[str, Any]:
     """Read every native task report; retain subset, filter, sample count, and uncertainty."""
     rows: list[dict[str, Any]] = []
@@ -221,6 +244,8 @@ class EvaluationArtifactSink:
 
 def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
     """Publish native-valued scalars, a complete score table, and downloadable run artifacts."""
+    if "evaluation_conditions" in run.record:
+        session.config.update({"evaluation_conditions": run.record["evaluation_conditions"]})
     columns = [
         *(["method"] if run.record.get("mode") == "evaluation_comparison" else []),
         "task",
@@ -282,13 +307,16 @@ class EvaluationComparisonArtifactSink:
         return None
 
     def publish(self, run: BenchmarkRun) -> None:
+        fields = ("conditions_changes", "conditions_unknown", "environment_changes", "environment_unknown")
         columns = ("method", "task", "level", "subset", "filter", "metric", "value",
-                   "stderr", "samples", "direction", "display_multiplier", "display_unit", "primary")
+                   "stderr", "samples", "direction", "display_multiplier", "display_unit", "primary", *fields)
         path = self.directory / "evaluation_comparison.csv"
         with path.open("w", encoding="utf-8", newline="") as stream:
             writer = csv.DictWriter(stream, fieldnames=columns, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(run.metrics["scores"])
+            writer.writerows({
+                **row, **{key: json.dumps(row.get(key), ensure_ascii=False) for key in fields},
+            } for row in run.metrics["scores"])
         run.artifacts["evaluation_comparison_csv"] = path
 
     def close(self, *, exit_code: int = 0) -> None:

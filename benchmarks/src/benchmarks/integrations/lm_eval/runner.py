@@ -25,6 +25,10 @@ from lm_eval.utils import (
 from benchmarks.config.evaluation import native_arguments, validate_model_transport
 from benchmarks.integrations.lm_eval.model import ServiceEvaluation
 from benchmarks.integrations.lm_eval.responses import LmEvalResponses
+from benchmarks.results.evaluation import (
+    generation_conditions,
+    save_evaluation_conditions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +103,49 @@ def _execute(config, model, manager) -> None:
         )
         if results is None:
             return
+        # Native task reports contain the final few-shot and generation overrides,
+        # including choices made while constructing this run's requests.
+        conditions = {
+            "limit": config.limit, "samples": config.samples, "seed": config.seed,
+            "system_instruction": config.system_instruction,
+            "apply_chat_template": config.apply_chat_template,
+            "fewshot_as_multiturn": config.fewshot_as_multiturn,
+            "model_options": {key: config.model_args[key] for key in (
+                "tokenizer", "tokenizer_backend", "revision", "max_length", "max_gen_toks",
+                "seed", "truncate", "eos_string",
+            ) if key in config.model_args},
+            "tasks": {},
+            "unknown": [name for name, unresolved in (
+                ("custom_tasks", bool(config.include_path) or any(
+                    isinstance(task, dict) or str(task).endswith((".yaml", ".yml")) for task in config.tasks
+                )),
+                ("seed", config.seed is None or any(seed is None for seed in config.seed)),
+                ("samples", isinstance(config.samples, str)),
+            ) if unresolved],
+        }
+        for name, task in results["configs"].items():
+            formatting = (task.get("metadata") or {}).get("foretoken") or {}
+            native_generation = task.get("generation_kwargs") or {}
+            generation = generation_conditions(native_generation)
+            conditions["tasks"][name] = {
+                **{key: task[key] for key in (
+                    "dataset_path", "dataset_name", "test_split", "validation_split",
+                    "fewshot_split", "output_type", "repeats",
+                ) if key in task},
+                "num_fewshot": results["n-shot"][name],
+                "generation": {"max_gen_toks": model._max_gen_toks, **generation},
+                "formatting": {key: formatting[key] for key in (
+                    "prompt_format", "fewshot_as_multiturn", "chat_template",
+                ) if key in formatting},
+                "version": results.get("versions", {}).get(name),
+            }
+            if native_generation.keys() - generation.keys():
+                conditions["unknown"].append(f"tasks.{name}.generation")
+            if "prompt_format" not in formatting:
+                conditions["unknown"].append(f"tasks.{name}.formatting")
+            if conditions["tasks"][name]["version"] is None:
+                conditions["unknown"].append(f"tasks.{name}.version")
+        save_evaluation_conditions(config.output_path, conditions)
         samples = results.pop("samples") if config.log_samples else None
         if config.show_config:
             print(json.dumps(results, indent=2, default=handle_non_serializable, ensure_ascii=False))
