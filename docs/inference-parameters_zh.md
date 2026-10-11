@@ -23,7 +23,7 @@ spec:
 
 ## 模型环境变量
 
-在各模型的 `spec.env` 中设置运行时环境变量，与 `engineArgs` 分开配置：
+通过 `spec.env` 为单个模型的运行进程设置环境变量：
 
 ```yaml
 spec:
@@ -33,7 +33,7 @@ spec:
     TOKENIZERS_PARALLELISM: false
 ```
 
-值可以直接填写字符串、数字或布尔值，最终统一转成环境字符串：`8` 变为 `"8"`，`false` 变为 `"false"`。加引号的写法也支持；需要保留 `"001"` 这样的精确文本时使用引号。字符串可通过 `$(NAME)` 引用其他变量，无需调整声明顺序；循环引用会被拒绝。
+值可以填写字符串、数字或布尔值，传给进程时统一转为字符串。保留 `"001"` 这样的文本时使用引号。`$(NAME)` 可以引用其他变量，无需调整声明顺序，但不能循环引用。
 
 各 Pool 默认继承所属模型的 `spec.env`。填写 `modelPools[].env` 会整体替换该 Pool 的映射，`env: {}` 清空继承的自定义变量，省略或填写 `null` 则继续继承。
 
@@ -49,11 +49,11 @@ spec:
           key: access-key-id
 ```
 
-`valueFrom` 沿用 Kubernetes 的 Secret、ConfigMap、Pod 字段或容器资源引用。Secret 和 ConfigMap 需位于服务所在命名空间。部署与实验配置保存直接填写的值及引用，不展开 Secret 内容。
+`valueFrom` 支持 Kubernetes 的 Secret、ConfigMap、Pod 字段和容器资源引用。上例需在模型所在命名空间创建 Secret `model-storage`，并提供 `access-key-id` 键。直接填写的值会随部署和实验配置保存。
 
-每个模型的变量仅作用于自己的运行容器及子进程，多节点副本的所有成员均生效；不作用于镜像构建、独立模型准备 Job、初始化容器或 frontend 服务。Foretoken 管理的启动、拓扑和缓存变量不能通过 `env` 覆盖。
+变量按模型隔离，多节点副本的所有成员均生效。构建和独立模型下载仍使用各自的配置；启动、拓扑和缓存等平台管理的变量由 Foretoken 设置。
 
-修改后照常执行 `foretoken deploy`。生效环境变化会替换受影响的模型实例。仅更新所引用的 Secret 或 ConfigMap 不会重启实例：已有进程保留原环境，新启动的容器读取更新后的值。如需立即切换，改用新的引用并重新部署。
+修改后执行 `foretoken deploy <配置目录>`，替换环境发生变化的模型实例。仅更新 Secret 或 ConfigMap 内容，要等新容器启动才生效；如需立即切换，改用新的引用并重新部署。
 
 ## 选择模型服务节点
 

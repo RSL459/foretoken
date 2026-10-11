@@ -23,7 +23,7 @@ Values are YAML booleans, numbers, strings, lists or objects. Omitted options re
 
 ## Model environment variables
 
-Set each model's runtime environment in `spec.env`, separately from `engineArgs`:
+Use `spec.env` to set environment variables for one model's runtime processes:
 
 ```yaml
 spec:
@@ -33,7 +33,7 @@ spec:
     TOKENIZERS_PARALLELISM: false
 ```
 
-Values accept strings, numbers and booleans and become environment strings: `8` becomes `"8"` and `false` becomes `"false"`. Quoted values also work; use quotes to preserve exact text such as `"001"`. Strings can reference other variables with `$(NAME)` without depending on declaration order; circular references are rejected.
+Values accept strings, numbers and booleans, converted to strings for the process. Use quotes to preserve text such as `"001"`. `$(NAME)` references another variable regardless of declaration order; references must not form a cycle.
 
 Each Pool inherits its model's `spec.env`. Set `modelPools[].env` to replace the complete mapping for one Pool, or `env: {}` to clear its inherited custom variables. Omission or `null` inherits the model's settings.
 
@@ -49,11 +49,11 @@ spec:
           key: access-key-id
 ```
 
-`valueFrom` uses Kubernetes references to Secrets, ConfigMaps, Pod fields or container resources. Secrets and ConfigMaps must exist in the service namespace. Deployment and experiment configuration retain literal values and references, not the referenced Secret contents.
+`valueFrom` supports Kubernetes Secret, ConfigMap, Pod-field and container-resource references. In this example, create Secret `model-storage` with key `access-key-id` in the model's namespace. Literal values are saved with deployment and experiment configuration.
 
-Each model's variables apply only to its runtime containers and child processes, including all members of a multi-node replica. They do not configure image builds, separate model-preparation Jobs, init containers or frontend services. Foretoken-managed startup, topology and cache variables cannot be overridden through `env`.
+These settings are local to the model, including all members of a multi-node replica. Build and separate model-download settings use their existing configuration. Foretoken-managed startup, topology and cache variables remain platform-controlled.
 
-Apply changes through the usual `foretoken deploy` command. Changes to the effective environment replace the affected model instances. Updating a referenced Secret or ConfigMap alone does not restart them: existing processes keep their environment, while newly started containers read the updated values. To roll out new values immediately, use a new reference and deploy it.
+Redeploy the configuration directory with `foretoken deploy <directory>` to replace instances whose environment changed. Updating Secret or ConfigMap contents alone takes effect when a new container starts; to apply it immediately, change the reference and redeploy.
 
 ## Select serving nodes
 
