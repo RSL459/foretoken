@@ -75,6 +75,18 @@ spec:
 
 `ModelService.spec.nodeSelector` selects the default Pool. `modelPools[].nodeSelector` selects a different group for one Pool. The cluster scheduler places serving and runtime-preparation Pods on nodes carrying the selected label.
 
+## Instance concurrency
+
+To bound accepted, unfinished work at each text model-server instance, including its engine queue, add this setting to the model YAML:
+
+```yaml
+spec:
+  instanceAdmission:
+    maxConcurrentRequests: 32
+```
+
+Redeploy the model's configuration directory with `foretoken deploy`. Limits update online and accepted work continues. A full instance stops accepting new work until occupancy falls below the limit. Omit `instanceAdmission` for unlimited acceptance.
+
 ## Common vLLM options
 
 | Engine option | Purpose |
@@ -102,7 +114,7 @@ P/D and E/P/D Pools can select their own parallelism settings within the model a
 
 `modelPools[].engineArgs`, when supplied, replaces the service-level native options for that Pool. Service replica counts remain separate from engine data parallelism.
 
-With EP enabled, attention can use TP × DP while routed experts span the corresponding EP group. Sharing experts does not share attention KV caches between DP ranks. Enabling EP alone does not add an RDMA device request to a single-node model; an active all-to-all backend that requires RDMA still requests it.
+Expert parallelism (EP) keeps each DP rank's KV cache separate. Single-node EP requests RDMA devices only when its active communication backend requires them.
 
 ## Speculative decoding
 

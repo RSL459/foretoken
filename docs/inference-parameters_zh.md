@@ -75,6 +75,18 @@ spec:
 
 `ModelService.spec.nodeSelector` 选择默认 Pool，`modelPools[].nodeSelector` 为单个 Pool 选择另一组节点。Kubernetes 会把模型服务和运行时准备 Pod 调度到带有该 label 的节点。
 
+## 实例并发上限
+
+要限制每个文本模型服务实例已接收但尚未完成的工作，包括引擎内排队的请求，在模型 YAML 中添加：
+
+```yaml
+spec:
+  instanceAdmission:
+    maxConcurrentRequests: 32
+```
+
+修改后，用 `foretoken deploy` 重新部署模型所在的配置目录。限额在线生效，已接收的工作继续执行；满额时停止接收新工作，直到占用降到上限以下。省略 `instanceAdmission` 表示不限流。
+
 ## vLLM 常用参数
 
 | 引擎参数 | 用途 |
@@ -102,7 +114,7 @@ P/D 和 E/P/D 各 Pool 可以在模型和引擎支持的组合内分别配置并
 
 填写 `modelPools[].engineArgs` 时，它会整体替换该 Pool 继承的服务级原生参数。服务副本数与引擎内部的数据并行度分别配置。
 
-开启 EP 后，attention 可以按 TP × DP 执行，路由专家则分布在对应的 EP 组中。共享专家不会让 attention 的 KV Cache 在 DP ranks 之间共享。单节点模型不会仅因开启 EP 而额外申请 RDMA 设备；实际启用的 all-to-all 通信后端需要 RDMA 时，仍会申请对应设备。
+开启专家并行（EP）后，各 DP rank 的 KV Cache 仍独立。单节点 EP 仅在实际通信后端需要时申请 RDMA 设备。
 
 ## 推测解码
 

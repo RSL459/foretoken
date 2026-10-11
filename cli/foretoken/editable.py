@@ -126,9 +126,7 @@ class EditableDeployment:
         previous = {
             str(p.relative_to(old))
             for p in old.rglob("*")
-            if p.is_file()
-            and str(p.relative_to(old))
-            not in _SNAPSHOT_METADATA
+            if p.is_file() and str(p.relative_to(old)) not in _SNAPSHOT_METADATA
         }
         changed = {
             name
@@ -244,6 +242,7 @@ class EditableDeployment:
         """Publish selected applications before submitting service and model-storage intent."""
         objects = copy.deepcopy(deployment.objects)
         pending: set[str] = set()
+        services = []
         for obj in objects:
             component = _COMPONENTS.get(obj.get("kind"))
             if component is None:
@@ -270,6 +269,17 @@ class EditableDeployment:
                 .get("annotations", {})
                 .get(SOURCE_REVISION, "")
             )
+            if bundle is not None and active != bundle["revision"]:
+                pending.add(component)
+            services.append((obj, component, namespace, current, active))
+        if pending or "control-plane" in self.state["bundles"]:
+            self._publish_applications(pending, timeout)
+
+        # Publication can reuse an earlier version. Select workloads only after the
+        # publisher has committed the actual application references.
+        for obj, component, namespace, current, active in services:
+            metadata = obj["metadata"]
+            bundle = self.state["bundles"].get(component)
             revision = bundle["revision"] if bundle is not None else ""
             writers = (
                 self._ready_containers(namespace, component, metadata["name"], revision)
@@ -284,11 +294,7 @@ class EditableDeployment:
             if active != revision or not ready:
                 self.selected[(obj["kind"], namespace, metadata["name"])] = revision
             if bundle is not None:
-                if active != revision:
-                    pending.add(component)
-                annotations[SOURCE_REVISION] = revision
-        if pending or "control-plane" in self.state["bundles"]:
-            self._publish_applications(pending, timeout)
+                metadata["annotations"][SOURCE_REVISION] = revision
         return parse_deployment(
             deployment.path, yaml.safe_dump_all(objects, sort_keys=False)
         )
@@ -477,10 +483,27 @@ class EditableDeployment:
                     previous,
                     references,
                     timeout=timeout,
+                    reuse_previous=True,
                     sources=build_sources(snapshot, component),
                 )
+                default_revision = (
+                    build.get("applications", {}).get(component, {}).get("revision")
+                )
+                # Matching the installed default needs no source override; adding one
+                # would change Pod annotations even though the application is unchanged.
+                if published_revision == default_revision:
+                    self.state["bundles"].pop(component)
+                else:
+                    bundle["revision"] = published_revision
+                _write_json(self.directory / "install.json", self.state)
+                if references is not None:
+                    references.add(published_revision)
+                if component == "control-plane":
+                    control_reference = origin.reference(component, published_revision)
                 publication = (
-                    "reused" if previous and published_revision == previous else "published"
+                    "reused"
+                    if previous and published_revision == previous
+                    else "published"
                 )
                 print(
                     f"Application {publication}: {component} in "
@@ -488,7 +511,7 @@ class EditableDeployment:
                     flush=True,
                 )
                 builder.run(["rm", "-rf", "--", staging])
-        if "control-plane" in pending:
+        if "control-plane" in pending and control_reference != active_control:
             helm.update_control_plane_application(snapshot, control_reference, timeout)
             self.kubectl.rollout_status(
                 ResourceRef("Deployment", platform["metadata"]["name"], namespace),

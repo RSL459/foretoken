@@ -280,6 +280,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	name := "prepare-" + string(group.UID)
 	env := []corev1.EnvVar{
 		{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON},
+		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: runtimeconfig.ModelPreparationScopeEnv, Value: group.Spec.ModelPoolRef.UID + "/" + group.Spec.Revision},
 		{Name: preparationConfigMapEnv, Value: preparationSourceName(group.Spec)},
 		{Name: preparationNamespaceEnv, Value: group.Namespace},
@@ -455,6 +456,11 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: launchEnv, Value: launchJSON},
 		{Name: "FORETOKEN_INTERNAL_LISTEN", Value: fmt.Sprintf("0.0.0.0:%d", group.Spec.Runtime.Port)},
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
+		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
+	}
+	env = append(env, runtimeconfig.AdmissionStoreEnv(group.Spec.Runtime.AdmissionStore)...)
+	if group.Spec.Runtime.InstanceAdmissionProtocol == 0 && group.Spec.Runtime.InstanceAdmission != nil {
+		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MAX_ACCEPTED_REQUESTS", Value: strconv.FormatUint(uint64(group.Spec.Runtime.InstanceAdmission.MaxConcurrentRequests), 10)})
 	}
 	if group.Spec.NodeCount > 1 {
 		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MEMBER_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}})
@@ -518,6 +524,11 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}},
 	}
 	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}, {Name: "dshm", MountPath: "/dev/shm"}}
+	if groupUsesLiveInstanceAdmission(group) {
+		volumes = append(volumes, corev1.Volume{Name: instanceAdmissionVolumeName, VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: instanceAdmissionConfigMapName(group.Spec.ModelPoolRef.UID)}}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: instanceAdmissionVolumeName, MountPath: instanceAdmissionDirectory, ReadOnly: true})
+		env = append(env, corev1.EnvVar{Name: instanceAdmissionConfigEnv, Value: instanceAdmissionDirectory + "/" + instanceAdmissionKey})
+	}
 	if group.Spec.Runtime.Backend == "vllm" {
 		volumes = append(volumes, corev1.Volume{Name: "kv-indexer", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: kvIndexerSecretName, Items: []corev1.KeyToPath{{Key: kvIndexerSecretKey, Path: "key"}}}}})
 		mounts = append(mounts, corev1.VolumeMount{Name: "kv-indexer", MountPath: "/etc/foretoken/kv-indexer", ReadOnly: true})
@@ -554,6 +565,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		runtimeClassName = &group.Spec.Accelerator.RuntimeClassName
 	}
 
+	readinessPath := "/readyz"
+	if groupUsesLiveInstanceAdmission(group) {
+		readinessPath = instanceAdmissionReadyPath
+	}
 	deployment := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: appsv1.SchemeGroupVersion.String(), Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{Name: group.Name, Namespace: group.Namespace, Labels: labels},
@@ -594,7 +609,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 						},
 						StartupProbe:             modelServerProbe("/readyz", 10, startupFailureThreshold),
 						LivenessProbe:            modelServerProbe("/healthz", 10, 3),
-						ReadinessProbe:           modelServerProbe("/readyz", 5, 3),
+						ReadinessProbe:           modelServerProbe(readinessPath, 5, 3),
 						TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 						TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 						Resources:                corev1.ResourceRequirements{Requests: requests, Limits: limits},
@@ -682,13 +697,19 @@ func modelGroupServiceName(group *inferencev1alpha1.ModelGroup) string {
 	return serviceNamePrefix + prefix + "-" + identity
 }
 
-// reconcileService applies the stable Service owned by the ModelGroup.
-func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) error {
-	labels := modelGroupLabels(group)
-	selector := maps.Clone(labels)
+// modelGroupServiceSelector selects the sole HTTP ingress, excluding distributed workers.
+func modelGroupServiceSelector(group *inferencev1alpha1.ModelGroup) map[string]string {
+	selector := modelGroupLabels(group)
 	if group.Spec.NodeCount > 1 {
 		selector[lwsv1.WorkerIndexLabelKey] = "0"
 	}
+	return selector
+}
+
+// reconcileService applies the stable Service owned by the ModelGroup.
+func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) error {
+	labels := modelGroupLabels(group)
+	selector := modelGroupServiceSelector(group)
 	// Scrape identity belongs on the Service, independently of workload selectors.
 	// Annotations preserve full resource names beyond the label-value length limit.
 	serviceLabels := maps.Clone(labels)
