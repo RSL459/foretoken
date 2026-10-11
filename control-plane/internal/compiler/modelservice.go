@@ -64,6 +64,9 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		return nil, err
 	}
 	if spec.Backend == "vllm-omni" {
+		if spec.PrefixCacheIsolation != nil {
+			return nil, fmt.Errorf("prefixCacheIsolation is not supported by the vllm-omni video backend")
+		}
 		if spec.InstanceAdmission != nil {
 			return nil, fmt.Errorf("instanceAdmission is not supported by the vllm-omni video backend")
 		}
@@ -209,6 +212,7 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			MemberCount:                           nodes,
 			Resources:                             normalizedResources,
 			NodeSelector:                          normalizedNodeSelector,
+			PrefixCacheIsolation:                  spec.PrefixCacheIsolation,
 			InternalGenerateRequestBodyLimitBytes: internalGenerateRequestBodyLimitBytes,
 			Network:                               network,
 			ECProfile:                             ecProfile,

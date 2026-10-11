@@ -18,15 +18,15 @@ The example requests two GPUs, 14 CPU cores, 44 GiB memory, and 21 GiB of dynami
 
 Use a [source-installed platform](../../docs/custom-deployment.md), a model-server image containing vLLM's `MooncakeStoreConnector` and `mooncake-transfer-engine`, and a default StorageClass. Configure the model directory as described in [Model storage](../../docs/model-storage.md).
 
-Build the Store image from the repository root. For a local k3d cluster, import it into the active cluster:
+Build the Store image from the repository root with the same Mooncake version as the model-server's transfer package. The standard NVIDIA image uses `0.3.12.post1`. For a local k3d cluster, import it into the active cluster:
 
 ```bash
-make image-mooncake
+make image-mooncake MOONCAKE_VERSION=0.3.12.post1
 K3D_CLUSTER="$(kubectl config current-context)"
 k3d image import foretoken-mooncake --cluster "${K3D_CLUSTER#k3d-}"
 ```
 
-For another cluster, replace `REGISTRY` with a registry repository accessible to its nodes. Build with `make image-mooncake MOONCAKE_IMAGE=REGISTRY/mooncake`, push the image with `docker push REGISTRY/mooncake`, and use that image in the Master and both clients in `kvservice.yaml`.
+For another cluster, replace `REGISTRY` with a registry repository accessible to its nodes. Build with `make image-mooncake MOONCAKE_VERSION=0.3.12.post1 MOONCAKE_IMAGE=REGISTRY/mooncake`, push the image with `docker push REGISTRY/mooncake`, and use that image in the Master and both clients in `kvservice.yaml`.
 
 ```bash
 foretoken deploy examples/shared-kv-store --timeout 20m

@@ -74,12 +74,11 @@ class _PrefixServer:
                 cache_salt=query.get("cacheSalt"),
                 block_hasher=self.block_hasher,
             )
-            # Match the native scheduler's complete-block lookup boundary.
-            token_len = len(tokens) // block_size * block_size
+            # The native lookup owns block alignment and the final-token sampling boundary.
             view = _LookupView(self.worker)
-            matched = type(self.worker).lookup(view, token_len, request.block_hashes)
+            result = type(self.worker).lookup(view, len(tokens), request.block_hashes)
             return {
-                "matchedTokens": None if view.store.failed else matched,
+                "matchedTokens": None if view.store.failed else result.hit_length,
                 "blockSize": block_size,
             }
         except Exception:

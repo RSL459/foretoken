@@ -146,7 +146,15 @@ impl RuntimeBuilder {
         let models = backends
             .models
             .iter()
-            .map(|(model, cached)| (model.clone(), ModelRuntime::new(cached.bundle.clone())))
+            .map(|(model, cached)| {
+                (
+                    model.clone(),
+                    ModelRuntime::new(
+                        cached.bundle.clone(),
+                        cached.identity.prefix_cache_isolation,
+                    ),
+                )
+            })
             .collect();
         let router: Arc<dyn Router> = Arc::new(
             PipelineRouter::with_pipeline(registry.clone(), pipeline)

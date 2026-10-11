@@ -61,6 +61,7 @@ const (
 // ModelGroupReconciler owns the Kubernetes workload for one execution Group.
 type ModelGroupReconciler struct {
 	client.Client
+	APIReader             client.Reader
 	DrainClient           ModelGroupDrainClient
 	Now                   func() time.Time
 	ControlPlaneNamespace string
@@ -72,6 +73,7 @@ type ModelGroupReconciler struct {
 
 // SetupWithManager registers the ModelGroup controller and its owned resources.
 func (reconciler *ModelGroupReconciler) SetupWithManager(manager ctrl.Manager) error {
+	reconciler.APIReader = manager.GetAPIReader()
 	builder := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelGroup{}).
 		Owns(&batchv1.Job{}).

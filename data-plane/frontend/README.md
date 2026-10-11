@@ -162,7 +162,9 @@ x-role: role1
 x-caller-id: caller-a
 ```
 
-Requests without a caller identifier or matching role are rejected. Authentication, authorization, and RPM/token quotas belong at the gateway; restrict frontend access to that gateway.
+For API key authentication, use the key's stable, non-secret record ID as `x-caller-id`, not the secret key value. Use the same ID across frontends and never assign it to another identity.
+
+With role rules configured, requests without a caller identifier or matching role are rejected. Authentication, authorization, and RPM/token quotas belong at the gateway; restrict frontend access to that gateway. The same caller ID can provide [prefix cache isolation](../../docs/inference-parameters.md#prefix-cache-isolation).
 
 ### Override one model
 

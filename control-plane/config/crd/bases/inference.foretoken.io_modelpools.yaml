@@ -522,6 +522,10 @@ spec:
                       constraint for this Pool.
                     maxProperties: 16
                     type: object
+                  prefixCacheIsolation:
+                    description: PrefixCacheIsolation pins the model's cache policy
+                      for this execution cohort.
+                    type: boolean
                   profiling:
                     description: Profiling is the service-selected instrumentation
                       for this Pool's processes.

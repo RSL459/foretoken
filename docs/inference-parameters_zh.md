@@ -87,6 +87,27 @@ spec:
 
 修改后，用 `foretoken deploy` 重新部署模型所在的配置目录。限额在线生效，已接收的工作继续执行；满额时停止接收新工作，直到占用降到上限以下。省略 `instanceAdmission` 表示不限流。
 
+## 前缀缓存隔离
+
+前缀缓存复用相同提示词前缀的计算结果。要按已认证的调用方隔离缓存，在 ModelService YAML 中添加：
+
+```yaml
+spec:
+  prefixCacheIsolation: true
+```
+
+该设置统一用于模型的所有 Pool 和前端，覆盖 Chat Completions、文本补全、Responses 和 Messages，支持 vLLM 的文本与图片输入生成。
+
+| 取值 | 缓存共享方式 |
+| --- | --- |
+| `true` | 使用可信网关提供的 `x-caller-id` 作为缓存盐，覆盖请求 body 中的 `cache_salt`；生成请求必须有非空调用方 ID。 |
+| `false` | 不加盐，允许调用方共享相同前缀，忽略请求 body 中的 `cache_salt`。 |
+| 省略或 `null` | 沿用请求 body 中的 `cache_salt`；body 省略该字段、填写 `null` 或空字符串时不加盐。 |
+
+启用隔离前，配置网关的[调用方身份请求头](../data-plane/frontend/README_zh.md#调用方限额与优先级)。该设置仅改变缓存共享范围，前缀缓存开关、身份认证和准入规则保持不变。
+
+对包含模型和前端配置的目录执行 `foretoken deploy <配置目录>`。修改该设置会替换模型实例，并切换到独立的缓存域，持久化共享缓存也按模式分开。
+
 ## vLLM 常用参数
 
 | 引擎参数 | 用途 |

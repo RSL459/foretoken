@@ -833,6 +833,10 @@ spec:
                     maximum: 65535
                     minimum: 1
                     type: integer
+                  prefixCacheIsolation:
+                    description: PrefixCacheIsolation pins the cache namespace and
+                      request policy for this instance.
+                    type: boolean
                   preparationVersion:
                     description: |-
                       PreparationVersion selects the source-publication contract for this immutable cohort.
