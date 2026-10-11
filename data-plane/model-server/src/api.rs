@@ -473,10 +473,7 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
             .unwrap_or(u64::MAX),
         accepting: state.health.accepting(),
         data_parallel_ranks: telemetry.data_parallel_ranks,
-        running_requests: state
-            .health
-            .running_requests()
-            .max(telemetry.running_requests),
+        running_requests: state.health.running_requests(),
         max_concurrent_requests: telemetry.max_concurrent_requests,
         scheduler_running_requests: telemetry.scheduler_running_requests,
         scheduler_waiting_requests: telemetry.scheduler_waiting_requests,

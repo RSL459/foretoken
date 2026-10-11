@@ -7,7 +7,6 @@ use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use thiserror::Error;
@@ -36,7 +35,6 @@ pub struct BackendGeneration {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BackendTelemetry {
     pub data_parallel_ranks: Vec<foretoken_model_protocol::DataParallelTelemetry>,
-    pub running_requests: u64,
     pub max_concurrent_requests: Option<u64>,
     pub scheduler_running_requests: Option<u64>,
     pub scheduler_waiting_requests: Option<u64>,
@@ -144,7 +142,6 @@ pub trait Backend: Send + Sync {
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
 pub struct VllmBackend {
     llm: RwLock<Option<Llm>>,
-    running_requests: Arc<AtomicU64>,
     max_concurrent_requests: Option<u64>,
     engine_labels: Vec<EngineLabels>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
@@ -165,7 +162,6 @@ impl VllmBackend {
             .collect();
         Self {
             llm: RwLock::new(Some(llm)),
-            running_requests: Arc::new(AtomicU64::new(0)),
             max_concurrent_requests,
             engine_labels,
             boundary_latency: Arc::new(Mutex::new(BoundaryLatencyMetrics::new())),
@@ -336,8 +332,6 @@ impl Backend for VllmBackend {
             .await
             .map_err(BackendError::from_llm)?;
         let completion = stream.completion();
-        let running_requests = self.running_requests.clone();
-        running_requests.fetch_add(1, Ordering::AcqRel);
         Ok(BackendGeneration {
             stream: tracked_stream(
                 stream,
@@ -349,9 +343,7 @@ impl Backend for VllmBackend {
                 completion
                     .wait()
                     .await
-                    .map_err(BackendError::from_engine_client)?;
-                running_requests.fetch_sub(1, Ordering::AcqRel);
-                Ok(())
+                    .map_err(BackendError::from_engine_client)
             }),
         })
     }
@@ -372,7 +364,6 @@ impl Backend for VllmBackend {
 
         BackendTelemetry {
             data_parallel_ranks: vllm.data_parallel_ranks,
-            running_requests: self.running_requests.load(Ordering::Acquire),
             max_concurrent_requests: self.max_concurrent_requests,
             scheduler_running_requests: vllm.scheduler_running_requests,
             scheduler_waiting_requests: vllm.scheduler_waiting_requests,
