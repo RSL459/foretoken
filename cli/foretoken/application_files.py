@@ -71,6 +71,37 @@ def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
     return references
 
 
+def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
+    """Read current service selections and present workloads, including terminating consumers."""
+    available = kubectl.api_resource_names("inference.foretoken.io")
+    kinds = tuple(
+        kind
+        for kind in (
+            "modelservices",
+            "frontendservices",
+            "modelpools",
+            "modelgroups",
+            "videotasks",
+        )
+        if kind + ".inference.foretoken.io" in available
+    )
+    objects = list(kubectl.list_all_resources(kinds)) if kinds else []
+    for label in (
+        "app.kubernetes.io/name=foretoken-control-plane",
+        "inference.foretoken.io/model-group",
+        "inference.foretoken.io/frontend-service",
+        "inference.foretoken.io/model-preparation-group",
+        "foretoken.io/application-files=consumer",
+    ):
+        objects.extend(
+            kubectl.list_all_resources(
+                ("pods", "jobs", "replicasets", "deployments"),
+                label_selector=label,
+            )
+        )
+    return objects
+
+
 def remove_application_jobs(kubectl: Kubectl, binding: str, timeout: str) -> None:
     """Stop abandoned writers before their workstation reuses its compiler output."""
     kubectl.run(
@@ -203,31 +234,7 @@ class ApplicationFiles:
         if history is None:
             return None
         references = history.copy()
-        available = self.kubectl.api_resource_names("inference.foretoken.io")
-        kinds = tuple(
-            kind
-            for kind in (
-                "modelservices",
-                "frontendservices",
-                "modelpools",
-                "modelgroups",
-                "videotasks",
-            )
-            if kind + ".inference.foretoken.io" in available
-        )
-        objects = list(self.kubectl.list_all_resources(kinds)) if kinds else []
-        for label in (
-            "inference.foretoken.io/model-group",
-            "inference.foretoken.io/frontend-service",
-            "inference.foretoken.io/model-preparation-group",
-            "foretoken.io/application-files=consumer",
-        ):
-            objects.extend(
-                self.kubectl.list_all_resources(
-                    ("pods", "jobs", "replicasets", "deployments"),
-                    label_selector=label,
-                )
-            )
+        objects = application_consumers(self.kubectl)
         references.update(application_references(objects))
         return references
 

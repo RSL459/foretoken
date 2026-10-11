@@ -82,6 +82,7 @@ pub enum KvPrefixUnavailableReason {
     Disabled,
     SourceUnhealthy,
     MissingBinding,
+    UnsupportedLayout,
     UnsupportedRequest,
     RankMismatch,
 }

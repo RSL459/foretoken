@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -20,7 +20,11 @@ from typing import Any
 
 import yaml
 
-from foretoken.application_files import ApplicationFiles, remove_application_jobs
+from foretoken.application_files import (
+    ApplicationFiles,
+    application_consumers,
+    remove_application_jobs,
+)
 from foretoken.arguments import InstallCommand
 from foretoken.cluster_build import (
     ClusterBuilder,
@@ -116,6 +120,8 @@ def source_operation(
                 remove_build_pods(
                     kubectl, timeout, binding=binding, preserve_ready=True
                 )
+            # Protect persisted source outputs before any compiler or workload can need them.
+            reconcile_source_images(kubectl, timeout)
             yield
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
@@ -356,11 +362,14 @@ def _local_candidates(directory: Path) -> Iterator[None]:
 
 
 def has_source_state(kubectl: Kubectl) -> bool:
-    """Identify installed or interrupted source builds belonging to this actual cluster."""
-    if not _has_server_binding(kubectl):
-        return False
-    directory = _state_directory(kubectl)
-    return any((directory / name).is_file() for name in ("install.json", "build.json"))
+    """Identify source builds for uninstall from local records or owned cluster caches."""
+    if _has_server_binding(kubectl):
+        directory = _state_directory(kubectl)
+        if any((directory / name).is_file() for name in ("install.json", "build.json")):
+            return True
+    return bool(kubectl.list_all_resources(
+        ("persistentvolumeclaims",), label_selector=_BUILD_CACHE_LABEL + "=true"
+    ))
 
 
 def forget_install(kubectl: Kubectl) -> None:
@@ -458,16 +467,19 @@ def resolve_source_base_image(
     requested_image: str | None,
     saved_image: str | None = None,
 ) -> str | None:
-    """Resolve a source build base from explicit intent or this checkout's successful installation."""
+    """Select explicit base intent from requests or this checkout's installed and pending state."""
     if requested_image is not None:
         return None if requested_image == "auto" else requested_image or None
     if saved_image is not None:
         return saved_image
-    path = _state_directory(kubectl) / "install.json"
-    if not path.is_file():
-        return None
-    state = json.loads(path.read_text())
-    return state.get("base_image") if state.get("root") == str(root) else None
+    directory = _state_directory(kubectl)
+    for name in ("install.json", "build.json"):
+        path = directory / name
+        if path.is_file():
+            state = json.loads(path.read_text())
+            if state.get("root") == str(root):
+                return state.get("base_image")
+    return None
 
 
 def record_install(
@@ -699,6 +711,170 @@ def ensure_build_cache(
     )
 
 
+def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
+    """Read environment images selected by platform defaults, services and workload consumers."""
+    images: set[str] = set()
+    for document in documents:
+        spec = document.get("spec", {})
+        status = document.get("status", {})
+        template = spec.get("template", {})
+        pod_spec = template.get("spec", spec)
+        selections = [
+            status.get("application", {}),
+            template.get("application", {}),
+            spec.get("runtime", {}),
+            status.get("plan", {}),
+            *status.get("poolApplications", {}).values(),
+        ]
+        for selection in selections:
+            if selection:
+                for key in ("image", "workerImage"):
+                    if selection.get(key):
+                        images.add(selection[key])
+        for key in ("containers", "initContainers", "ephemeralContainers"):
+            for container in pod_spec.get(key, []):
+                images.add(container["image"])
+                if container["name"] != "manager":
+                    continue
+                for argument in container.get("args", []):
+                    for prefix in (
+                        "--frontend-image=",
+                        "--inference-engine-image=",
+                        "--omni-inference-engine-image=",
+                        "--video-worker-image=",
+                        "--nsight-image=",
+                    ):
+                        if argument.startswith(prefix) and argument.removeprefix(
+                            prefix
+                        ):
+                            images.add(argument.removeprefix(prefix))
+    return images
+
+
+def reconcile_source_images(
+    kubectl: Kubectl, timeout: str, *, uninstall: bool = False
+) -> None:
+    """Protect recorded selections and release unreferenced pins under source_operation.
+
+    Uninstall releases all Foretoken pins, including bindings absent from this workstation.
+    """
+    from foretoken.node_images import SOURCE_BUILD_POD_LABEL, node_image_store
+    from foretoken.platform.config import default_platform_config
+    from foretoken.platform.helm import Helm
+
+    if not uninstall and not _has_server_binding(kubectl):
+        return
+    directory = _state_directory(kubectl)
+    states = {
+        name: json.loads(path.read_text())
+        for name in ("build.json", "install.json")
+        if (path := directory / name).is_file()
+    }
+    bindings = {state.get("build", {}).get("binding") for state in states.values()} - {
+        None,
+        "",
+    }
+    if not uninstall and not bindings:
+        return
+    config = default_platform_config()
+    installed = states.get("install.json", {})
+    build = installed.get("build", {}) or states.get("build.json", {}).get("build", {})
+    tools = image_tools_image(
+        build.get("arguments", {}), build.get("registry_mirrors", {})
+    )
+    secrets = tuple(
+        installed.get("runtime", {}).get("pull_secrets", build.get("pull_secrets", []))
+    )
+    retained: set[str] = set()
+    if not uninstall:
+        history = Helm(config).image_history()
+        if history is None:
+            return
+        retained.update(history)
+        retained.update(application_images(application_consumers(kubectl)))
+        retained.update(
+            states.get("build.json", {}).get("build", {}).get("images", {}).values()
+        )
+    # Builders already describe node runtime access. Use those cluster-owned
+    # mounts during uninstall even when invoked from a different workstation.
+    access: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
+    for pod in kubectl.list_resources(
+        ("pods",),
+        config.namespace,
+        label_selector=SOURCE_BUILD_POD_LABEL + "=true",
+    ):
+        node = pod["spec"].get("nodeName")
+        socket = next(
+            (
+                volume["hostPath"]["path"]
+                for volume in pod["spec"].get("volumes", [])
+                if volume["name"] == "runtime-socket"
+            ),
+            None,
+        )
+        images = next(
+            (
+                container
+                for container in pod["spec"]["containers"]
+                if container["name"] == "images"
+            ),
+            None,
+        )
+        if node and socket and images:
+            access[node, socket] = (
+                images["image"],
+                tuple(item["name"] for item in pod["spec"].get("imagePullSecrets", [])),
+            )
+    sockets = {
+        state.get("build", {}).get("containerd_socket", "") for state in states.values()
+    } - {""}
+    nodes = kubectl.list_resources(("nodes",), "")
+    if uninstall and not sockets:
+        context = kubectl.run(["config", "current-context"]).stdout.strip()
+        for node in nodes:
+            socket = _node_containerd_socket(context, node)
+            if socket:
+                access.setdefault((node["metadata"]["name"], socket), (tools, secrets))
+    for socket in sockets:
+        for node in nodes:
+            access.setdefault((node["metadata"]["name"], socket), (tools, secrets))
+    for (node, socket), (tools, secrets) in access.items():
+        for binding in [""] if uninstall else sorted(bindings):
+            with node_image_store(
+                kubectl,
+                config.namespace,
+                node,
+                socket,
+                tools,
+                timeout,
+                binding=binding,
+                pull_secrets=secrets,
+            ) as store:
+                if not uninstall:
+                    # Persisted producer records authorize migrating an unlabeled source output.
+                    for state in states.values():
+                        recorded = state.get("build", {})
+                        if recorded.get("binding") != binding:
+                            continue
+                        digests = recorded.get("digests", {}).get(node, {})
+                        for component, image in recorded.get("images", {}).items():
+                            if image in retained and component in digests:
+                                store.pin_recorded(image, digests[component])
+                store.release_except(retained)
+
+
+def _node_containerd_socket(context: str, node: dict[str, Any]) -> str:
+    """Resolve the node-local runtime path supported by source import and cleanup."""
+    runtime = (
+        node.get("status", {}).get("nodeInfo", {}).get("containerRuntimeVersion", "")
+    )
+    if context.startswith("k3d-") or "k3s" in runtime:
+        return "/run/k3s/containerd/containerd.sock"
+    if context.startswith("kind-"):
+        return "/run/containerd/containerd.sock"
+    return ""
+
+
 def remove_build_caches(kubectl: Kubectl, timeout: str) -> None:
     """Release managed build Pods before their compiler volumes, leaving model caches intact."""
     remove_build_pods(kubectl, timeout)
@@ -730,22 +906,12 @@ def local_build_nodes(
         raise DeploymentError("source builds need a schedulable Kubernetes node")
     if not socket:
         context = kubectl.run(["config", "current-context"]).stdout.strip()
-        if context.startswith("k3d-"):
-            socket = "/run/k3s/containerd/containerd.sock"
-        elif context.startswith("kind-"):
-            socket = "/run/containerd/containerd.sock"
-        elif all(
-            "k3s"
-            in node.get("status", {})
-            .get("nodeInfo", {})
-            .get("containerRuntimeVersion", "")
-            for node in nodes
-        ):
-            socket = "/run/k3s/containerd/containerd.sock"
-        else:
+        sockets = {_node_containerd_socket(context, node) for node in nodes}
+        if "" in sockets or len(sockets) != 1:
             raise DeploymentError(
                 "source installation on a remote cluster requires --registry"
             )
+        socket = sockets.pop()
     return [
         (
             node["metadata"]["name"],
@@ -788,7 +954,11 @@ def prepare_source_images(
     pending = json.loads(pending_path.read_text()) if pending_path.is_file() else {}
     if not build and pending.get("root") == str(root):
         build = pending["build"]
-    binding = build.get("binding") or uuid.uuid4().hex
+    binding = (
+        build.get("binding")
+        or previous.get("build", {}).get("binding")
+        or uuid.uuid4().hex
+    )
     environment = os.environ.copy()
     if command.oci_registry:
         environment["FORETOKEN_OCI_REGISTRY"] = command.oci_registry
@@ -918,7 +1088,14 @@ def prepare_source_images(
         {
             "root": str(root),
             "context": _context_identity(kubectl),
-            "build": {"binding": binding, "containerd_socket": nodes[0][1]},
+            "base_image": inference_engine_image,
+            "build": {
+                "binding": binding,
+                "containerd_socket": nodes[0][1],
+                "arguments": arguments,
+                "registry_mirrors": registry_mirrors,
+                "pull_secrets": list(secret_names),
+            },
         },
     )
     for _, _, claim in nodes:
