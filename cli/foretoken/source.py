@@ -169,6 +169,10 @@ def _inputs(root: Path, engines: dict[str, str] | None = None) -> dict[str, Path
             ("data-plane/", "control-plane/", "deploy/")
         ) and name not in {"Makefile", "LICENSE", ".dockerignore", ".gitmodules"}:
             continue
+        if name == "deploy/platform-values.yaml":
+            # Values are applied explicitly by `foretoken install --values`; they do
+            # not affect any image or application bundle built from this checkout.
+            continue
         if path.is_file() and path.suffix not in {".md", ".png", ".svg"}:
             files[name] = path
     # Rust dependencies use the pinned submodule. Its own ignore rules exclude build caches.

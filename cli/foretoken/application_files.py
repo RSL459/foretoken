@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from importlib.resources import files
+from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
@@ -110,21 +111,56 @@ class ApplicationFiles:
         self.client_image = data["clientImage"]
         self.mount = data["storageMount"]
 
-    def read_sources(self, application_url: str) -> dict[str, Any] | None:
-        """Read published build provenance for a benchmark without starting a publisher."""
+    def _manifest_path(self, application_url: str) -> str | None:
         prefix = self.endpoint.rstrip("/") + "/"
         if not application_url.startswith(prefix):
             return None
         relative = application_url.removeprefix(prefix).rstrip("/")
-        path = (
+        return (
             f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/"
-            + quote(relative, safe="/") + "/manifest.json"
+            + quote(relative, safe="/")
+            + "/manifest.json"
         )
+
+    def read_manifest(self, application_url: str) -> dict[str, Any] | None:
+        """Read one immutable publication manifest, returning None only when it is absent."""
+        path = self._manifest_path(application_url)
+        if path is None:
+            return None
+        raw = self.kubectl.get_raw_if_not_found(path, "5s")
+        if raw is None:
+            return None
         try:
-            manifest = json.loads(self.kubectl.get_raw(path, "5s"))
+            manifest = json.loads(raw)
         except json.JSONDecodeError as error:
-            raise DeploymentError("application manifest returned invalid JSON") from error
-        return manifest.get("sources")
+            raise DeploymentError(
+                "application manifest returned invalid JSON"
+            ) from error
+        if not isinstance(manifest, dict):
+            raise DeploymentError("application manifest must be an object")
+        files = manifest.get("files")
+        if not isinstance(files, list) or any(
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("path"), str)
+            or not PurePosixPath(entry["path"]).parts
+            or PurePosixPath(entry["path"]).is_absolute()
+            or ".." in PurePosixPath(entry["path"]).parts
+            or isinstance(entry.get("mode"), bool)
+            or not isinstance(entry.get("mode"), int)
+            or entry["mode"] < 0
+            or entry["mode"] > 0o777
+            or isinstance(entry.get("size"), bool)
+            or not isinstance(entry.get("size"), int)
+            or entry["size"] < 0
+            for entry in files
+        ):
+            raise DeploymentError("application manifest has invalid file entries")
+        return manifest
+
+    def read_sources(self, application_url: str) -> dict[str, Any] | None:
+        """Read published build provenance for a benchmark without starting a publisher."""
+        manifest = self.read_manifest(application_url)
+        return None if manifest is None else manifest.get("sources")
 
     def prepare(self, timeout: str) -> None:
         """Wait for the file origin and select its volume's current publisher node."""
