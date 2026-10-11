@@ -47,7 +47,7 @@ from foretoken.platform import PlatformLifecycle
 from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
-from foretoken.source import source_operation
+from foretoken.source import reconcile_source_images, source_operation
 from foretoken.storage import DirectoryVolumes
 
 
@@ -163,6 +163,8 @@ def _deploy(
                     deployment.service_refs(), time.monotonic() - rollout_started
                 ),
             )
+    if source is not None:
+        reconcile_source_images(kubectl, timeout)
     print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
     if capture is not None:
         try:
@@ -181,6 +183,7 @@ def _delete(kustomize_path: str, timeout: str) -> None:
     namespace = deployment.namespace or "<current>"
     print(f"Deleting {deployment.path} from namespace {namespace}")
     DirectoryVolumes(kubectl).delete(deployment, timeout)
+    reconcile_source_images(kubectl, timeout)
     print("Foretoken deployment deleted")
 
 
@@ -254,7 +257,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             with source_operation(Kubectl(), command.timeout):
                 _deploy(command.kustomize_path, command.timeout, command.profile)
         elif isinstance(command, DeleteCommand):
-            _delete(command.kustomize_path, command.timeout)
+            with source_operation(Kubectl(), command.timeout):
+                _delete(command.kustomize_path, command.timeout)
         elif isinstance(command, StatusCommand):
             _status(command.kustomize_path, command.namespace, command.watch)
         elif isinstance(command, EndpointCommand):

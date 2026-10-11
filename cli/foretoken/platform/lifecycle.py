@@ -57,6 +57,7 @@ from foretoken.source import (
     forget_install,
     has_source_state,
     prepare_source_images,
+    reconcile_source_images,
     record_install,
     remove_build_caches,
     resolve_source_base_image,
@@ -191,19 +192,12 @@ class PlatformLifecycle:
                 f"Helm release {platform.display_name} is not managed by foretoken; "
                 "use its existing Helm lifecycle"
             )
-        if platform_exists:
-            install_source = helm.release_install_source(platform)
-            requested_source = "source" if command.editable is not None else "release"
-            if install_source != requested_source:
-                command_hint = (
-                    "foretoken install -e ."
-                    if install_source == "source"
-                    else "foretoken install"
-                )
-                raise DeploymentError(
-                    f"Helm release {platform.display_name} uses {install_source} images; "
-                    f"run {command_hint}"
-                )
+        install_source = helm.release_install_source(platform) if platform_exists else None
+        if install_source == "source" and command.editable is None:
+            raise DeploymentError(
+                f"Helm release {platform.display_name} uses source images; "
+                "run foretoken install -e ."
+            )
         values = load_platform_values(command.values)
         current_runtime = runtime_overrides_from_values(values)
         stored_values = (
@@ -317,7 +311,7 @@ class PlatformLifecycle:
             source_runtime_image = resolve_source_base_image(
                 kubectl,
                 Path(command.editable).expanduser().resolve(),
-                current_runtime.image,
+                configured_runtime_image if install_source == "release" else current_runtime.image,
                 source_base_image,
             )
             if (
@@ -534,7 +528,7 @@ class PlatformLifecycle:
                 source_root = Path(command.editable).expanduser().resolve()
                 installed_images = (
                     helm.platform_image_references(platform)
-                    if platform_exists
+                    if install_source == "source"
                     else None
                 )
 
@@ -731,6 +725,7 @@ class PlatformLifecycle:
                 source_images.inputs,
                 build_state=source_images.build_state,
             )
+            reconcile_source_images(kubectl, command.timeout)
         _print_plan("Foretoken platform", "Ready", platform.display_name)
         if not load_balancer_plan.install and load_balancer_plan.action != "Reuse":
             _print_plan(
@@ -843,6 +838,8 @@ class PlatformLifecycle:
             _print_plan(
                 "Logs", "Remove", release.display_name + " (retain stored logs)"
             )
+        if source_builds:
+            reconcile_source_images(kubectl, command.timeout, uninstall=True)
         self._logs.uninstall(managed_logs, command.timeout)
         if platform_exists:
             helm.uninstall(platform, command.timeout)

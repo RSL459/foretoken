@@ -294,6 +294,9 @@ func (reconciler *FrontendServiceReconciler) sourceSelectionAllowed(ctx context.
 	if selected := frontend.Status.Application; selected != nil {
 		return selected.DeploymentRevision == frontend.Spec.DeploymentRevision && (selected.SourceRevision == revision || (selected.SourceRevision == "" && selected.ApplicationURL == profile.ApplicationFiles.Ref("frontend", revision))), nil
 	}
+	if frontend.Spec.DeploymentRevision != "" {
+		return false, nil
+	}
 	deployment := new(appsv1.Deployment)
 	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), deployment); err != nil {
 		return false, client.IgnoreNotFound(err)
@@ -356,35 +359,38 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 			if !metav1.IsControlledBy(current, frontend) {
 				return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: "The existing frontend Deployment belongs to another owner"})
 			}
-			selection = &inferencev1alpha1.ApplicationSelection{
-				Image:              current.Spec.Template.Spec.Containers[0].Image,
-				ApplicationURL:     current.Spec.Template.Annotations["inference.foretoken.io/application-url"],
-				SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
-				DeploymentRevision: deploymentRevision,
-			}
-			for _, env := range current.Spec.Template.Spec.Containers[0].Env {
-				if env.Name != runtimeconfig.AdmissionStoreURLEnv {
-					continue
+			// Adopting observed state must not consume an explicit request for a new application.
+			if deploymentRevision == "" {
+				selection = &inferencev1alpha1.ApplicationSelection{
+					Image:              current.Spec.Template.Spec.Containers[0].Image,
+					ApplicationURL:     current.Spec.Template.Annotations["inference.foretoken.io/application-url"],
+					SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
+					DeploymentRevision: deploymentRevision,
 				}
-				selection.AdmissionStore = &inferencev1alpha1.AdmissionStoreConnection{URL: env.Value}
-				if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-					selection.AdmissionStore.URLSecretRef = env.ValueFrom.SecretKeyRef.DeepCopy()
+				for _, env := range current.Spec.Template.Spec.Containers[0].Env {
+					if env.Name != runtimeconfig.AdmissionStoreURLEnv {
+						continue
+					}
+					selection.AdmissionStore = &inferencev1alpha1.AdmissionStoreConnection{URL: env.Value}
+					if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+						selection.AdmissionStore.URLSecretRef = env.ValueFrom.SecretKeyRef.DeepCopy()
+					}
+					if err := runtimeconfig.ValidateAdmissionStore(selection.AdmissionStore); err != nil {
+						return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
+					}
 				}
-				if err := runtimeconfig.ValidateAdmissionStore(selection.AdmissionStore); err != nil {
-					return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
+				base := frontend.DeepCopy()
+				frontend.Status.Application = selection
+				frontend.Status.ServingConfigVersion = 0
+				if current.Spec.Template.Annotations[frontendServingConfigAnnotation] == fmt.Sprint(frontendServingConfigVersion) {
+					frontend.Status.ServingConfigVersion = frontendServingConfigVersion
 				}
-			}
-			base := frontend.DeepCopy()
-			frontend.Status.Application = selection
-			frontend.Status.ServingConfigVersion = 0
-			if current.Spec.Template.Annotations[frontendServingConfigAnnotation] == fmt.Sprint(frontendServingConfigVersion) {
-				frontend.Status.ServingConfigVersion = frontendServingConfigVersion
-			}
-			if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-				return ctrl.Result{}, fmt.Errorf("retain frontend application configuration: %w", err)
-			}
-			if frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
-				return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, deploymentRequired)
+				if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+					return ctrl.Result{}, fmt.Errorf("retain frontend application configuration: %w", err)
+				}
+				if frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
+					return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, deploymentRequired)
+				}
 			}
 		} else if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
