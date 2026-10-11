@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -380,30 +380,21 @@ def forget_install(kubectl: Kubectl) -> None:
             shutil.rmtree(directory)
 
 
-def _snapshot_matches(
+def validate_build_inputs(
     root: Path, snapshot: Path, engines: dict[str, str] | None = None
-) -> bool:
-    """Return whether a committed source snapshot still describes the checkout."""
-    if not snapshot.is_dir():
-        return False
+) -> None:
+    """Reject a build whose checkout changed before its image or bundle was selected."""
     current = _inputs(root, engines)
     previous = {
         str(path.relative_to(snapshot))
         for path in snapshot.rglob("*")
         if path.is_file() and str(path.relative_to(snapshot)) not in _SNAPSHOT_METADATA
     }
-    return previous == set(current) and all(
-        filecmp.cmp(snapshot / name, path, shallow=False)
-        and (snapshot / name).stat().st_mode == path.stat().st_mode
+    if previous != current.keys() or any(
+        not filecmp.cmp(snapshot / name, path, shallow=False)
+        or (snapshot / name).stat().st_mode != path.stat().st_mode
         for name, path in current.items()
-    )
-
-
-def validate_build_inputs(
-    root: Path, snapshot: Path, engines: dict[str, str] | None = None
-) -> None:
-    """Reject a build whose checkout changed before its image or bundle was selected."""
-    if not _snapshot_matches(root, snapshot, engines):
+    ):
         raise DeploymentError(
             "source changed while preparing artifacts; rerun the source operation"
         )
@@ -527,8 +518,7 @@ def record_install(
     }
     with _local_candidates(directory):
         destination = directory / snapshot.name
-        if snapshot != destination:
-            snapshot.rename(destination)
+        snapshot.rename(destination)
         _write_json(
             path,
             {
@@ -934,8 +924,13 @@ def prepare_source_images(
     build_metax_runtime: bool = False,
     runtime_backend: str = "nvidia",
     saved_arguments: dict[str, str] | None = None,
+    before_delivery: Callable[[], None] | None = None,
 ) -> Iterator[SourceImages]:
-    """Build directly in the target cluster and retain inputs until installation commits."""
+    """Prepare installation artifacts, awaiting dependencies before node image delivery.
+
+    The platform supplies before_delivery when preparing dependencies concurrently.
+    Inputs remain owned by this context until record_install commits them.
+    """
     root = Path(command.editable or "").expanduser().resolve()
     if (
         not (root / "Makefile").is_file()
@@ -997,67 +992,6 @@ def prepare_source_images(
         ),
     )
     registry = (command.registry or "").rstrip("/")
-    reusable_components = ("control-plane", "frontend", "model-server")
-    committed_snapshot = (
-        state_directory / previous["inputs"] if previous.get("inputs") else None
-    )
-    committed_images = build.get("images", {})
-    committed_applications = build.get("applications", {})
-    engine_native = bool(engines) and (
-        runtime_backend != "metax" or "vllm-metax" in engines
-    )
-    base_image = (
-        None
-        if build_metax_runtime
-        or committed_snapshot is None
-        or not committed_snapshot.is_dir()
-        else resolve_vllm_base_image(
-            committed_snapshot,
-            inference_engine_image,
-            arguments.get("BASE_IMAGE_REGISTRY", ""),
-        )
-    )
-    application_references = {
-        component: origin.reference(
-            component, committed_applications.get(component, {}).get("revision", "")
-        )
-        for component in reusable_components
-    }
-    can_reuse = (
-        bool(registry)
-        and not build_metax_runtime
-        and previous.get("root") == str(root)
-        and previous.get("engines", {}) == engines
-        and previous.get("base_image") == base_image
-        and build.get("registry") == registry
-        and build.get("arguments") == arguments
-        and build.get("registry_mirrors") == registry_mirrors
-        and build.get("configuration") == configuration
-        and build.get("engine_native") == engine_native
-        and set(committed_images) == set(reusable_components)
-        and set(committed_applications) == set(reusable_components)
-        and installed_images is not None
-        and tuple(committed_images[component] for component in reusable_components)
-        == installed_images
-        and committed_snapshot is not None
-        and _snapshot_matches(root, committed_snapshot, engines)
-        and all(
-            committed_applications[component].get("revision")
-            and origin.read_manifest(application_references[component]) is not None
-            for component in reusable_components
-        )
-    )
-    if can_reuse:
-        print("Source build: reused installed registry artifacts", flush=True)
-        yield SourceImages(
-            root,
-            "registry",
-            *(committed_images[component] for component in reusable_components),
-            committed_snapshot,
-            build,
-            application_references,
-        )
-        return
     prefix = registry if registry else "docker.io/library/foretoken-dev"
     suffix = uuid.uuid4().hex
     references = {
@@ -1142,6 +1076,9 @@ def prepare_source_images(
         }
         digests: dict[str, dict[str, str]] = {}
         engine_caches: dict[str, str] = {}
+        engine_native = bool(engines) and (
+            runtime_backend != "metax" or "vllm-metax" in engines
+        )
         installed = dict(zip(references, installed_images or (), strict=False))
         reusable = {
             component: build.get("registry") == registry
@@ -1335,8 +1272,11 @@ def prepare_source_images(
             component: origin.reference(component, revision)
             for component, revision in application_revisions.items()
         }
-        # Build and publish everything before making node images collectible. Deliver
-        # the control plane last so installation can immediately start its consumers.
+        # Keep builders alive until platform dependencies finish. A failed
+        # prerequisite exits through cleanup without delivering candidate images.
+        if before_delivery is not None:
+            before_delivery()
+        # Deliver the control plane last, immediately before platform installation.
         for component in ("model-server", "frontend", "control-plane"):
             for builder in builders:
                 if builder.containerd_socket:
