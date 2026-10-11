@@ -91,7 +91,7 @@ impl RoutingReservations {
     }
 }
 
-/// Estimates prompt-token computation for routing load, including the final token's cache block.
+/// Estimates prompt-token computation from the observation owner's reusable token count.
 pub(crate) fn uncached_tokens(
     request: &RouterRequest,
     candidate: &RouteCandidate,
@@ -100,11 +100,5 @@ pub(crate) fn uncached_tokens(
     let Some(info) = crate::cache::cache_match(request, candidate, kv) else {
         return request.token_count();
     };
-    let tokens = request.token_count();
-    // Causal generation computes the final prompt token for logits; complete-block reuse
-    // cannot include its block even when the entire prefix is resident.
-    let reusable_blocks = info
-        .matched_blocks
-        .min(tokens.saturating_sub(1) / info.block_size);
-    tokens - reusable_blocks * info.block_size
+    info.total_tokens - info.matched_tokens
 }

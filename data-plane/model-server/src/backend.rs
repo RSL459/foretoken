@@ -132,6 +132,12 @@ pub trait Backend: Send + Sync {
     /// Cancels request IDs supplied by the abort handler; backend ownership remains unchanged.
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError>;
 
+    /// Observes reusable prefixes in every local scheduler without allocating request capacity.
+    async fn local_prefixes(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError>;
+
     /// Returns a snapshot published by telemetry handlers without transferring backend ownership.
     fn telemetry(&self) -> BackendTelemetry;
 
@@ -352,6 +358,46 @@ impl Backend for VllmBackend {
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
         llm.abort(request_ids).await.map_err(BackendError::from_llm)
+    }
+
+    async fn local_prefixes(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError> {
+        let guard = self.llm.read().await;
+        let client = guard
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?
+            .engine_core_client();
+        // Each scheduler reports its own rank; cache contents are not a consensus value.
+        let observations = client
+            .call_utility::<serde_json::Value, _>(
+                "get_prefix_cache_hit",
+                (
+                    &request.prompt_token_ids,
+                    request.cache_salt.as_deref(),
+                    request.lora_name.as_deref(),
+                    request
+                        .multimodal
+                        .iter()
+                        .map(|feature| {
+                            serde_json::json!({
+                                "identifier": feature.identifier,
+                                "offset": feature.offset,
+                                "length": feature.length,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                    request.lora_path.as_deref(),
+                ),
+            )
+            .await
+            .map_err(BackendError::from_engine_client)?;
+        // Native dictionaries encode tiers as strings; rmpv's enum decoder expects arrays.
+        observations
+            .into_iter()
+            .map(|value| serde_json::from_value(value).map_err(|_| BackendError::Protocol))
+            .collect()
     }
 
     fn telemetry(&self) -> BackendTelemetry {

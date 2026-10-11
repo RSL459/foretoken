@@ -503,10 +503,6 @@ impl LaunchPlanV1 {
     /// Returns the connector-owned placement exposed by live prefix observation.
     pub fn shared_prefix_placement(&self) -> Option<KvPlacement> {
         match self.kv {
-            KvPlan::FilesystemOffload { .. } => Some(KvPlacement {
-                tier: KvStorageTier::Disk,
-                locality: KvCacheLocality::Local,
-            }),
             KvPlan::MooncakeStore { .. } | KvPlan::MultiConnector { .. } => Some(KvPlacement {
                 tier: KvStorageTier::External,
                 locality: KvCacheLocality::Remote,

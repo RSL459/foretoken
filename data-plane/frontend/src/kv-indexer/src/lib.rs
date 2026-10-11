@@ -13,24 +13,14 @@ pub use sync::*;
 
 /// Deterministic prefix facts for one exact route-to-source binding.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct KvPrefixMatches(Vec<KvPrefixMatch>, Option<u32>);
+pub struct KvPrefixMatches(Vec<KvPrefixMatch>);
 
 impl KvPrefixMatches {
     /// Sorts facts into a stable order before exposing them to a scorer.
     pub fn new(mut matches: Vec<KvPrefixMatch>) -> Self {
+        matches.retain(|hit| hit.matched_tokens > 0);
         matches.sort();
-        Self(matches, None)
-    }
-
-    /// Attaches the source partition's block size, including on a confirmed cache miss.
-    pub(crate) fn with_block_size(mut self, block_size: Option<u32>) -> Self {
-        self.1 = block_size;
-        self
-    }
-
-    /// Returns observed block granularity; None means the source has not advertised a partition.
-    pub fn block_size(&self) -> Option<u32> {
-        self.1
+        Self(matches)
     }
 }
 
@@ -44,7 +34,7 @@ impl IntoIterator for KvPrefixMatches {
 }
 
 /// Borrowed inputs for one route- and rank-specific prefix lookup.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct KvPrefixLookup<'a> {
     /// Routable ModelGroup identity used to resolve the event-source binding.
     pub route_target_id: &'a str,
@@ -54,6 +44,9 @@ pub struct KvPrefixLookup<'a> {
     pub prompt_token_ids: &'a [u32],
     /// Cache identity already attached to the generation request; not an authentication claim.
     pub cache_salt: Option<&'a str>,
+    pub lora_name: Option<&'a str>,
+    pub lora_path: Option<&'a str>,
+    pub multimodal: Vec<foretoken_model_protocol::KvMultimodalIdentity>,
 }
 
 impl<'a> KvPrefixLookup<'a> {
@@ -67,6 +60,21 @@ impl<'a> KvPrefixLookup<'a> {
             data_parallel_rank,
             prompt_token_ids,
             cache_salt: None,
+            lora_name: None,
+            lora_path: None,
+            multimodal: Vec::new(),
+        }
+    }
+
+    /// Projects the same native cache identity to either observation provider.
+    pub fn request(&self) -> foretoken_model_protocol::KvPrefixRequest {
+        foretoken_model_protocol::KvPrefixRequest {
+            prompt_token_ids: self.prompt_token_ids.to_vec(),
+            dp_rank: self.data_parallel_rank,
+            cache_salt: self.cache_salt.map(str::to_owned),
+            lora_name: self.lora_name.map(str::to_owned),
+            lora_path: self.lora_path.map(str::to_owned),
+            multimodal: self.multimodal.clone(),
         }
     }
 }
@@ -88,8 +96,8 @@ pub enum KvPrefixUnavailableReason {
 }
 #[async_trait::async_trait]
 pub trait KvPrefixIndexer: Send + Sync {
-    /// Prepares request-local observations when lookup requires an external backend.
-    /// Event-only implementations need no preparation and retain their existing reader.
+    /// Prepares request-local observations from engines and connectors before synchronous scoring.
+    /// Event-only implementations may retain their existing reader.
     async fn prepare(
         &self,
         _lookups: &[KvPrefixLookup<'_>],

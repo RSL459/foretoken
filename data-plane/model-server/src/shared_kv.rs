@@ -3,7 +3,7 @@
 
 //! Reads shared prefix observations from each DP rank's active native Store connector.
 
-use foretoken_model_protocol::{KvPlacement, KvSharedPrefixRequest, KvSharedPrefixResponse};
+use foretoken_model_protocol::{KvPlacement, KvPrefixRequest, KvSharedPrefixResponse};
 use serde::Deserialize;
 use zeromq::prelude::{Socket, SocketRecv, SocketSend};
 
@@ -31,7 +31,6 @@ pub struct SharedKvLookup {
 #[serde(rename_all = "camelCase")]
 struct ConnectorPrefixResponse {
     matched_tokens: Option<usize>,
-    block_size: usize,
 }
 
 impl SharedKvLookup {
@@ -67,7 +66,7 @@ impl SharedKvLookup {
     }
 
     /// Queries the existing connector without retaining tokens, results, or a Store client.
-    pub async fn lookup(&self, request: &KvSharedPrefixRequest) -> Option<KvSharedPrefixResponse> {
+    pub async fn lookup(&self, request: &KvPrefixRequest) -> Option<KvSharedPrefixResponse> {
         let endpoint = self.endpoints.get(request.dp_rank as usize)?;
         let mut socket = zeromq::ReqSocket::new();
         socket.connect(endpoint).await.ok()?;
@@ -81,10 +80,7 @@ impl SharedKvLookup {
         }
         let response: ConnectorPrefixResponse = serde_json::from_slice(message.get(0)?).ok()?;
         let matched_tokens = response.matched_tokens?;
-        if response.block_size == 0
-            || matched_tokens > request.prompt_token_ids.len()
-            || !matched_tokens.is_multiple_of(response.block_size)
-        {
+        if matched_tokens > request.prompt_token_ids.len().saturating_sub(1) {
             return None;
         }
         Some(KvSharedPrefixResponse {
@@ -92,7 +88,6 @@ impl SharedKvLookup {
             scope_id: self.scope_id.clone(),
             placement: self.placement,
             matched_tokens,
-            block_size: response.block_size,
         })
     }
 }

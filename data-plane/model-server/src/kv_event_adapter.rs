@@ -177,6 +177,18 @@ impl KvEventAdapter {
         Ok(())
     }
 
+    /// Binds live scheduler observations to the same model/layout identity as event deltas.
+    pub fn prefix_response(
+        &self,
+        ranks: Vec<foretoken_model_protocol::KvRankPrefix>,
+    ) -> foretoken_model_protocol::KvLocalPrefixResponse {
+        foretoken_model_protocol::KvLocalPrefixResponse {
+            model_group_id: self.model_group_id.clone(),
+            scope_id: self.scope_id.clone(),
+            ranks,
+        }
+    }
+
     /// Returns bounded rank-local deltas for the internal KV index endpoint.
     ///
     /// The adapter retains cursor state; this response owns its cloned events or signals a reset.
@@ -461,6 +473,23 @@ impl KvEventAdapter {
             field(fields, "kv_cache_spec_sliding_window")
                 .or_else(|| field(fields, "sliding_window")),
         );
+        // Sparse groups are observed through the scheduler's native prefix query; their
+        // event hashes are not a contiguous token sequence and must not degrade dense streams.
+        let sparse_group = self
+            .inner
+            .lock()
+            .unwrap()
+            .cache_groups
+            .as_ref()
+            .is_some_and(|groups| {
+                groups.iter().any(|group| {
+                    Some(group.group_idx) == group_idx
+                        && (group.spec_kind != "full_attention" || group.sliding_window.is_some())
+                })
+            });
+        if spec_kind != "full_attention" || sliding_window.is_some() || sparse_group {
+            return true;
+        }
         let (Some(token_values), Some(block_size)) = (
             field(fields, "token_ids").and_then(Value::as_array),
             field(fields, "block_size").and_then(Value::as_u64),

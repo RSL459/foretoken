@@ -64,7 +64,7 @@ impl NoHitLruScorer {
 }
 
 impl RouteScorer for NoHitLruScorer {
-    /// Requests the same complete-block prefix observations as the prefix scorer.
+    /// Requests the same reusable prefix-token observations as the prefix scorer.
     fn needs_kv_prefix(&self) -> bool {
         true
     }
@@ -160,7 +160,7 @@ impl RouteScorer for NoHitLruScorer {
             .filter(|candidate| belongs_to_profile(candidate))
             .any(|candidate| {
                 crate::cache::cache_match(request, candidate, kv_prefix_indexer)
-                    .is_some_and(|matched| matched.matched_blocks > 0)
+                    .is_some_and(|matched| matched.matched_tokens > 0)
             })
         {
             return vec![

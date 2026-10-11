@@ -298,6 +298,9 @@ impl KvIndexer {
             .find(|s| s.event_source_id == id)
     }
     fn query(&self, lookup: KvPrefixLookup<'_>) -> KvPrefixQueryResult {
+        if lookup.lora_name.is_some() || !lookup.multimodal.is_empty() {
+            return KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::UnsupportedRequest);
+        }
         let Some(binding) = self.config.route_bindings.get(lookup.route_target_id) else {
             return KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::MissingBinding);
         };
@@ -369,7 +372,15 @@ impl KvIndexer {
                 && (m.placement.tier == foretoken_model_protocol::KvStorageTier::Device
                     || binding.can_restore_or_transfer)
         });
-        KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches).with_block_size(block_size))
+        if let Some(block_size) = block_size {
+            let block_size = block_size as usize;
+            let reusable =
+                lookup.prompt_token_ids.len().saturating_sub(1) / block_size * block_size;
+            for matched in &mut matches {
+                matched.matched_tokens = matched.matched_tokens.min(reusable);
+            }
+        }
+        KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches))
     }
     /// Refreshes every configured source and updates index-owned locality facts and health.
     ///
@@ -485,108 +496,140 @@ impl KvPrefixIndexer for KvIndexer {
         lookups: &[KvPrefixLookup<'_>],
     ) -> Option<std::sync::Arc<dyn KvPrefixIndexer>> {
         self.state.as_ref()?;
-        // Query once per connector-owned lookup scope and compatible layout, not per candidate.
+        // One request-local query per model group covers all DP schedulers. Shared
+        // observations may be reused only across the same Store, layout and identity.
+        let mut local = BTreeMap::new();
         let mut shared = BTreeMap::new();
         let mut targets = BTreeMap::new();
         for lookup in lookups {
             let Some(binding) = self.config.route_bindings.get(lookup.route_target_id) else {
                 continue;
             };
-            let (Some(lookup_scope), Some(lookup_placement)) = (
+            let Some(source) = binding
+                .data_parallel_rank_event_source_ids
+                .get(&lookup.data_parallel_rank)
+                .and_then(|id| self.source(id))
+            else {
+                continue;
+            };
+            local
+                .entry(source.model_group_id.clone())
+                .or_insert_with(|| (source.clone(), lookup.request()));
+            let (Some(scope), Some(placement)) = (
                 binding.shared_lookup_scope.as_deref(),
                 binding.shared_lookup_placement,
             ) else {
                 continue;
             };
-            if !binding.can_restore_or_transfer
-                || !binding.readable_placements.contains(&lookup_placement)
+            if !binding.can_restore_or_transfer || !binding.readable_placements.contains(&placement)
             {
                 continue;
             }
-            let Some(source_id) = binding
-                .data_parallel_rank_event_source_ids
-                .get(&lookup.data_parallel_rank)
-            else {
-                continue;
-            };
-            let Some(source) = self.source(source_id) else {
-                continue;
-            };
             let key = (
-                lookup_scope.to_owned(),
+                scope.to_owned(),
                 source.scope_id.clone(),
                 lookup.cache_salt.map(str::to_owned),
-                lookup_placement,
+                lookup.lora_name.map(str::to_owned),
+                lookup.lora_path.map(str::to_owned),
+                lookup.multimodal.clone(),
+                placement,
             );
             shared
                 .entry(key.clone())
-                .or_insert_with(|| (source.clone(), lookup.prompt_token_ids.to_vec()));
+                .or_insert_with(|| (source.clone(), lookup.request()));
             targets.insert(
                 (lookup.route_target_id.to_owned(), lookup.data_parallel_rank),
                 key,
             );
         }
-        if shared.is_empty() {
+        if local.is_empty() {
             return None;
         }
-        let queries = stream::iter(
-            shared
-                .into_iter()
-                .map(|(key, (source, tokens))| async move {
-                    let response =
-                        fetch_shared_prefix(&self.client, &source, &tokens, key.2.as_deref()).await;
-                    (key, response)
-                }),
-        )
+        let local_queries =
+            stream::iter(local.into_iter().map(|(id, (source, request))| async move {
+                (
+                    id,
+                    fetch_local_prefix(&self.client, &source, &request).await,
+                )
+            }))
+            .buffer_unordered(OBSERVATION_CONCURRENCY);
+        let shared_queries = stream::iter(shared.into_iter().map(
+            |(key, (source, request))| async move {
+                (
+                    key,
+                    fetch_shared_prefix(&self.client, &source, &request).await,
+                )
+            },
+        ))
         .buffer_unordered(OBSERVATION_CONCURRENCY);
-        tokio::pin!(queries);
-        let deadline = tokio::time::sleep(foretoken_model_protocol::KV_OBSERVATION_TIMEOUT);
-        tokio::pin!(deadline);
-        let mut observations = BTreeMap::new();
-        loop {
-            tokio::select! {
-                _ = &mut deadline => break,
-                observation = queries.next() => match observation {
-                    Some((key, response)) => { observations.insert(key, response); }
-                    None => break,
-                },
-            }
-        }
+        let (local, shared) = tokio::join!(
+            observe_prefixes(local_queries),
+            observe_prefixes(shared_queries)
+        );
         let mut prepared = BTreeMap::new();
         for lookup in lookups {
             let id = (lookup.route_target_id.to_owned(), lookup.data_parallel_rank);
-            let local = self.query(*lookup);
-            let Some(key) = targets.get(&id) else {
-                prepared.insert(id, local);
-                continue;
-            };
-            let observation = observations
-                .get(key)
+            let rank = self
+                .config
+                .route_bindings
+                .get(lookup.route_target_id)
+                .and_then(|binding| {
+                    binding
+                        .data_parallel_rank_event_source_ids
+                        .get(&lookup.data_parallel_rank)
+                })
+                .and_then(|source_id| self.source(source_id))
+                .and_then(|source| local.get(&source.model_group_id))
                 .and_then(Option::as_ref)
-                .filter(|response| response.placement == key.3);
-            let block_size = match &local {
-                KvPrefixQueryResult::Matches(matches) => matches.block_size(),
-                KvPrefixQueryResult::Unavailable(_) => None,
-            }
-            .or_else(|| observation.and_then(|response| u32::try_from(response.block_size).ok()));
-            let mut matches = match &local {
-                KvPrefixQueryResult::Matches(matches) => {
-                    matches.clone().into_iter().collect::<Vec<_>>()
-                }
-                KvPrefixQueryResult::Unavailable(_) => Vec::new(),
+                .and_then(|response| {
+                    response
+                        .ranks
+                        .iter()
+                        .find(|rank| rank.dp_rank == lookup.data_parallel_rank)
+                });
+            let shared = targets.get(&id).and_then(|key| {
+                shared
+                    .get(key)
+                    .and_then(Option::as_ref)
+                    .filter(|response| response.placement == key.6)
+            });
+            let fallback = if rank.is_none() {
+                Some(self.query(lookup.clone()))
+            } else {
+                None
             };
-            if let Some(response) = observation.filter(|response| response.matched_tokens > 0) {
+            let known_local =
+                rank.is_some() || matches!(fallback, Some(KvPrefixQueryResult::Matches(_)));
+            let mut matches = match fallback {
+                Some(KvPrefixQueryResult::Matches(matches)) => matches.into_iter().collect(),
+                _ => Vec::new(),
+            };
+            if let Some(rank) = rank {
                 matches.push(KvPrefixMatch {
-                    placement: response.placement,
-                    matched_tokens: response.matched_tokens,
+                    placement: KvPlacement {
+                        tier: foretoken_model_protocol::KvStorageTier::Device,
+                        locality: foretoken_model_protocol::KvCacheLocality::Local,
+                    },
+                    matched_tokens: rank.matched_tokens,
+                });
+                // The native connector reports a complete recoverable continuation, not
+                // independent group fragments to add to the GPU observation.
+                matches.extend(rank.offloaded.iter().map(|hit| KvPrefixMatch {
+                    placement: KvPlacement {
+                        tier: hit.tier,
+                        locality: foretoken_model_protocol::KvCacheLocality::Local,
+                    },
+                    matched_tokens: hit.matched_tokens,
+                }));
+            }
+            if let Some(hit) = shared {
+                matches.push(KvPrefixMatch {
+                    placement: hit.placement,
+                    matched_tokens: hit.matched_tokens,
                 });
             }
-            let result = if !matches.is_empty()
-                || (observation.is_some() && matches!(local, KvPrefixQueryResult::Matches(_)))
-            {
-                KvPrefixQueryResult::Matches(
-                    KvPrefixMatches::new(matches).with_block_size(block_size),
-                )
+            let result = if known_local || shared.is_some() {
+                KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches))
             } else {
                 KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::SourceUnhealthy)
             };
@@ -600,24 +643,79 @@ impl KvPrefixIndexer for KvIndexer {
     }
 }
 
+// Retain completed observations within the existing routing deadline, even if a peer stalls.
+async fn observe_prefixes<K: Ord, V>(
+    queries: impl futures::Stream<Item = (K, V)>,
+) -> BTreeMap<K, V> {
+    tokio::pin!(queries);
+    let deadline = tokio::time::sleep(foretoken_model_protocol::KV_OBSERVATION_TIMEOUT);
+    tokio::pin!(deadline);
+    let mut observations = BTreeMap::new();
+    loop {
+        tokio::select! {
+            _ = &mut deadline => break,
+            observation = queries.next() => match observation {
+                Some((key, value)) => { observations.insert(key, value); }
+                None => break,
+            },
+        }
+    }
+    observations
+}
+
+async fn fetch_local_prefix(
+    client: &reqwest::Client,
+    source: &KvEventSourceConfig,
+    request: &foretoken_model_protocol::KvPrefixRequest,
+) -> Option<foretoken_model_protocol::KvLocalPrefixResponse> {
+    let response = client
+        .post(format!(
+            "{}{}",
+            source.endpoint.trim_end_matches('/'),
+            foretoken_model_protocol::KV_LOCAL_PREFIX_PATH
+        ))
+        .json(request)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let response: foretoken_model_protocol::KvLocalPrefixResponse = response.json().await.ok()?;
+    let mut ranks = BTreeSet::new();
+    let maximum = request.prompt_token_ids.len().saturating_sub(1);
+    if response.model_group_id != source.model_group_id
+        || response.scope_id != source.scope_id
+        || response.ranks.iter().any(|rank| {
+            !ranks.insert(rank.dp_rank)
+                || rank.matched_tokens > maximum
+                || rank.offloaded.iter().any(|hit| {
+                    hit.matched_tokens > maximum
+                        || !matches!(
+                            hit.tier,
+                            foretoken_model_protocol::KvStorageTier::HostPinned
+                                | foretoken_model_protocol::KvStorageTier::Disk
+                        )
+                })
+        })
+    {
+        return None;
+    }
+    Some(response)
+}
+
 async fn fetch_shared_prefix(
     client: &reqwest::Client,
     source: &KvEventSourceConfig,
-    tokens: &[u32],
-    cache_salt: Option<&str>,
+    request: &foretoken_model_protocol::KvPrefixRequest,
 ) -> Option<foretoken_model_protocol::KvSharedPrefixResponse> {
-    let url = format!(
-        "{}{}",
-        source.endpoint.trim_end_matches('/'),
-        foretoken_model_protocol::KV_SHARED_PREFIX_PATH
-    );
     let response = client
-        .post(url)
-        .json(&foretoken_model_protocol::KvSharedPrefixRequest {
-            prompt_token_ids: tokens.to_vec(),
-            dp_rank: source.dp_rank,
-            cache_salt: cache_salt.map(str::to_owned),
-        })
+        .post(format!(
+            "{}{}",
+            source.endpoint.trim_end_matches('/'),
+            foretoken_model_protocol::KV_SHARED_PREFIX_PATH
+        ))
+        .json(request)
         .send()
         .await
         .ok()?;
@@ -628,9 +726,7 @@ async fn fetch_shared_prefix(
     if response.model_group_id != source.model_group_id
         || response.scope_id != source.scope_id
         || response.placement.locality == foretoken_model_protocol::KvCacheLocality::Unspecified
-        || response.block_size == 0
-        || response.matched_tokens > tokens.len()
-        || !response.matched_tokens.is_multiple_of(response.block_size)
+        || response.matched_tokens > request.prompt_token_ids.len().saturating_sub(1)
     {
         return None;
     }
