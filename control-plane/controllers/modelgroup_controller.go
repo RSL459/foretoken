@@ -159,7 +159,7 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	available, err := reconciler.reconcileWorkload(ctx, group, deployment)
+	workload, err := reconciler.reconcileWorkload(ctx, group, deployment)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -170,10 +170,42 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := reconciler.updateStatus(ctx, group, modelGroupMaterializedState(available, scheduling)); err != nil {
+	state := modelGroupMaterializedState(workload.available, scheduling)
+	var remaining time.Duration
+	if workload.createdAt.IsZero() {
+		state.materialized = modelGroupConditionState{status: metav1.ConditionFalse, reason: "ReplacingWorkload", message: "The serving workload waits for its previous workload to be retired"}
+	} else if !workload.available {
+		startup, err := time.ParseDuration(string(group.Spec.Timeouts.Startup))
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("parse ModelGroup startup timeout: %w", err)
+		}
+		now := reconciler.now()
+		started := workload.createdAt
+		// Preparation does not spend the serving budget. Keep one continuous
+		// unavailable interval across container restarts and LWS member replacement.
+		if previous := meta.FindStatusCondition(group.Status.Conditions, conditionWorkloadAvailable); previous != nil {
+			switch previous.Status {
+			case metav1.ConditionFalse:
+				if previous.LastTransitionTime.Time.After(started) {
+					started = previous.LastTransitionTime.Time
+				}
+			case metav1.ConditionTrue:
+				started = now
+			}
+		}
+		state.unavailableSince = metav1.NewTime(started)
+		remaining = started.Add(startup).Sub(now)
+		state.target = conditionState{Status: metav1.ConditionUnknown, Reason: "Starting", Message: "Waiting for the serving workload to become ready"}
+		if remaining <= 0 {
+			state.phase = inferencev1alpha1.ModelGroupPhaseFailed
+			state.target = conditionState{Status: metav1.ConditionFalse, Reason: "StartupDeadlineExceeded", Message: fmt.Sprintf("The serving workload did not become ready within %s; Kubernetes recovery continues", group.Spec.Timeouts.Startup)}
+			remaining = 0
+		}
+	}
+	if err := reconciler.updateStatus(ctx, group, state); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: remaining}, nil
 }
 
 // owningModelPool returns the verified owner for workload reconciliation and scrape identity.
@@ -891,11 +923,13 @@ type modelGroupConditionState struct {
 type schedulingCapacityState = modelGroupConditionState
 
 type modelGroupStatusState struct {
-	phase        inferencev1alpha1.ModelGroupPhase
-	preparation  modelGroupConditionState
-	materialized modelGroupConditionState
-	available    bool
-	scheduling   schedulingCapacityState
+	phase            inferencev1alpha1.ModelGroupPhase
+	preparation      modelGroupConditionState
+	materialized     modelGroupConditionState
+	available        bool
+	unavailableSince metav1.Time
+	target           conditionState
+	scheduling       schedulingCapacityState
 }
 
 func schedulingNotEvaluated() schedulingCapacityState {
@@ -907,6 +941,7 @@ func modelGroupFailureState(err error) modelGroupStatusState {
 		phase:        inferencev1alpha1.ModelGroupPhaseFailed,
 		preparation:  modelGroupConditionState{status: metav1.ConditionUnknown, reason: "NotEvaluated", message: "Model preparation was not evaluated"},
 		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "UnsupportedProfile", message: err.Error()},
+		target:       conditionState{Status: metav1.ConditionFalse, Reason: "UnsupportedProfile", Message: err.Error()},
 		scheduling:   schedulingNotEvaluated(),
 	}
 }
@@ -943,13 +978,17 @@ func modelGroupMaterializedState(available bool, scheduling schedulingCapacitySt
 	if available {
 		phase = inferencev1alpha1.ModelGroupPhaseReady
 	}
-	return modelGroupStatusState{
+	state := modelGroupStatusState{
 		phase:        phase,
 		preparation:  modelGroupConditionState{status: metav1.ConditionTrue, reason: preparationSourceReadyReason, message: "Model preparation completed using resolved source versions"},
 		materialized: modelGroupConditionState{status: metav1.ConditionTrue, reason: "Applied", message: "Group workload was materialized"},
 		available:    available,
 		scheduling:   scheduling,
 	}
+	if available {
+		state.target = conditionState{Status: metav1.ConditionTrue, Reason: "Ready", Message: "The serving workload is ready"}
+	}
+	return state
 }
 
 // schedulingCapacity reports insufficient capacity only from the scheduler's
@@ -1007,7 +1046,19 @@ func (reconciler *ModelGroupReconciler) updateStatus(ctx context.Context, group 
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionModelPreparation, Status: state.preparation.status, Reason: state.preparation.reason, Message: state.preparation.message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadMaterialized, Status: state.materialized.status, Reason: state.materialized.reason, Message: state.materialized.message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionSchedulingCapacity, Status: state.scheduling.status, Reason: state.scheduling.reason, Message: state.scheduling.message, ObservedGeneration: group.Generation})
-	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadAvailable, Status: conditionStatus(state.available), Reason: availabilityReason(state.available), Message: availabilityMessage(state.available), ObservedGeneration: group.Generation})
+	availability := metav1.Condition{Type: conditionWorkloadAvailable, Status: conditionStatus(state.available), Reason: availabilityReason(state.available), Message: availabilityMessage(state.available), ObservedGeneration: group.Generation, LastTransitionTime: metav1.NewTime(reconciler.now())}
+	if state.materialized.status != metav1.ConditionTrue {
+		availability.Status = metav1.ConditionUnknown
+		availability.Reason = "NotMaterialized"
+		availability.Message = state.materialized.message
+	} else if !state.available {
+		availability.LastTransitionTime = state.unavailableSince
+	}
+	meta.SetStatusCondition(&group.Status.Conditions, availability)
+	if state.target.Status == "" {
+		state.target = conditionState{Status: metav1.ConditionUnknown, Reason: state.materialized.reason, Message: state.materialized.message}
+	}
+	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionTargetReady, Status: state.target.Status, Reason: state.target.Reason, Message: state.target.Message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionReady, Status: conditionStatus(state.available), Reason: availabilityReason(state.available), Message: readinessMessage(state.available), ObservedGeneration: group.Generation})
 	if reflect.DeepEqual(base.Status, group.Status) {
 		return nil
@@ -1027,9 +1078,9 @@ func availabilityReason(available bool) string {
 
 func availabilityMessage(available bool) string {
 	if available {
-		return "The Group Deployment is available"
+		return "The Group workload is available"
 	}
-	return "The Group Deployment is not yet available"
+	return "The Group workload is not yet available"
 }
 
 func readinessMessage(ready bool) string {

@@ -206,6 +206,7 @@ type groupState struct {
 	Materialized         bool
 	Ready                bool
 	CapacityReady        bool
+	Target               conditionState
 	RolloutPending       bool
 	InsufficientCapacity bool
 	PreparedRevision     string
@@ -326,6 +327,22 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 		Reason:               "Applied",
 		Message:              "All requested ModelGroups were materialized",
 	}
+	state.Target = conditionState{metav1.ConditionUnknown, "Starting", "Waiting for requested ModelGroups to become ready"}
+	if targetReady || pool.Spec.DesiredGroups == 0 {
+		state.Target = conditionState{metav1.ConditionTrue, "Ready", "Requested ModelGroup capacity is ready"}
+	} else {
+		for ordinal := int32(0); ordinal < pool.Spec.DesiredGroups; ordinal++ {
+			group := current[ordinal]
+			if group == nil || !group.DeletionTimestamp.IsZero() {
+				continue
+			}
+			failure := meta.FindStatusCondition(group.Status.Conditions, conditionTargetReady)
+			if failure != nil && failure.ObservedGeneration == group.Generation && failure.Status == metav1.ConditionFalse {
+				state.Target = conditionState{metav1.ConditionFalse, failure.Reason, fmt.Sprintf("ModelGroup %s: %s", group.Name, failure.Message)}
+				break
+			}
+		}
+	}
 	if state.RolloutPending {
 		state.Reason = "RolloutPending"
 		state.Message = "Requested Group capacity is converging or superseded Groups are being retired"
@@ -415,8 +432,14 @@ func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *i
 		state.Reason = "NotMaterialized"
 		state.Message = "ModelGroups were not materialized"
 	}
+	if resolvedStatus == metav1.ConditionFalse {
+		state.Target = conditionState{metav1.ConditionFalse, resolvedReason, resolvedMessage}
+	} else if state.Target.Status == "" {
+		state.Target = conditionState{metav1.ConditionUnknown, "Reconciling", "Waiting for requested ModelGroups to be materialized"}
+	}
 	base := pool.DeepCopy()
 	pool.Status.ObservedGeneration = pool.Generation
+	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionTargetReady, Status: state.Target.Status, Reason: state.Target.Reason, Message: state.Target.Message, ObservedGeneration: pool.Generation})
 	pool.Status.PreparedRevision = state.PreparedRevision
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionResolved, Status: resolvedStatus, Reason: resolvedReason, Message: resolvedMessage, ObservedGeneration: pool.Generation})
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionGroupsMaterialized, Status: conditionStatus(state.Materialized), Reason: state.Reason, Message: state.Message, ObservedGeneration: pool.Generation})

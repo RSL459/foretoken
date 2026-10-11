@@ -172,6 +172,8 @@ foretoken deploy examples/multi-model-quickstart --timeout 20m
 
 等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。所有服务 Ready 且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
 
+目标模型配置被拒绝时，部署命令会显示原因并失败退出，即使旧版本仍在提供服务。模型的 `spec.timeouts.startup` 还限定运行工作负载创建后等待启动或恢复就绪的时间，模型准备阶段单独计时。超过时限会结束本次命令，Kubernetes 继续恢复；时限内的容器重启仍按进行中处理。
+
 不应用配置，直接查看同一部署的状态：
 
 ```bash

@@ -164,11 +164,11 @@ class StartupProgress:
 
     def poll(
         self, resources: Iterable[ResourceRef], elapsed: float, budget: float = 5.0,
-        *, follow_logs: bool = True,
+        *, follow_logs: bool = True, force: bool = False,
     ) -> None:
         """Discover container attempts and report Pod changes without deciding service readiness."""
         now = time.monotonic()
-        if now < self._next_poll or budget <= 0:
+        if (not force and now < self._next_poll) or budget <= 0:
             return
         self._next_poll = now + 5.0
         deadline = now + min(budget, 5.0)

@@ -172,6 +172,8 @@ The command applies the configuration and deploys these services with the runtim
 
 While waiting, it shows service status and streams Pod and container logs with source prefixes. It exits when every service reports Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
 
+Rejected model configuration ends the deployment command with the reported error, even if the previous version is still serving. Each model's `spec.timeouts.startup` also bounds how long a created serving workload may remain unready during startup or recovery; model preparation has its own budget. Exceeding this limit ends the command while Kubernetes continues recovery. Container restarts within the limit remain in progress.
+
 Inspect the same deployment without applying it:
 
 ```bash

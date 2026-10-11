@@ -344,6 +344,15 @@ pub struct KvDelta {
     pub sequence: u64,
     pub event: KvDeltaEvent,
 }
+/// Engine-reported cache layout required to bind a locality query to its event partition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KvCacheGroup {
+    pub group_idx: u32,
+    pub spec_kind: String,
+    pub sliding_window: Option<u32>,
+}
+
 /// Bounded source-local page. Identity, producer epoch and rank are independent from route ID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -354,6 +363,9 @@ pub struct KvDeltaResponse {
     pub dp_rank: u32,
     pub through: u64,
     pub current: u64,
+    /// Absent when the producer cannot establish the engine's layout; consumers must not guess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_groups: Option<Vec<KvCacheGroup>>,
     pub deltas: Vec<KvDelta>,
 }
 

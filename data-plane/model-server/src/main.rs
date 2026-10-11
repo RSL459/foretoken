@@ -221,17 +221,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Default::default()
         },
     };
-    if !*client_health.borrow() {
-        let reason = client.health_error().map_or_else(
-            || "EngineCore client became unhealthy during startup".to_string(),
-            |error| format!("EngineCore client became unhealthy during startup: {error}"),
-        );
-        let _ = client.shutdown().await;
-        let _ = engine.shutdown(config.launch.drain_timeout()).await;
-        health.set_process_alive(false);
-        return Err(std::io::Error::other(reason).into());
-    }
     let kv_events = if let Some(adapter) = kv_events {
+        let remaining = startup_deadline.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(remaining, adapter.load_cache_groups(&client)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                warn!(%error, "KV cache group metadata is unavailable; local prefix scoring is disabled");
+            }
+            Err(_) => {
+                warn!(
+                    "KV cache group metadata exceeded the engine startup deadline; local prefix scoring is disabled"
+                );
+            }
+        }
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let host = config.member.as_ref().map_or_else(
             || LOOPBACK_HOST.to_string(),
@@ -247,6 +249,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    if !*client_health.borrow() {
+        let reason = client.health_error().map_or_else(
+            || "EngineCore client became unhealthy during startup".to_string(),
+            |error| format!("EngineCore client became unhealthy during startup: {error}"),
+        );
+        let _ = client.shutdown().await;
+        let _ = engine.shutdown(config.launch.drain_timeout()).await;
+        health.set_process_alive(false);
+        return Err(std::io::Error::other(reason).into());
+    }
     health.set_client_healthy(true);
     health.set_accepting(true);
     let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));

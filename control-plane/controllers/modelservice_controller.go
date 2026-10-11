@@ -38,6 +38,7 @@ const (
 	conditionIntentCompiled    = "IntentCompiled"
 	conditionPoolsMaterialized = "PoolsMaterialized"
 	conditionReady             = "Ready"
+	conditionTargetReady       = "TargetReady"
 	maxDesiredReplicas         = int32(1<<31 - 1)
 )
 
@@ -126,9 +127,10 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		compiledPools, err = compiler.CompileModelService(service.Spec)
 	}
 	if err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
+		return ctrl.Result{}, reconciler.rejectTarget(ctx, service, modelServiceState{
 			compiled: conditionState{metav1.ConditionFalse, "InvalidIntent", err.Error()},
 			pools:    conditionState{metav1.ConditionFalse, "CompilationFailed", "ModelService intent was not compiled"},
+			target:   conditionState{metav1.ConditionFalse, "InvalidIntent", err.Error()},
 			ready:    conditionState{metav1.ConditionFalse, "InvalidIntent", "ModelService intent is invalid"},
 		})
 	}
@@ -190,9 +192,10 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 	if err := reconciler.reconcilePools(ctx, service, compiledPools); err != nil {
 		var deploymentRequired *instanceAdmissionDeploymentRequiredError
 		if errors.As(err, &deploymentRequired) {
-			return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
+			return ctrl.Result{}, reconciler.rejectTarget(ctx, service, modelServiceState{
 				compiled: conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
 				pools:    conditionState{metav1.ConditionFalse, "DeploymentRequired", err.Error()},
+				target:   conditionState{metav1.ConditionFalse, "DeploymentRequired", err.Error()},
 				ready:    conditionState{metav1.ConditionFalse, "DeploymentRequired", err.Error()},
 			})
 		}
@@ -222,10 +225,15 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 			return ctrl.Result{}, err
 		}
 	}
+	target, err := reconciler.targetReadiness(ctx, service, compiledPools)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	pools := conditionState{metav1.ConditionTrue, "Applied", "All ModelPools were materialized"}
 	if err := reconciler.updateStatus(ctx, service, modelServiceState{
 		compiled:    conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
 		pools:       pools,
+		target:      target,
 		ready:       conditionState{conditionStatus(ready), readyReason, readyMessage},
 		autoscaling: &autoscalingStatus,
 	}); err != nil {
@@ -238,6 +246,18 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		return ctrl.Result{RequeueAfter: scaling.PollingInterval}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+// rejectTarget publishes a configuration rejection without withdrawing a still-serving cohort.
+func (reconciler *ModelServiceReconciler) rejectTarget(ctx context.Context, service *inferencev1alpha1.ModelService, state modelServiceState) error {
+	if len(service.Status.ServingPoolRevisions) > 0 {
+		ready, reason, message, err := reconciler.serviceReadiness(ctx, service, nil)
+		if err != nil {
+			return err
+		}
+		state.ready = conditionState{conditionStatus(ready), reason, message}
+	}
+	return reconciler.updateStatus(ctx, service, state)
 }
 
 // sourceSelectionAllowed admits new source intent only in source mode, while preserving
@@ -612,6 +632,39 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 	return true, nil
 }
 
+// targetReadiness observes current requested execution independently of the serving cohort.
+// Matching the complete intent prevents an older Pool failure from rejecting a new deployment.
+func (reconciler *ModelServiceReconciler) targetReadiness(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (conditionState, error) {
+	pools, err := reconciler.ownedPools(ctx, service)
+	if err != nil {
+		return conditionState{}, err
+	}
+	state := conditionState{metav1.ConditionTrue, "Ready", "All requested ModelPools are ready"}
+	for _, compiled := range compiledPools {
+		var target *metav1.Condition
+		for index := range pools {
+			pool := &pools[index]
+			if pool.Spec.PoolName != compiled.Name || !pool.DeletionTimestamp.IsZero() ||
+				pool.Spec.DesiredGroups != compiled.DesiredGroups || !equalOptionalInt32(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) ||
+				!reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) ||
+				pool.Status.ObservedGeneration != pool.Generation {
+				continue
+			}
+			condition := meta.FindStatusCondition(pool.Status.Conditions, conditionTargetReady)
+			if condition != nil && condition.ObservedGeneration == pool.Generation {
+				target = condition
+			}
+		}
+		if target != nil && target.Status == metav1.ConditionFalse {
+			return conditionState{metav1.ConditionFalse, target.Reason, fmt.Sprintf("ModelPool %s: %s", compiled.Name, target.Message)}, nil
+		}
+		if target == nil || target.Status != metav1.ConditionTrue {
+			state = conditionState{metav1.ConditionUnknown, "Reconciling", "Waiting for requested ModelPools to become ready"}
+		}
+	}
+	return state, nil
+}
+
 // serviceReadiness verifies that the selected serving generation remains routable.
 func (reconciler *ModelServiceReconciler) serviceReadiness(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, string, string, error) {
 	pools, err := reconciler.ownedPools(ctx, service)
@@ -774,6 +827,7 @@ type conditionState struct {
 type modelServiceState struct {
 	compiled    conditionState
 	pools       conditionState
+	target      conditionState
 	ready       conditionState
 	autoscaling *[]inferencev1alpha1.AutoscalingTargetStatus
 }
@@ -782,6 +836,10 @@ type modelServiceState struct {
 func (reconciler *ModelServiceReconciler) updateStatus(ctx context.Context, service *inferencev1alpha1.ModelService, state modelServiceState) error {
 	base := service.DeepCopy()
 	service.Status.ObservedGeneration = service.Generation
+	if state.target.Status == "" {
+		state.target = conditionState{metav1.ConditionUnknown, "Reconciling", "Waiting for requested ModelPools to be materialized"}
+	}
+	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionTargetReady, Status: state.target.Status, Reason: state.target.Reason, Message: state.target.Message, ObservedGeneration: service.Generation})
 	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionIntentCompiled, Status: state.compiled.Status, Reason: state.compiled.Reason, Message: state.compiled.Message, ObservedGeneration: service.Generation})
 	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionPoolsMaterialized, Status: state.pools.Status, Reason: state.pools.Reason, Message: state.pools.Message, ObservedGeneration: service.Generation})
 	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionReady, Status: state.ready.Status, Reason: state.ready.Reason, Message: state.ready.Message, ObservedGeneration: service.Generation})
