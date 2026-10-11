@@ -136,17 +136,25 @@ def _deploy(
     print(f"Waiting up to {timeout} for Foretoken services")
     rollout_started = time.monotonic()
     with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
-        wait_for_resources(
-            deployment.service_refs(),
-            kubectl,
-            timeout,
-            report=_report_progress,
-            observe=startup.poll,
-            expected_revisions={
-                ref: revision for ref in deployment.service_refs()
-                if ref.kind in selection_kinds
-            },
-        )
+        try:
+            wait_for_resources(
+                deployment.service_refs(),
+                kubectl,
+                timeout,
+                report=_report_progress,
+                observe=startup.poll,
+                expected_revisions={
+                    ref: revision for ref in deployment.service_refs()
+                    if ref.kind in selection_kinds
+                },
+            )
+        except DeploymentError:
+            # Capture the final container attempt even when the normal polling interval has not elapsed.
+            startup.poll(
+                deployment.service_refs(), time.monotonic() - rollout_started,
+                follow_logs=False, force=True,
+            )
+            raise
         if source is not None:
             source.verify(
                 deployment,
