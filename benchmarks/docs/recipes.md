@@ -198,6 +198,4 @@ foretoken plot results/baseline results/candidate \
   --output-dir results/comparison
 ```
 
-Repeat `--metric` to select more metrics, or use `--method` to select named methods. Performance comparisons group matching workloads; quality comparisons also distinguish recorded task selections, few-shot settings, generation options and seeds. Native scores and standard errors retain the evaluator's aggregation. Runs with missing evaluation conditions remain separate rather than being treated as matching repetitions.
-
-`comparison-runs.csv` lists changes in recorded conditions and serving environments, including precision, engine options, declared environment variables, resources and client provenance, and marks unavailable evidence as unknown. Score figures flag these differences; their CSV files contain the details. Use this evidence to interpret comparisons across deployments or hardware. For score definitions and evaluator reports, see [quality results](eval/README.md#read-scores).
+Repeat `--metric` to select more metrics, or use `--method` to select named methods. Compare results in the figures and inspect values and condition differences in the accompanying CSV files. For score definitions, see [quality results](eval/README.md#read-scores).
