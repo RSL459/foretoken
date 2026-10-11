@@ -104,12 +104,22 @@ impl RankState {
 
 struct Inner {
     ranks: BTreeMap<u32, RankState>,
+    cache_groups: Option<Vec<foretoken_model_protocol::KvCacheGroup>>,
+}
+
+/// Native utility result decoded only at the vLLM adapter boundary.
+#[derive(Debug, serde::Deserialize, PartialEq)]
+struct VllmCacheGroup {
+    group_idx: u32,
+    kind: String,
+    block_size: u32,
+    sliding_window: Option<u32>,
 }
 
 #[derive(Debug)]
 pub enum KvDeltaError {
     Unavailable,
-    CursorReset(KvDeltaResponse),
+    CursorReset(Box<KvDeltaResponse>),
 }
 
 pub struct KvEventAdapter {
@@ -135,6 +145,7 @@ impl KvEventAdapter {
                 ranks: (0..data_parallel_size)
                     .map(|rank| (rank, RankState::new()))
                     .collect(),
+                cache_groups: None,
             }),
             key,
             scope_id,
@@ -142,6 +153,28 @@ impl KvEventAdapter {
             model_revision,
             data_parallel_size,
         })
+    }
+
+    /// Loads the connected engines' shared cache layout before bootstrap starts event subscription.
+    /// The adapter carries this immutable layout with each source epoch; failure leaves it unknown.
+    pub async fn load_cache_groups(
+        &self,
+        client: &vllm_engine_core_client::EngineCoreClient,
+    ) -> Result<(), vllm_engine_core_client::Error> {
+        let groups: Vec<VllmCacheGroup> = client
+            .call_utility_consensus("get_kv_cache_group_metadata", ())
+            .await?;
+        self.inner.lock().unwrap().cache_groups = Some(
+            groups
+                .into_iter()
+                .map(|group| foretoken_model_protocol::KvCacheGroup {
+                    group_idx: group.group_idx,
+                    spec_kind: group.kind,
+                    sliding_window: group.sliding_window,
+                })
+                .collect(),
+        );
+        Ok(())
     }
 
     /// Returns bounded rank-local deltas for the internal KV index endpoint.
@@ -168,12 +201,12 @@ impl KvEventAdapter {
         let rank = &inner.ranks[&dp_rank];
         if epoch != Some(rank.epoch.as_str()) || after.is_some_and(|cursor| cursor > rank.current())
         {
-            return Err(KvDeltaError::CursorReset(self.response(
+            return Err(KvDeltaError::CursorReset(Box::new(self.response(
                 &inner,
                 dp_rank,
                 0,
                 Vec::new(),
-            )));
+            ))));
         }
         let deltas = rank
             .ring
@@ -204,6 +237,7 @@ impl KvEventAdapter {
             dp_rank,
             through,
             current: inner.ranks.get(&dp_rank).map_or(0, RankState::current),
+            cache_groups: inner.cache_groups.clone(),
             deltas,
         }
     }

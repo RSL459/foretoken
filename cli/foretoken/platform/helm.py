@@ -10,7 +10,7 @@ import os
 import shutil
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -1277,6 +1277,56 @@ class Helm(HelmClient):
             with self._prepare_application_origin(args, input_text, timeout):
                 self._finish_upgrade(args, timeout)
                 self.run(args, input_text=input_text)
+                self._wait_control_plane(release, timeout)
+
+    def _wait_control_plane(self, release: ReleaseRef, timeout: str) -> None:
+        """Wait for the deployed controller to renew leadership before submitting new service intent."""
+        kubectl = Kubectl()
+        deadline = time.monotonic() + timeout_seconds(timeout)
+
+        def run(arguments: list[str]) -> str:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise DeploymentError(f"Timed out waiting for {release.display_name} controller leadership")
+            return kubectl.run(arguments, timeout=remaining).stdout
+
+        selector = ",".join(f"{key}={value}" for key, value in self.platform_selector_labels)
+        deployments = json.loads(run(["get", "deployments", "-n", release.namespace, "-l", selector, "-o", "json"]))["items"]
+        if len(deployments) != 1:
+            raise DeploymentError(f"Expected one controller Deployment for {release.display_name}")
+        name = deployments[0]["metadata"]["name"]
+        run(["rollout", "status", "deployment/" + name, "-n", release.namespace, "--timeout=" + timeout])
+        deployment = json.loads(run(["get", "deployment", name, "-n", release.namespace, "-o", "json"]))
+        manager = next(container for container in deployment["spec"]["template"]["spec"]["containers"] if container["name"] == "manager")
+        if not any(argument in {"--leader-elect", "--leader-elect=true"} for argument in manager.get("args", [])):
+            return
+        selector = ",".join(f"{key}={value}" for key, value in deployment["spec"]["selector"]["matchLabels"].items())
+        observed = None
+        while time.monotonic() < deadline:
+            pods = json.loads(run(["get", "pods", "-n", release.namespace, "-l", selector, "-o", "json"]))["items"]
+            active = {
+                pod["metadata"]["name"]: status["containerID"]
+                for pod in pods if not pod["metadata"].get("deletionTimestamp")
+                for status in pod.get("status", {}).get("containerStatuses", [])
+                if status["name"] == "manager" and status.get("ready")
+                and "running" in status["state"] and status.get("containerID")
+            }
+            raw = run(["get", "lease", "inference.foretoken.io", "-n", release.namespace, "-o", "json", "--ignore-not-found"])
+            lease = json.loads(raw).get("spec", {}) if raw.strip() else {}
+            holder = lease.get("holderIdentity", "")
+            pod_name = holder.rsplit("_", 1)[0]
+            renewal = lease.get("renewTime")
+            # A new renewal from the same running container excludes a retired
+            # process in a restarted Pod without relying on workstation clock time.
+            current = (holder, active.get(pod_name), renewal)
+            if current[1] and renewal:
+                if observed is not None and observed[:2] == current[:2] and observed[2] != renewal:
+                    return
+                observed = current
+            else:
+                observed = None
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+        raise DeploymentError(f"Timed out waiting for {release.display_name} controller leadership")
 
     def update_control_plane_application(
         self, root: Path, reference: str, timeout: str
@@ -1297,9 +1347,20 @@ class Helm(HelmClient):
         )
         self._finish_upgrade(args, timeout)
         self.run(args)
+        self._wait_control_plane(release, timeout)
 
     def application_history(self) -> set[str] | None:
-        """Retain all rendered application defaults and defer cleanup if Helm history advances."""
+        """Retain application publications selected by available Helm revisions."""
+        return self._history_references(application_references)
+
+    def image_history(self) -> set[str] | None:
+        """Retain images selected by installed defaults or an available Helm rollback."""
+        from foretoken.source import application_images
+
+        return self._history_references(application_images)
+
+    def _history_references(self, extract: Callable[[Iterable[dict[str, Any]]], set[str]]) -> set[str] | None:
+        """Read retained revision selections, deferring cleanup when Helm history advances."""
         release = self.platform_release()
         if not self.release_exists(release):
             return set()
@@ -1346,7 +1407,7 @@ class Helm(HelmClient):
                 ]
             ).stdout
             references.update(
-                application_references(
+                extract(
                     document
                     for document in yaml.safe_load_all(manifest)
                     if document is not None
