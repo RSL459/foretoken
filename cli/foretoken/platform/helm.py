@@ -24,6 +24,7 @@ from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.network_sources import (
     platform_image_reference,
     select_github_download,
+    select_platform_image_sources,
     select_platform_oci_reference,
 )
 from foretoken.platform.config import (
@@ -133,7 +134,7 @@ class Helm(HelmClient):
         """Select native chart image defaults while leaving user image settings untouched."""
         values, versions = self._chart_image_defaults(chart, subcharts)
         overrides = overrides or {}
-        updates = {}
+        images = {}
         for path in paths:
             owner = path.split(".", 1)[0]
             if overrides.get("global", {}).get("imageRegistry"):
@@ -159,14 +160,21 @@ class Helm(HelmClient):
             registry = image.get("registry")
             if registry:
                 reference = f"{registry}/{reference}"
-            selected = platform_image_reference(reference, self._config.image_registry)
+            images[path] = (reference, image)
+        sources = select_platform_image_sources(
+            {path: reference for path, (reference, _) in images.items()},
+            self._config.image_registry,
+        )
+        updates = {}
+        for path, (reference, image) in images.items():
+            selected = sources[path]
             if selected != reference:
                 repository = (
                     selected.rsplit("@", 1)[0]
-                    if digest
+                    if image.get("digest") or image.get("sha")
                     else _image_repository_tag(selected)[0]
                 )
-                if registry:
+                if image.get("registry"):
                     registry, repository = repository.split("/", 1)
                     updates[f"{path}.registry"] = registry
                 updates[f"{path}.repository"] = repository
@@ -681,7 +689,8 @@ class Helm(HelmClient):
             previous, _ = self._platform_images(
                 tuple(document for document in yaml.safe_load_all(manifest) if document is not None)
             )
-        updates = {}
+        references = {}
+        prior_sources = {}
         for path, reference in images.items():
             if source_mode and path in {
                 "image.repository",
@@ -706,10 +715,15 @@ class Helm(HelmClient):
                         continue
                 except KeyError:
                     pass
-            selected = platform_image_reference(
-                reference, self._config.image_registry, previous=prior
-            )
-            if selected == reference:
+            references[path] = reference
+            if prior is not None:
+                prior_sources[path] = prior
+        sources = select_platform_image_sources(
+            references, self._config.image_registry, previous=prior_sources
+        )
+        updates = {}
+        for path, selected in sources.items():
+            if selected == references[path]:
                 continue
             if path == "image.repository":
                 selected = (
