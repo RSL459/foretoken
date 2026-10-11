@@ -43,6 +43,8 @@ fn candidate_prefix(
 
 Each match provides `placement` and `matched_tokens`. An empty `Matches` means no matching prefix was found; `Unavailable` means the result is unknown. Keep unavailable candidates eligible for ordinary routing.
 
+Local cache matching requires one full-attention cache group reported by the engine. Missing group metadata and multi-group, sliding-window, or sparse layouts return `Unavailable`.
+
 The built-in [KvLeastLoadedScorer](../router/src/algorithm/scorer/kv_least_loaded_scorer.rs) prefers longer matches, then faster cache tiers and lower load. See [PipelineRouter](../router/src/selection/pipeline_router.rs) for batched query preparation.
 
 ## Observe

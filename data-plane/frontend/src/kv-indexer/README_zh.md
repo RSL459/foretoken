@@ -43,6 +43,8 @@ fn candidate_prefix(
 
 每项匹配包含缓存位置 `placement` 和匹配长度 `matched_tokens`。空的 `Matches` 表示未命中，`Unavailable` 表示无法判断；无法判断的候选仍可参与常规路由。
 
+本地缓存匹配要求引擎报告单个全注意力缓存组。缺少缓存组元数据，以及多缓存组、滑动窗口或稀疏布局，均返回 `Unavailable`。
+
 内置的 [KvLeastLoadedScorer](../router/src/algorithm/scorer/kv_least_loaded_scorer.rs) 优先比较匹配长度，再比较缓存层级和负载。批量准备查询的调用见 [PipelineRouter](../router/src/selection/pipeline_router.rs)。
 
 ## 查看状态

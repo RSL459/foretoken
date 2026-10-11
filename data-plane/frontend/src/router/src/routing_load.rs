@@ -56,7 +56,7 @@ impl RoutingReservations {
             candidate.route_target_id.clone(),
             candidate.data_parallel_rank,
         );
-        // Reserve uncached prompt tokens for each generation stage until its first response.
+        // Reserve estimated prompt-token computation until the stage's first response.
         // Encoder has no token-generation workload.
         let uncached_tokens = if candidate.role == ModelServerRole::Encoder {
             0
@@ -91,7 +91,7 @@ impl RoutingReservations {
     }
 }
 
-/// Returns uncached indexed tokens and the partial prompt tail for routing load accounting.
+/// Estimates prompt-token computation for routing load, including the final token's cache block.
 pub(crate) fn uncached_tokens(
     request: &RouterRequest,
     candidate: &RouteCandidate,
@@ -100,7 +100,11 @@ pub(crate) fn uncached_tokens(
     let Some(info) = crate::cache::cache_match(request, candidate, kv) else {
         return request.token_count();
     };
-    let indexed = info.total_blocks * info.block_size;
-    indexed.saturating_sub(info.matched_blocks * info.block_size)
-        + request.token_count().saturating_sub(indexed)
+    let tokens = request.token_count();
+    // Causal generation computes the final prompt token for logits; complete-block reuse
+    // cannot include its block even when the entire prefix is resident.
+    let reusable_blocks = info
+        .matched_blocks
+        .min(tokens.saturating_sub(1) / info.block_size);
+    tokens - reusable_blocks * info.block_size
 }
