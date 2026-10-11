@@ -100,11 +100,11 @@ The setting applies to all Pools and frontends serving this model, across Chat C
 
 | Value | Cache sharing |
 | --- | --- |
-| `true` | Use the trusted gateway's `x-caller-id` as the cache salt, overriding the request body's `cache_salt`. Generation requires a nonempty caller ID. |
+| `true` | Isolate prefixes by authenticated caller, ignoring the request body's `cache_salt`. |
 | `false` | Share unsalted prefixes across callers, ignoring the request body's `cache_salt`. |
 | Omitted or `null` | Use the request body's `cache_salt`; omission, `null` or an empty string uses unsalted prefixes. |
 
-Configure the gateway's [caller identity headers](../data-plane/frontend/README.md#caller-limits-and-priorities) before enabling isolation. Changing isolation leaves prefix caching, authentication and admission settings unchanged.
+Isolation requires an authentication gateway. Changing isolation leaves prefix caching and admission settings unchanged.
 
 Apply the model and frontend configuration directory with `foretoken deploy <directory>`. Changing this setting replaces model instances and switches to a separate cache domain, including for persistent shared caches.
 

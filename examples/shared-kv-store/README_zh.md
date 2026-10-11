@@ -18,15 +18,15 @@
 
 使用[从源码安装的平台](../../docs/custom-deployment_zh.md)、包含 vLLM `MooncakeStoreConnector` 和 `mooncake-transfer-engine` 的 model-server 镜像，以及默认 StorageClass。模型目录的配置见[模型存储](../../docs/model-storage_zh.md)。
 
-在仓库根目录构建 Store 镜像，版本与 model-server 中的 Mooncake 传输包保持一致。标准 NVIDIA 镜像使用 `0.3.12.post1`。使用本地 k3d 时，将镜像导入当前集群：
+在仓库根目录构建 Store 镜像。使用本地 k3d 时，将镜像导入当前集群：
 
 ```bash
-make image-mooncake MOONCAKE_VERSION=0.3.12.post1
+make image-mooncake
 K3D_CLUSTER="$(kubectl config current-context)"
 k3d image import foretoken-mooncake --cluster "${K3D_CLUSTER#k3d-}"
 ```
 
-其他集群将 `REGISTRY` 替换为节点可访问的镜像仓库路径，执行 `make image-mooncake MOONCAKE_VERSION=0.3.12.post1 MOONCAKE_IMAGE=REGISTRY/mooncake` 构建，再用 `docker push REGISTRY/mooncake` 推送。将 `kvservice.yaml` 中 Master 和两个客户端的镜像都改为该地址。
+其他集群将 `REGISTRY` 替换为节点可访问的镜像仓库路径，执行 `make image-mooncake MOONCAKE_IMAGE=REGISTRY/mooncake` 构建，再用 `docker push REGISTRY/mooncake` 推送。将 `kvservice.yaml` 中 Master 和两个客户端的镜像都改为该地址。
 
 ```bash
 foretoken deploy examples/shared-kv-store --timeout 20m
