@@ -25,9 +25,15 @@ import yaml
 
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
+from foretoken.node_images import (
+    SOURCE_BUILD_BINDING_LABEL,
+    SOURCE_BUILD_POD_LABEL,
+    NodeImageStore,
+    images_container_spec,
+)
 
-_BUILD_POD_LABEL = "inference.foretoken.io/source-builder"
-_BUILD_BINDING_LABEL = "inference.foretoken.io/source-build-binding"
+_BUILD_POD_LABEL = SOURCE_BUILD_POD_LABEL
+_BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
 _BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
 
 
@@ -222,7 +228,6 @@ class ClusterBuilder(AbstractContextManager):
         self.timeout = timeout
         self.node = node
         self.containerd_socket = containerd_socket
-        self.containerd_client = "/usr/local/bin/ctr"
         self.pull_secrets = pull_secrets
         self.credentials = credentials or {}
         self.registry_mirrors = registry_mirrors or {}
@@ -462,55 +467,16 @@ chmod 600 "$1/buildkit.toml"
                 {"name": "DOCKER_CONFIG", "value": "/registry-auth"}
             )
         spec["containers"] = [container]
-        # PID 1 must handle termination rather than consume the Pod's grace period.
-        idle_command = ["sh", "-c", "trap 'exit 0' TERM INT; sleep infinity & wait"]
         if self.containerd_socket:
             # Only local kind/k3d installation uses node image import. The compiler
             # never receives the runtime socket; archives remain on the cluster volume.
             # GNU tar preserves PAX sizes for OCI layer blobs larger than 8 GiB.
-            client = (
-                "/bin/k3s"
-                if "/k3s/" in self.containerd_socket
-                else "/usr/local/bin/ctr"
+            images, volumes = images_container_spec(
+                self.tools_image, self.containerd_socket
             )
-            spec["volumes"] += [
-                {
-                    "name": "runtime-socket",
-                    "hostPath": {"path": self.containerd_socket, "type": "Socket"},
-                },
-                {
-                    "name": "runtime-client",
-                    "hostPath": {"path": client, "type": "File"},
-                },
-            ]
-            spec["containers"].append(
-                {
-                    "name": "images",
-                    "image": self.tools_image,
-                    "command": idle_command,
-                    "env": [
-                        {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
-                    ],
-                    "securityContext": {
-                        "runAsUser": 1000,
-                        "runAsGroup": 0,
-                        "allowPrivilegeEscalation": False,
-                        "capabilities": {"drop": ["ALL"]},
-                    },
-                    "volumeMounts": [
-                        {"name": "cache", "mountPath": self.mount},
-                        {
-                            "name": "runtime-socket",
-                            "mountPath": "/run/foretoken-containerd.sock",
-                        },
-                        {
-                            "name": "runtime-client",
-                            "mountPath": self.containerd_client,
-                            "readOnly": True,
-                        },
-                    ],
-                }
-            )
+            images["volumeMounts"].insert(0, {"name": "cache", "mountPath": self.mount})
+            spec["volumes"] += volumes
+            spec["containers"].append(images)
         pod = {
             "apiVersion": "v1",
             "kind": "Pod",
@@ -752,41 +718,21 @@ rm -rf "$incoming"
 
     def _containerd(self) -> list[str]:
         """Address the local development node's image store through its own client."""
-        return [
-            self.containerd_client,
-            "--address",
-            "/run/foretoken-containerd.sock",
-            "--namespace",
-            "k8s.io",
-        ]
+        return NodeImageStore(
+            self.kubectl, self.namespace, self.name, self.binding
+        ).containerd()
 
     def _node_images(self) -> dict[str, str]:
-        """Read containerd's image reference and OCI digest columns for local base reuse."""
-        output = self.run(
-            [*self._containerd(), "images", "list"], capture=True, container="images"
-        )
-        return {
-            columns[0]: columns[2]
-            for line in output.splitlines()[1:]
-            if len(columns := line.split()) >= 3
-        }
+        """Read node references for existing local build-context reuse."""
+        return NodeImageStore(
+            self.kubectl, self.namespace, self.name, self.binding
+        ).images()
 
     def _node_image_matches(self, image: str, digest: str) -> bool:
-        """Compare a node image with BuildKit's output, including containerd's OCI index wrapper."""
-        node_digest = self._node_images().get(image)
-        if node_digest is None:
-            return False
-        if node_digest == digest:
-            return True
-        descriptor = json.loads(
-            self.run(
-                [*self._containerd(), "content", "get", node_digest],
-                capture=True,
-                container="images",
-            )
-        )
-        manifests = descriptor.get("manifests", [])
-        return len(manifests) == 1 and manifests[0]["digest"] == digest
+        """Compare a selected node image with BuildKit output without exporting layers."""
+        return NodeImageStore(
+            self.kubectl, self.namespace, self.name, self.binding
+        ).matches(image, digest)
 
     def _save_layout(self, image: str, layout: str, digest: str) -> None:
         """Retain the cluster-local OCI layout corresponding to an imported image reference."""
@@ -981,30 +927,14 @@ rm -rf "$incoming"
         _, digest = self._image_builds[image]
         if self._node_image_matches(reference, digest):
             print(f"Reusing unchanged node image {reference}", flush=True)
+            NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding
+            ).pin_owned(reference)
             return
         layout = self._export_image(image)
-        import_command = [*self._containerd(), "images", "import"]
-        # ctr 1.x imports synchronously by default. On ctr 2.x select that same
-        # path instead of the transfer service's temporary image references.
-        help_text = self.run(
-            [*import_command, "--help"], capture=True, container="images"
-        )
-        if "--local" in help_text:
-            import_command.append("--local")
-        self.run(
-            [
-                "bash",
-                "-ec",
-                'set -o pipefail; layout=$1; shift; tar -C "$layout" -cf - . | "$@"',
-                "import",
-                layout["path"],
-                *import_command,
-                "--index-name",
-                reference,
-                "-",
-            ],
-            container="images",
-        )
+        NodeImageStore(
+            self.kubectl, self.namespace, self.name, self.binding
+        ).import_layout(layout["path"], reference)
         # OCI names retain the candidate reference as well as the selected index name.
         # Retire only references created by this operation after every node is delivered.
         self._built_images.update((image, reference))
@@ -1012,9 +942,6 @@ rm -rf "$incoming"
     def discard_unselected_images(self, retained: set[str]) -> None:
         """Remove only this build's unselected local references after every node has been compared."""
         if self.containerd_socket:
-            unused = self._built_images - retained
-            if unused:
-                self.run(
-                    [*self._containerd(), "images", "remove", *sorted(unused)],
-                    container="images",
-                )
+            NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding
+            ).remove_owned(self._built_images - retained)

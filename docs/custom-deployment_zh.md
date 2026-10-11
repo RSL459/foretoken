@@ -29,7 +29,7 @@ pip install -e .
 foretoken install -e .
 ```
 
-编译在集群中执行。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
+已有通过 Foretoken 命令安装的发布版平台，也可用同一命令切换到当前源码。编译在集群中执行。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
 
 ## 部署与更新代码
 

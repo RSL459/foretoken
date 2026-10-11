@@ -25,11 +25,6 @@ pub struct KvEventSourceConfig {
     pub dp_rank: u32,
     pub model_revision: String,
     pub scope_id: String,
-    pub spec_kind: String,
-    pub sliding_window: Option<u32>,
-    pub group_idx: Option<u32>,
-    #[serde(default)]
-    pub match_all_groups: bool,
 }
 /// Binding separates router identity from owner identity and only permits lower-tier hints when a
 /// candidate declares it can read, restore, or transfer the exact placement.
@@ -167,6 +162,7 @@ struct State {
 struct Cursor {
     epoch: String,
     after: Option<u64>,
+    cache_groups: Option<Vec<foretoken_model_protocol::KvCacheGroup>>,
 }
 pub struct KvIndexer {
     config: KvRuntimeConfig,
@@ -338,6 +334,14 @@ impl KvIndexer {
         if cursor.epoch.is_empty() {
             return KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::SourceUnhealthy);
         }
+        // Only one dense group has complete-prefix semantics in the current event index.
+        // Missing metadata and hybrid/sparse layouts cannot establish a reusable model prefix.
+        let Some([group]) = cursor.cache_groups.as_deref() else {
+            return KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::UnsupportedLayout);
+        };
+        if group.spec_kind != "full_attention" || group.sliding_window.is_some() {
+            return KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::UnsupportedLayout);
+        }
         let identity = KvEventSourceId {
             event_source_id: source.event_source_id.clone(),
             model_group_id: source.model_group_id.clone(),
@@ -350,10 +354,10 @@ impl KvIndexer {
             model_revision: &source.model_revision,
             scope_id: &source.scope_id,
             hash_format: KvHashFormat::NormalizedKeyedBlake3V1,
-            group_idx: source.group_idx,
-            match_all_groups: source.match_all_groups,
-            spec_kind: &source.spec_kind,
-            sliding_window: source.sliding_window,
+            group_idx: Some(group.group_idx),
+            match_all_groups: false,
+            spec_kind: &group.spec_kind,
+            sliding_window: group.sliding_window,
         };
         let mut index = state.index.lock().unwrap();
         let mut matches = index.query(&identity, &q, &state.key, Instant::now());
@@ -726,6 +730,7 @@ fn apply(
         Cursor {
             epoch: d.epoch,
             after: has.then_some(d.through).or(after),
+            cache_groups: d.cache_groups,
         },
     );
     Ok(())
