@@ -52,6 +52,7 @@ COPY --exclude=model-server/python data-plane/ ./data-plane/
 # Bullseye cannot load procedural macros linked against the frontend builder's newer glibc.
 # Retain prepared Rust inputs with their outputs, isolated from legacy builders.
 # Copy changed trees afresh so patch removals also receive mtimes Cargo can observe.
+# Preserve captured Rust sources when completing the upstream tree for patch preparation.
 RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
     --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
@@ -75,7 +76,11 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
         && git -C /var/cache/vllm checkout -q --detach FETCH_HEAD; \
       fi \
       && mkdir -p data-plane/third_party/vllm \
-      && git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
+      && if [ -d data-plane/third_party/vllm/rust ]; then \
+        git -C /var/cache/vllm archive HEAD | tar --anchored --exclude=rust -x -C data-plane/third_party/vllm; \
+      else \
+        git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
+      fi; \
     fi \
     && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
     && mkdir -p data-plane/target/vllm-rust \
