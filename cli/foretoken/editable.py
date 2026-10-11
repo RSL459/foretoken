@@ -324,7 +324,24 @@ class EditableDeployment:
         )
         if control_reference and active_control != control_reference:
             pending.add("control-plane")
-        if not pending:
+        missing = {
+            component
+            for component in pending
+            if (bundle := self.state["bundles"].get(component)) is not None
+            and origin.read_manifest(origin.reference(component, bundle["revision"]))
+            is None
+        }
+        snapshot = self.directory / self.state["inputs"]
+        helm = Helm(default_platform_config(self.state["command"]["oci_registry"]))
+        if not missing:
+            if "control-plane" in pending and control_reference != active_control:
+                helm.update_control_plane_application(
+                    snapshot, control_reference, timeout
+                )
+                self.kubectl.rollout_status(
+                    ResourceRef("Deployment", platform["metadata"]["name"], namespace),
+                    timeout,
+                )
             return
 
         origin.prepare(timeout)
@@ -358,7 +375,7 @@ class EditableDeployment:
             },
         )
         if (
-            "model-server" in pending
+            "model-server" in missing
             and self.state.get("engines")
             and not build["registry"]
             and origin.node not in build["engine_caches"]
@@ -368,19 +385,17 @@ class EditableDeployment:
                 build["binding"] + "-" + uuid.uuid4().hex
             )
             _write_json(self.directory / "install.json", self.state)
-        snapshot = self.directory / self.state["inputs"]
         inputs = {
             str(path.relative_to(snapshot)): path
             for path in snapshot.rglob("*")
             if path.is_file()
         }
-        helm = Helm(default_platform_config(self.state["command"]["oci_registry"]))
         references = origin.references(helm.application_history())
         if references is not None:
             references.update(
                 bundle["revision"] for bundle in self.state["bundles"].values()
             )
-        print("Preparing application files: " + ", ".join(sorted(pending)), flush=True)
+        print("Preparing application files: " + ", ".join(sorted(missing)), flush=True)
         with ClusterBuilder(
             self.kubectl,
             namespace,
@@ -395,7 +410,7 @@ class EditableDeployment:
             registry_mirrors=build.get("registry_mirrors", {}),
             node=origin.node,
             containerd_socket=socket
-            if self.state.get("engines") and "model-server" in pending
+            if self.state.get("engines") and "model-server" in missing
             else "",
             credentials=registry_credentials(
                 [
@@ -421,7 +436,7 @@ class EditableDeployment:
             pull_secrets=origin.pull_secrets,
         ) as builder:
             builder.sync(inputs, build["versions"])
-            for component in sorted(pending):
+            for component in sorted(missing):
                 bundle = self.state["bundles"][component]
                 revision = bundle["revision"]
                 staging = builder.root + "/output/" + revision

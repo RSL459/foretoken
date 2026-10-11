@@ -100,6 +100,30 @@ class Kubectl:
             ["get", f"--request-timeout={request_timeout}", "--raw", path]
         ).stdout
 
+    def get_raw_if_not_found(self, path: str, request_timeout: str) -> str | None:
+        """Read a raw endpoint and return None only for the API server's NotFound response."""
+        command = self.command(
+            ["get", f"--request-timeout={request_timeout}", "--raw", path]
+        )
+        try:
+            completed = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=timeout_seconds(request_timeout),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise DeploymentError(
+                f"{' '.join(command)} timed out after {request_timeout}"
+            ) from exc
+        if completed.returncode == 0:
+            return completed.stdout
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        if detail.startswith("Error from server (NotFound):"):
+            return None
+        raise DeploymentError(f"{' '.join(command)} failed: {detail}")
+
     def kustomize(self, path: Path) -> str:
         """Render a Kustomize root through the installed kubectl."""
         return self.run(["kustomize", str(path)]).stdout
