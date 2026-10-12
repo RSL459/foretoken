@@ -55,6 +55,10 @@ class ResourceProgress:
         return self.message or self.reason
 
 
+class KubernetesServiceUnavailableError(DeploymentError):
+    """Identify API-server unavailability for callers that own a readiness deadline."""
+
+
 class Kubectl:
     """Run kubectl commands using the caller's active Kubernetes context."""
 
@@ -91,7 +95,10 @@ class Kubectl:
             ) from exc
         if completed.returncode:
             detail = completed.stderr.strip() or completed.stdout.strip()
-            raise DeploymentError(f"{' '.join(command)} failed: {detail}")
+            message = f"{' '.join(command)} failed: {detail}"
+            if detail.startswith("Error from server (ServiceUnavailable):"):
+                raise KubernetesServiceUnavailableError(message)
+            raise DeploymentError(message)
         return completed
 
     def get_raw(self, path: str, request_timeout: str) -> str:

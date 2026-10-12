@@ -367,6 +367,7 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 		}
 	}
 
+	capacityBlocked := replacementPoolsCapacityBlocked(compiledPools, byPoolName)
 	desired := make(map[string]struct{}, len(compiledPools))
 	for _, compiled := range compiledPools {
 		desired[compiled.Name] = struct{}{}
@@ -412,7 +413,12 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 
 	for index := range owned {
 		pool := &owned[index]
-		if _, keep := desired[pool.Spec.PoolName]; keep || serviceServingRevision(service, pool) != "" {
+		if _, keep := desired[pool.Spec.PoolName]; keep {
+			continue
+		}
+		// Retain obsolete serving Pools while replacements can schedule. Under capacity
+		// pressure, their normal deletion drain releases resources for the new topology.
+		if serviceServingRevision(service, pool) != "" && !capacityBlocked {
 			continue
 		}
 		if err := reconciler.Delete(ctx, pool); err != nil && !apierrors.IsNotFound(err) {
@@ -420,6 +426,39 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 		}
 	}
 	return nil
+}
+
+// replacementPoolsCapacityBlocked permits obsolete-Pool retirement only after every active
+// replacement has resolved current intent and at least one reports scheduler capacity pressure.
+// Failed or unobserved targets retain the serving topology rather than spending its capacity.
+func replacementPoolsCapacityBlocked(compiledPools []compiler.ModelPool, pools map[string]*inferencev1alpha1.ModelPool) bool {
+	blocked := false
+	for _, compiled := range compiledPools {
+		if compiled.DesiredGroups == 0 {
+			continue
+		}
+		pool := pools[compiled.Name]
+		if pool == nil || !pool.DeletionTimestamp.IsZero() || pool.Status.ObservedGeneration != pool.Generation ||
+			pool.Spec.DesiredGroups != compiled.DesiredGroups || !equalOptionalInt32(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) ||
+			!reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) {
+			return false
+		}
+		for _, name := range []string{conditionResolved, conditionGroupsMaterialized} {
+			condition := meta.FindStatusCondition(pool.Status.Conditions, name)
+			if condition == nil || condition.ObservedGeneration != pool.Generation || condition.Status != metav1.ConditionTrue {
+				return false
+			}
+		}
+		target := meta.FindStatusCondition(pool.Status.Conditions, conditionTargetReady)
+		if target == nil || target.ObservedGeneration != pool.Generation || target.Status == metav1.ConditionFalse {
+			return false
+		}
+		rollout := meta.FindStatusCondition(pool.Status.Conditions, conditionRolloutPending)
+		if rollout != nil && rollout.ObservedGeneration == pool.Generation && rollout.Status == metav1.ConditionTrue && rollout.Reason == "InsufficientCapacity" {
+			blocked = true
+		}
+	}
+	return blocked
 }
 
 // selectPoolApplication retains execution choices independently of changing platform defaults.
