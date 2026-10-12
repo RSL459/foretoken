@@ -1146,109 +1146,118 @@ def prepare_source_images(
                     if component == "model-server" and engines
                     else references[component]
                 )
-                metadata = builder.build(
-                    dockerfile,
-                    target="environment",
-                    image=image,
-                    push=bool(registry),
-                    arguments=component_arguments,
-                )
-                final_dockerfile, final_target, final_arguments = (
-                    dockerfile,
-                    "environment",
-                    component_arguments,
-                )
-                if component == "model-server" and engines:
-                    cache_prefix = "-".join(
-                        (
-                            binding,
-                            versions[
-                                "deploy/inference-engines/source-build.Dockerfile"
-                            ],
-                            *sorted(engines),
-                        )
-                    )
-                    engine_arguments = {
-                        **arguments,
-                        "RUNTIME_IMAGE": image,
-                        "CACHE_ID": cache_prefix
-                        + "-"
-                        + metadata["containerimage.digest"],
-                    }
-                    user_output = builder.root + "/runtime-user"
-                    builder.build(
-                        "deploy/inference-engines/source-build.Dockerfile",
-                        target="runtime-user-export",
-                        destination=user_output,
-                        arguments=engine_arguments,
-                    )
-                    engine_arguments["RUNTIME_USER"] = builder.run(
-                        ["cat", user_output + "/user"], capture=True
-                    ).strip()
-                    metadata = builder.build(
-                        "deploy/inference-engines/source-build.Dockerfile",
-                        target="environment",
-                        image=references[component],
-                        push=bool(registry),
-                        arguments=engine_arguments,
-                    )
-                    final_dockerfile, final_target, final_arguments = (
-                        "deploy/inference-engines/source-build.Dockerfile",
-                        "environment",
-                        engine_arguments,
-                    )
-                    # Native exports use the selected dependency environment, and their
-                    # cache identity survives Python-only updates and origin relocation.
-                    engine_cache = (
-                        cache_prefix + "-" + metadata["containerimage.digest"]
-                    )
-                    engine_export_arguments = {
-                        **engine_arguments,
-                        "RUNTIME_IMAGE": references[component],
-                        "CACHE_ID": engine_cache,
-                        "BUILD_NATIVE": str(engine_native).lower(),
-                    }
-                digest = metadata["containerimage.digest"]
-                reuse = reusable[component] and digest == build.get("digests", {}).get(
-                    builder.node, {}
-                ).get(component)
-                if reuse and not builder.containerd_socket:
-                    # Restore an unchanged registry tag if it was collected, without
-                    # assigning different content to an installed reference.
-                    builder.build(
-                        final_dockerfile,
-                        target=final_target,
-                        image=installed[component],
-                        push=True,
-                        arguments=final_arguments,
-                    )
-                if builder.node == origin.node:
+                # Foretoken application exports do not depend on the environment image.
+                # Scope their worker to the component so failure joins it before cleanup.
+                with ThreadPoolExecutor(max_workers=1) as application_build:
                     payload = builder.root + "/applications/" + component
-                    builder.build(
+                    application = (
+                        application_build.submit(
+                            builder.build,
+                            dockerfile,
+                            target="source-export",
+                            destination=payload,
+                            arguments=component_arguments,
+                        )
+                        if builder.node == origin.node
+                        else None
+                    )
+                    metadata = builder.build(
                         dockerfile,
-                        target="source-export",
-                        destination=payload,
+                        target="environment",
+                        image=image,
+                        push=bool(registry),
                         arguments=component_arguments,
                     )
+                    final_dockerfile, final_target, final_arguments = (
+                        dockerfile,
+                        "environment",
+                        component_arguments,
+                    )
                     if component == "model-server" and engines:
-                        engine_output = builder.root + "/applications/engine"
+                        cache_prefix = "-".join(
+                            (
+                                binding,
+                                versions[
+                                    "deploy/inference-engines/source-build.Dockerfile"
+                                ],
+                                *sorted(engines),
+                            )
+                        )
+                        engine_arguments = {
+                            **arguments,
+                            "RUNTIME_IMAGE": image,
+                            "CACHE_ID": cache_prefix
+                            + "-"
+                            + metadata["containerimage.digest"],
+                        }
+                        user_output = builder.root + "/runtime-user"
                         builder.build(
                             "deploy/inference-engines/source-build.Dockerfile",
-                            target="source-export",
-                            destination=engine_output,
-                            arguments=engine_export_arguments,
+                            target="runtime-user-export",
+                            destination=user_output,
+                            arguments=engine_arguments,
                         )
-                        builder.run(
-                            [
-                                "sh",
-                                "-ec",
-                                'cp -R "$1/." "$2/"',
-                                "assemble",
-                                engine_output,
-                                payload,
-                            ]
+                        engine_arguments["RUNTIME_USER"] = builder.run(
+                            ["cat", user_output + "/user"], capture=True
+                        ).strip()
+                        metadata = builder.build(
+                            "deploy/inference-engines/source-build.Dockerfile",
+                            target="environment",
+                            image=references[component],
+                            push=bool(registry),
+                            arguments=engine_arguments,
                         )
-                return digest, reuse, engine_cache
+                        final_dockerfile, final_target, final_arguments = (
+                            "deploy/inference-engines/source-build.Dockerfile",
+                            "environment",
+                            engine_arguments,
+                        )
+                        # Native exports use the selected dependency environment, and their
+                        # cache identity survives Python-only updates and origin relocation.
+                        engine_cache = (
+                            cache_prefix + "-" + metadata["containerimage.digest"]
+                        )
+                        engine_export_arguments = {
+                            **engine_arguments,
+                            "RUNTIME_IMAGE": references[component],
+                            "CACHE_ID": engine_cache,
+                            "BUILD_NATIVE": str(engine_native).lower(),
+                        }
+                    digest = metadata["containerimage.digest"]
+                    reuse = reusable[component] and digest == build.get(
+                        "digests", {}
+                    ).get(builder.node, {}).get(component)
+                    if reuse and not builder.containerd_socket:
+                        # Restore an unchanged registry tag if it was collected, without
+                        # assigning different content to an installed reference.
+                        builder.build(
+                            final_dockerfile,
+                            target=final_target,
+                            image=installed[component],
+                            push=True,
+                            arguments=final_arguments,
+                        )
+                    if application is not None:
+                        application.result()
+                        if component == "model-server" and engines:
+                            engine_output = builder.root + "/applications/engine"
+                            builder.build(
+                                "deploy/inference-engines/source-build.Dockerfile",
+                                target="source-export",
+                                destination=engine_output,
+                                arguments=engine_export_arguments,
+                            )
+                            builder.run(
+                                [
+                                    "sh",
+                                    "-ec",
+                                    'cp -R "$1/." "$2/"',
+                                    "assemble",
+                                    engine_output,
+                                    payload,
+                                ]
+                            )
+                    return digest, reuse, engine_cache
 
             # Components share a daemon, but their dependency chains and exports are
             # independent. Join all builds before publishing or releasing the builder.
