@@ -54,7 +54,7 @@ spec:
         matchLengthWeight: 0.5
 ```
 
-When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
+A target with unavailable prefix observations remains eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 
 ## Choose from the scores
 

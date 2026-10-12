@@ -54,7 +54,7 @@ spec:
         matchLengthWeight: 0.5
 ```
 
-KV 索引不可用时，目标仍可参与路由，只是不享有缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+无法取得某个目标的前缀匹配结果时，该目标仍可参与路由，但不获得缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
 ## 根据得分选择目标
 

@@ -95,7 +95,7 @@ pub(super) fn inverse_normalized_scores(
 ///
 /// Returns one score for every input candidate. A length mismatch is reported as a routing error.
 pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
-    /// Requests live shared-prefix observations before the synchronous routing round.
+    /// Declares that scoring consumes prefix matches, preparing live observations before routing.
     fn needs_kv_prefix(&self) -> bool {
         false
     }
