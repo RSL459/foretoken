@@ -8,6 +8,7 @@ Precision: fixed BF16
 Deployment layout: unrestricted; examples include colocated serving and prefill/decode disaggregation
 Per-service configuration: at most 8 GPUs per service; agent-selected GPU count within this limit, parallelism, CPU cores and memory
 Available resources: 2*8 MetaX C500 GPUs; determine and record available CPU cores and memory from the execution environment
+Concurrently working subagents: 6–20
 Minimum parallel experiments: 2
 Maximum parallel experiments: have the agent determine the limit from available resources and per-experiment requirements, and record it in the experiment notes
 Evaluation workloads: measure concurrency 1 and 16 separately per service, covering input/output lengths and natural answers; agent-selected datasets and lengths
