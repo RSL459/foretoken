@@ -11,6 +11,7 @@ import json
 import time
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -483,26 +484,38 @@ class EditableDeployment:
                             payload,
                         ]
                     )
-                validate_build_inputs(
-                    self.root, snapshot, self.state.get("engines", {})
-                )
-                previous = bundle.get("previous", "")
-                if component == "control-plane" and active_control.startswith(
-                    origin.endpoint + "/control-plane/"
-                ):
-                    previous = active_control.rsplit("/", 1)[-1]
-                published_at = time.monotonic()
-                published_revision = origin.publish(
-                    builder,
-                    payload,
-                    component,
-                    revision,
-                    previous,
-                    references,
-                    timeout=timeout,
-                    reuse_previous=True,
-                    sources=build_sources(snapshot, component),
-                )
+            validate_build_inputs(self.root, snapshot, self.state.get("engines", {}))
+            # Builds share compiler metadata; publishers use separate component directories.
+            # Join every publisher before committing selections or releasing their exports.
+            published_at = time.monotonic()
+            previous_revisions = {}
+            with ThreadPoolExecutor(max_workers=len(missing)) as publications:
+                futures = {}
+                for component in sorted(missing):
+                    bundle = self.state["bundles"][component]
+                    revision = bundle["revision"]
+                    previous = bundle.get("previous", "")
+                    if component == "control-plane" and active_control.startswith(
+                        origin.endpoint + "/control-plane/"
+                    ):
+                        previous = active_control.rsplit("/", 1)[-1]
+                    previous_revisions[component] = previous
+                    futures[component] = publications.submit(
+                        origin.publish,
+                        builder,
+                        builder.root + "/output/" + revision + "/payload",
+                        component,
+                        revision,
+                        previous,
+                        references,
+                        timeout=timeout,
+                        reuse_previous=True,
+                        sources=build_sources(snapshot, component),
+                    )
+                published = {
+                    component: future.result() for component, future in futures.items()
+                }
+            for component, published_revision in published.items():
                 default_revision = (
                     build.get("applications", {}).get(component, {}).get("revision")
                 )
@@ -511,23 +524,21 @@ class EditableDeployment:
                 if published_revision == default_revision:
                     self.state["bundles"].pop(component)
                 else:
-                    bundle["revision"] = published_revision
-                _write_json(self.directory / "install.json", self.state)
-                if references is not None:
-                    references.add(published_revision)
+                    self.state["bundles"][component]["revision"] = published_revision
                 if component == "control-plane":
                     control_reference = origin.reference(component, published_revision)
                 publication = (
                     "reused"
-                    if previous and published_revision == previous
+                    if published_revision == previous_revisions[component]
                     else "published"
                 )
-                print(
-                    f"Application {publication}: {component} in "
-                    f"{time.monotonic() - published_at:.1f}s",
-                    flush=True,
-                )
-                builder.run(["rm", "-rf", "--", staging])
+                print(f"Application {publication}: {component}", flush=True)
+            _write_json(self.directory / "install.json", self.state)
+            print(
+                f"Application publication completed in {time.monotonic() - published_at:.1f}s",
+                flush=True,
+            )
+            builder.run(["rm", "-rf", "--", builder.root + "/output"])
         if "control-plane" in pending and control_reference != active_control:
             helm.update_control_plane_application(snapshot, control_reference, timeout)
             self.kubectl.rollout_status(
