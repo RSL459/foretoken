@@ -334,6 +334,10 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route("/v1/internal/abort", post(abort))
         .route(KV_INDEX_DELTA_PATH, get(kv_index_delta))
         .route(
+            foretoken_model_protocol::KV_LOCAL_PREFIX_PATH,
+            post(local_kv_prefix),
+        )
+        .route(
             foretoken_model_protocol::KV_SHARED_PREFIX_PATH,
             post(shared_kv_prefix),
         )
@@ -394,10 +398,32 @@ async fn profile_control(
     }
 }
 
+// Query schedulers through their existing utility transport, without admitting a generation.
+async fn local_kv_prefix(
+    State(state): State<AppState>,
+    Json(request): Json<foretoken_model_protocol::KvPrefixRequest>,
+) -> Response {
+    if !state.health.ready() || !state.health.accepting() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let Some(adapter) = state.kv_events else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match tokio::time::timeout(
+        foretoken_model_protocol::KV_OBSERVATION_TIMEOUT,
+        state.backend.local_prefixes(&request),
+    )
+    .await
+    {
+        Ok(Ok(ranks)) => Json(adapter.prefix_response(ranks)).into_response(),
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 // Shared lookups are observations only: admission and engine health must still permit reads.
 async fn shared_kv_prefix(
     State(state): State<AppState>,
-    Json(request): Json<foretoken_model_protocol::KvSharedPrefixRequest>,
+    Json(request): Json<foretoken_model_protocol::KvPrefixRequest>,
 ) -> Response {
     if !state.health.ready() || !state.health.accepting() {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();

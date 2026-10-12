@@ -49,22 +49,25 @@ pub(crate) fn project_kv_runtime(
             );
             rank_sources.insert(dp_rank, event_source_id);
         }
+        let shared_placement = store_id.map(|_| KvPlacement {
+            tier: KvStorageTier::External,
+            locality: KvCacheLocality::Remote,
+        });
+        let mut readable_placements: BTreeSet<_> = [KvPlacement {
+            tier: KvStorageTier::Device,
+            locality: KvCacheLocality::Local,
+        }]
+        .into_iter()
+        .collect();
+        readable_placements.extend(shared_placement);
         bindings.insert(
             route_target_id.as_str().to_owned(),
             KvRouteBinding {
                 data_parallel_rank_event_source_ids: rank_sources,
-                readable_placements: [KvPlacement {
-                    tier: KvStorageTier::Device,
-                    locality: KvCacheLocality::Local,
-                }]
-                .into_iter()
-                .collect(),
+                readable_placements,
                 can_restore_or_transfer: store_id.is_some(),
                 shared_lookup_scope: store_id.map(str::to_owned),
-                shared_lookup_placement: store_id.map(|_| KvPlacement {
-                    tier: KvStorageTier::External,
-                    locality: KvCacheLocality::Remote,
-                }),
+                shared_lookup_placement: shared_placement,
             },
         );
     };

@@ -43,18 +43,29 @@ Choose a scorer for the workload:
 | Prefer the same model replica for requests with the same `session_id` in the request body | `session_affinity` |
 | Give every target an equal score | `uniform` |
 
-Scorer-specific options go under `scorer.parameters`. For example, give matched prefix length more weight:
+Scorer-specific options go under `scorer.parameters`. For example, give cache affinity more weight in the default strategy:
 
 ```yaml
 spec:
   routerPipeline:
     scorer:
-      algorithm: prefix
+      algorithm: kv_least_loaded
       parameters:
-        matchLengthWeight: 0.5
+        cacheWeight: 0.7
 ```
 
-When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
+`kv_least_loaded` combines cache credit with per-rank request pressure. By default, GPU-local reuse receives full credit and the additional prefix requiring CPU, filesystem or shared-store restoration receives half credit. Equal shared-cache hits therefore retain each target's local-cache advantage, while load can change the ranking.
+
+Both weights accept values from 0 to 1:
+
+| Parameter | Default | Effect |
+| --- | --- | --- |
+| `cacheWeight` | `0.5` | Balances cache affinity against load; `0` selects by load alone and skips cache queries for this scorer. |
+| `restoreWeight` | `0.5` | Credit for the restored extension relative to GPU-local reuse; `0` credits only GPU-local reuse, and `1` gives both equal credit. |
+
+Encoder and Decode stages use load alone. These weights express routing preferences, not transfer-time estimates.
+
+A target with unavailable prefix observations remains eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 
 ## Choose from the scores
 

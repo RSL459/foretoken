@@ -4,6 +4,10 @@
 common/python-profiling.patch
 compatibility/v1-031/python-profiling.patch
 common/engine-abort-completion.patch
+common/prefix-cache-lookup.patch
+common/offload-prefix-lookup.patch
+compatibility/v1-modern-offload-prefix.patch
+compatibility/v1-031/mooncake-prefix-lookup.patch
 common/ready-logprobs.patch
 common/metax-dp-ep-shared-expert-serialization.patch
 common/spec-decode-timing-collector.patch

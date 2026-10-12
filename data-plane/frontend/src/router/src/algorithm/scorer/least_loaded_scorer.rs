@@ -41,10 +41,9 @@ impl RouteScorer for LeastLoadedScorer {
                 };
                 // Picker prefers larger scores, so negate the total load: less load ranks higher.
                 RouteScore {
-                    load: load(candidate)
+                    preference: load(candidate)
                         .saturating_add(downstream_load)
-                        .saturating_neg(),
-                    ..RouteScore::default()
+                        .saturating_neg() as f64,
                 }
             })
             .collect()

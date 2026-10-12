@@ -12,8 +12,13 @@ rust/latency-histogram-buckets.patch
 rust/managed-engine-command.patch
 rust/engine-request-completion.patch
 common/engine-abort-completion.patch
+common/prefix-cache-lookup.patch
+common/offload-prefix-lookup.patch
+compatibility/source-offload-prefix.patch
+common/mooncake-prefix-lookup.patch
 common/ready-logprobs.patch
 rust/ready-logprobs.patch
+rust/logprobs-tensor-wire.patch
 rust/logprob-padding-tokens.patch
 common/offloading-event-identity.patch
 common/fused-gdn-declaration.patch

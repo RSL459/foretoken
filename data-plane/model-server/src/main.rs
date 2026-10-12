@@ -226,12 +226,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match tokio::time::timeout(remaining, adapter.load_cache_groups(&client)).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
-                warn!(%error, "KV cache group metadata is unavailable; local prefix scoring is disabled");
+                warn!(%error, "KV cache group metadata is unavailable; event-index queries cannot select a cache group");
             }
             Err(_) => {
-                warn!(
-                    "KV cache group metadata exceeded the engine startup deadline; local prefix scoring is disabled"
-                );
+                warn!("KV cache group metadata exceeded the engine startup deadline");
             }
         }
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
@@ -240,12 +238,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             |member| member.address.to_string(),
         );
         tokio::spawn(adapter.clone().serve(host, ready_tx));
-        if ready_rx.await == Ok(true) {
-            Some(adapter)
-        } else {
-            warn!("KV event subscriber is unavailable; prefix scoring is disabled");
-            None
+        if ready_rx.await != Ok(true) {
+            warn!("KV event subscriber is unavailable; live engine observations remain available");
         }
+        Some(adapter)
     } else {
         None
     };
