@@ -10,6 +10,7 @@ import math
 import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from importlib.resources import files
 from pathlib import PurePosixPath
@@ -85,21 +86,25 @@ def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
         )
         if kind + ".inference.foretoken.io" in available
     )
-    objects = list(kubectl.list_all_resources(kinds)) if kinds else []
-    for label in (
-        "app.kubernetes.io/name=foretoken-control-plane",
-        "inference.foretoken.io/model-group",
-        "inference.foretoken.io/frontend-service",
-        "inference.foretoken.io/model-preparation-group",
-        "foretoken.io/application-files=consumer",
-    ):
-        objects.extend(
-            kubectl.list_all_resources(
+    # Read independent consumer classes concurrently, completing every query before
+    # callers can retire unreferenced applications or image pins.
+    with ThreadPoolExecutor() as queries:
+        pending = [queries.submit(kubectl.list_all_resources, kinds)] if kinds else []
+        pending.extend(
+            queries.submit(
+                kubectl.list_all_resources,
                 ("pods", "jobs", "replicasets", "deployments"),
                 label_selector=label,
             )
+            for label in (
+                "app.kubernetes.io/name=foretoken-control-plane",
+                "inference.foretoken.io/model-group",
+                "inference.foretoken.io/frontend-service",
+                "inference.foretoken.io/model-preparation-group",
+                "foretoken.io/application-files=consumer",
+            )
         )
-    return objects
+        return [obj for future in pending for obj in future.result()]
 
 
 def remove_application_jobs(kubectl: Kubectl, binding: str, timeout: str) -> None:
