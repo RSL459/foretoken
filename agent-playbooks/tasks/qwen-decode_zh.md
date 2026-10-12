@@ -4,6 +4,7 @@
 
 ```text
 模型：Qwen3.5-35B-A3B
+优化目标：提升单并发解码速度和 16 并发总输出吞吐（token/s），降低两组的解码延迟（TPOT）
 精度：固定 BF16
 部署形态：聚合部署、预填充/解码分离等，不限
 单服务配置：每个服务最多 8 卡；具体 GPU 数、并行方式、CPU 核数和内存由 Agent 选择
@@ -12,13 +13,12 @@
 最大并行工作子 Agent 数：20
 最小并行实验数：2
 最大并行实验数：由 Agent 根据可用资源和单实验需求确定上限，并写入实验说明
-评测负载：每个服务分别测量并发 1 和 16，覆盖不同输入输出长度与自然回答；使用 foretoken perf 测量性能、foretoken perf --profile 分析瓶颈
+评测负载：每个服务分别测量并发 1 和 16，覆盖随机长度负载和 StudyChat 对话；具体命令见下方“评测命令”
 精度评测：仅在改动可能影响精度时考虑执行 foretoken eval；每完成 20 轮速度迭代最多执行一次，不要求逢 20 轮必测
-优化目标：提升单并发解码速度和 16 并发总输出吞吐（token/s），降低两组的解码延迟（TPOT）
-可改动范围：不限
+可改动范围：在上述精度与资源约束内不限，包括部署配置、并发与批处理、并行策略、预填充/解码分离、推理引擎与调度、算子优化与融合、编译与图执行、通信、显存管理、KV 缓存与卸载、推测解码、采样、Router 与负载均衡、准入与排队、扩缩容、CPU 与 I/O 优化
 单次迭代实验最长用时：10 分钟
-工作时间：从开始执行任务计时，自主持续优化 12 小时
-预期／结束条件：吞吐最大化、TPOT 最小化
+工作时间：从开始执行任务计时，最多自主优化 12 小时
+预期／结束条件：不设固定指标阈值，持续最大化吞吐、最小化 TPOT，直至无进一步优化空间或工作时间用尽
 交付结果：每轮列出改动、完整 foretoken perf 命令、并发 1／16 的输出吞吐（token/s）与平均 TPOT（ms/token），对比相同负载下初始方案和上一轮的数值及变化百分比，附 W&B 链接和图表；最终给出保留方案、对应代码／配置及各负载的实测结果
 ```
 
@@ -35,17 +35,16 @@ export WANDB_API_KEY="<your-wandb-api-key>"
 foretoken perf path/to/qwen-deployment --dataset random \
   --min-prompt-length 128 --max-prompt-length 4096 \
   --min-output-length 128 --max-output-length 512 \
-  --max-concurrency 1 --num-prompts 16 --warmup-requests 4 \
+  --max-concurrency 16 --num-prompts 160 --warmup-requests 4 \
   --random-seed 0 --temperature 0 --output experiment,raw,plot,wandb
 
-# 最终保留方案必跑，中间按需：自然回答
+# 最终保留方案必跑，中间按需：StudyChat 对话
 foretoken perf path/to/qwen-deployment \
-  --prompt "Explain the trade-offs between tensor parallelism and pipeline parallelism." \
-  --max-concurrency 16 --num-prompts 16 --max-tokens 2048 \
+  --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
+  --max-concurrency 16 --num-prompts 128 --max-tokens 2048 \
   --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb
 
 # 可不执行：仅在改动可能影响精度且满足上述频率限制时评测
 foretoken eval path/to/qwen-deployment \
-  --tasks piqa,arc_easy,arc_challenge,hellaswag,winogrande \
-  --num_fewshot 0 --limit 100 --output experiment,plot,wandb
+  --tasks gsm8k --num_fewshot 0 --limit 20 --output experiment,plot,wandb
 ```
