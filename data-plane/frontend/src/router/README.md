@@ -98,9 +98,11 @@ spec:
         algorithm: max
 ```
 
-`filter`, `scorer`, and `picker` can each be set at the model level and under `encoder`, `prefill`, or `decode`. Omitted selections inherit from the model, then the frontend. Each supplied selection replaces its entire `algorithm` and `parameters`; omitted parameters use that algorithm's defaults. Aggregate serving uses the model-level selections.
+Each of `filter`, `scorer`, and `picker` is resolved independently: an `encoder`, `prefill`, or `decode` selection takes precedence over the model selection, which takes precedence over the frontend default. Aggregate serving uses the model selection. Remove a selection to resume inheritance.
 
-Apply changes with the deployment's usual `foretoken deploy` command. Routing updates online without replacing model instances; invalid algorithms or parameters leave the active routing configuration unchanged. Remove an override to resume inheritance. ModelServices exposing the same public model name through one frontend must resolve to the same routing configuration.
+A selection must name its `algorithm` and replaces that algorithm's entire `parameters` object. Omitting parameters uses the selected algorithm's defaults, not the inherited parameters.
+
+Apply changes with the deployment's usual `foretoken deploy` command. Routing updates online without replacing model instances; invalid settings keep the active configuration. ModelServices exposing the same public model name through one frontend must resolve to the same routing configuration.
 
 ## Inspect routing behavior
 

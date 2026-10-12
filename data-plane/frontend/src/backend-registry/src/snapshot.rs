@@ -4,7 +4,7 @@
 //! Defines the controller-projected component/pipeline-scope routing snapshot contract.
 use foretoken_artifacts::ModelSource;
 use foretoken_model_protocol::ModelServerRole;
-use foretoken_router::{RouteTargetId, RouteTargetSet};
+use foretoken_router::{ModelRoutingStages, RouteTargetId, RouteTargetSet, RouterPipelineConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -207,14 +207,13 @@ impl ServingSnapshot {
     /// Resolves model routing once and rejects conflicting policies for a shared public model name.
     pub fn model_routing(
         &self,
-    ) -> Result<BTreeMap<String, [foretoken_router::RouterPipelineConfig; 4]>, SnapshotError> {
+    ) -> Result<BTreeMap<String, ModelRoutingStages<RouterPipelineConfig>>, SnapshotError> {
         let mut routing = BTreeMap::new();
         for model in &self.models {
             let config = model
                 .router_pipeline
                 .as_ref()
-                .cloned()
-                .unwrap_or_default()
+                .unwrap_or(&Default::default())
                 .resolve(&self.settings.router_pipeline);
             if let Some(previous) = routing.insert(model.model.clone(), config.clone())
                 && previous != config

@@ -27,8 +27,8 @@ pub use request::RouterRequest;
 pub use route_target_stats::RouteTargetStatsReader;
 pub use selection::{
     AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, FilterStage,
-    ModelRouterPipeline, PickerAlgorithm, PickerDescriptor, PickerStage, PipelineRouter,
-    RouteCandidate, RouteError, RouteScore, RouteSession, Router, RouterPipeline,
+    ModelRouterPipeline, ModelRoutingStages, PickerAlgorithm, PickerDescriptor, PickerStage,
+    PipelineRouter, RouteCandidate, RouteError, RouteScore, RouteSession, Router, RouterPipeline,
     RouterPipelineConfig, RouterPipelineConfigError, RouterPipelineOverride, RouterPipelines,
     RoutingProgress, RoutingStage, ScoredCandidate, ScorerAlgorithm, ScorerDescriptor, ScorerStage,
 };

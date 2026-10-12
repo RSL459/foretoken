@@ -16,7 +16,9 @@ pub use config::{
     PickerDescriptor, PickerStage, RouterPipelineConfig, RouterPipelineConfigError,
     ScorerAlgorithm, ScorerDescriptor, ScorerStage,
 };
-pub use model_pipelines::{ModelRouterPipeline, RouterPipelineOverride, RouterPipelines};
+pub use model_pipelines::{
+    ModelRouterPipeline, ModelRoutingStages, RouterPipelineOverride, RouterPipelines,
+};
 pub use pipeline::RouterPipeline;
 pub use pipeline_router::PipelineRouter;
 pub use session::{RouteError, RouteSession, Router, RoutingProgress, RoutingStage};

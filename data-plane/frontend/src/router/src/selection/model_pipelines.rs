@@ -60,22 +60,49 @@ pub struct ModelRouterPipeline {
     pub decode: Option<RouterPipelineOverride>,
 }
 
+/// Model execution roles shared by resolved configuration and compiled routing pipelines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelRoutingStages<T> {
+    pub aggregate: T,
+    pub encoder: T,
+    pub prefill: T,
+    pub decode: T,
+}
+
+impl<T> ModelRoutingStages<T> {
+    /// Selects the value owned by one execution role without changing its lifetime.
+    fn get(&self, role: ModelServerRole) -> &T {
+        match role {
+            ModelServerRole::Aggregate => &self.aggregate,
+            ModelServerRole::Encoder => &self.encoder,
+            ModelServerRole::Prefill => &self.prefill,
+            ModelServerRole::Decode => &self.decode,
+        }
+    }
+}
+
 impl ModelRouterPipeline {
-    /// Resolves this model's aggregate and E/P/D choices against the frontend defaults.
-    pub fn resolve(&self, inherited: &RouterPipelineConfig) -> [RouterPipelineConfig; 4] {
+    /// Resolves this model's execution-role choices against the frontend defaults.
+    pub fn resolve(
+        &self,
+        inherited: &RouterPipelineConfig,
+    ) -> ModelRoutingStages<RouterPipelineConfig> {
         let model = self.pipeline.resolve(inherited);
-        [
-            model.clone(),
-            self.encoder
+        ModelRoutingStages {
+            encoder: self
+                .encoder
                 .as_ref()
                 .map_or_else(|| model.clone(), |stage| stage.resolve(&model)),
-            self.prefill
+            prefill: self
+                .prefill
                 .as_ref()
                 .map_or_else(|| model.clone(), |stage| stage.resolve(&model)),
-            self.decode
+            decode: self
+                .decode
                 .as_ref()
                 .map_or_else(|| model.clone(), |stage| stage.resolve(&model)),
-        ]
+            aggregate: model,
+        }
     }
 }
 
@@ -83,7 +110,7 @@ impl ModelRouterPipeline {
 /// The runtime publisher activates shared state only after accepting the complete generation.
 pub struct RouterPipelines<C: Send + 'static = ()> {
     default: Arc<RouterPipeline<C>>,
-    models: BTreeMap<String, [Arc<RouterPipeline<C>>; 4]>,
+    models: BTreeMap<String, ModelRoutingStages<Arc<RouterPipeline<C>>>>,
 }
 
 impl<C: Send + 'static> RouterPipelines<C> {
@@ -97,22 +124,21 @@ impl<C: Send + 'static> RouterPipelines<C> {
 
     /// Returns the resolved algorithms for one model's execution role.
     pub(crate) fn get(&self, model: &str, role: ModelServerRole) -> &Arc<RouterPipeline<C>> {
-        let index = match role {
-            ModelServerRole::Aggregate => 0,
-            ModelServerRole::Encoder => 1,
-            ModelServerRole::Prefill => 2,
-            ModelServerRole::Decode => 3,
-        };
         self.models
             .get(model)
-            .map_or(&self.default, |stages| &stages[index])
+            .map_or(&self.default, |stages| stages.get(role))
     }
 
     /// Commits scorer settings at the existing atomic runtime-publication boundary.
     pub fn activate(&self, version: u64) {
         self.default.activate(version);
         for stages in self.models.values() {
-            for pipeline in stages {
+            for pipeline in [
+                &stages.aggregate,
+                &stages.encoder,
+                &stages.prefill,
+                &stages.decode,
+            ] {
                 pipeline.activate(version);
             }
         }
@@ -124,7 +150,7 @@ impl RouterPipelines {
     /// Callers supply resolved configs and retain the previous published set if construction fails.
     pub fn build(
         default: &RouterPipelineConfig,
-        models: BTreeMap<String, [RouterPipelineConfig; 4]>,
+        models: BTreeMap<String, ModelRoutingStages<RouterPipelineConfig>>,
         previous: Option<&Self>,
     ) -> Result<Self, RouterPipelineConfigError> {
         let fallback = match previous {
@@ -134,25 +160,30 @@ impl RouterPipelines {
         let mut compiled = BTreeMap::new();
         for (model, configs) in models {
             let old = previous.and_then(|previous| previous.models.get(&model));
-            let mut stages = Vec::with_capacity(4);
-            for (index, config) in configs.into_iter().enumerate() {
+            let build = |role, config: RouterPipelineConfig| {
                 let pipeline = match old {
-                    Some(stages) => config.rebuild(&stages[index]),
+                    Some(stages) => config.rebuild(stages.get(role)),
                     None => config.build(),
                 }
                 .map_err(|source| RouterPipelineConfigError::ModelStage {
                     model: model.clone(),
-                    stage: ["aggregate", "encoder", "prefill", "decode"][index],
+                    stage: match role {
+                        ModelServerRole::Aggregate => "aggregate",
+                        ModelServerRole::Encoder => "encoder",
+                        ModelServerRole::Prefill => "prefill",
+                        ModelServerRole::Decode => "decode",
+                    },
                     source: Box::new(source),
                 })?;
-                stages.push(Arc::new(pipeline));
-            }
-            compiled.insert(
-                model,
-                stages
-                    .try_into()
-                    .unwrap_or_else(|_| unreachable!("four role configurations")),
-            );
+                Ok::<_, RouterPipelineConfigError>(Arc::new(pipeline))
+            };
+            let stages = ModelRoutingStages {
+                aggregate: build(ModelServerRole::Aggregate, configs.aggregate)?,
+                encoder: build(ModelServerRole::Encoder, configs.encoder)?,
+                prefill: build(ModelServerRole::Prefill, configs.prefill)?,
+                decode: build(ModelServerRole::Decode, configs.decode)?,
+            };
+            compiled.insert(model, stages);
         }
         Ok(Self {
             default: Arc::new(fallback),
