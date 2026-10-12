@@ -398,8 +398,11 @@ class Helm(HelmClient):
         )
 
     def install_leader_worker(
-        self, release: ReleaseRef, timeout: str,
-        *, apply_crds: Callable[[str], None] | None = None,
+        self,
+        release: ReleaseRef,
+        timeout: str,
+        *,
+        apply_crds: Callable[[str], None] | None = None,
     ) -> None:
         """Install the owned LWS release, updating CRDs from the same chart on upgrade."""
         chart = self._config.leader_worker

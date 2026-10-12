@@ -97,7 +97,8 @@ class LeaderWorkerLifecycle:
             self._kubectl.rollout_status(plan.controller, timeout)
             return
         self._helm.install_leader_worker(
-            plan.release, timeout,
+            plan.release,
+            timeout,
             apply_crds=self._kubectl.apply if plan.action == "Upgrade" else None,
         )
         self._kubectl.wait_for_crds((_RESOURCE,), timeout)
