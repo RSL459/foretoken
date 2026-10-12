@@ -439,7 +439,9 @@ class EditableDeployment:
             pull_secrets=origin.pull_secrets,
         ) as builder:
             builder.sync(inputs, build["versions"])
-            for component in sorted(missing):
+
+            def build_application(component: str) -> None:
+                """Build a component's files and assemble its engine overlay before publication."""
                 bundle = self.state["bundles"][component]
                 revision = bundle["revision"]
                 staging = builder.root + "/output/" + revision
@@ -484,8 +486,17 @@ class EditableDeployment:
                             payload,
                         ]
                     )
+
+            # Each component owns its export directory. Join builds before validating
+            # their shared source snapshot or allowing any publisher to consume them.
+            with ThreadPoolExecutor(max_workers=len(missing)) as builds:
+                pending_builds = [
+                    builds.submit(build_application, component)
+                    for component in sorted(missing)
+                ]
+                for future in pending_builds:
+                    future.result()
             validate_build_inputs(self.root, snapshot, self.state.get("engines", {}))
-            # Builds share compiler metadata; publishers use separate component directories.
             # Join every publisher before committing selections or releasing their exports.
             published_at = time.monotonic()
             previous_revisions = {}

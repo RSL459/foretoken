@@ -49,14 +49,9 @@ WORKDIR /workspace
 # Python adapters belong to the file export, not the Rust compilation input.
 COPY --exclude=model-server/python data-plane/ ./data-plane/
 
-# Bullseye cannot load procedural macros linked against the frontend builder's newer glibc.
-# Retain prepared Rust inputs with their outputs, isolated from legacy builders.
-# Copy changed trees afresh so patch removals also receive mtimes Cargo can observe.
+# Lock only upstream preparation so other components can compile independently.
 # Preserve captured Rust sources when completing the upstream tree for patch preparation.
 RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
-    --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
       printf '[url "%s/"]\n\tinsteadOf = https://github.com/\n' \
         "${FORETOKEN_GITHUB_MIRROR%/}" > /root/.gitconfig; \
@@ -65,9 +60,6 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
       mkdir -p /workspace/.cargo; \
       printf '[source.crates-io]\nreplace-with = "foretoken-mirror"\n\n[source.foretoken-mirror]\nregistry = "%s"\n' \
         "${FORETOKEN_CARGO_REGISTRY}" > /workspace/.cargo/config.toml; \
-    fi \
-    && if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
-      export CARGO_NET_GIT_FETCH_WITH_CLI; \
     fi \
     && if [ ! -f data-plane/third_party/vllm/vllm/v1/engine/core.py ]; then \
       if [ ! -f /var/cache/vllm/rust/Cargo.toml ]; then \
@@ -81,6 +73,15 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
       else \
         git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
       fi; \
+    fi
+
+# Bullseye cannot load procedural macros linked against the frontend builder's newer glibc.
+# Retain prepared inputs with their outputs; refresh changed trees so Cargo sees patch removals.
+RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/data-plane/target,sharing=locked \
+    if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
+      export CARGO_NET_GIT_FETCH_WITH_CLI; \
     fi \
     && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
     && mkdir -p data-plane/target/vllm-rust \
