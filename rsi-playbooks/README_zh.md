@@ -6,6 +6,21 @@ Foretoken 是一个面向 RSI（Recursive Self-Improvement，递归自提升）�
 
 这套手册提供任务指导、实验方法与可复用经验，并持续吸收经过验证的发现，帮助后续迭代更有效地开展优化。
 
+## 开始优化任务
+
+克隆仓库：
+
+```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
+```
+
+在这个目录中打开 Claude Code 或 Codex，粘贴以下指令；使用自己的任务时，替换其中的文件路径：
+
+```text
+使用 RSI skill，按照 rsi-playbooks/tasks/qwen-decode_zh.md 中的任务要求完成推理系统优化。先阅读任务与已有实验记录，再开展调研、实现、部署、评测和分析。持续安排并行工作，利用全部可用节点推进实验，直到满足任务的结束条件。按任务要求保存结果并交付优化结论。
+```
+
 ## 设计目标
 
 - 快速部署：将代码改动快速更新到目标集群中的推理服务。
