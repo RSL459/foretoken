@@ -356,6 +356,7 @@ spec:
                     required:
                     - algorithm
                     type: object
+                    x-kubernetes-map-type: atomic
                   picker:
                     default:
                       algorithm: gamble_sampling
@@ -373,6 +374,7 @@ spec:
                     required:
                     - algorithm
                     type: object
+                    x-kubernetes-map-type: atomic
                   scorer:
                     default:
                       algorithm: kv_least_loaded
@@ -390,6 +392,7 @@ spec:
                     required:
                     - algorithm
                     type: object
+                    x-kubernetes-map-type: atomic
                 required:
                 - filter
                 - picker

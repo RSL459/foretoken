@@ -63,7 +63,7 @@ spec:
 | `cacheWeight` | `0.5` | 权衡缓存与负载；设为 `0` 时只按负载评分，也不为该算法发起缓存查询。 |
 | `restoreWeight` | `0.5` | 恢复部分相对于 GPU 本地复用的权重；`0` 只计本地复用，`1` 对两者同等计分。 |
 
-编码和解码阶段只按负载评分。这些权重表达路由偏好，不是缓存传输耗时的估计。
+在编码和解码阶段，`kv_least_loaded` 只按负载评分。这些权重表达路由偏好，不是缓存传输耗时的估计。
 
 无法取得某个目标的前缀匹配结果时，该目标仍可参与路由，但不获得缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
@@ -76,6 +76,31 @@ spec:
 | `gamble_sampling`（默认） | 排名越高，选中概率越大；同分概率相同，低排名目标仍有机会被选中。 |
 | `max` | 选择最高分目标。 |
 | `power_of_two_choices` | 随机抽取两个不同目标，选择分数较高者，同分时随机选择。 |
+
+## 按模型和执行阶段选择算法
+
+在模型的 `ModelService` YAML 中设置 `spec.routerPipeline`，即可覆盖前端默认策略。例如，模型默认按负载选路，预填充阶段单独使用缓存感知策略：
+
+```yaml
+spec:
+  routerPipeline:
+    scorer:
+      algorithm: least_loaded
+    prefill:
+      scorer:
+        algorithm: kv_least_loaded
+        parameters:
+          cacheWeight: 0.7
+    decode:
+      scorer:
+        algorithm: queue_depth
+      picker:
+        algorithm: max
+```
+
+模型级以及 `encoder`、`prefill`、`decode` 下都可以分别设置 `filter`、`scorer`、`picker`。未设置的项先继承模型配置，再继承前端配置。每个显式配置的项整体替换其 `algorithm` 和 `parameters`；省略参数时使用该算法的默认值。聚合推理使用模型级选择。
+
+使用该部署原有的 `foretoken deploy` 命令应用修改。路由配置在线生效，不替换模型实例；算法名或参数无效时，继续使用当前生效的路由配置。删除覆盖项即可恢复继承。同一前端下，多个 ModelService 对外提供相同模型名称时，最终路由配置需要一致。
 
 ## 查看路由表现
 

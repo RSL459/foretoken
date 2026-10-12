@@ -14,7 +14,7 @@ use foretoken_backend_registry::{
 use foretoken_kv_indexer::{KvIndexDegradedReason, KvIndexer};
 use foretoken_llm_facade::LlmFacadeResolver;
 use foretoken_router::{
-    PipelineRouter, RouteInventory, Router, RouterPipeline, RouterPipelineConfigError,
+    PipelineRouter, RouteInventory, Router, RouterPipelineConfigError, RouterPipelines,
 };
 use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
@@ -51,7 +51,7 @@ struct CachedBackends {
 pub struct RuntimeBuilder {
     logging: Arc<foretoken_tracing::LogControl>,
     backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
-    router_pipeline: Arc<Mutex<Option<Arc<RouterPipeline>>>>,
+    router_pipeline: Arc<Mutex<Option<Arc<RouterPipelines>>>>,
     kv_credential: KvIndexCredential,
     routing_load: foretoken_router::RoutingLoadState,
 }
@@ -110,10 +110,13 @@ impl RuntimeBuilder {
                 .router_pipeline
                 .lock()
                 .expect("router pipeline lock poisoned");
-            match published.as_deref() {
-                Some(previous) => settings.router_pipeline.rebuild(previous)?,
-                None => settings.router_pipeline.build()?,
-            }
+            RouterPipelines::build(
+                &settings.router_pipeline,
+                snapshot
+                    .model_routing()
+                    .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?,
+                published.as_deref(),
+            )?
         });
         let identities = snapshot
             .model_identities()
@@ -157,7 +160,7 @@ impl RuntimeBuilder {
             })
             .collect();
         let router: Arc<dyn Router> = Arc::new(
-            PipelineRouter::with_pipeline(registry.clone(), pipeline)
+            PipelineRouter::with_pipelines(registry.clone(), pipeline)
                 .with_snapshot_version(version)
                 .with_load_state(self.routing_load.clone())
                 .with_kv_prefix_indexer(kv_indexer)
@@ -332,8 +335,8 @@ pub enum RuntimeBuildError {
 struct RegistryRuntimeControl {
     logging: Arc<foretoken_tracing::LogControl>,
     log_level: tracing::level_filters::LevelFilter,
-    pipeline: Arc<RouterPipeline>,
-    published_pipeline: Arc<Mutex<Option<Arc<RouterPipeline>>>>,
+    pipeline: Arc<RouterPipelines>,
+    published_pipeline: Arc<Mutex<Option<Arc<RouterPipelines>>>>,
     backends: Arc<CachedBackends>,
     published_backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
 }

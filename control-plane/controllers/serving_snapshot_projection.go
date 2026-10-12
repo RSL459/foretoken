@@ -34,19 +34,21 @@ import (
 // It reports whether all protocol views were published; preserved configuration still refreshes membership.
 func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService, preserveConfiguration bool) (bool, error) {
 	name := frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion)
-	legacyName := frontendServingConfigMapName(frontend, frontendAdmissionConfigVersion)
-	names := []string{name}
-	if name != legacyName {
-		names = append(names, legacyName)
+	protocols := frontendServingConfigVersions(frontend)
+	type servingPublication struct {
+		snapshot  servingSnapshot
+		configMap *corev1.ConfigMap
 	}
+	publications := make(map[uint32]servingPublication, len(protocols))
 	reader := reconciler.APIReader
 	if reader == nil {
 		reader = reconciler.Client
 	}
 	var previous servingSnapshot
 	var primaryVersion uint64
-	previousFound, previousValid, legacyExists := false, false, false
-	for index, publicationName := range names {
+	previousFound, previousValid := false, false
+	for index, protocol := range protocols {
+		publicationName := frontendServingConfigMapName(frontend, protocol)
 		current := new(corev1.ConfigMap)
 		if err := reader.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: publicationName}, current); apierrors.IsNotFound(err) {
 			continue
@@ -65,10 +67,9 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		if !previousFound || snapshot.Version > previous.Version {
 			previous, previousValid, previousFound = snapshot, valid, true
 		}
+		publications[protocol] = servingPublication{snapshot: snapshot, configMap: current}
 		if index == 0 {
 			primaryVersion = snapshot.Version
-		} else {
-			legacyExists = true
 		}
 	}
 	if preserveConfiguration && (!previousValid || frontend.Status.ServingConfigVersion < frontendAdmissionConfigVersion) {
@@ -79,17 +80,30 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		return false, err
 	}
 	frontendInstances := make([]string, 0, len(instancePods))
+	consumedViews := make(map[string]bool)
 	for _, pod := range instancePods {
 		frontendInstances = append(frontendInstances, string(pod.UID))
+		if pod.DeletionTimestamp.IsZero() {
+			consumedViews[frontendPodServingConfigMapName(&pod)] = true
+		}
 	}
 	slices.Sort(frontendInstances)
+	// Recreated mounts need a fresh acknowledgement even when their projected contents are unchanged.
+	missingConsumedView := slices.ContainsFunc(protocols, func(protocol uint32) bool {
+		_, exists := publications[protocol]
+		return !exists && consumedViews[frontendServingConfigMapName(frontend, protocol)]
+	})
 	backendInstances, err := reconciler.backendInstances(ctx, frontend.Namespace, previous.BackendInstances)
 	if err != nil {
 		return false, err
 	}
-	settings, models, admission := previous.Settings, previous.Models, previous.Admission
-	groups, pdComponents, pdPipelineScopes := previous.Groups, previous.PDComponents, previous.PDPipelineScopes
-	epdComponents, epdPipelineScopes := previous.EPDComponents, previous.EPDPipelineScopes
+	configuration := previous
+	if primary, exists := publications[frontend.Status.ServingConfigVersion]; preserveConfiguration && exists {
+		configuration = primary.snapshot
+	}
+	settings, models, admission := configuration.Settings, configuration.Models, configuration.Admission
+	groups, pdComponents, pdPipelineScopes := configuration.Groups, configuration.PDComponents, configuration.PDPipelineScopes
+	epdComponents, epdPipelineScopes := configuration.EPDComponents, configuration.EPDPipelineScopes
 	var projectionErr error
 	if !preserveConfiguration {
 		requestTimeout, err := durationSeconds(frontend.Spec.Timeouts.Request)
@@ -136,21 +150,20 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 	}
 
 	snapshot := servingSnapshot{Settings: settings, FrontendInstances: frontendInstances, BackendInstances: backendInstances, Models: models, Admission: admission, Groups: groups, PDComponents: pdComponents, PDPipelineScopes: pdPipelineScopes, EPDComponents: epdComponents, EPDPipelineScopes: epdPipelineScopes}
-	if frontend.Status.ServingConfigVersion < frontendServingConfigVersion {
-		snapshot = admissionOnlyServingSnapshot(snapshot)
-		if !preserveConfiguration && slices.ContainsFunc(models, func(model servingSnapshotModel) bool { return model.PrefixCacheIsolation != nil }) {
-			projectionErr = errors.Join(projectionErr, errFrontendCacheIsolationUnsupported)
-		}
+	if frontend.Status.ServingConfigVersion < frontendCacheIsolationConfigVersion && !preserveConfiguration && slices.ContainsFunc(models, func(model servingSnapshotModel) bool { return model.PrefixCacheIsolation != nil }) {
+		projectionErr = errors.Join(projectionErr, errFrontendCacheIsolationUnsupported)
 	}
 
+	snapshot = servingSnapshotForProtocol(snapshot, frontend.Status.ServingConfigVersion)
 	// A restored payload below the durable floor cannot prove what consumers applied
 	// at that version. Allocate a fresh version even when it matches current intent.
 	version := max(frontend.Status.ServingSnapshotVersion, previous.Version)
 	contentsChanged := true
 	if previousValid {
-		contentsChanged = !reflect.DeepEqual(previous.Settings, settings) || !slices.Equal(previous.FrontendInstances, frontendInstances) || !slices.Equal(previous.BackendInstances, backendInstances) || !reflect.DeepEqual(previous.Admission, admission) || !slices.EqualFunc(previous.Models, models, equalScalingModel) || !slices.EqualFunc(previous.Groups, snapshot.Groups, equalRoutingGroup) || !slices.EqualFunc(previous.PDComponents, snapshot.PDComponents, equalRoutingPDComponent) || !slices.EqualFunc(previous.PDPipelineScopes, snapshot.PDPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previous.EPDComponents, snapshot.EPDComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previous.EPDPipelineScopes, snapshot.EPDPipelineScopes, equalRoutingEPDPipelineScope)
+		previousView := servingSnapshotForProtocol(previous, frontend.Status.ServingConfigVersion)
+		contentsChanged = !reflect.DeepEqual(previousView.Settings, snapshot.Settings) || !slices.Equal(previousView.FrontendInstances, snapshot.FrontendInstances) || !slices.Equal(previousView.BackendInstances, snapshot.BackendInstances) || !reflect.DeepEqual(previousView.Admission, snapshot.Admission) || !slices.EqualFunc(previousView.Models, snapshot.Models, equalScalingModel) || !slices.EqualFunc(previousView.Groups, snapshot.Groups, equalRoutingGroup) || !slices.EqualFunc(previousView.PDComponents, snapshot.PDComponents, equalRoutingPDComponent) || !slices.EqualFunc(previousView.PDPipelineScopes, snapshot.PDPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previousView.EPDComponents, snapshot.EPDComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previousView.EPDPipelineScopes, snapshot.EPDPipelineScopes, equalRoutingEPDPipelineScope)
 	}
-	if contentsChanged || primaryVersion < version || version == 0 {
+	if contentsChanged || missingConsumedView || primaryVersion < version || version == 0 {
 		version++
 	}
 	snapshot.Version = version
@@ -167,12 +180,23 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 	}
 	// Protocol-specific routes share one version and identical ledger inputs. Updating the
 	// legacy mount first also keeps withdrawal acknowledgements valid across a rolling update.
-	if legacyExists {
-		if err := reconciler.publishServingSnapshot(ctx, frontend, legacyName, admissionOnlyServingSnapshot(snapshot)); err != nil {
+	for _, protocol := range protocols[1:] {
+		publication, exists := publications[protocol]
+		if !exists && !consumedViews[frontendServingConfigMapName(frontend, protocol)] {
+			continue
+		}
+		view := snapshot
+		if preserveConfiguration && exists {
+			view = publication.snapshot
+			view.Version = snapshot.Version
+			view.FrontendInstances = frontendInstances
+			view.BackendInstances = backendInstances
+		}
+		if err := reconciler.publishServingSnapshot(ctx, frontend, frontendServingConfigMapName(frontend, protocol), servingSnapshotForProtocol(view, protocol), publication.configMap); err != nil {
 			return false, err
 		}
 	}
-	if err := reconciler.publishServingSnapshot(ctx, frontend, name, snapshot); err != nil {
+	if err := reconciler.publishServingSnapshot(ctx, frontend, name, snapshot, publications[frontend.Status.ServingConfigVersion].configMap); err != nil {
 		return false, err
 	}
 	// Updating Pod metadata prompts kubelet to refresh the projected ConfigMap.
@@ -194,6 +218,21 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		}
 	}
 	return true, projectionErr
+}
+
+// servingSnapshotForProtocol projects only settings and routes understood by the selected application.
+// All protocol views retain the same publication version and admission membership.
+func servingSnapshotForProtocol(snapshot servingSnapshot, protocol uint32) servingSnapshot {
+	if protocol < frontendModelRoutingConfigVersion {
+		snapshot.Models = slices.Clone(snapshot.Models)
+		for index := range snapshot.Models {
+			snapshot.Models[index].RouterPipeline = nil
+		}
+	}
+	if protocol < frontendCacheIsolationConfigVersion {
+		snapshot = admissionOnlyServingSnapshot(snapshot)
+	}
+	return snapshot
 }
 
 var errFrontendCacheIsolationUnsupported = errors.New("redeploy the frontend with the current application to use prefixCacheIsolation")
@@ -229,27 +268,45 @@ func admissionOnlyServingSnapshot(snapshot servingSnapshot) servingSnapshot {
 	return snapshot
 }
 
-// publishServingSnapshot writes one protocol view at the publisher's reserved version.
-// The FrontendService owns both current and retained legacy ConfigMaps until deletion.
-func (reconciler *FrontendServiceReconciler) publishServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, name string, snapshot servingSnapshot) error {
+// publishServingSnapshot writes one protocol view against the object read for this candidate.
+// The FrontendService owns each view; a deleted or concurrently changed view must be reconciled again.
+func (reconciler *FrontendServiceReconciler) publishServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, name string, snapshot servingSnapshot, current *corev1.ConfigMap) error {
 	payload, err := json.Marshal(snapshot)
 	if err != nil {
 		return fmt.Errorf("encode routing snapshot: %w", err)
 	}
-	desired := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "ConfigMap"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: frontend.Namespace,
-			Labels:    map[string]string{frontendServiceLabel: frontend.Name},
-		},
-		Data: map[string]string{servingSnapshotKey: string(payload)},
+	if current == nil {
+		desired := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: frontend.Namespace,
+				Labels:    map[string]string{frontendServiceLabel: frontend.Name},
+			},
+			Data: map[string]string{servingSnapshotKey: string(payload)},
+		}
+		if err := controllerutil.SetControllerReference(frontend, desired, reconciler.Scheme()); err != nil {
+			return fmt.Errorf("set serving snapshot ConfigMap owner: %w", err)
+		}
+		if err := reconciler.Create(ctx, desired); err != nil {
+			return fmt.Errorf("create serving snapshot ConfigMap: %w", err)
+		}
+		return nil
 	}
-	if err := controllerutil.SetControllerReference(frontend, desired, reconciler.Scheme()); err != nil {
-		return fmt.Errorf("set serving snapshot ConfigMap owner: %w", err)
+	if current.Data[servingSnapshotKey] == string(payload) && current.Labels[frontendServiceLabel] == frontend.Name {
+		return nil
 	}
-	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(frontendServiceFieldOwner), client.ForceOwnership); err != nil {
-		return fmt.Errorf("apply serving snapshot ConfigMap: %w", err)
+	updated := current.DeepCopy()
+	if updated.Data == nil {
+		updated.Data = make(map[string]string)
+	}
+	updated.Data[servingSnapshotKey] = string(payload)
+	if updated.Labels == nil {
+		updated.Labels = make(map[string]string)
+	}
+	updated.Labels[frontendServiceLabel] = frontend.Name
+	// Retain UID and resourceVersion so deletion cannot silently recreate a view at an already-acknowledged version.
+	if err := reconciler.Update(ctx, updated); err != nil {
+		return fmt.Errorf("update serving snapshot ConfigMap: %w", err)
 	}
 	return nil
 }
@@ -575,6 +632,7 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 			Tokenizer:             identity.Tokenizer,
 			TokenizerRevision:     identity.TokenizerRevision,
 			PrefixCacheIsolation:  identity.PrefixCacheIsolation,
+			RouterPipeline:        service.Spec.RouterPipeline.DeepCopy(),
 			SelectedPoolRevisions: sortedServingPoolRevisions(service.Status.ServingPoolRevisions),
 			Topology:              topology,
 			Capabilities:          identity.Capabilities,
@@ -1452,7 +1510,7 @@ func matchingRoutingIdentity(left, right servingSnapshotGroup) bool {
 	return left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation)
 }
 func equalScalingModel(left, right servingSnapshotModel) bool {
-	return left.ServiceGeneration == right.ServiceGeneration && left.ServiceUID == right.ServiceUID && left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation) && left.Topology == right.Topology && slices.Equal(left.SelectedPoolRevisions, right.SelectedPoolRevisions) && slices.Equal(left.Capabilities, right.Capabilities) && slices.EqualFunc(left.AdmissionTargetSets, right.AdmissionTargetSets, func(left, right []servingSnapshotScalingTarget) bool { return slices.Equal(left, right) })
+	return left.ServiceGeneration == right.ServiceGeneration && left.ServiceUID == right.ServiceUID && left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation) && reflect.DeepEqual(left.RouterPipeline, right.RouterPipeline) && left.Topology == right.Topology && slices.Equal(left.SelectedPoolRevisions, right.SelectedPoolRevisions) && slices.Equal(left.Capabilities, right.Capabilities) && slices.EqualFunc(left.AdmissionTargetSets, right.AdmissionTargetSets, func(left, right []servingSnapshotScalingTarget) bool { return slices.Equal(left, right) })
 }
 
 func equalRoutingGroup(left, right servingSnapshotGroup) bool {

@@ -47,6 +47,7 @@ type servingSnapshotModel struct {
 	Tokenizer             string                                  `json:"tokenizer"`
 	TokenizerRevision     string                                  `json:"tokenizer_revision"`
 	PrefixCacheIsolation  *bool                                   `json:"prefix_cache_isolation,omitempty"`
+	RouterPipeline        *inferencev1alpha1.ModelRouterPipeline  `json:"router_pipeline,omitempty"`
 	SelectedPoolRevisions []inferencev1alpha1.ServingPoolRevision `json:"selected_pool_revisions,omitempty"`
 	Topology              string                                  `json:"topology"`
 	Capabilities          []string                                `json:"capabilities,omitempty"`

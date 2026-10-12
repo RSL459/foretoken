@@ -5,6 +5,7 @@
 
 mod candidate;
 mod config;
+mod model_pipelines;
 mod pipeline;
 mod pipeline_router;
 mod session;
@@ -15,6 +16,7 @@ pub use config::{
     PickerDescriptor, PickerStage, RouterPipelineConfig, RouterPipelineConfigError,
     ScorerAlgorithm, ScorerDescriptor, ScorerStage,
 };
+pub use model_pipelines::{ModelRouterPipeline, RouterPipelineOverride, RouterPipelines};
 pub use pipeline::RouterPipeline;
 pub use pipeline_router::PipelineRouter;
 pub use session::{RouteError, RouteSession, Router, RoutingProgress, RoutingStage};

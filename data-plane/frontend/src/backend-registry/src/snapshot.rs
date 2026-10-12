@@ -62,6 +62,8 @@ pub struct SnapshotModel {
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
     pub admission_target_sets: Vec<RouteTargetSet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router_pipeline: Option<foretoken_router::ModelRouterPipeline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,12 +185,44 @@ impl ServingSnapshot {
     /// Compares the backend inventory independently of frontend rules and publication version.
     /// Runtime builders reuse clients and cached observations when this inventory is unchanged.
     pub fn same_discovery(&self, other: &Self) -> bool {
-        self.models == other.models
+        self.models.len() == other.models.len()
+            && self.models.iter().zip(&other.models).all(|(left, right)| {
+                left.service_uid == right.service_uid
+                    && left.model == right.model
+                    && left.source == right.source
+                    && left.revision == right.revision
+                    && left.tokenizer == right.tokenizer
+                    && left.tokenizer_revision == right.tokenizer_revision
+                    && left.prefix_cache_isolation == right.prefix_cache_isolation
+                    && left.capabilities == right.capabilities
+                    && left.admission_target_sets == right.admission_target_sets
+            })
             && self.groups == other.groups
             && self.pd_components == other.pd_components
             && self.pd_pipeline_scopes == other.pd_pipeline_scopes
             && self.epd_components == other.epd_components
             && self.epd_pipeline_scopes == other.epd_pipeline_scopes
+    }
+
+    /// Resolves model routing once and rejects conflicting policies for a shared public model name.
+    pub fn model_routing(
+        &self,
+    ) -> Result<BTreeMap<String, [foretoken_router::RouterPipelineConfig; 4]>, SnapshotError> {
+        let mut routing = BTreeMap::new();
+        for model in &self.models {
+            let config = model
+                .router_pipeline
+                .as_ref()
+                .cloned()
+                .unwrap_or_default()
+                .resolve(&self.settings.router_pipeline);
+            if let Some(previous) = routing.insert(model.model.clone(), config.clone())
+                && previous != config
+            {
+                return Err(SnapshotError::ConflictingRouting(model.model.clone()));
+            }
+        }
+        Ok(routing)
     }
 
     /// Returns each model's deterministically ordered, controller-owned admission target sets.
@@ -325,6 +359,8 @@ impl ServingSnapshot {
 }
 #[derive(Debug, Error)]
 pub enum SnapshotError {
+    #[error("model {0} has conflicting routing configurations")]
+    ConflictingRouting(String),
     #[error("routing snapshot version must be greater than zero")]
     InvalidVersion,
     #[error("routing snapshot has an incomplete model or tokenizer identity")]

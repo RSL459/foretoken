@@ -63,7 +63,7 @@ Both weights accept values from 0 to 1:
 | `cacheWeight` | `0.5` | Balances cache affinity against load; `0` selects by load alone and skips cache queries for this scorer. |
 | `restoreWeight` | `0.5` | Credit for the restored extension relative to GPU-local reuse; `0` credits only GPU-local reuse, and `1` gives both equal credit. |
 
-Encoder and Decode stages use load alone. These weights express routing preferences, not transfer-time estimates.
+For Encoder and Decode, `kv_least_loaded` uses load alone. These weights express routing preferences, not transfer-time estimates.
 
 A target with unavailable prefix observations remains eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 
@@ -76,6 +76,31 @@ Set `routerPipeline.picker.algorithm` to control selection:
 | `gamble_sampling` (default) | Higher ranks are more likely; ties have equal probability and lower-ranked targets remain eligible. |
 | `max` | Select the highest score. |
 | `power_of_two_choices` | Sample two distinct targets and select the higher score; choose randomly on ties. |
+
+## Override a model or execution stage
+
+Set `spec.routerPipeline` in the model's `ModelService` YAML to override the frontend defaults. For example, use load-based routing for the model and cache-aware routing for its Prefill stage:
+
+```yaml
+spec:
+  routerPipeline:
+    scorer:
+      algorithm: least_loaded
+    prefill:
+      scorer:
+        algorithm: kv_least_loaded
+        parameters:
+          cacheWeight: 0.7
+    decode:
+      scorer:
+        algorithm: queue_depth
+      picker:
+        algorithm: max
+```
+
+`filter`, `scorer`, and `picker` can each be set at the model level and under `encoder`, `prefill`, or `decode`. Omitted selections inherit from the model, then the frontend. Each supplied selection replaces its entire `algorithm` and `parameters`; omitted parameters use that algorithm's defaults. Aggregate serving uses the model-level selections.
+
+Apply changes with the deployment's usual `foretoken deploy` command. Routing updates online without replacing model instances; invalid algorithms or parameters leave the active routing configuration unchanged. Remove an override to resume inheritance. ModelServices exposing the same public model name through one frontend must resolve to the same routing configuration.
 
 ## Inspect routing behavior
 

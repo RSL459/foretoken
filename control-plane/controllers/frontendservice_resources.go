@@ -35,6 +35,26 @@ func frontendServingConfigMapName(frontend *inferencev1alpha1.FrontendService, v
 	return name
 }
 
+// frontendServingConfigVersions lists the selected protocol first and older views retained during rollout.
+// Publication, membership watches, and drain share the same ConfigMap identity range.
+func frontendServingConfigVersions(frontend *inferencev1alpha1.FrontendService) []uint32 {
+	versions := []uint32{frontend.Status.ServingConfigVersion}
+	for version := frontend.Status.ServingConfigVersion; version > frontendAdmissionConfigVersion; version-- {
+		versions = append(versions, version-1)
+	}
+	return versions
+}
+
+// frontendPodServingConfigMapName reads the Pod's actual serving mount independently of protocol annotations.
+func frontendPodServingConfigMapName(pod *corev1.Pod) string {
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Name == "serving" && volume.ConfigMap != nil {
+			return volume.ConfigMap.Name
+		}
+	}
+	return ""
+}
+
 // Derive the frontend workload, stable Service, and optional gateway route as one desired-state
 // unit so ports, timeouts, labels, and ownership cannot drift across independently built objects.
 func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profile FrontendRuntimeProfile) (*appsv1.Deployment, *corev1.Service, *gatewayv1.HTTPRoute, error) {
