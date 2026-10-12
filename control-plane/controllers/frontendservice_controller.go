@@ -175,7 +175,9 @@ func (reconciler *FrontendServiceReconciler) frontendsForPod(ctx context.Context
 			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}})
 			continue
 		}
-		if (configuration.Name == frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion) || configuration.Name == frontendServingConfigMapName(frontend, frontendAdmissionConfigVersion)) && routingControllerOwnerMatches(configuration, inferencev1alpha1.GroupVersion.String(), "FrontendService", frontend.Name, frontend.UID) {
+		if slices.ContainsFunc(frontendServingConfigVersions(frontend), func(version uint32) bool {
+			return configuration.Name == frontendServingConfigMapName(frontend, version)
+		}) && routingControllerOwnerMatches(configuration, inferencev1alpha1.GroupVersion.String(), "FrontendService", frontend.Name, frontend.UID) {
 			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(frontend)})
 		}
 	}
@@ -306,7 +308,9 @@ func (reconciler *FrontendServiceReconciler) sourceSelectionAllowed(ctx context.
 }
 
 // Serving configuration protocol selected with the frontend application.
-const frontendServingConfigVersion uint32 = 4
+const frontendModelRoutingConfigVersion uint32 = 5
+const frontendServingConfigVersion = frontendModelRoutingConfigVersion
+const frontendCacheIsolationConfigVersion uint32 = 4
 const frontendAdmissionConfigVersion uint32 = 3
 const frontendServingConfigAnnotation = "inference.foretoken.io/serving-config-protocol"
 
@@ -407,7 +411,10 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	// Application selection and its serving protocol advance together. A platform update
 	// leaves an explicitly retained application and its existing configuration untouched.
-	if retained && frontend.Status.ServingConfigVersion < frontendAdmissionConfigVersion {
+	requiresModelRouting := slices.ContainsFunc(services.Items, func(service inferencev1alpha1.ModelService) bool {
+		return service.DeletionTimestamp.IsZero() && (service.Spec.Backend == "vllm" || service.Spec.Backend == "vllm-omni") && service.Spec.RouterPipeline != nil
+	})
+	if retained && (frontend.Status.ServingConfigVersion < frontendAdmissionConfigVersion || requiresModelRouting && frontend.Status.ServingConfigVersion < frontendModelRoutingConfigVersion) {
 		_, membershipErr := reconciler.reconcileServingSnapshot(ctx, frontend, nil, true)
 		statusErr := reconciler.updateStatus(ctx, frontend, deploymentRequired)
 		return ctrl.Result{}, errors.Join(membershipErr, statusErr)
