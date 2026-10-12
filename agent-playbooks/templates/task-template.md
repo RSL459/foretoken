@@ -29,4 +29,4 @@ The parallel-experiment limit counts independent experiments running at once; re
 
 Workloads can reference existing configurations or [recipes](../../benchmarks/docs/recipes.md). For multiple workload groups, specify whether objectives apply to each group or to an aggregate result.
 
-See [optimization tasks](../tasks/README.md#examples) for filled-in examples. Follow the [shared workflow](../README.md#steps) for execution and the [experiment records guide](../experiment-records.md) for results.
+See the [Qwen throughput and decode latency task](../tasks/qwen-decode.md) for a filled-in example. Follow the [shared workflow](../README.md#steps) for execution and the [experiment records guide](../experiment-records.md) for results.

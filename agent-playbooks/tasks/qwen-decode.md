@@ -5,7 +5,7 @@ English | [简体中文](qwen-decode_zh.md)
 ```text
 Models: Qwen3.5-35B-A3B
 Precision: fixed BF16
-Deployment layout: agent-selected
+Deployment layout: unrestricted; examples include colocated serving and prefill/decode disaggregation
 Per-service configuration: at most 8 GPUs per service; agent-selected GPU count within this limit, parallelism, CPU cores and memory
 Available resources: 2*8 MetaX C500 GPUs; determine and record available CPU cores and memory from the execution environment
 Maximum parallel experiments: have the agent determine the limit from available resources and per-experiment requirements, and record it in the experiment notes
