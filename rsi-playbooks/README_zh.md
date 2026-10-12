@@ -8,23 +8,18 @@ Foretoken 是一个面向 RSI（Recursive Self-Improvement，递归自提升）�
 
 ## 开始优化任务
 
-在 Foretoken 仓库目录中打开 Claude Code 或 Codex。以 [Qwen 优化任务](tasks/qwen-decode_zh.md)为例，在对话输入框中输入对应内容：
+克隆仓库：
 
-Claude Code：
-
-```text
-/rsi 执行 rsi-playbooks/tasks/qwen-decode_zh.md
+```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 ```
 
-Codex：
+在这个目录中打开 Claude Code 或 Codex，告诉 Agent 使用 RSI skill，按照你的任务要求完成优化。说明优化目标、模型、可用机器、评测负载、时间预算和结果保存位置；已有任务文件时，直接提供文件路径。需要整理任务条件时，可使用[任务模板](templates/task-template_zh.md)。
 
-```text
-$rsi 执行 rsi-playbooks/tasks/qwen-decode_zh.md
-```
+仓库中的 RSI skill 提供执行指令，指导 Agent 调研、修改代码、部署、评测和分析结果，并协调并行工作、检查 GPU 使用与实验进展。
 
-`rsi` 是仓库提供的优化任务指令集（skill），指导 Agent 调研、修改代码、部署、评测和分析结果，并协调并行工作、检查 GPU 使用与实验进展。任务文件规定模型、可用资源、评测负载、时间预算和交付位置；可以在对话中说明要调整的条件，也可以用[任务模板](templates/task-template_zh.md)描述自己的任务，替换上面的文件路径。
-
-在同一对话中说“暂停 RSI”即可暂停，说“继续 RSI”恢复执行。结果保存到任务文件指定的位置。
+在同一对话中要求“暂停 RSI”或“继续 RSI”即可暂停或恢复。结果保存在任务指定的位置。
 
 如果输入时找不到 `rsi`，在 Claude Code 中执行 `/reload-skills`，在 Codex 中重新打开会话。
 

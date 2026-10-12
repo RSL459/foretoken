@@ -8,23 +8,18 @@ These playbooks provide task guidance, experimental methods, and reusable knowle
 
 ## Start an optimization task
 
-Open Claude Code or Codex in the Foretoken repository directory. To run the [Qwen optimization task](tasks/qwen-decode.md), enter the corresponding prompt in the conversation:
+Clone the repository:
 
-Claude Code:
-
-```text
-/rsi Run rsi-playbooks/tasks/qwen-decode.md
+```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 ```
 
-Codex:
+Open Claude Code or Codex in this directory and ask the agent to use the RSI skill to carry out your optimization task. Provide the objective, model, available machines, evaluation workloads, time budget, and output location. If these are already in a task file, provide its path. Use the [task template](templates/task-template.md) when you need help organizing the requirements.
 
-```text
-$rsi Run rsi-playbooks/tasks/qwen-decode.md
-```
+The repository's RSI skill supplies instructions for research, code changes, deployment, evaluation, and analysis, including parallel work and observation of GPU usage and experiment progress.
 
-The repository's `rsi` skill is a set of instructions that guides the agent through research, code changes, deployment, evaluation, and analysis, including parallel work and observation of GPU usage and experiment progress. The task file specifies the model, available resources, workloads, time budget, and delivery locations. State any changes to these conditions in your prompt, or describe your own task using the [task template](templates/task-template.md) and substitute its path above.
-
-Say "pause RSI" in the same conversation to pause, and "resume RSI" to continue. Results are saved to the locations specified in the task file.
+Ask to "pause RSI" or "resume RSI" in the same conversation to pause or continue. Results are saved to the locations specified in the task.
 
 If `rsi` is not available, run `/reload-skills` in Claude Code or reopen the Codex session.
 
