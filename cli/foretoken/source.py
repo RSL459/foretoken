@@ -1115,25 +1115,25 @@ def prepare_source_images(
             )
             builders.append(builder)
             builder.sync(files, versions)
-            engine_image = base_image
-            if build_metax_runtime:
-                engine_image = (
-                    f"{prefix}/vllm-metax:{suffix}"
-                    if registry
-                    else f"{prefix}-vllm-metax:{suffix}"
-                )
-                builder.build(
-                    "deploy/inference-engines/vllm-metax/Dockerfile",
-                    image=engine_image,
-                    push=bool(registry),
-                    arguments=arguments,
-                )
-            node_digests = {}
-            for component, dockerfile in (
-                ("control-plane", "control-plane/Dockerfile"),
-                ("frontend", "data-plane/frontend/Dockerfile"),
-                ("model-server", "data-plane/model-server/Dockerfile"),
-            ):
+
+            def build_component(
+                builder: ClusterBuilder, component: str, dockerfile: str
+            ) -> tuple[str, bool, str]:
+                """Build one component's environment and files in dependency order."""
+                engine_image = base_image
+                engine_cache = ""
+                if component == "model-server" and build_metax_runtime:
+                    engine_image = (
+                        f"{prefix}/vllm-metax:{suffix}"
+                        if registry
+                        else f"{prefix}-vllm-metax:{suffix}"
+                    )
+                    builder.build(
+                        "deploy/inference-engines/vllm-metax/Dockerfile",
+                        image=engine_image,
+                        push=bool(registry),
+                        arguments=arguments,
+                    )
                 component_arguments = dict(arguments)
                 if component == "model-server" and engine_image:
                     component_arguments["INFERENCE_ENGINE_IMAGE"] = engine_image
@@ -1202,18 +1202,17 @@ def prepare_source_images(
                     engine_cache = (
                         cache_prefix + "-" + metadata["containerimage.digest"]
                     )
-                    engine_caches["" if registry else node] = engine_cache
                     engine_export_arguments = {
                         **engine_arguments,
                         "RUNTIME_IMAGE": references[component],
                         "CACHE_ID": engine_cache,
                         "BUILD_NATIVE": str(engine_native).lower(),
                     }
-                node_digests[component] = metadata["containerimage.digest"]
-                reusable[component] = reusable[component] and node_digests[
-                    component
-                ] == build.get("digests", {}).get(node, {}).get(component)
-                if reusable[component] and not socket:
+                digest = metadata["containerimage.digest"]
+                reuse = reusable[component] and digest == build.get("digests", {}).get(
+                    builder.node, {}
+                ).get(component)
+                if reuse and not builder.containerd_socket:
                     # Restore an unchanged registry tag if it was collected, without
                     # assigning different content to an installed reference.
                     builder.build(
@@ -1223,7 +1222,7 @@ def prepare_source_images(
                         push=True,
                         arguments=final_arguments,
                     )
-                if node == origin.node:
+                if builder.node == origin.node:
                     payload = builder.root + "/applications/" + component
                     builder.build(
                         dockerfile,
@@ -1249,7 +1248,31 @@ def prepare_source_images(
                                 payload,
                             ]
                         )
-            digests[node] = node_digests
+                return digest, reuse, engine_cache
+
+            # Components share a daemon, but their dependency chains and exports are
+            # independent. Join all builds before publishing or releasing the builder.
+            with ThreadPoolExecutor(max_workers=len(references)) as builds:
+                pending_builds = {
+                    component: builds.submit(
+                        build_component, builder, component, dockerfile
+                    )
+                    for component, dockerfile in (
+                        ("control-plane", "control-plane/Dockerfile"),
+                        ("frontend", "data-plane/frontend/Dockerfile"),
+                        ("model-server", "data-plane/model-server/Dockerfile"),
+                    )
+                }
+                results = {
+                    component: future.result()
+                    for component, future in pending_builds.items()
+                }
+            digests[node] = {}
+            for component, (digest, reuse, engine_cache) in results.items():
+                digests[node][component] = digest
+                reusable[component] = reuse
+                if engine_cache:
+                    engine_caches["" if registry else node] = engine_cache
         built_references = dict(references)
         for component in references:
             if reusable[component]:
