@@ -19,7 +19,12 @@ Allowed changes: unrestricted within the precision and resource constraints abov
 Maximum time per experiment iteration: 10 minutes
 Work duration: optimize autonomously for up to 12 hours from the start of task execution
 Expected outcome / completion criteria: no fixed metric thresholds; continue maximizing throughput and minimizing TPOT until no further optimization opportunities remain or the time budget expires
-Deliverables: for each iteration, list the changes, full foretoken perf commands, output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16; compare values and percentage changes against the initial approach and previous iteration under the same workload, with W&B links and plots; finish with the retained approach, its code/configuration, and measured results for each workload
+Deliverables:
+  - Changes and commands: code/configuration changes and full foretoken perf commands for each iteration.
+  - Performance metrics: output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16 for each workload and iteration.
+  - Comparative analysis: values and percentage changes against the initial approach and previous iteration under the same workload, with an explanation of the differences.
+  - Evidence: W&B links, plots, and raw result paths for each iteration.
+  - Final approach: the retained approach, its code/configuration, and measured results for each workload.
 ```
 
 See [optimization tasks](README.md#autonomous-execution) for execution and resource scheduling, and the [experiment records guide](../experiment-records.md) for recording results.
