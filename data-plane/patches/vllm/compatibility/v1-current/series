@@ -10,3 +10,4 @@ common/spec-decode-timing-collector.patch
 common/spec-decode-timing-hooks.patch
 common/shm-nonblocking-read.patch
 compatibility/v1-current/spec-decode-timing.patch
+common/scheduler-load.patch

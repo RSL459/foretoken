@@ -4,6 +4,7 @@
 //! Engine-neutral HTTP-facing boundary and the thin vLLM EngineCore adapter.
 
 use async_trait::async_trait;
+use foretoken_model_protocol::SchedulerLoad;
 use futures::{Stream, StreamExt};
 use std::future::Future;
 use std::pin::Pin;
@@ -134,6 +135,10 @@ pub trait Backend: Send + Sync {
 
     /// Returns a snapshot published by telemetry handlers without transferring backend ownership.
     fn telemetry(&self) -> BackendTelemetry;
+
+    /// Reads scheduler-owned token demand for the optional autoscaling observation endpoint.
+    /// Failure leaves ordinary inference and telemetry available without inventing zero load.
+    async fn scheduler_load(&self) -> Result<Vec<SchedulerLoad>, BackendError>;
 
     /// Renders the OpenMetrics payload published by the metrics handler as an owned response body.
     fn render_openmetrics(&self) -> Result<String, MetricsError>;
@@ -378,5 +383,19 @@ impl Backend for VllmBackend {
 
     fn render_openmetrics(&self) -> Result<String, MetricsError> {
         METRICS.render().map_err(|_| MetricsError)
+    }
+
+    async fn scheduler_load(&self) -> Result<Vec<SchedulerLoad>, BackendError> {
+        let guard = self.llm.read().await;
+        let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
+        let loads = llm
+            .engine_core_client()
+            .call_utility::<Option<SchedulerLoad>, _>("get_scheduler_load", ())
+            .await
+            .map_err(BackendError::from_engine_client)?;
+        loads
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(BackendError::Unavailable)
     }
 }

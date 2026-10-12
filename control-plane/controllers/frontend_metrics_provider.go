@@ -117,7 +117,7 @@ func (provider *HTTPScalingMetricsProvider) copyOptions(ctx context.Context) Aut
 }
 
 // Snapshot collects one complete backend-neutral metrics snapshot for a scaling target.
-func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target core.TargetID) (core.MetricsSnapshot, error) {
+func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target core.TargetID, needsEngineLoad bool) (core.MetricsSnapshot, error) {
 	if provider == nil || provider.client == nil || provider.httpClient == nil {
 		return core.MetricsSnapshot{}, fmt.Errorf("scaling metrics provider is not configured")
 	}
@@ -125,10 +125,10 @@ func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target
 	startedAt := provider.now()
 	collectionCtx, cancel := context.WithTimeout(ctx, options.CollectionTimeout.Duration)
 	defer cancel()
-	var runtimeQueuedRequests, dispatchQueuedRequests, schedulerWaitingRequests, schedulerRunningRequests, activeRequests uint64
-	var kvCacheUsage *float64
-	var queueSamples, modelSamples int64
-	var queueObservedAt, modelObservedAt time.Time
+	var runtimeQueuedRequests, dispatchQueuedRequests uint64
+	var demand modelDemandObservation
+	var queueSamples int64
+	var queueObservedAt time.Time
 	group, collectionCtx := errgroup.WithContext(collectionCtx)
 	group.Go(func() error {
 		var err error
@@ -137,20 +137,20 @@ func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target
 	})
 	group.Go(func() error {
 		var err error
-		schedulerWaitingRequests, schedulerRunningRequests, activeRequests, kvCacheUsage, modelSamples, modelObservedAt, err = provider.modelDemand(collectionCtx, target, options)
+		demand, err = provider.modelDemand(collectionCtx, target, options, needsEngineLoad)
 		return err
 	})
 	if err := group.Wait(); err != nil {
 		return core.MetricsSnapshot{}, err
 	}
 	collectedAt := provider.now()
-	samples := queueSamples + modelSamples
+	samples := queueSamples + demand.samples
 	if samples > math.MaxInt32 {
 		samples = math.MaxInt32
 	}
 	observedAt := queueObservedAt
-	if !modelObservedAt.IsZero() && modelObservedAt.Before(observedAt) {
-		observedAt = modelObservedAt
+	if !demand.observedAt.IsZero() && demand.observedAt.Before(observedAt) {
+		observedAt = demand.observedAt
 	}
 	return core.MetricsSnapshot{
 		State: core.MetricsFresh,
@@ -165,11 +165,11 @@ func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target
 		// observe the same request at adjacent stages, so count only their larger aggregate.
 		WaitingRequests: saturatingInt64(saturatingAdd(
 			runtimeQueuedRequests,
-			max(dispatchQueuedRequests, schedulerWaitingRequests),
+			max(dispatchQueuedRequests, demand.waitingRequests),
 		)),
-		RunningRequests: saturatingInt64(schedulerRunningRequests),
-		ActiveRequests:  saturatingInt64(activeRequests),
-		KVCacheUsage:    kvCacheUsage,
+		RunningRequests: saturatingInt64(demand.runningRequests),
+		ActiveRequests:  saturatingInt64(demand.activeRequests),
+		EngineLoads:     demand.engineLoads,
 	}, nil
 }
 
@@ -232,20 +232,28 @@ func (provider *HTTPScalingMetricsProvider) frontendQueue(ctx context.Context, t
 	return runtimeQueuedRequests, dispatchQueuedRequests, samples, oldest, nil
 }
 
+// modelDemandObservation retains one complete serving cohort for snapshot composition.
+type modelDemandObservation struct {
+	waitingRequests, runningRequests, activeRequests uint64
+	engineLoads                                      []core.EngineLoad
+	samples                                          int64
+	observedAt                                       time.Time
+}
+
 // modelDemand sums scheduler backlog and admitted requests from routable model servers for one target.
-func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, target core.TargetID, options AutoscalingTelemetryOptions) (uint64, uint64, uint64, *float64, int64, time.Time, error) {
+func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, target core.TargetID, options AutoscalingTelemetryOptions, needsEngineLoad bool) (modelDemandObservation, error) {
 	service := new(inferencev1alpha1.ModelService)
 	if err := provider.client.Get(ctx, client.ObjectKey{Namespace: target.ServiceNamespace, Name: target.ServiceName}, service); err != nil {
-		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("get ModelService for telemetry: %w", err)
+		return modelDemandObservation{}, fmt.Errorf("get ModelService for telemetry: %w", err)
 	}
 	if string(service.UID) != target.ServiceUID {
-		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("ModelService UID changed for target %q", target.Name)
+		return modelDemandObservation{}, fmt.Errorf("ModelService UID changed for target %q", target.Name)
 	}
 	// Demand follows only the service-selected serving revision; preparing and draining
 	// cohorts must not influence the Pool's scaling decision.
 	var pools inferencev1alpha1.ModelPoolList
 	if err := provider.client.List(ctx, &pools, client.InNamespace(target.ServiceNamespace)); err != nil {
-		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("list ModelPools for telemetry: %w", err)
+		return modelDemandObservation{}, fmt.Errorf("list ModelPools for telemetry: %w", err)
 	}
 	selectedPools := make(map[string]*inferencev1alpha1.ModelPool)
 	for index := range pools.Items {
@@ -259,18 +267,18 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 		selectedPools[string(pool.UID)] = pool
 	}
 	if len(selectedPools) == 0 {
-		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("no ModelPools found for target %q", target.Name)
+		return modelDemandObservation{}, fmt.Errorf("no ModelPools found for target %q", target.Name)
 	}
 
 	var groups inferencev1alpha1.ModelGroupList
 	if err := provider.client.List(ctx, &groups, client.InNamespace(target.ServiceNamespace)); err != nil {
-		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("list ModelGroups for telemetry: %w", err)
+		return modelDemandObservation{}, fmt.Errorf("list ModelGroups for telemetry: %w", err)
 	}
 	type modelDemandSample struct {
 		waitingRequests uint64
 		runningRequests uint64
 		activeRequests  uint64
-		kvCacheUsage    *float64
+		engineLoads     []core.EngineLoad
 		observedAt      time.Time
 	}
 	results := make(chan modelDemandSample, len(groups.Items))
@@ -298,48 +306,47 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 			if telemetry.SchedulerWaitingRequests == nil || telemetry.SchedulerRunningRequests == nil {
 				return fmt.Errorf("ModelGroup %q telemetry has no scheduler request metrics", name)
 			}
+			var loads []core.EngineLoad
+			observedAt := time.UnixMilli(int64(telemetry.CollectedAtUnixMS))
+			if needsEngineLoad {
+				load, err := provider.getSchedulerLoad(groupCtx, endpoint, options.RequestTimeout.Duration, modelGroup)
+				if err != nil {
+					return fmt.Errorf("ModelGroup %q scheduler load: %w", name, err)
+				}
+				loads = load.engineLoads
+				if load.observedAt.Before(observedAt) {
+					observedAt = load.observedAt
+				}
+			}
 			results <- modelDemandSample{
 				waitingRequests: *telemetry.SchedulerWaitingRequests,
 				runningRequests: *telemetry.SchedulerRunningRequests,
 				activeRequests:  telemetry.RunningRequests,
-				kvCacheUsage:    telemetry.KVCacheUsage,
-				observedAt:      time.UnixMilli(int64(telemetry.CollectedAtUnixMS)),
+				engineLoads:     loads,
+				observedAt:      observedAt,
 			}
 			return nil
 		})
 	}
 	if err := requestGroup.Wait(); err != nil {
-		return 0, 0, 0, nil, 0, time.Time{}, err
+		return modelDemandObservation{}, err
 	}
 	close(results)
-	var waitingRequests, runningRequests, activeRequests uint64
-	var kvCacheTotal float64
-	kvCacheAvailable := true
-	var samples int64
-	var oldest time.Time
+	var observation modelDemandObservation
 	for sample := range results {
-		waitingRequests = saturatingAdd(waitingRequests, sample.waitingRequests)
-		runningRequests = saturatingAdd(runningRequests, sample.runningRequests)
-		activeRequests = saturatingAdd(activeRequests, sample.activeRequests)
-		if sample.kvCacheUsage == nil {
-			kvCacheAvailable = false
-		} else {
-			kvCacheTotal += *sample.kvCacheUsage
-		}
-		samples++
-		if oldest.IsZero() || sample.observedAt.Before(oldest) {
-			oldest = sample.observedAt
+		observation.waitingRequests = saturatingAdd(observation.waitingRequests, sample.waitingRequests)
+		observation.runningRequests = saturatingAdd(observation.runningRequests, sample.runningRequests)
+		observation.activeRequests = saturatingAdd(observation.activeRequests, sample.activeRequests)
+		observation.engineLoads = append(observation.engineLoads, sample.engineLoads...)
+		observation.samples++
+		if observation.observedAt.IsZero() || sample.observedAt.Before(observation.observedAt) {
+			observation.observedAt = sample.observedAt
 		}
 	}
-	if samples == 0 {
-		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("no routable ModelGroups for target %q", target.Name)
+	if observation.samples == 0 {
+		return modelDemandObservation{}, fmt.Errorf("no routable ModelGroups for target %q", target.Name)
 	}
-	var kvCacheUsage *float64
-	if kvCacheAvailable {
-		value := kvCacheTotal / float64(samples)
-		kvCacheUsage = &value
-	}
-	return waitingRequests, runningRequests, activeRequests, kvCacheUsage, samples, oldest, nil
+	return observation, nil
 }
 
 // getFrontendTelemetry reads and validates one frontend autoscaling telemetry response.

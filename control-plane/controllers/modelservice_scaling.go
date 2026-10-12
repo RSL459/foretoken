@@ -216,7 +216,8 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, target core.TargetID, evaluatedAt metav1.Time, replicas core.ReplicaState, scaling modelScalingConfig) core.ScalingSnapshot {
 	metrics := core.MetricsSnapshot{State: core.MetricsUnavailable}
 	if scaling.Autoscaler.Automatic() {
-		metrics = reconciler.metricsSnapshot(ctx, target, scaling.MetricsMaxAge)
+		needsEngineLoad := service.Spec.Autoscaling.Decision.Algorithm == "dynamo_load" && target.Role != core.RoleEncoder
+		metrics = reconciler.metricsSnapshot(ctx, target, scaling.MetricsMaxAge, needsEngineLoad)
 	}
 	return core.ScalingSnapshot{
 		Target:      target,
@@ -228,11 +229,11 @@ func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, s
 }
 
 // metricsSnapshot fails closed: a missing or failed provider can never be interpreted as zero demand.
-func (reconciler *ModelServiceReconciler) metricsSnapshot(ctx context.Context, target core.TargetID, maxAge time.Duration) core.MetricsSnapshot {
+func (reconciler *ModelServiceReconciler) metricsSnapshot(ctx context.Context, target core.TargetID, maxAge time.Duration, needsEngineLoad bool) core.MetricsSnapshot {
 	if reconciler.MetricsProvider == nil {
 		return core.MetricsSnapshot{State: core.MetricsUnavailable}
 	}
-	metrics, err := reconciler.MetricsProvider.Snapshot(ctx, target)
+	metrics, err := reconciler.MetricsProvider.Snapshot(ctx, target, needsEngineLoad)
 	if err != nil || metrics.State == "" {
 		return core.MetricsSnapshot{State: core.MetricsUnavailable}
 	}

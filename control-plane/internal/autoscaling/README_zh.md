@@ -43,3 +43,29 @@
 ```bash
 make -C control-plane verify
 ```
+
+## Dynamo 反应式策略边界
+
+复刻参考固定为 NVIDIA Dynamo 提交
+[`bea55a595a83a84b76183d44516de05f9ea1b2d0`](https://github.com/ai-dynamo/dynamo/blob/bea55a595a83a84b76183d44516de05f9ea1b2d0/components/src/dynamo/planner/core/load_scaling.py)，
+对应 `_prefill_easy_decision`、`_decode_easy_decision`、`_agg_easy_decision`
+及其缩容后负载检查。本实现覆盖 easy 反应式策略；基于 profile 的 TTFT/ITL
+预测、启动中容量估算和 Dynamo endpoint 管理不属于此决策边界。
+Foretoken 通过已有控制器管理资源生命周期。
+
+vLLM 参考固定为源码提交 `1be36283678a9a94fc8fdaad6c95c2896d6b4015`。
+通用 `get_scheduler_load` utility 与调度采集钩子位于
+`common/scheduler-load.patch`，仅加入固定源码和当前 Python 版本的补丁系列。
+第一次 utility 查询启用采集，保留原生异步调度器。被分类为 decode 的 cached
+请求计入已计算 token 数；抢占或等待远端 KV 的请求计入排队 decode token；
+其余等待请求按完整 token 数计入排队 prefill。已完成请求从最后一轮 decode 样本中排除。
+
+model-server 适配器通过公开 EngineCore utility API 查询全部 DP rank，
+发布独立的 version-1 `/v1/internal/scheduler-load` 响应。既有 version-2
+telemetry 不变。仅 `dynamo_load` 请求新增观测。控制器验证 rank 覆盖和容量，
+将样本归属到选定 serving Group UID，并在 `EngineLoads` 中保留各 rank。
+任一采集错误会丢弃整个观测，不以平均值或部分成功 cohort 作为扩缩容依据。
+
+单组全注意力 cache 容量为 `num_blocks * block_size`。混合 cache、多 cache
+组和上下文并行需要不同的容量协议，当前返回指标不可用。
+已有请求由 Group 排空机制保护，不通过算法中的仅空闲可缩容条件保护。

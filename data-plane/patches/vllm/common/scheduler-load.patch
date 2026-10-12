@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+diff --git a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
+--- a/vllm/v1/core/sched/scheduler.py
++++ b/vllm/v1/core/sched/scheduler.py
+@@ -53,7 +53,7 @@
+ )
+ from vllm.v1.core.sched.utils import check_stop, remove_all
+ from vllm.v1.engine import EngineCoreEventType, EngineCoreOutput, EngineCoreOutputs
+-from vllm.v1.kv_cache_interface import KVCacheConfig
++from vllm.v1.kv_cache_interface import FullAttentionSpec, KVCacheConfig
+ from vllm.v1.metrics.perf import ModelMetrics, PerfStats
+ from vllm.v1.metrics.stats import PrefixCacheStats, SchedulerStats
+ from vllm.v1.outputs import DraftTokenIds, KVConnectorOutput, ModelRunnerOutput
+@@ -86,6 +86,8 @@
+         self.kv_events_config = vllm_config.kv_events_config
+         self.parallel_config = vllm_config.parallel_config
+         self.log_stats = log_stats
++        self._capture_scheduler_load = False
++        self._scheduled_decode_load: dict[str, int] | None = None
+         self.observability_config = vllm_config.observability_config
+         self.kv_metrics_collector: KVCacheMetricsCollector | None = None
+         if self.observability_config.kv_cache_metrics:
+@@ -1376,7 +1378,56 @@
+         self.waiting.prepend_request(request)
+         self.reset_preempted_req_ids.add(request.request_id)
+ 
++    def get_scheduler_load(self) -> dict[str, int] | None:
++        """Return token demand for capacity planning; activate capture on first query.
++
++        Unsupported layouts and active engines awaiting their first captured
++        scheduling step return None rather than an approximate load.
++        """
++        groups = self.kv_cache_config.kv_cache_groups
++        if (
++            len(groups) != 1
++            or not isinstance(groups[0].kv_cache_spec, FullAttentionSpec)
++            or self.dcp_world_size != 1
++            or self.pcp_world_size != 1
++        ):
++            return None
++        self._capture_scheduler_load = True
++        if self.running and self._scheduled_decode_load is None:
++            return None
++        queued_prefill = queued_decode = 0
++        for queue in (self.waiting, self.skipped_waiting):
++            for request in queue:
++                if request.status in (
++                    RequestStatus.PREEMPTED,
++                    RequestStatus.WAITING_FOR_REMOTE_KVS,
++                ):
++                    queued_decode += request.num_computed_tokens
++                else:
++                    queued_prefill += request.num_tokens
++        scheduled_decode = sum(
++            tokens
++            for request_id, tokens in (self._scheduled_decode_load or {}).items()
++            if request_id in self.requests
++        )
++        return {
++            "data_parallel_rank": self.parallel_config.data_parallel_index,
++            "queued_prefill_tokens": queued_prefill,
++            "scheduled_decode_kv_tokens": scheduled_decode,
++            "queued_decode_kv_tokens": queued_decode,
++            "context_length": self.max_model_len,
++            "kv_capacity_tokens": self.kv_cache_config.num_blocks
++            * groups[0].kv_cache_spec.block_size,
++        }
++
+     def _update_after_schedule(self, scheduler_output: SchedulerOutput) -> None:
++        if self._capture_scheduler_load:
++            cached = scheduler_output.scheduled_cached_reqs
++            self._scheduled_decode_load = {
++                request_id: cached.num_computed_tokens[index]
++                for index, request_id in enumerate(cached.req_ids)
++                if not cached.is_context_phase(request_id)
++            }
+         # Advance the number of computed tokens for the request AFTER
+         # the request is scheduled.
+         # 1. The scheduler_output of the current step has to include the
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -766,6 +766,10 @@
+     def profile(self, is_start: bool = True, profile_prefix: str | None = None):
+         self.model_executor.profile(is_start, profile_prefix)
+ 
++    def get_scheduler_load(self) -> dict[str, int] | None:
++        """Expose per-engine token demand through the existing utility RPC."""
++        return self.scheduler.get_scheduler_load()
++
+     def reset_mm_cache(self):
+         # NOTE: Since this is mainly for debugging, we don't attempt to
+         # re-sync the internal caches (P0 sender, P1 receiver)

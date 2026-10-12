@@ -43,3 +43,36 @@ Use the control-plane verification target after changing this package:
 ```bash
 make -C control-plane verify
 ```
+
+## Dynamo reactive policy boundary
+
+The replication reference is NVIDIA Dynamo commit
+[`bea55a595a83a84b76183d44516de05f9ea1b2d0`](https://github.com/ai-dynamo/dynamo/blob/bea55a595a83a84b76183d44516de05f9ea1b2d0/components/src/dynamo/planner/core/load_scaling.py),
+particularly `_prefill_easy_decision`, `_decode_easy_decision`, `_agg_easy_decision`,
+and their consolidation check. This implements the easy reactive policies;
+profile-driven TTFT/ITL prediction, pending-startup estimates, and Dynamo endpoint
+management are outside this decision boundary. Foretoken owns those lifecycle
+operations through its existing controllers.
+
+The vLLM reference is the pinned source commit
+`1be36283678a9a94fc8fdaad6c95c2896d6b4015`. The generic `get_scheduler_load`
+utility and scheduler capture hook live in `common/scheduler-load.patch`, enabled
+only by the pinned-source and current Python compatibility series. Capture is
+activated by the first utility query and preserves the native async scheduler.
+Cached requests classified as decode contribute their computed token count;
+preempted and remote-KV waiting requests contribute queued decode tokens;
+other waiting requests contribute their full token count to queued prefill.
+Finished requests are excluded from the last scheduled decode sample.
+
+The model-server adapter calls the public EngineCore utility API for every DP
+rank and exposes a separate version-1 `/v1/internal/scheduler-load` response.
+Existing version-2 telemetry stays unchanged. Only `dynamo_load` requests this
+additional observation. The controller validates rank coverage and capacities,
+attributes samples to the selected serving Group UID, and retains individual
+ranks in `EngineLoads`. Errors discard the whole collection; an average or a
+partial successful cohort never becomes a scaling signal.
+
+Single-group full-attention cache capacity is `num_blocks * block_size`. Hybrid,
+multiple cache groups, and context parallelism require a different capacity
+contract and currently return unavailable. Accepted work is protected by Group
+draining rather than an idle-only condition in the policy.
