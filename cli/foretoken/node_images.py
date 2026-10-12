@@ -235,15 +235,22 @@ class NodeImageStore:
             )
             for reference in sorted(references):
                 self._pin(reference)
-        self._import_layout(layout, [*command, "--index-name", image, "-"])
+        # ctr 1.x has already stored and pinned the content graph. Sending its
+        # index again triggers unpack without rewriting every blob a second time.
+        self._import_layout(
+            layout, [*command, "--index-name", image, "-"], metadata_only=major == 1
+        )
 
-    def _import_layout(self, layout: str, command: list[str]) -> None:
-        """Stream GNU tar directly to the node client without a workstation transfer."""
+    def _import_layout(
+        self, layout: str, command: list[str], *, metadata_only: bool = False
+    ) -> None:
+        """Stream the OCI archive, or its index for already stored content, to the node client."""
+        members = "oci-layout index.json" if metadata_only else "."
         self.run(
             [
                 "bash",
                 "-ec",
-                'set -o pipefail; layout=$1; shift; tar -C "$layout" -cf - . | "$@"',
+                f'set -o pipefail; layout=$1; shift; tar -C "$layout" -cf - {members} | "$@"',
                 "import",
                 layout,
                 *command,
