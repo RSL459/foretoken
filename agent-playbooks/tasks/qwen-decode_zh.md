@@ -19,19 +19,22 @@
 单次迭代实验最长用时：10 分钟
 工作时间：从开始执行任务计时，最多自主优化 12 小时
 预期／结束条件：不设固定指标阈值，持续最大化吞吐、最小化 TPOT，直至无进一步优化空间或工作时间用尽
-交付结果：
-  - 改动与命令：每轮的代码／配置改动和完整 foretoken perf 命令。
-  - 性能指标：每轮、各负载在并发 1／16 下的输出吞吐（token/s）与平均 TPOT（ms/token）。
-  - 对照分析：相同负载下，与初始方案和上一轮的数值对照、变化百分比及原因分析。
-  - 结果证据：各轮 W&B 链接、图表和原始结果路径。
-  - 最终方案：保留方案、对应代码／配置及各负载的实测结果。
+交付结果（<iteration> 为 --iteration 指定的方案名）：
+  - 改动与命令：每轮的代码／配置改动和完整 foretoken perf 命令，写入 results/qwen-decode/iterations/<iteration>/notes/iteration.md 的“改动与命令”部分。
+  - 性能指标：各负载在并发 1／16 下的输出吞吐（token/s）与平均 TPOT（ms/token），写入同一 iteration.md 的“性能指标”表。
+  - 对照分析：相同负载下，与初始方案和上一轮的数值对照、变化百分比及原因分析，写入同一 iteration.md 的“对照分析”部分。
+  - 结果证据：W&B 链接、图表和原始结果路径，写入同一 iteration.md 的“结果证据”部分；命令自动保存的原始产物保留在 results/qwen-decode/iterations/<iteration>/runs/ 下。
+  - 最终方案：保留方案、对应代码／配置、各负载实测结果及逐轮对照汇总，写入 results/qwen-decode/notes/experiment.md。
+  - 用户汇总：将 experiment.md 中的主要结论、逐轮性能对照、关键图表和 W&B 链接同步到用户可直接访问的报告页面（如 Lark），交付报告链接。
 ```
 
 执行与资源安排见[优化任务](README_zh.md#自主执行)，记录方法见[实验记录手册](../experiment-records_zh.md)。
 
 ## 评测命令
 
-在仓库根目录执行，将部署目录和 W&B API key 占位符替换为实际值。前两条分别用 `--max-concurrency 1` 和 `16` 运行；请求数、预热量和评测样本量按单轮时间预算调整，对照时保持一致。更多负载见 [recipes](../../benchmarks/docs/recipes_zh.md)。
+在仓库根目录执行，将部署目录和 W&B API key 占位符替换为实际值。结果统一保存到执行机器上的 `results/qwen-decode/`；`baseline` 是初始方案名，新方案更名，同一方案补测沿用名称。上述笔记由 Agent 填写，指标与图表由命令生成。
+
+前两条分别用 `--max-concurrency 1` 和 `16` 运行；请求数、预热量和评测样本量按单轮时间预算调整，对照时保持一致。更多负载见 [recipes](../../benchmarks/docs/recipes_zh.md)。
 
 ```bash
 export WANDB_API_KEY="<your-wandb-api-key>"
@@ -41,15 +44,18 @@ foretoken perf path/to/qwen-deployment --dataset random \
   --min-prompt-length 128 --max-prompt-length 4096 \
   --min-output-length 128 --max-output-length 512 \
   --max-concurrency 16 --num-prompts 160 --warmup-requests 4 \
-  --random-seed 0 --temperature 0 --output experiment,raw,plot,wandb
+  --random-seed 0 --temperature 0 --output experiment,raw,plot,wandb \
+  --output-dir results/qwen-decode --iteration baseline
 
 # 最终保留方案必跑，中间按需：StudyChat 对话
 foretoken perf path/to/qwen-deployment \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --max-concurrency 16 --num-prompts 128 --max-tokens 2048 \
-  --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb
+  --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
+  --output-dir results/qwen-decode --iteration baseline
 
 # 可不执行：仅在改动可能影响精度且满足上述频率限制时评测
 foretoken eval path/to/qwen-deployment \
-  --tasks gsm8k --num_fewshot 0 --limit 20 --output experiment,plot,wandb
+  --tasks gsm8k --num_fewshot 0 --limit 20 --output experiment,plot,wandb \
+  --output-dir results/qwen-decode --iteration baseline
 ```
