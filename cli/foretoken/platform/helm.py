@@ -17,6 +17,11 @@ from typing import Any
 
 import yaml
 
+try:
+    from yaml import CSafeLoader as _SafeLoader
+except ImportError:
+    from yaml import SafeLoader as _SafeLoader
+
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.application_files import ApplicationFiles, application_references
 from foretoken.kubernetes import Kubectl, timeout_seconds
@@ -200,7 +205,7 @@ class Helm(HelmClient):
         rendered = self.run(command, input_text=input_text).stdout
         return tuple(
             document
-            for document in yaml.safe_load_all(rendered)
+            for document in yaml.load_all(rendered, Loader=_SafeLoader)
             if document is not None
         )
 
@@ -215,7 +220,7 @@ class Helm(HelmClient):
         ).stdout
         return tuple(
             document
-            for document in yaml.safe_load_all(manifest)
+            for document in yaml.load_all(manifest, Loader=_SafeLoader)
             if document is not None
         )
 
@@ -333,7 +338,7 @@ class Helm(HelmClient):
         try:
             resources = [
                 item
-                for item in yaml.safe_load_all(rendered)
+                for item in yaml.load_all(rendered, Loader=_SafeLoader)
                 if isinstance(item, dict)
                 and item.get("apiVersion") == api_version
                 and item.get("kind") == kind
@@ -884,7 +889,7 @@ class Helm(HelmClient):
             ).stdout
             references = application_references(
                 document
-                for document in yaml.safe_load_all(manifest)
+                for document in yaml.load_all(manifest, Loader=_SafeLoader)
                 if document is not None
             )
             prefix = origin.endpoint.rstrip("/") + "/"
@@ -1450,7 +1455,7 @@ class Helm(HelmClient):
             references.update(
                 extract(
                     document
-                    for document in yaml.safe_load_all(manifest)
+                    for document in yaml.load_all(manifest, Loader=_SafeLoader)
                     if document is not None
                 )
             )
