@@ -12,9 +12,11 @@ Minimum concurrently working subagents: 6
 Maximum concurrently working subagents: 20
 Minimum parallel experiments: 2
 Maximum parallel experiments: have the agent determine the limit from available resources and per-experiment requirements, and record it in the experiment notes
-Evaluation workloads: measure concurrency 1 and 16 separately per service, covering input/output lengths and natural answers; agent-selected datasets and lengths
+Evaluation workloads: measure concurrency 1 and 16 separately per service, covering input/output lengths and natural answers; use foretoken perf for performance and foretoken perf --profile for bottleneck analysis
+Accuracy evaluation: consider foretoken eval only when changes may affect accuracy; run it at most once per 20 completed performance iterations, not automatically every 20 iterations
 Optimization objectives: improve single-request decode speed and total output throughput (tokens/s) at concurrency 16, and reduce decode latency (TPOT) in both groups
 Allowed changes: unrestricted
+Maximum time per experiment iteration: 10 minutes
 Work and completion conditions: optimize autonomously for 12 hours from the start of task execution
 Deliverables: full iteration history with motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; per-workload gains, retained approach, code changes and result links
 ```
