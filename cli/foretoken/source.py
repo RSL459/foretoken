@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -1248,25 +1249,32 @@ def prepare_source_images(
                 references[component] = installed[component]
         # The publisher compares actual exports, independently of download-source choices.
         # Prefer the latest deployment bundle over the initial installation's application.
-        application_revisions = {}
         publisher = next(builder for builder in builders if builder.node == origin.node)
-        for component in references:
-            prior = (
-                previous.get("bundles", {})
-                .get(component, build.get("applications", {}).get(component, {}))
-                .get("revision", "")
-            )
-            application_revisions[component] = origin.publish(
-                publisher,
-                publisher.root + "/applications/" + component,
-                component,
-                suffix,
-                prior,
-                None,
-                timeout=command.timeout,
-                reuse_previous=True,
-                sources=build_sources(snapshot, component),
-            )
+        # Component publications use separate directories and do not collect old
+        # versions here. Join every publisher before releasing compiler outputs.
+        with ThreadPoolExecutor(max_workers=len(references)) as publications:
+            pending = {}
+            for component in references:
+                prior = (
+                    previous.get("bundles", {})
+                    .get(component, build.get("applications", {}).get(component, {}))
+                    .get("revision", "")
+                )
+                pending[component] = publications.submit(
+                    origin.publish,
+                    publisher,
+                    publisher.root + "/applications/" + component,
+                    component,
+                    suffix,
+                    prior,
+                    None,
+                    timeout=command.timeout,
+                    reuse_previous=True,
+                    sources=build_sources(snapshot, component),
+                )
+            application_revisions = {
+                component: future.result() for component, future in pending.items()
+            }
         publisher.run(["rm", "-rf", "--", publisher.root + "/applications"])
         applications = {
             component: origin.reference(component, revision)
