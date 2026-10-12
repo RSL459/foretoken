@@ -1,10 +1,10 @@
-# Inference Optimization Playbooks
+# RSI Playbooks
 
 English | [简体中文](README_zh.md)
 
 Foretoken is an inference infrastructure framework designed for RSI (Recursive Self-Improvement), enabling agents to autonomously modify, deploy, evaluate, and optimize inference systems.
 
-This Agent Book provides task guidance, experimental methods, and reusable knowledge. Validated findings feed back into the book to make subsequent optimization work more effective.
+These playbooks provide task guidance, experimental methods, and reusable knowledge. Validated findings are incorporated to make subsequent optimization work more effective.
 
 ## Design goals
 
