@@ -15,15 +15,11 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-在这个目录中打开 Claude Code 或 Codex，粘贴以下指令，并在后面附上任务要求或任务文件路径：
+在这个目录中打开 Claude Code 或 Codex，粘贴以下指令；使用自己的任务时，替换其中的文件路径：
 
 ```text
-使用 RSI skill，按照我提供的任务要求完成推理系统优化。先阅读任务与已有实验记录，再开展调研、实现、部署、评测和分析。持续安排并行工作，利用全部可用节点推进实验，直到满足任务的结束条件。按任务要求保存结果并交付优化结论。
+使用 RSI skill，按照 rsi-playbooks/tasks/qwen-decode_zh.md 中的任务要求完成推理系统优化。先阅读任务与已有实验记录，再开展调研、实现、部署、评测和分析。持续安排并行工作，利用全部可用节点推进实验，直到满足任务的结束条件。按任务要求保存结果并交付优化结论。
 ```
-
-在同一对话中要求“暂停 RSI”或“继续 RSI”即可暂停或恢复。结果保存在任务指定的位置。
-
-如果输入时找不到 `rsi`，在 Claude Code 中执行 `/reload-skills`，在 Codex 中重新打开会话。
 
 ## 设计目标
 

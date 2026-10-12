@@ -15,15 +15,11 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-Open Claude Code or Codex in this directory. Paste the following prompt, followed by your task requirements or task file path:
+Open Claude Code or Codex in this directory and paste the following prompt. Replace the file path to use your own task:
 
 ```text
-Use the RSI skill to optimize the inference system according to the task requirements I provide. Read the task and prior experiment records, then carry out research, implementation, deployment, evaluation, and analysis. Keep assigning parallel work and use all available nodes to advance experiments until the task's completion criteria are met. Save the results and deliver the optimization conclusions as specified in the task.
+Use the RSI skill to optimize the inference system according to rsi-playbooks/tasks/qwen-decode.md. Read the task and prior experiment records, then carry out research, implementation, deployment, evaluation, and analysis. Keep assigning parallel work and use all available nodes to advance experiments until the task's completion criteria are met. Save the results and deliver the optimization conclusions as specified in the task.
 ```
-
-Ask to "pause RSI" or "resume RSI" in the same conversation to pause or continue. Results are saved to the locations specified in the task.
-
-If `rsi` is not available, run `/reload-skills` in Claude Code or reopen the Codex session.
 
 ## Design goals
 
