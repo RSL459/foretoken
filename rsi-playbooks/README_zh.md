@@ -6,21 +6,27 @@ Foretoken 是一个面向 RSI（Recursive Self-Improvement，递归自提升）�
 
 这套手册提供任务指导、实验方法与可复用经验，并持续吸收经过验证的发现，帮助后续迭代更有效地开展优化。
 
-## 通过编码 Agent 执行
+## 开始优化任务
 
-在当前仓库中打开 Claude Code 或 Codex，让 Agent 执行 RSI 任务，也可以显式调用仓库提供的 `rsi` skill：
+在 Foretoken 仓库目录中打开 Claude Code 或 Codex。以 [Qwen 优化任务](tasks/qwen-decode_zh.md)为例，在对话输入框中输入对应内容：
+
+Claude Code：
 
 ```text
-# Claude Code
 /rsi 执行 rsi-playbooks/tasks/qwen-decode_zh.md
+```
 
-# Codex
+Codex：
+
+```text
 $rsi 执行 rsi-playbooks/tasks/qwen-decode_zh.md
 ```
 
-Skill 使用原生子 Agent 派工，在完成结果中附带续派提醒，并安排独立 Agent 观察 GPU 使用与实验进展，不给主 Agent 设置周期提醒。在同一对话中要求暂停或停止即可；恢复执行需要明确提出。
+`rsi` 是仓库提供的优化任务指令集（skill），指导 Agent 调研、修改代码、部署、评测和分析结果，并协调并行工作、检查 GPU 使用与实验进展。任务文件规定模型、可用资源、评测负载、时间预算和交付位置；可以在对话中说明要调整的条件，也可以用[任务模板](templates/task-template_zh.md)描述自己的任务，替换上面的文件路径。
 
-Claude Code 在调用 skill 时额外加载一次性的结束提醒；Codex 使用共用指令，不安装 hooks。普通会话不加载 RSI hooks。如果添加 skill 时会话已经打开，Claude Code 可执行 `/reload-skills`；Codex 会自动发现 skill 变化，未出现时重新打开会话。
+在同一对话中说“暂停 RSI”即可暂停，说“继续 RSI”恢复执行。结果保存到任务文件指定的位置。
+
+如果输入时找不到 `rsi`，在 Claude Code 中执行 `/reload-skills`，在 Codex 中重新打开会话。
 
 ## 设计目标
 

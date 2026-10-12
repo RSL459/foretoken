@@ -6,21 +6,27 @@ Foretoken is an inference infrastructure framework designed for RSI (Recursive S
 
 These playbooks provide task guidance, experimental methods, and reusable knowledge. Validated findings are incorporated to make subsequent optimization work more effective.
 
-## Run with a coding agent
+## Start an optimization task
 
-Open this checkout in Claude Code or Codex and ask the agent to run an RSI task, or invoke the repository's `rsi` skill explicitly:
+Open Claude Code or Codex in the Foretoken repository directory. To run the [Qwen optimization task](tasks/qwen-decode.md), enter the corresponding prompt in the conversation:
+
+Claude Code:
 
 ```text
-# Claude Code
 /rsi Run rsi-playbooks/tasks/qwen-decode.md
+```
 
-# Codex
+Codex:
+
+```text
 $rsi Run rsi-playbooks/tasks/qwen-decode.md
 ```
 
-The skill uses native workers, includes a follow-up reminder in their completion results, and assigns a separate agent to observe GPU usage and experiment progress. It does not schedule periodic prompts for the main agent. Ask to pause or stop RSI in the same conversation; resuming requires an explicit request.
+The repository's `rsi` skill is a set of instructions that guides the agent through research, code changes, deployment, evaluation, and analysis, including parallel work and observation of GPU usage and experiment progress. The task file specifies the model, available resources, workloads, time budget, and delivery locations. State any changes to these conditions in your prompt, or describe your own task using the [task template](templates/task-template.md) and substitute its path above.
 
-Claude Code additionally loads a one-shot Stop reminder when the skill is invoked. Codex uses the shared instructions without installing hooks. Ordinary sessions do not load RSI hooks. If a session was already open when these skills were added, use `/reload-skills` in Claude Code; Codex detects skill changes automatically, with a restart if the skill does not appear.
+Say "pause RSI" in the same conversation to pause, and "resume RSI" to continue. Results are saved to the locations specified in the task file.
+
+If `rsi` is not available, run `/reload-skills` in Claude Code or reopen the Codex session.
 
 ## Design goals
 
