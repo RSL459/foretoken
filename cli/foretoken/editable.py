@@ -35,6 +35,7 @@ from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
 from foretoken.source import (
     _INSTALL_SOURCE,
+    _NON_BUILD_INPUTS,
     _SNAPSHOT_METADATA,
     _has_server_binding,
     _inputs,
@@ -126,7 +127,8 @@ class EditableDeployment:
         previous = {
             str(p.relative_to(old))
             for p in old.rglob("*")
-            if p.is_file() and str(p.relative_to(old)) not in _SNAPSHOT_METADATA
+            if p.is_file()
+            and str(p.relative_to(old)) not in _SNAPSHOT_METADATA | _NON_BUILD_INPUTS
         }
         changed = {
             name

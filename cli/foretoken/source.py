@@ -42,6 +42,10 @@ _BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 _INSTALL_SOURCE = "foretoken.io/install-source"
 _SOURCE_METADATA = ".foretoken-sources.json"
 _SNAPSHOT_METADATA = frozenset({"engine/manifest.json", "engine/deleted.json", _SOURCE_METADATA})
+# Workstation build entrypoints and explicitly applied values are not cluster build inputs.
+_NON_BUILD_INPUTS = frozenset(
+    {"Makefile", "deploy/dev-build", "deploy/platform-values.yaml"}
+)
 
 
 def _source_home() -> Path:
@@ -176,9 +180,7 @@ def _inputs(root: Path, engines: dict[str, str] | None = None) -> dict[str, Path
             ("data-plane/", "control-plane/", "deploy/")
         ) and name not in {"Makefile", "LICENSE", ".dockerignore", ".gitmodules"}:
             continue
-        if name == "deploy/platform-values.yaml":
-            # Values are applied explicitly by `foretoken install --values`; they do
-            # not affect any image or application bundle built from this checkout.
+        if name in _NON_BUILD_INPUTS:
             continue
         if path.is_file() and path.suffix not in {".md", ".png", ".svg"}:
             files[name] = path
@@ -389,7 +391,8 @@ def validate_build_inputs(
     previous = {
         str(path.relative_to(snapshot))
         for path in snapshot.rglob("*")
-        if path.is_file() and str(path.relative_to(snapshot)) not in _SNAPSHOT_METADATA
+        if path.is_file()
+        and str(path.relative_to(snapshot)) not in _SNAPSHOT_METADATA | _NON_BUILD_INPUTS
     }
     if previous != current.keys() or any(
         not filecmp.cmp(snapshot / name, path, shallow=False)
@@ -776,16 +779,6 @@ def reconcile_source_images(
     secrets = tuple(
         installed.get("runtime", {}).get("pull_secrets", build.get("pull_secrets", []))
     )
-    retained: set[str] = set()
-    if not uninstall:
-        history = Helm(config).image_history()
-        if history is None:
-            return
-        retained.update(history)
-        retained.update(application_images(application_consumers(kubectl)))
-        retained.update(
-            states.get("build.json", {}).get("build", {}).get("images", {}).values()
-        )
     # Builders already describe node runtime access. Use those cluster-owned
     # mounts during uninstall even when invoked from a different workstation.
     access: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
@@ -819,6 +812,10 @@ def reconcile_source_images(
     sockets = {
         state.get("build", {}).get("containerd_socket", "") for state in states.values()
     } - {""}
+    # Registry-only builds have no node image store to reconcile. Existing
+    # builders and pending state still retain access after a delivery-mode change.
+    if not uninstall and not access and not sockets:
+        return
     nodes = kubectl.list_resources(("nodes",), "")
     if uninstall and not sockets:
         context = kubectl.run(["config", "current-context"]).stdout.strip()
@@ -829,6 +826,16 @@ def reconcile_source_images(
     for socket in sockets:
         for node in nodes:
             access.setdefault((node["metadata"]["name"], socket), (tools, secrets))
+    retained: set[str] = set()
+    if not uninstall:
+        history = Helm(config).image_history()
+        if history is None:
+            return
+        retained.update(history)
+        retained.update(application_images(application_consumers(kubectl)))
+        retained.update(
+            states.get("build.json", {}).get("build", {}).get("images", {}).values()
+        )
     for (node, socket), (tools, secrets) in access.items():
         for binding in [""] if uninstall else sorted(bindings):
             with node_image_store(
