@@ -17,8 +17,9 @@
 优化目标：提升单并发解码速度和 16 并发总输出吞吐（token/s），降低两组的解码延迟（TPOT）
 可改动范围：不限
 单次迭代实验最长用时：10 分钟
-工作与结束条件：从开始执行任务计时，自主持续优化 12 小时
-交付结果：完整迭代过程，记录每轮动机、方案与改动、测量结果、分析、耗时和下一步决定；汇总各组收益、保留方案、代码改动与结果链接
+工作时间：从开始执行任务计时，自主持续优化 12 小时
+预期／结束条件：吞吐最大化、TPOT 最小化
+交付结果：每轮列出改动、完整 foretoken perf 命令、并发 1／16 的输出吞吐（token/s）与平均 TPOT（ms/token），对比相同负载下初始方案和上一轮的数值及变化百分比，附 W&B 链接和图表；最终给出保留方案、对应代码／配置及各负载的实测结果
 ```
 
 执行与资源安排见[优化任务](README_zh.md#自主执行)，记录方法见[实验记录手册](../experiment-records_zh.md)。
@@ -40,7 +41,7 @@ foretoken perf path/to/qwen-deployment --dataset random \
 # 最终保留方案必跑，中间按需：自然回答
 foretoken perf path/to/qwen-deployment \
   --prompt "Explain the trade-offs between tensor parallelism and pipeline parallelism." \
-  --max-concurrency 1 --num-prompts 16 --max-tokens 2048 \
+  --max-concurrency 16 --num-prompts 16 --max-tokens 2048 \
   --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb
 
 # 可不执行：仅在改动可能影响精度且满足上述频率限制时评测

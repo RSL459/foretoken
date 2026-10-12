@@ -17,8 +17,9 @@ Accuracy evaluation: consider foretoken eval only when changes may affect accura
 Optimization objectives: improve single-request decode speed and total output throughput (tokens/s) at concurrency 16, and reduce decode latency (TPOT) in both groups
 Allowed changes: unrestricted
 Maximum time per experiment iteration: 10 minutes
-Work and completion conditions: optimize autonomously for 12 hours from the start of task execution
-Deliverables: full iteration history with motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; per-workload gains, retained approach, code changes and result links
+Work duration: optimize autonomously for 12 hours from the start of task execution
+Expected outcome / completion criteria: maximize throughput and minimize TPOT
+Deliverables: for each iteration, list the changes, full foretoken perf commands, output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16; compare values and percentage changes against the initial approach and previous iteration under the same workload, with W&B links and plots; finish with the retained approach, its code/configuration, and measured results for each workload
 ```
 
 See [optimization tasks](README.md#autonomous-execution) for execution and resource scheduling, and the [experiment records guide](../experiment-records.md) for recording results.
@@ -40,7 +41,7 @@ foretoken perf path/to/qwen-deployment --dataset random \
 # Required for the final retained approach; optional during iterations: natural answers.
 foretoken perf path/to/qwen-deployment \
   --prompt "Explain the trade-offs between tensor parallelism and pipeline parallelism." \
-  --max-concurrency 1 --num-prompts 16 --max-tokens 2048 \
+  --max-concurrency 16 --num-prompts 16 --max-tokens 2048 \
   --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb
 
 # Optional: only for accuracy-affecting changes within the frequency limit above.
