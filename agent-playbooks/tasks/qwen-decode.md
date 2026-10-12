@@ -34,7 +34,7 @@ See [optimization tasks](README.md#autonomous-execution) for execution and resou
 
 Run from the repository root, replacing the deployment directory and W&B API key placeholders. Results are saved under `results/qwen-decode/` on the execution machine. Use `baseline` for the initial approach, rename it for a new approach, and reuse it for repeat measurements of the same approach. The agent writes the notes above; commands generate metrics and plots.
 
-Run the first two commands with `--max-concurrency 1` and `16`. Size request, warmup, and evaluation samples to fit the iteration budget, keeping reference and candidate settings identical. See [recipes](../../benchmarks/docs/recipes.md) for more workloads.
+Run the random workload once with `--max-concurrency 1` and again with `16`; keep request, warmup, and evaluation samples identical between the two runs. The StudyChat command is required for the final retained approach and is otherwise optional. See [recipes](../../benchmarks/docs/recipes.md) for more workloads.
 
 ```bash
 export WANDB_API_KEY="<your-wandb-api-key>"

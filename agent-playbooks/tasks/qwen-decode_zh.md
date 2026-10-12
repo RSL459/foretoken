@@ -34,7 +34,7 @@
 
 在仓库根目录执行，将部署目录和 W&B API key 占位符替换为实际值。结果统一保存到执行机器上的 `results/qwen-decode/`；`baseline` 是初始方案名，新方案更名，同一方案补测沿用名称。上述笔记由 Agent 填写，指标与图表由命令生成。
 
-前两条分别用 `--max-concurrency 1` 和 `16` 运行；请求数、预热量和评测样本量按单轮时间预算调整，对照时保持一致。更多负载见 [recipes](../../benchmarks/docs/recipes_zh.md)。
+随机负载需分别用 `--max-concurrency 1` 和 `16` 运行两次；两次运行的请求数、预热量和评测样本量保持一致。StudyChat 命令是最终保留方案的必需项，其余迭代可选。更多负载见 [recipes](../../benchmarks/docs/recipes_zh.md)。
 
 ```bash
 export WANDB_API_KEY="<your-wandb-api-key>"
