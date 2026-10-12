@@ -15,9 +15,11 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-Open Claude Code or Codex in this directory and ask the agent to use the RSI skill to carry out your optimization task. Provide the objective, model, available machines, evaluation workloads, time budget, and output location. If these are already in a task file, provide its path. Use the [task template](templates/task-template.md) when you need help organizing the requirements.
+Open Claude Code or Codex in this directory. Paste the following prompt, followed by your task requirements or task file path:
 
-The repository's RSI skill supplies instructions for research, code changes, deployment, evaluation, and analysis, including parallel work and observation of GPU usage and experiment progress.
+```text
+Use the RSI skill to optimize the inference system according to the task requirements I provide. Read the task and prior experiment records, then carry out research, implementation, deployment, evaluation, and analysis. Keep assigning parallel work and use all available nodes to advance experiments until the task's completion criteria are met. Save the results and deliver the optimization conclusions as specified in the task.
+```
 
 Ask to "pause RSI" or "resume RSI" in the same conversation to pause or continue. Results are saved to the locations specified in the task.
 

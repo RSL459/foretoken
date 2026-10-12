@@ -15,9 +15,11 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-在这个目录中打开 Claude Code 或 Codex，告诉 Agent 使用 RSI skill，按照你的任务要求完成优化。说明优化目标、模型、可用机器、评测负载、时间预算和结果保存位置；已有任务文件时，直接提供文件路径。需要整理任务条件时，可使用[任务模板](templates/task-template_zh.md)。
+在这个目录中打开 Claude Code 或 Codex，粘贴以下指令，并在后面附上任务要求或任务文件路径：
 
-仓库中的 RSI skill 提供执行指令，指导 Agent 调研、修改代码、部署、评测和分析结果，并协调并行工作、检查 GPU 使用与实验进展。
+```text
+使用 RSI skill，按照我提供的任务要求完成推理系统优化。先阅读任务与已有实验记录，再开展调研、实现、部署、评测和分析。持续安排并行工作，利用全部可用节点推进实验，直到满足任务的结束条件。按任务要求保存结果并交付优化结论。
+```
 
 在同一对话中要求“暂停 RSI”或“继续 RSI”即可暂停或恢复。结果保存在任务指定的位置。
 
