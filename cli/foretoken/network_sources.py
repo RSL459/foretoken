@@ -270,7 +270,9 @@ def _oci_mirror_prefixes(host: str) -> tuple[str, ...]:
     return prefixes + ("docker.1ms.run",) if host == "docker.io" else prefixes
 
 
-def _oci_mirrors(host: str, repository: str, revision: str) -> tuple[_SourceMirror, ...]:
+def _oci_mirrors(
+    host: str, repository: str, revision: str
+) -> tuple[_SourceMirror, ...]:
     """Build shared registry candidates for platform pulls and source-image builds."""
     candidates = []
     for prefix in _oci_mirror_prefixes(host):
@@ -278,7 +280,9 @@ def _oci_mirrors(host: str, repository: str, revision: str) -> tuple[_SourceMirr
         mirror_repository = f"{namespace}/{repository}" if namespace else repository
         candidates.append(
             _SourceMirror(
-                partial(_measure_oci_manifest, mirror_host, mirror_repository, revision),
+                partial(
+                    _measure_oci_manifest, mirror_host, mirror_repository, revision
+                ),
                 prefix,
             )
         )
@@ -361,9 +365,17 @@ def select_platform_oci_reference(reference: str, previous: str | None = None) -
         repository, revision = path, "latest"
     official_host = "registry-1.docker.io" if host == "docker.io" else host
     mirrors = _oci_mirrors(host, repository, revision)
-    preferred = "" if previous == reference else next(
-        (mirror.value for mirror in mirrors if previous == f"{scheme}{mirror.value}/{path}"),
-        None,
+    preferred = (
+        ""
+        if previous == reference
+        else next(
+            (
+                mirror.value
+                for mirror in mirrors
+                if previous == f"{scheme}{mirror.value}/{path}"
+            ),
+            None,
+        )
     )
     with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
         official = executor.submit(
@@ -371,7 +383,9 @@ def select_platform_oci_reference(reference: str, previous: str | None = None) -
         )
         futures = tuple(executor.submit(mirror.measure) for mirror in mirrors)
         selected = _select_mirror(
-            official.result(), mirrors, tuple(future.result() for future in futures),
+            official.result(),
+            mirrors,
+            tuple(future.result() for future in futures),
             preferred=preferred,
         )
     return f"{scheme}{selected[0].value}/{path}" if selected else reference
