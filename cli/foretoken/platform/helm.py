@@ -148,7 +148,9 @@ class Helm(HelmClient):
                 explicit = _value_at(overrides, path)
             except KeyError:
                 explicit = {}
-            if explicit is None or any(key in explicit for key in ("registry", "repository")):
+            if explicit is None or any(
+                key in explicit for key in ("registry", "repository")
+            ):
                 continue
             image = _merge_values(_value_at(values, path), explicit)
             repository = image["repository"]
@@ -303,9 +305,13 @@ class Helm(HelmClient):
                 self._set_chart_defaults(
                     prepared, {"image.repository": "docker.io/fluent/fluent-bit"}
                 )
-                for document in self._render_chart(args, input_text=yaml.safe_dump(values)):
+                for document in self._render_chart(
+                    args, input_text=yaml.safe_dump(values)
+                ):
                     if document["kind"] == "DaemonSet":
-                        image = document["spec"]["template"]["spec"]["containers"][0]["image"]
+                        image = document["spec"]["template"]["spec"]["containers"][0][
+                            "image"
+                        ]
                         selected = select_platform_image_sources(
                             {"image": image},
                             self._config.image_registry,
@@ -475,7 +481,8 @@ class Helm(HelmClient):
         with self._prepared_chart(chart.source, chart.version) as prepared:
             args[3] = str(prepared)
             self._set_chart_image_sources(
-                prepared, ("scheduler.image", "client.image", "client.initContainer.image"),
+                prepared,
+                ("scheduler.image", "client.image", "client.initContainer.image"),
                 release=release,
                 overrides=values,
             )
