@@ -44,7 +44,7 @@ fn candidate_prefix(
 
 Each match provides `placement` and the reusable prefix length `matched_tokens`, including any local prefix before a restore. Compare these lengths rather than adding them across tiers. An empty `Matches` means no matching prefix was found; `Unavailable` means the result is unknown. Keep unavailable candidates eligible for ordinary routing.
 
-The built-in [KvLeastLoadedScorer](../router/src/algorithm/scorer/kv_least_loaded_scorer.rs) prefers longer matches, then faster cache tiers and lower load. See [PipelineRouter](../router/src/selection/pipeline_router.rs) for batched query preparation.
+The built-in [KvLeastLoadedScorer](../router/src/algorithm/scorer/kv_least_loaded_scorer.rs) combines GPU-local and restored prefix affinity with request load. See [PipelineRouter](../router/src/selection/pipeline_router.rs) for batched query preparation.
 
 ## Observe
 

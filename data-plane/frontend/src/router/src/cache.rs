@@ -5,10 +5,11 @@
 
 use crate::{RouteCandidate, RouterRequest};
 use foretoken_kv_indexer::{KvPrefixIndexer, KvPrefixQueryResult};
-use foretoken_model_protocol::{KvCacheLocality, ModelServerRole};
+use foretoken_model_protocol::{KvCacheLocality, KvStorageTier, ModelServerRole};
 
 pub(crate) struct CacheMatch {
     pub(crate) matched_tokens: usize,
+    pub(crate) device_tokens: usize,
     pub(crate) total_tokens: usize,
 }
 
@@ -33,6 +34,7 @@ pub(crate) fn cache_match(
     };
     let mut info = CacheMatch {
         matched_tokens: 0,
+        device_tokens: 0,
         total_tokens: request.token_count(),
     };
     for matched in matches {
@@ -41,6 +43,11 @@ pub(crate) fn cache_match(
         }
         let count = matched.matched_tokens.min(info.total_tokens);
         info.matched_tokens = info.matched_tokens.max(count);
+        if matched.placement.tier == KvStorageTier::Device
+            && matched.placement.locality == KvCacheLocality::Local
+        {
+            info.device_tokens = info.device_tokens.max(count);
+        }
     }
     Some(info)
 }

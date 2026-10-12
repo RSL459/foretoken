@@ -44,7 +44,7 @@ fn candidate_prefix(
 
 每项匹配包含缓存位置 `placement` 和可复用前缀长度 `matched_tokens`；需要恢复缓存时，该长度已包含前面的本地命中，应比较各层结果而不是相加。空的 `Matches` 表示未命中，`Unavailable` 表示无法判断；无法判断的候选仍可参与常规路由。
 
-内置的 [KvLeastLoadedScorer](../router/src/algorithm/scorer/kv_least_loaded_scorer.rs) 优先比较匹配长度，再比较缓存层级和负载。批量准备查询的调用见 [PipelineRouter](../router/src/selection/pipeline_router.rs)。
+内置的 [KvLeastLoadedScorer](../router/src/algorithm/scorer/kv_least_loaded_scorer.rs) 综合 GPU 本地前缀、可恢复前缀与请求负载评分。批量准备查询的调用见 [PipelineRouter](../router/src/selection/pipeline_router.rs)。
 
 ## 查看状态
 

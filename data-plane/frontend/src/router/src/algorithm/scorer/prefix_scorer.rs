@@ -76,7 +76,6 @@ impl RouteScorer for PrefixScorer {
                 RouteScore {
                     preference: self.match_length_weight * length
                         + (1.0 - self.match_length_weight) * ratio,
-                    ..RouteScore::default()
                 }
             })
             .collect()

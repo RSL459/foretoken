@@ -43,16 +43,27 @@ foretoken deploy examples/quickstart --timeout 20m
 | 按请求体中的 `session_id`，优先将同一会话的请求发往同一模型副本 | `session_affinity` |
 | 所有目标得分相同 | `uniform` |
 
-评分算法的选项放在 `scorer.parameters` 下。例如，提高匹配前缀长度的权重：
+评分算法的选项放在 `scorer.parameters` 下。例如，让默认策略更偏向缓存复用：
 
 ```yaml
 spec:
   routerPipeline:
     scorer:
-      algorithm: prefix
+      algorithm: kv_least_loaded
       parameters:
-        matchLengthWeight: 0.5
+        cacheWeight: 0.7
 ```
+
+`kv_least_loaded` 综合缓存复用与各 DP rank 的请求压力评分。默认给 GPU 本地前缀完整的缓存权重，超出本地前缀、需要从 CPU、文件或共享存储恢复的部分按一半计入。因此，共享缓存命中相同时，本地缓存更多的目标仍有优势；负载差异也能改变排名。
+
+两个权重的取值范围均为 0 到 1：
+
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `cacheWeight` | `0.5` | 权衡缓存与负载；设为 `0` 时只按负载评分，也不为该算法发起缓存查询。 |
+| `restoreWeight` | `0.5` | 恢复部分相对于 GPU 本地复用的权重；`0` 只计本地复用，`1` 对两者同等计分。 |
+
+编码和解码阶段只按负载评分。这些权重表达路由偏好，不是缓存传输耗时的估计。
 
 无法取得某个目标的前缀匹配结果时，该目标仍可参与路由，但不获得缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 

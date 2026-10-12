@@ -113,7 +113,6 @@ impl RouteScorer for TwoTierScorer {
             .map(|(row, _)| match selected {
                 Some(selected) => RouteScore {
                     preference: if row == selected { 1.0 } else { 0.0 },
-                    ..RouteScore::default()
                 },
                 None => RouteScore::default(),
             })

@@ -166,7 +166,6 @@ impl RouteScorer for NoHitLruScorer {
             return vec![
                 RouteScore {
                     preference: 0.5,
-                    ..RouteScore::default()
                 };
                 candidates.len()
             ]
@@ -215,7 +214,6 @@ impl RouteScorer for NoHitLruScorer {
                 } else {
                     (1.0 - rank as f64 / (keys.len() - 1) as f64).max(0.0)
                 },
-                ..RouteScore::default()
             }
         });
         let scores = candidates
@@ -228,7 +226,6 @@ impl RouteScorer for NoHitLruScorer {
                 } else {
                     RouteScore {
                         preference: 0.5,
-                        ..RouteScore::default()
                     }
                 }
             })

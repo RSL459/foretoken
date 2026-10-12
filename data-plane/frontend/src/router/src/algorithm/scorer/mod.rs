@@ -37,7 +37,7 @@ pub type RouteSelectionUpdate = Box<dyn FnOnce(&RouteCandidate) + Send>;
 /// Scores and an optional state update for one selection attempt.
 /// Router runs the update only after validating the picker result; failed attempts drop it.
 pub struct ScoringOutcome {
-    /// One numeric or locality score for each candidate supplied to the scorer.
+    /// One numeric preference for each candidate supplied to the scorer.
     pub scores: Vec<RouteScore>,
     /// Captures scoring-time facts needed when the chosen target is committed before dispatch.
     /// Runs under Router's selection lock and must not re-enter routing.
@@ -75,7 +75,6 @@ pub(super) fn inverse_normalized_scores(
                     (maximum - count) as f64 / (maximum - minimum) as f64
                 }
             },
-            ..RouteScore::default()
         })
         .collect()
 }
@@ -155,18 +154,20 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     }
 }
 
+/// Returns the exact rank's observed scheduler request count, preserving missing telemetry.
+fn scheduler_requests(candidate: &RouteCandidate) -> Option<u64> {
+    let stats = candidate.data_parallel_stats()?;
+    Some(
+        stats
+            .scheduler_running_requests?
+            .saturating_add(stats.scheduler_waiting_requests?),
+    )
+}
+
 /// Returns this DP rank's scheduler load; unavailable observations rank after measured loads.
 /// Group-level admission counts cannot be assigned to an individual rank.
 pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
-    candidate
-        .data_parallel_stats()
-        .and_then(|stats| {
-            Some(
-                stats
-                    .scheduler_running_requests?
-                    .saturating_add(stats.scheduler_waiting_requests?),
-            )
-        })
+    scheduler_requests(candidate)
         .and_then(|requests| i64::try_from(requests).ok())
         .unwrap_or(i64::MAX)
 }
