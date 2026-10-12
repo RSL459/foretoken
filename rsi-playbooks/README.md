@@ -17,6 +17,8 @@ These playbooks provide task guidance, experimental methods, and reusable knowle
 
 ## Steps
 
+An iteration covers one candidate change, from deployment through the required performance comparisons and result analysis to a decision to retain or revert it. Measurements of that candidate across workloads and concurrency levels belong to the same iteration.
+
 1. Define the behavior to improve and how to judge success, such as reducing time to first token under a given workload while preserving answer quality.
 2. Set the scope: focus on routing, the inference engine, or another specific area, or leave it open to changes across the whole system.
 3. Read the code and relevant research and practice. Use existing measurements to understand the system's current behavior, taking additional measurements as needed.
