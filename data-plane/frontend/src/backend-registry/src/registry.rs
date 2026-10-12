@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, RouteStage};
-use foretoken_model_protocol::{RuntimeMetadataResponse, TelemetryResponse};
+use foretoken_model_protocol::{PreparedTokenizer, RuntimeMetadataResponse, TelemetryResponse};
 
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{
@@ -71,7 +71,11 @@ impl BackendRegistry {
     ///
     /// Startup retains the registry for routing, readiness refresh, and facade resolution; the input snapshot is consumed.
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
-        let configured_models = snapshot.admission_target_sets()?.into_keys().collect();
+        let configured_models = snapshot
+            .models
+            .iter()
+            .map(|model| model.model.clone())
+            .collect();
         let (model_routes, components) = crate::snapshot_projection::project_registry(snapshot)?;
         let health = components
             .keys()
@@ -134,6 +138,20 @@ impl BackendRegistry {
             .min()
     }
 
+    /// Returns the most restrictive logprob cap across healthy model components.
+    /// Runtime preparation supplies the upstream default for engines that do not report a cap.
+    pub fn effective_max_logprobs(&self, model: &str, default: i32) -> Option<i32> {
+        self.model_routes
+            .routes()
+            .iter()
+            .filter(|route| {
+                route.model == model && self.is_route_target_healthy(&route.route_target_id)
+            })
+            .filter_map(|route| self.metadata(&route.route_target_id))
+            .map(|metadata| metadata.max_logprobs.unwrap_or(default))
+            .min_by_key(|limit| if *limit == -1 { i32::MAX } else { *limit })
+    }
+
     /// Resolves runtime preparation's shared dtype, retaining text-only operation when it is unknown.
     /// Conflicting reported values are an invalid model configuration, not missing metadata.
     pub fn effective_model_dtype(&self, model: &str) -> Result<Option<ModelDtype>, String> {
@@ -162,18 +180,66 @@ impl BackendRegistry {
         Ok(effective.filter(|_| !unknown))
     }
 
-    /// Reports whether one logical model currently has an executable backend path.
-    pub fn is_model_ready(&self, model: &str) -> bool {
-        self.healthy_models().iter().any(|healthy| healthy == model)
+    /// Returns the exact tokenizer selected by healthy engines for frontend preparation.
+    /// A candidate generation cannot combine different resolved tokenizer file revisions.
+    pub fn prepared_tokenizer(&self, model: &str) -> Result<Option<PreparedTokenizer>, String> {
+        let mut selected: Option<PreparedTokenizer> = None;
+        let mut unprepared = false;
+        for route in self.model_routes.routes().iter().filter(|route| {
+            route.model == model && self.is_route_target_healthy(&route.route_target_id)
+        }) {
+            let tokenizer = self
+                .metadata(&route.route_target_id)
+                .and_then(|metadata| metadata.prepared_tokenizer);
+            match tokenizer {
+                Some(tokenizer) => {
+                    if let Some(previous) = &selected {
+                        if previous.model != tokenizer.model
+                            || previous.revision != tokenizer.revision
+                            || previous.files != tokenizer.files
+                        {
+                            return Err(format!(
+                                "conflicting prepared tokenizer revisions for model {model}"
+                            ));
+                        }
+                    } else {
+                        selected = Some(tokenizer);
+                    }
+                }
+                None => unprepared = true,
+            }
+        }
+        if unprepared && selected.is_some() {
+            return Err(format!(
+                "incomplete prepared tokenizer metadata for model {model}"
+            ));
+        }
+        Ok(selected)
+    }
+
+    /// Reports whether a model has a healthy complete execution path in the allowed Pools.
+    /// Runtime readiness uses this before dispatch, including scale-from-zero waiting.
+    pub fn is_model_ready(&self, model: &str, allowed_pools: &[String]) -> bool {
+        self.healthy_models_in_pools(allowed_pools)
+            .iter()
+            .any(|healthy| healthy == model)
     }
 
     /// Lists models with a currently executable aggregate route or complete split pipeline.
     pub fn healthy_models(&self) -> Vec<String> {
+        self.healthy_models_in_pools(&[])
+    }
+
+    /// Resolves complete healthy execution paths within the allowed logical Pool range.
+    fn healthy_models_in_pools(&self, allowed_pools: &[String]) -> Vec<String> {
         // Aggregate routes are independently serviceable. A split scope is healthy only with
         // P+D, or E+P+D when that scope includes an encoder.
         let mut models = BTreeSet::new();
         let mut pipeline_scopes = BTreeMap::<(String, String), (bool, bool, bool)>::new();
         for route in self.model_routes.routes() {
+            if !allowed_pools.is_empty() && !allowed_pools.contains(&route.target.name) {
+                continue;
+            }
             if route.role == ModelServerRole::Aggregate
                 && self.is_route_target_healthy(&route.route_target_id)
             {
@@ -288,6 +354,16 @@ impl LlmFacadeResolver for BackendRegistry {
     }
 }
 impl RouteInventory for BackendRegistry {
+    fn http_endpoint(&self, decision: &RouteDecision) -> Option<String> {
+        if decision.role != foretoken_model_protocol::ModelServerRole::Aggregate {
+            return None;
+        }
+        match self.components.get(&decision.route_target_id)? {
+            Component::Aggregate { endpoint, .. } => Some(endpoint.clone()),
+            _ => None,
+        }
+    }
+
     fn model_routes(&self) -> &ModelRouteTable {
         &self.model_routes
     }
@@ -333,7 +409,7 @@ impl RouteTargetStatsReader for BackendRegistry {
 }
 
 fn requires_runtime_observation(capability: &str) -> bool {
-    matches!(capability, "lora")
+    matches!(capability, "lora" | "video")
 }
 
 async fn metadata(client: &reqwest::Client, endpoint: &str) -> Option<RuntimeMetadataResponse> {

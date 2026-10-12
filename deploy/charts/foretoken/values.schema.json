@@ -6,7 +6,9 @@
     "image",
     "imagePullSecrets",
     "controller",
+    "admissionStore",
     "workload",
+    "modelDistribution",
     "loadBalancer",
     "rdma",
     "frontend",
@@ -14,6 +16,64 @@
     "runtime"
   ],
   "properties": {
+    "admissionStore": {
+      "type": "object",
+      "required": ["image", "storageClass", "storageSize", "externalURL", "externalURLSecret"],
+      "properties": {
+        "image": {"type": "string", "minLength": 1},
+        "storageClass": {"type": "string"},
+        "storageSize": {"type": "string", "minLength": 1},
+        "externalURL": {
+          "type": "string",
+          "description": "Credential-free endpoint; authenticated URLs use externalURLSecret."
+        },
+        "externalURLSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string"},
+            "key": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "development": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "build": {
+          "type": "object",
+          "properties": {
+            "image": {"type": "string", "minLength": 1},
+            "storageClassName": {"type": "string"},
+            "storageSize": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "applicationFiles": {
+      "type": "object",
+      "required": ["serverImage", "clientImage", "storageClassName", "storageSize"],
+      "properties": {
+        "releaseURL": {"type": "string"},
+        "revision": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._+-]*$",
+          "description": "Application version used as one URL-safe directory name."
+        },
+        "credentialsSecret": {"type": "string"},
+        "serverImage": {"type": "string", "minLength": 1},
+        "clientImage": {"type": "string", "minLength": 1},
+        "storageClassName": {"type": "string"},
+        "storageSize": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "profiling": {
       "type": "object",
       "additionalProperties": false,
@@ -102,6 +162,7 @@
         "autoscalingTelemetry"
       ],
       "properties": {
+        "applicationURL": {"type": "string"},
         "replicas": {
           "type": "integer",
           "minimum": 1
@@ -176,6 +237,41 @@
       },
       "additionalProperties": false
     },
+    "modelDistribution": {
+      "type": "object",
+      "required": ["dragonfly", "modelexpress"],
+      "additionalProperties": false,
+      "properties": {
+        "modelexpress": {
+          "type": "object",
+          "required": ["enabled"],
+          "additionalProperties": false,
+          "properties": {"enabled": {"type": "boolean"}}
+        },
+        "dragonfly": {
+          "type": "object",
+          "required": ["enabled", "existingRelease", "socketPath"],
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "existingRelease": {
+              "type": "object",
+              "required": ["name", "namespace"],
+              "additionalProperties": false,
+              "properties": {
+                "name": {"type": "string"},
+                "namespace": {"type": "string"}
+              }
+            },
+            "socketPath": {"type": "string"}
+          },
+          "allOf": [{
+            "if": {"properties": {"enabled": {"const": true}}},
+            "then": {"properties": {"socketPath": {"minLength": 1, "pattern": "^/"}}}
+          }]
+        }
+      }
+    },
     "loadBalancer": {
       "type": "object",
       "required": [
@@ -216,6 +312,7 @@
         "image": {
           "type": "string"
         },
+        "applicationURL": {"type": "string"},
         "port": {
           "type": "integer",
           "minimum": 1,
@@ -279,6 +376,30 @@
         "prometheus": {
           "type": "string"
         },
+        "grafana": {
+          "type": "object",
+          "properties": {
+            "anonymousAccess": {
+              "type": "boolean",
+              "description": "Allow read-only access without login to CLI-managed Grafana."
+            }
+          },
+          "additionalProperties": false
+        },
+        "logs": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "endpoint": {"type": "string", "description": "Existing Loki HTTP(S) base URL; empty installs managed storage."},
+            "retention": {"type": "string", "description": "Managed Loki retention duration."},
+            "storageClass": {"type": "string"},
+            "initialSize": {"type": "string", "description": "Initial managed log PVC request; defaults to 5Gi."},
+            "maxSize": {"type": "string", "description": "Enable automatic log PVC expansion up to this capacity; requires an expandable StorageClass."},
+            "managedStatefulSet": {"type": "string", "description": "Managed Loki StatefulSet resolved by foretoken install."},
+            "datasourceURL": {"type": "string", "description": "Loki query URL resolved by foretoken install."}
+          },
+          "additionalProperties": false
+        },
         "notifications": {
           "type": "object",
           "properties": {
@@ -323,6 +444,14 @@
         "vllm"
       ],
       "properties": {
+        "vllmOmni": {
+          "type": "object",
+          "required": ["image"],
+          "properties": {
+            "image": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
         "vllm": {
           "type": "object",
           "required": [
@@ -335,6 +464,12 @@
           "properties": {
             "image": {
               "type": "string"
+            },
+            "applicationURL": {"type": "string"},
+            "environmentImages": {
+              "type": "object",
+              "properties": {"nvidia": {"type": "string"}, "metax": {"type": "string"}},
+              "additionalProperties": false
             },
             "nsightImage": {
               "type": "string"

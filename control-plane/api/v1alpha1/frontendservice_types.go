@@ -18,15 +18,24 @@ type FrontendTimeouts struct {
 
 	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
 	StreamIdle Duration `json:"streamIdle"`
+
+	// Drain bounds process shutdown independently of live request budgets.
+	// +optional
+	// +kubebuilder:default="10m"
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	Drain Duration `json:"drain,omitempty"`
 }
 
 // RouterAlgorithm names one compiled routing algorithm.
 type RouterAlgorithm string
 
 const (
+	// DefaultRouterFilter is applied by the API when a Filter is omitted.
 	DefaultRouterFilter RouterAlgorithm = "allow_all"
+	// DefaultRouterScorer is applied by the API when a Scorer is omitted.
 	DefaultRouterScorer RouterAlgorithm = "kv_least_loaded"
-	DefaultRouterPicker RouterAlgorithm = "round_robin"
+	// DefaultRouterPicker is applied by the API when a Picker is omitted.
+	DefaultRouterPicker RouterAlgorithm = "gamble_sampling"
 )
 
 // RouterStage selects one compiled algorithm and its algorithm-owned parameters.
@@ -48,12 +57,26 @@ type RouterPipeline struct {
 	// +kubebuilder:default={algorithm:kv_least_loaded,parameters:{}}
 	Scorer RouterStage `json:"scorer"`
 
-	// +kubebuilder:default={algorithm:round_robin,parameters:{}}
+	// +kubebuilder:default={algorithm:gamble_sampling,parameters:{}}
 	Picker RouterStage `json:"picker"`
+}
+
+// VideoTaskStorage configures the dedicated PVC shared by the frontend and video workers.
+type VideoTaskStorage struct {
+	// +kubebuilder:validation:MinLength=1
+	ClaimName string `json:"claimName"`
+	// RetentionSeconds is the lifetime of a completed task and its stored files.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=9223372036
+	RetentionSeconds int64 `json:"retentionSeconds"`
 }
 
 // FrontendServiceSpec defines the desired state of a frontend service.
 type FrontendServiceSpec struct {
+	// DeploymentRevision requests current platform applications on an explicit deployment.
+	// +optional
+	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
@@ -62,12 +85,29 @@ type FrontendServiceSpec struct {
 	Resources FrontendResources `json:"resources"`
 	Timeouts  FrontendTimeouts  `json:"timeouts"`
 
+	// LogLevel controls frontend diagnostics without replacing the process.
+	// +optional
+	// +kubebuilder:default=info
+	// +kubebuilder:validation:Enum=trace;debug;info;warn;error;off
+	LogLevel string `json:"logLevel,omitempty"`
+
 	// Observability selects frontend-scoped alerts, including shared HTTP failures.
 	// +optional
 	Observability *FrontendObservability `json:"observability,omitempty"`
 
+	// Admission supplies per-model defaults shared across frontend replicas.
+	// A ModelService admission block replaces these defaults; omission is unrestricted.
 	// +optional
-	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:round_robin}}
+	Admission *AdmissionConfig `json:"admission,omitempty"`
+
+	// RoleRules supplies per-model caller rules unless the ModelService replaces the list.
+	// +optional
+	// +listType=map
+	// +listMapKey=role
+	RoleRules *[]RoleRule `json:"roleRules,omitempty"`
+
+	// +optional
+	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:gamble_sampling}}
 	RouterPipeline RouterPipeline `json:"routerPipeline,omitempty"`
 
 	// Hostname is required when the platform exposes frontends through a Gateway.
@@ -75,10 +115,22 @@ type FrontendServiceSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$"
 	Hostname string `json:"hostname,omitempty"`
+
+	// VideoTasks enables asynchronous video task submission and result access.
+	// +optional
+	VideoTasks *VideoTaskStorage `json:"videoTasks,omitempty"`
 }
 
 // FrontendServiceStatus defines the observed state of a frontend service.
 type FrontendServiceStatus struct {
+	// ServingConfigVersion is the configuration protocol of the selected frontend application.
+	// +optional
+	ServingConfigVersion uint32 `json:"servingConfigVersion,omitempty"`
+
+	// Application retains the selected frontend environment and files across workload recovery.
+	// +optional
+	Application *ApplicationSelection `json:"application,omitempty"`
+
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -87,6 +139,11 @@ type FrontendServiceStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ServingSnapshotVersion uint64 `json:"servingSnapshotVersion,omitempty"`
+
+	// AppliedServingSnapshotVersion is the last version confirmed by every observed workload replica.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	AppliedServingSnapshotVersion uint64 `json:"appliedServingSnapshotVersion,omitempty"`
 
 	// +optional
 	// +listType=map

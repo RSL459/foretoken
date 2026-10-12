@@ -1,39 +1,73 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# Router
+# 请求路由
 
-Router 为每个推理请求选择兼容且健康的模型目标。
+[English](README.md) | 简体中文
 
-在 `FrontendService.spec.routerPipeline` 中配置路由策略：
+请求路由为请求选择模型、输入长度和能力要求都匹配的健康副本，也确保预填充/解码分离、编码/预填充/解码分离服务的各阶段相互兼容。
+
+## 选择路由策略
+
+优先选择等待请求较少的副本时，在 `FrontendService` YAML 中设置评分算法。以快速开始示例为例，修改 `examples/quickstart/frontend.yaml`：
 
 ```yaml
 spec:
   routerPipeline:
-    filter:
-      algorithm: allow_all
     scorer:
-      algorithm: kv_least_loaded
-    picker:
-      algorithm: round_robin
+      algorithm: queue_depth
 ```
 
-| 阶段 | 当前可选值 | 默认值 | 作用 |
-| --- | --- | --- | --- |
-| Filter | `allow_all` | `allow_all` | 保留全部兼容且健康的目标 |
-| Scorer | `kv_least_loaded`、`least_loaded`、`uniform`、`queue_depth`、`running_request`、`kv_cache_utilization`、`active_request`、`token_load`、`prefix` | `kv_least_loaded` | 为保留目标评分 |
-| Picker | `max`、`round_robin` | `round_robin` | 从最高分目标中选择一个 |
+重新部署修改后的配置：
 
-`kv_least_loaded` 优先选择可复用前缀更长的目标；长度相同时，依次比较已确认的设备、本机 CPU、本机磁盘和外部 Store，再比较负载。无法提供完整缓存身份的层级不会获得位置偏好。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
 
-将 `scorer` 设为 `queue_depth`，可优先选择调度器中等待请求较少的目标；设为 `running_request`，可优先选择运行请求较少的目标；设为 `kv_cache_utilization`，可优先选择实测 KV cache 使用率较低的目标。
+默认使用 `kv_least_loaded` 兼顾缓存复用和负载均衡，再由 `gamble_sampling` 选择目标。
 
-将 `scorer.algorithm` 设为 `active_request`，即可优先选择当前 frontend 跟踪的活跃请求较少的目标；如需调整默认行为，可配置 `scorer.parameters.idleThreshold` 和 `scorer.parameters.maxBusyScore`。
+根据工作负载选择评分算法：
 
-将 `scorer.algorithm` 设为 `token_load`，即可优先选择 frontend 本地在途 token 负载较低、且当前请求未缓存 prompt token 较少的目标；可通过 `scorer.parameters.queueThresholdTokens` 调整饱和阈值。
+| 目标 | 评分算法 |
+| --- | --- |
+| 兼顾输入缓存复用和负载均衡 | `kv_least_loaded`（默认） |
+| 优先选择低负载目标 | `least_loaded` |
+| 优先选择等待或运行请求较少的目标 | 分别使用 `queue_depth` 或 `running_request` |
+| 优先选择实测 KV 缓存占用较低的目标 | `kv_cache_utilization` |
+| 均衡当前前端副本上的活跃请求 | `active_request` |
+| 优先选择模型服务等待队列较短的目标 | `load_aware` |
+| 均衡当前前端副本上的未缓存输入 token 负载 | `token_load` |
+| 优先复用输入前缀缓存 | `prefix` |
+| 将冷请求分散到较久未选中的目标 | `no_hit_lru` |
+| 在负载均衡与缓存复用之间折中 | `two_tier`，必须搭配 `picker.algorithm: max` |
+| 按请求体中的 `session_id`，优先将同一会话的请求发往同一模型副本 | `session_affinity` |
+| 所有目标得分相同 | `uniform` |
 
-将 `scorer.algorithm` 设为 `prefix`，即可优先选择可复用 prompt 前缀更长的目标；可配置 `scorer.parameters.matchLengthWeight` 和 `scorer.parameters.matchLengthScaleTokens` 增加归一化的匹配长度偏好。
+评分算法的选项放在 `scorer.parameters` 下。例如，提高匹配前缀长度的权重：
 
-只有健康、支持所请求模型、输入限制和请求能力的目标才会参与路由。对于预填充/解码分离或编码/预填充/解码分离的服务，路由会保持选中阶段之间的兼容关系。
+```yaml
+spec:
+  routerPipeline:
+    scorer:
+      algorithm: prefix
+      parameters:
+        matchLengthWeight: 0.5
+```
 
-KV 索引不可用时，目标仍可参与路由，但不获得 KV 前缀匹配优先权。缓存位置行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+KV 索引不可用时，目标仍可参与路由，只是不享有缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+
+## 根据得分选择目标
+
+通过 `routerPipeline.picker.algorithm` 选择：
+
+| 选择算法 | 行为 |
+| --- | --- |
+| `gamble_sampling`（默认） | 排名越高，选中概率越大；同分概率相同，低排名目标仍有机会被选中。 |
+| `max` | 选择最高分目标。 |
+| `power_of_two_choices` | 随机抽取两个不同目标，选择分数较高者，同分时随机选择。 |
+
+## 查看路由表现
+
+向服务发送流量时，在 [Grafana](../../../../observability/README_zh.md) 的路由选择区域比较选择份额、结果、可选目标和选择耗时。
+
+请求限额与排队单独通过前端的[准入规则](../../README_zh.md#配置准入规则)配置。

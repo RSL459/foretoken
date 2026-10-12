@@ -3,7 +3,7 @@
 
 //! Frontend-owned routing reservations and request-specific load projections.
 
-use crate::{RouteCandidate, RouteTargetId, RouterRequest};
+use crate::{RouteCandidate, RouteTargetId, RouterRequest, RoutingLoadSnapshot};
 use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 use std::collections::BTreeMap;
@@ -14,17 +14,17 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Default)]
 pub struct RoutingLoadState(pub(crate) Arc<Mutex<RoutingReservations>>);
 
-pub(crate) type ReservationKey = (RouteTargetId, u32);
-
-/// Snapshot of this frontend's reservations for one route target and data-parallel rank.
-/// Engine telemetry is deliberately not added to these values.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct RoutingLoadSnapshot {
-    /// Requests reserved by a selected stage or response stream.
-    pub requests: i64,
-    /// Uncached prompt tokens reserved by this frontend.
-    pub tokens: i64,
+impl RoutingLoadState {
+    /// Reads this frontend's current reservations for one target and rank without modifying them.
+    pub fn snapshot(&self, target: &RouteTargetId, rank: u32) -> RoutingLoadSnapshot {
+        self.0
+            .lock()
+            .expect("routing load lock poisoned")
+            .snapshot(&(target.clone(), rank))
+    }
 }
+
+pub(crate) type ReservationKey = (RouteTargetId, u32);
 
 #[derive(Default)]
 pub(crate) struct RoutingReservations {
@@ -56,17 +56,17 @@ impl RoutingReservations {
             candidate.route_target_id.clone(),
             candidate.data_parallel_rank,
         );
-        // Reserve uncached prompt tokens for each generation stage until its first response.
+        // Reserve estimated prompt-token computation until the stage's first response.
         // Encoder has no token-generation workload.
         let uncached_tokens = if candidate.role == ModelServerRole::Encoder {
             0
         } else {
             uncached_tokens(request, candidate, kv)
         };
-        self.requests.entry(key).or_default().insert(
-            request.generate_request.request_id.as_str().to_owned(),
-            uncached_tokens,
-        );
+        self.requests
+            .entry(key)
+            .or_default()
+            .insert(request.request_id().to_owned(), uncached_tokens);
     }
 
     /// Releases prompt-token load when the first response reaches the frontend.
@@ -91,7 +91,7 @@ impl RoutingReservations {
     }
 }
 
-/// Returns uncached indexed tokens and the partial prompt tail for routing load accounting.
+/// Estimates prompt-token computation for routing load, including the final token's cache block.
 pub(crate) fn uncached_tokens(
     request: &RouterRequest,
     candidate: &RouteCandidate,
@@ -100,7 +100,11 @@ pub(crate) fn uncached_tokens(
     let Some(info) = crate::cache::cache_match(request, candidate, kv) else {
         return request.token_count();
     };
-    let indexed = info.total_blocks * info.block_size;
-    indexed.saturating_sub(info.matched_blocks * info.block_size)
-        + request.token_count().saturating_sub(indexed)
+    let tokens = request.token_count();
+    // Causal generation computes the final prompt token for logits; complete-block reuse
+    // cannot include its block even when the entire prefix is resident.
+    let reusable_blocks = info
+        .matched_blocks
+        .min(tokens.saturating_sub(1) / info.block_size);
+    tokens - reusable_blocks * info.block_size
 }

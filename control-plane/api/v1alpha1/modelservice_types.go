@@ -17,6 +17,15 @@ const (
 	MaxInternalGenerateRequestBodyLimitBytes     int64 = 256 * 1024 * 1024
 )
 
+// InstanceAdmissionConfig bounds unfinished generation units accepted by each model instance.
+type InstanceAdmissionConfig struct {
+	// MaxConcurrentRequests includes engine waiting, running, and unfinished submissions.
+	// +kubebuilder:validation:Format=int64
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	MaxConcurrentRequests uint32 `json:"maxConcurrentRequests"`
+}
+
 // ModelTimeouts defines ModelService lifecycle budgets.
 type ModelTimeouts struct {
 	Startup Duration `json:"startup"`
@@ -117,9 +126,23 @@ type ModelPoolTemplate struct {
 
 	Resources ModelResources `json:"resources"`
 
+	// NodeSelector constrains this Pool's member Pods to matching Kubernetes nodes.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// EngineArgs replaces service-level native options for this Pool when supplied.
 	// +optional
 	EngineArgs *EngineArguments `json:"engineArgs,omitempty"`
+
+	// Env replaces the service environment when supplied; an empty map clears inheritance.
+	// +optional
+	// +nullable
+	// +mapType=atomic
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Env *ModelEnvironment `json:"env,omitempty"`
 
 	// MaxInputTokens is the prompt admission limit for requests routed to this Pool.
 	// +optional
@@ -194,6 +217,11 @@ type ProfilingConfig struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.role) || pool.role == 'aggregate') || (self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'prefill' || pool.role == 'decode'))) || (has(self.ecProfile) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="modelPools must be aggregate-only, complete P/D, or complete E/P/D without aggregate pools"
 // +kubebuilder:validation:XValidation:rule="!has(self.ecProfile) || (has(self.modelPools) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="ecProfile requires complete E/P/D modelPools"
 type ModelServiceSpec struct {
+	// DeploymentRevision requests current platform applications on an explicit deployment.
+	// It carries no executable, image or external URL supplied by model intent.
+	// +optional
+	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
@@ -209,8 +237,17 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Tokenizer string `json:"tokenizer,omitempty"`
 
-	// +kubebuilder:validation:Enum=vllm
+	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
+
+	// PrefixCacheIsolation selects caller-bound caching when true and unsalted sharing when false.
+	// Omission preserves the request's cache_salt. The setting applies to every Pool and frontend.
+	// +optional
+	PrefixCacheIsolation *bool `json:"prefixCacheIsolation,omitempty"`
+
+	// InstanceAdmission limits accepted unfinished work in each instance; omission is unrestricted.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
 
 	// InternalGenerateRequestBodyLimitBytes is the maximum body size accepted by
 	// a group-local generate endpoint. It defaults to 64 MiB.
@@ -231,6 +268,12 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Nodes *int32 `json:"nodes,omitempty"`
 
+	// NodeSelector constrains the default Pool's member Pods to matching Kubernetes nodes.
+	// A Pool-level selector replaces this service-level selector when specified.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// +optional
 	Resources *ModelResources `json:"resources,omitempty"`
 
@@ -244,6 +287,16 @@ type ModelServiceSpec struct {
 	// Observability selects model-scoped alerts independently of serving and autoscaling.
 	// +optional
 	Observability *ModelObservability `json:"observability,omitempty"`
+
+	// Admission replaces the frontend's entire admission block; omission uses its defaults.
+	// +optional
+	Admission *AdmissionConfig `json:"admission,omitempty"`
+
+	// RoleRules replaces the frontend's entire list; an empty list disables role rules.
+	// +optional
+	// +listType=map
+	// +listMapKey=role
+	RoleRules *[]RoleRule `json:"roleRules,omitempty"`
 
 	// Autoscaling is evaluated by the ModelService controller. Algorithms remain
 	// side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
@@ -278,6 +331,15 @@ type ModelServiceSpec struct {
 	// EngineArgs uses the selected backend's native option names without leading --.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
+
+	// Env configures model runtime containers and their child processes.
+	// +optional
+	// +nullable
+	// +mapType=atomic
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Env ModelEnvironment `json:"env,omitempty"`
 }
 
 // AutoscalingStageStatus describes one named pipeline stage result.
@@ -371,6 +433,11 @@ type ServingPoolRevision struct {
 
 // ModelServiceStatus defines the observed state of a model service.
 type ModelServiceStatus struct {
+	// PoolApplications retains controller-selected execution settings when a Pool is recreated.
+	// The controller publishes selections before materializing their Pool and Group contracts.
+	// +optional
+	PoolApplications map[string]ApplicationSelection `json:"poolApplications,omitempty"`
+
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

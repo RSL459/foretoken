@@ -1,39 +1,73 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# Router
+# Request Routing
 
-The Router selects a compatible, healthy model target for each inference request.
+English | [简体中文](README_zh.md)
 
-Configure routing in `FrontendService.spec.routerPipeline`:
+Route requests to healthy replicas that support the model, input length, and required capabilities. Routing also keeps the stages of prefill/decode and encoder/prefill/decode services compatible.
+
+## Select a routing strategy
+
+To prefer replicas with fewer waiting requests, set the scorer in your `FrontendService` YAML. For the Quick Start, edit `examples/quickstart/frontend.yaml`:
 
 ```yaml
 spec:
   routerPipeline:
-    filter:
-      algorithm: allow_all
     scorer:
-      algorithm: kv_least_loaded
-    picker:
-      algorithm: round_robin
+      algorithm: queue_depth
 ```
 
-| Stage | Current values | Default | Effect |
-| --- | --- | --- | --- |
-| Filter | `allow_all` | `allow_all` | Retains every compatible, healthy target |
-| Scorer | `kv_least_loaded`, `least_loaded`, `uniform`, `queue_depth`, `running_request`, `kv_cache_utilization`, `active_request`, `token_load`, `prefix` | `kv_least_loaded` | Ranks retained targets |
-| Picker | `max`, `round_robin` | `round_robin` | Selects among the highest-scoring targets |
+Apply the edited configuration:
 
-`kv_least_loaded` prefers longer reusable KV prefixes. For equal lengths it orders confirmed tiers as device, local CPU, local disk, then external Store, before comparing load. Tiers without identity-complete observations receive no locality preference. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
 
-Set `scorer` to `queue_depth` to prefer fewer requests waiting in the engine scheduler, `running_request` to prefer fewer running requests, or `kv_cache_utilization` to prefer lower measured KV-cache utilization.
+The default strategy combines cache reuse and load balancing with `kv_least_loaded` and selects a target with `gamble_sampling`.
 
-Set `scorer.algorithm` to `active_request` to prefer fewer active requests tracked by this frontend. Configure `scorer.parameters.idleThreshold` and `scorer.parameters.maxBusyScore` when the defaults are not suitable.
+Choose a scorer for the workload:
 
-Set `scorer.algorithm` to `token_load` to prefer candidates with lower frontend-local in-flight token load and lower incoming uncached prompt load. Configure `scorer.parameters.queueThresholdTokens` to change the saturation point.
+| Goal | Scorer |
+| --- | --- |
+| Combine prompt-cache reuse with load balancing | `kv_least_loaded` (default) |
+| Prefer lower load | `least_loaded` |
+| Prefer fewer waiting or running requests | `queue_depth` or `running_request`, respectively |
+| Prefer lower measured KV-cache occupancy | `kv_cache_utilization` |
+| Balance requests active in this frontend replica | `active_request` |
+| Prefer shorter model-server waiting queues | `load_aware` |
+| Balance uncached prompt-token load in this frontend replica | `token_load` |
+| Prefer reusable prompt prefixes | `prefix` |
+| Spread cold requests toward less recently selected targets | `no_hit_lru` |
+| Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
+| Prefer the same model replica for requests with the same `session_id` in the request body | `session_affinity` |
+| Give every target an equal score | `uniform` |
 
-Set `scorer.algorithm` to `prefix` to prefer candidates with a larger reusable prompt prefix. Configure `scorer.parameters.matchLengthWeight` and `scorer.parameters.matchLengthScaleTokens` to add a normalized match-length preference.
+Scorer-specific options go under `scorer.parameters`. For example, give matched prefix length more weight:
 
-The Router selects only healthy targets that support the requested model, input length, and capabilities. For services with separate prefill/decode or encoder/prefill/decode stages, it keeps the selected stages compatible with one another.
+```yaml
+spec:
+  routerPipeline:
+    scorer:
+      algorithm: prefix
+      parameters:
+        matchLengthWeight: 0.5
+```
 
-When the KV index is unavailable, targets remain eligible and routing continues without KV-prefix preference. See the [KV prefix index](../kv-indexer/README.md) for cache locality behavior.
+When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
+
+## Choose from the scores
+
+Set `routerPipeline.picker.algorithm` to control selection:
+
+| Picker | Selection |
+| --- | --- |
+| `gamble_sampling` (default) | Higher ranks are more likely; ties have equal probability and lower-ranked targets remain eligible. |
+| `max` | Select the highest score. |
+| `power_of_two_choices` | Sample two distinct targets and select the higher score; choose randomly on ties. |
+
+## Inspect routing behavior
+
+Use the Routing decisions panels in [Grafana](../../../../observability/README.md) to compare selection shares, outcomes, eligible targets, and selection latency while sending traffic.
+
+Request limits and queueing are configured separately through the frontend's [admission rules](../../README.md#configure-admission-rules).

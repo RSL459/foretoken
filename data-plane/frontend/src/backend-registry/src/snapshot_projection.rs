@@ -45,10 +45,6 @@ pub(crate) fn project_kv_runtime(
                     dp_rank,
                     model_revision: model_revision.to_owned(),
                     scope_id: scope_id.to_owned(),
-                    spec_kind: "full_attention".into(),
-                    sliding_window: None,
-                    group_idx: None,
-                    match_all_groups: false,
                 },
             );
             rank_sources.insert(dp_rank, event_source_id);
@@ -73,6 +69,9 @@ pub(crate) fn project_kv_runtime(
         );
     };
     for group in &snapshot.groups {
+        if group.capabilities.contains("video") {
+            continue;
+        }
         add_route(
             &group.route_target_id,
             &group.endpoint,

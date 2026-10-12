@@ -33,6 +33,8 @@ pub enum ModelServerRole {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GenerateInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservation: Option<foretoken_request_ledger::ReservationRef>,
     pub request_id: String,
     pub prompt_token_ids: Vec<u32>,
     pub sampling_params: EngineCoreSamplingParams,
@@ -50,6 +52,7 @@ pub struct GenerateInput {
 impl From<GenerateRequest> for GenerateInput {
     fn from(request: GenerateRequest) -> Self {
         Self {
+            reservation: None,
             request_id: request.request_id,
             prompt_token_ids: request.prompt_token_ids,
             sampling_params: request.sampling_params,
@@ -140,6 +143,19 @@ pub struct RuntimeEcTransferMetadata {
     pub profile: String,
     pub connector: String,
 }
+/// Concrete tokenizer snapshot selected during model acquisition.
+/// File revisions let frontends without the shared claim fetch the exact metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedTokenizer {
+    pub scope: String,
+    pub model: String,
+    pub revision: String,
+    pub directory: String,
+    pub cache_binding: Option<String>,
+    pub files: std::collections::BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeMetadataResponse {
@@ -148,7 +164,12 @@ pub struct RuntimeMetadataResponse {
     #[serde(default)]
     pub model_dtype: Option<ModelDtype>,
     pub effective_max_model_len: u32,
+    /// Engine-configured logprob limit; -1 permits the complete model vocabulary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_logprobs: Option<i32>,
     pub ec_transfer: Option<RuntimeEcTransferMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared_tokenizer: Option<PreparedTokenizer>,
     #[serde(default)]
     pub capabilities: std::collections::BTreeSet<String>,
 }
@@ -323,6 +344,15 @@ pub struct KvDelta {
     pub sequence: u64,
     pub event: KvDeltaEvent,
 }
+/// Engine-reported cache layout required to bind a locality query to its event partition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KvCacheGroup {
+    pub group_idx: u32,
+    pub spec_kind: String,
+    pub sliding_window: Option<u32>,
+}
+
 /// Bounded source-local page. Identity, producer epoch and rank are independent from route ID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -333,6 +363,9 @@ pub struct KvDeltaResponse {
     pub dp_rank: u32,
     pub through: u64,
     pub current: u64,
+    /// Absent when the producer cannot establish the engine's layout; consumers must not guess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_groups: Option<Vec<KvCacheGroup>>,
     pub deltas: Vec<KvDelta>,
 }
 

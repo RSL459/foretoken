@@ -9,12 +9,10 @@ license.workspace = true
 description = "Typed internal protocol between Foretoken frontend and model-server"
 
 [dependencies]
+foretoken-request-ledger = { path = "../request-ledger" }
 base64.workspace = true
 blake3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 vllm-engine-core-client.workspace = true
 vllm-llm.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true

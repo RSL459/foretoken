@@ -9,6 +9,7 @@ pub use facade::{
     consume_encoder, consume_prefill, encoder_stage_request, inject_ec_transfer_params,
     pd_stage_requests, reject_client_transfer_params,
 };
+use foretoken_request_ledger::ReservationRef;
 use foretoken_router::RouteDecision;
 use futures::Stream;
 pub use http::{HttpFacade, bootstrap_engine_id};
@@ -30,6 +31,8 @@ pub enum RouteStage {
 pub enum LlmFacadeError {
     #[error("request is invalid for the selected backend")]
     InvalidRequest,
+    #[error("backend explicitly rejected acceptance because it is busy")]
+    Busy,
     #[error("backend unavailable")]
     Unavailable,
     #[error("backend rejected request")]
@@ -45,94 +48,21 @@ pub enum LlmFacadeError {
 pub trait LlmFacade: Send + Sync {
     /// Starts one backend generation for the execution workflow.
     ///
-    /// Returns a live token stream owned by the caller until terminal output or drop; failures
-    /// before stream creation describe a request that never entered streaming.
-    async fn generate(&self, request: GenerateRequest) -> Result<TokenStream, LlmFacadeError>;
+    /// Returns a live token stream owned by the caller until terminal output or drop.
+    /// The adapter converts optional role priority to native scheduling; absent rules preserve
+    /// client priority. Only `Busy` proves nonacceptance; other failures must not be replayed.
+    async fn generate(
+        &self,
+        request: GenerateRequest,
+        reservation: Option<ReservationRef>,
+        role_priority: Option<i32>,
+    ) -> Result<TokenStream, LlmFacadeError>;
 
     /// Requests cleanup of backend work whose consuming workflow has ended early.
     ///
     /// Drop guards call this best-effort operation for admitted request IDs. Success only confirms
     /// that the abort request was accepted; the backend owns final request termination.
     async fn abort(&self, request_ids: &[String]) -> Result<(), LlmFacadeError>;
-}
-
-struct AbortOnDrop {
-    facade: Option<Arc<dyn LlmFacade>>,
-    request_id: Option<String>,
-    runtime: Option<tokio::runtime::Handle>,
-}
-
-impl AbortOnDrop {
-    fn disarm(&mut self) {
-        self.facade = None;
-        self.request_id = None;
-    }
-
-    fn spawn_abort(&mut self) {
-        let (Some(facade), Some(request_id)) = (self.facade.take(), self.request_id.take()) else {
-            return;
-        };
-        let runtime = self
-            .runtime
-            .clone()
-            .or_else(|| tokio::runtime::Handle::try_current().ok());
-        if let Some(runtime) = runtime {
-            runtime.spawn(async move {
-                let _ = facade.abort(&[request_id]).await;
-            });
-        }
-    }
-}
-
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.spawn_abort();
-    }
-}
-
-struct AbortableStream {
-    stream: TokenStream,
-    abort: AbortOnDrop,
-}
-
-impl Stream for AbortableStream {
-    type Item = Result<GenerateOutput, LlmFacadeError>;
-
-    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.stream.as_mut().poll_next(context) {
-            Poll::Ready(Some(Ok(output))) => {
-                if output.finish_reason.is_some() {
-                    self.abort.disarm();
-                }
-                Poll::Ready(Some(Ok(output)))
-            }
-            Poll::Ready(Some(Err(error))) => {
-                self.abort.spawn_abort();
-                Poll::Ready(Some(Err(error)))
-            }
-            Poll::Ready(None) => {
-                self.abort.spawn_abort();
-                Poll::Ready(None)
-            }
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-/// Aborts backend work when its output stream is dropped before a terminal output.
-pub fn abort_on_drop(
-    facade: Arc<dyn LlmFacade>,
-    request_id: String,
-    stream: TokenStream,
-) -> TokenStream {
-    Box::pin(AbortableStream {
-        stream,
-        abort: AbortOnDrop {
-            facade: Some(facade),
-            request_id: Some(request_id),
-            runtime: tokio::runtime::Handle::try_current().ok(),
-        },
-    })
 }
 
 /// Best-effort cleanup for execution stages that have been admitted but not completed.
@@ -169,6 +99,13 @@ impl MultiStageCleanup {
     /// it produces no handle because this guard retains ownership until completion.
     pub fn register(&mut self, facade: Arc<dyn LlmFacade>, request_id: String) {
         self.stages.push((facade, request_id));
+    }
+
+    /// Removes a stage after an explicit nonacceptance response, without sending an abort.
+    /// Submission owns this transition so a delayed abort cannot cancel a subsequent retry.
+    pub fn rejected(&mut self, request_id: &str) {
+        self.stages
+            .retain(|(_, registered)| registered != request_id);
     }
 
     /// Transfers cleanup ownership to the final backend stream returned to HTTP response handling.

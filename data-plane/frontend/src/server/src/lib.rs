@@ -1,15 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Thin OpenAI-compatible HTTP adapters over Foretoken's vLLM output stream.
+//! OpenAI and Anthropic HTTP adapters over Foretoken's shared generation pipeline.
 
+mod admission;
+mod api;
+
+pub use admission::AdmissionOrigin;
 mod http;
-mod response;
 mod runtime;
+mod video;
+mod video_task;
+
+pub use video::VideoRequest;
 
 pub use http::router;
 pub use runtime::{
     Generated, GeneratedChat, Generation, GenerationError, GenerationRequest, KvIndexDiagnostics,
-    ModelRuntime, RoutedGenerate, RoutedRequest, RuntimeBundle, RuntimeControl, RuntimeDiagnostics,
-    RuntimeGeneration, RuntimeState, Tokenization,
+    ModelRuntime, RequestSnapshot, RoutedGenerate, RoutedRequest, RuntimeBundle, RuntimeControl,
+    RuntimeDiagnostics, RuntimeGeneration, RuntimeState, Tokenization,
 };

@@ -26,6 +26,8 @@ class InstallCommand:
     gateway_namespace: str
     gateway_section_name: str
     timeout: str
+    grafana_auth: str | None = None
+    engine_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,17 @@ class UninstallCommand:
     """Remove the Foretoken platform Helm release."""
 
     timeout: str
+
+
+@dataclass(frozen=True)
+class ClusterCommand:
+    """Create or remove a locally managed development cluster."""
+
+    action: str
+    kind: str
+    name: str
+    gpus: str | None = None
+    config: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,15 +84,29 @@ class EndpointCommand:
 
 
 @dataclass(frozen=True)
-class BenchCommand:
-    """Forward benchmark arguments to the optional benchmark module."""
+class PerformanceCommand:
+    """Forward performance benchmark arguments to the benchmark module."""
+
+    arguments: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EvaluationCommand:
+    """Forward model evaluation arguments to the benchmark module."""
+
+    arguments: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PlotCommand:
+    """Forward saved-result plotting arguments without loading benchmark dependencies."""
 
     arguments: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class ProfileCommand:
-    """Describe one runtime-owned capture requested by deploy or bench."""
+    """Describe one runtime-owned capture requested by deploy or perf."""
 
     kustomize_path: str
     model: str | None
@@ -97,7 +124,7 @@ class ProfileViewCommand:
 
 
 def add_profile_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add the shared optional capture controls to deploy and bench."""
+    """Add the shared optional capture controls to deploy and perf."""
     parser.add_argument(
         "--profile", action="store_true",
         help="Capture a profile during this operation",
@@ -115,7 +142,7 @@ def add_profile_arguments(parser: argparse.ArgumentParser) -> None:
 def validate_profile_arguments(
     parser: argparse.ArgumentParser, arguments: argparse.Namespace
 ) -> None:
-    """Require a complete capture selection before executing deploy or bench."""
+    """Require a complete capture selection before executing deploy or perf."""
     if arguments.profile and not (arguments.profile_engine and arguments.profile_duration):
         parser.error("--profile requires --profile-engine and --profile-duration")
     if not arguments.profile and (arguments.profile_engine or arguments.profile_duration):
@@ -125,11 +152,14 @@ def validate_profile_arguments(
 ParsedCommand = (
     InstallCommand
     | UninstallCommand
+    | ClusterCommand
     | DeployCommand
     | DeleteCommand
     | StatusCommand
     | EndpointCommand
-    | BenchCommand
+    | PerformanceCommand
+    | EvaluationCommand
+    | PlotCommand
     | ProfileViewCommand
 )
 
@@ -151,7 +181,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="foretoken",
         description=(
             "Install the Kubernetes control plane, deploy model services, "
-            "capture profiles, and run benchmarks"
+            "capture profiles, run performance benchmarks, and evaluate models"
         ),
     )
     parser.add_argument(
@@ -161,12 +191,44 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    cluster = subparsers.add_parser(
+        "cluster",
+        help="Create or remove a local kind or k3d cluster",
+    )
+    cluster_actions = cluster.add_subparsers(dest="cluster_action", required=True)
+    for action in ("create", "delete"):
+        cluster_action = cluster_actions.add_parser(
+            action,
+            help=(
+                "Create a local cluster" if action == "create"
+                else "Delete a local cluster"
+            ),
+        )
+        cluster_action.add_argument("kind", choices=("kind", "k3d"))
+        cluster_action.add_argument(
+            "--name",
+            default="foretoken-dev",
+            metavar="NAME",
+            help="name of the local cluster",
+        )
+        if action == "create":
+            cluster_action.add_argument(
+                "--gpus",
+                metavar="INDICES",
+                help="GPU indices for k3d, for example 0 or 0,1",
+            )
+            cluster_action.add_argument(
+                "--config",
+                metavar="PATH",
+                help="kind or k3d configuration file",
+            )
+
     install = subparsers.add_parser(
         "install",
         help="Install or update the Foretoken Kubernetes control plane",
         description=(
             "Install or update Foretoken CRDs and the controller, discover the cluster "
-            "LoadBalancer, configure shared monitoring, and create Gateway resources "
+            "LoadBalancer, configure shared metrics and persistent logs, and create Gateway resources "
             "when Gateway mode is selected. "
             "Model services are deployed separately with 'foretoken deploy'."
         ),
@@ -175,7 +237,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "-e",
         "--editable",
         metavar="PATH",
-        help="build Foretoken images from this source root",
+        help="build Foretoken images and bind this workstation's source root for subsequent deploy updates",
+    )
+    install.add_argument(
+        "--engine-source", action="append", metavar="[ENGINE=]PATH",
+        help="bind a vLLM checkout for source updates; repeat with vllm-metax=PATH for its plugin (requires -e)",
     )
     install.add_argument(
         "--registry",
@@ -197,7 +263,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="PATH",
         help=(
-            "Helm values for images, runtime, hardware, or a managed LoadBalancer "
+            "Helm values for images, runtime, hardware, logging, build caches, or a managed LoadBalancer "
             "address pool; may be repeated"
         ),
     )
@@ -205,6 +271,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--prometheus",
         metavar="NAMESPACE/NAME",
         help="existing compatible Prometheus when automatic discovery is ambiguous",
+    )
+    install.add_argument(
+        "--grafana-auth",
+        choices=("anonymous", "password"),
+        help="managed Grafana access; overrides values, new installations allow anonymous viewing",
     )
     install.add_argument(
         "--frontend-mode",
@@ -317,9 +388,18 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_wait_timeout_argument(view, "capture storage readiness")
 
     subparsers.add_parser(
-        "bench",
+        "perf",
         add_help=False,
-        help="Benchmark Foretoken or other OpenAI-compatible model services",
+        help="Measure Foretoken or other OpenAI-compatible model services",
+    )
+    subparsers.add_parser(
+        "eval",
+        add_help=False,
+        help="Score model answers or compare reference and candidate distributions",
+    )
+    subparsers.add_parser(
+        "plot", add_help=False,
+        help="Export publication figures and tables from saved benchmark results",
     )
     return parser
 
@@ -327,11 +407,25 @@ def _build_parser() -> argparse.ArgumentParser:
 def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
     """Parse CLI arguments into the command consumed by the execution layer."""
     arguments = tuple(argv)
-    if arguments and arguments[0] == "bench":
-        return BenchCommand(arguments[1:])
+    if arguments and arguments[0] == "perf":
+        return PerformanceCommand(arguments[1:])
+    if arguments and arguments[0] == "eval":
+        return EvaluationCommand(arguments[1:])
+    if arguments and arguments[0] == "plot":
+        return PlotCommand(arguments[1:])
 
     parser = _build_parser()
     parsed_args = parser.parse_args(arguments)
+    if parsed_args.command == "cluster":
+        if parsed_args.cluster_action == "create" and parsed_args.kind == "k3d" and not parsed_args.gpus:
+            parser.error("cluster create k3d requires --gpus INDICES")
+        return ClusterCommand(
+            parsed_args.cluster_action,
+            parsed_args.kind,
+            parsed_args.name,
+            getattr(parsed_args, "gpus", None),
+            getattr(parsed_args, "config", None),
+        )
     if parsed_args.command == "install":
         reused_gateway_arguments = any(
             (
@@ -353,6 +447,8 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             )
         if parsed_args.registry and not parsed_args.editable:
             parser.error("--registry requires --editable PATH")
+        if parsed_args.engine_source and not parsed_args.editable:
+            parser.error("--engine-source requires --editable PATH")
         return InstallCommand(
             tuple(parsed_args.values or ()),
             parsed_args.editable,
@@ -364,6 +460,8 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             parsed_args.gateway_namespace,
             parsed_args.gateway_section_name,
             parsed_args.timeout,
+            parsed_args.grafana_auth,
+            tuple(parsed_args.engine_source or ()),
         )
     if parsed_args.command == "uninstall":
         return UninstallCommand(parsed_args.timeout)

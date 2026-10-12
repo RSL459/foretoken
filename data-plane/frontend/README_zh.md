@@ -3,29 +3,206 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Foretoken Frontend
+# Foretoken 前端
 
-`foretoken-frontend` 接收推理请求并返回 OpenAI 兼容响应。通过维护中的示例或自己的服务配置声明 `FrontendService`，Foretoken 会自动创建并配置前端工作负载。
+[English](README.md) | 简体中文
 
-## 使用方式
+前端为已部署的模型提供文本和视频生成接口。
 
-按照仓库[快速开始](../../README_zh.md)部署前端并发送请求。一个前端可以提供多个公开模型，客户端通过请求中的 `model` 选择模型；目标模型暂时不可用时，前端不会静默改为其他模型。
+## 文本生成
 
-前端支持普通 JSON 和 SSE 流式响应、Completion、Chat Completion、分词、工具调用、reasoning、structured output 与受能力约束的图片输入。图片输入当前只接受大小受限的 base64 `data:` 内容，不接受远程媒体 URL。
+按仓库[快速开始](../../README_zh.md#快速开始)完成部署，再从仓库根目录发送请求：
 
-通过 `ModelService` 配置聚合部署、预填充/解码分离（P/D）或编码/预填充/解码分离（E/P/D）。分离式推理需要平台支持所选运行时和传输方式。[E/P/D 示例](../../examples/encoder-prefill-decode/README_zh.md)展示独立图片编码和张量并行解码。
+```bash
+DEPLOYMENT=examples/quickstart
+FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
+REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
 
-## 接口访问范围
+# OpenAI Responses
+curl --fail-with-body "$FRONTEND_URL/v1/responses" \
+  -H "Host: $REQUEST_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen3-0.6B","input":"你好","max_output_tokens":512,"store":false}'
 
-默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 暴露前端。网关模式通过绑定平台 Gateway 的 `HTTPRoute` 暴露 `/v1`、`/tokenize` 和 `/detokenize`。域名解析、TLS、认证和其他入口策略需在 Gateway 部署中配置。默认模式下，运维接口的访问范围取决于 LoadBalancer 和集群网络策略。
+# Anthropic Messages
+curl --fail-with-body "$FRONTEND_URL/v1/messages" \
+  -H "Host: $REQUEST_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"max_tokens":512}'
+```
 
-| 范围 | 接口 | 用途 |
+添加 `"stream": true` 和 `curl --no-buffer` 可实时接收生成内容。
+
+| 接口 | 路径 | 请求内容 |
 | --- | --- | --- |
-| 客户端 | `/v1/*`、`/tokenize`、`/detokenize` | 发送推理请求和发现已配置模型 |
-| 平台运维 | `/healthz`、`/readyz`、`/statusz`、`/metrics` | 探针、运行状态诊断和 Prometheus 抓取 |
+| OpenAI Chat Completions | `POST /v1/chat/completions` | `model`、`messages` |
+| OpenAI Responses | `POST /v1/responses` | `model`、`input`；设置 `store: false`，每轮携带对话历史 |
+| Anthropic Messages | `POST /v1/messages` | `model`、`messages`、必填的 `max_tokens` |
+| Anthropic token 计数 | `POST /v1/messages/count_tokens` | 与生成请求一致的模型、消息、系统提示和工具定义 |
+| 文本补全 | `POST /v1/completions` | `model`、`prompt` |
 
-`/v1/models` 返回前端当前生效配置中的模型。
+`GET /v1/models` 列出已配置的模型标识；`/tokenize` 和 `/detokenize` 用于文本与 token ID 之间的转换。支持图片的文本模型接受 base64 编码的图片 `data:` URL。
 
-`/healthz` 表示前端进程正在运行。`/readyz` 表示服务配置已生效，前端可以接收新请求，但不保证每个已配置模型都有健康后端路径。`/statusz` 为平台运维者提供运行状态和 KV 索引诊断信息。`/metrics` 是 Prometheus 抓取端点。
+工具由客户端执行，再将结果传入下一轮请求。Responses 支持函数工具、带命名空间的函数和自定义文本工具，不支持服务端托管工具或后台执行模式。强制选择工具和严格约束工具参数需要模型支持结构化输出。
 
-模型配置准备完成后，会在运行中的前端进程内更新；已经开始执行的请求保留其选定的配置。修改 `FrontendService.spec.routerPipeline` 则通过前端 Deployment 滚动更新生效。
+部分工具解析器通过结构标签语法约束强制工具调用或严格工具的输出格式。模型的解析器和语法后端支持该能力时，在 ModelService 已有的结构化输出格式中加入 `structuralTag`：
+
+```yaml
+spec:
+  features:
+    structuredOutputs: [structuralTag]
+```
+
+使用 `spec.modelPools` 配置时，在适用池的 `features.structuredOutputs` 中声明该能力，不使用顶层 `features`。
+
+输出 token 预算包含思考内容。Messages 使用 `max_tokens`，不接受独立的 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `incomplete`，客户端只应执行完整的工具调用。
+
+## 视频生成
+
+通过 `POST /v1/videos/sync` 提交提示词和参考图片或视频，生成完成后直接返回视频内容。[MiniMax H3 配方](../../examples/recipes/minimax-h3/a100-bf16-tp2/README_zh.md#根据图片生成视频)提供完整的部署和请求命令，将结果保存到 `./data/video.mp4`。
+
+### 后台生成
+
+如需提交后离开、稍后获取结果，在部署的 `frontend.yaml` 中启用：
+
+```yaml
+spec:
+  videoTasks:
+    claimName: video-results
+    retentionSeconds: 86400
+```
+
+`video-results` 对应同一命名空间内已准备好的专用持久化存储声明（PVC）；跨节点运行时需支持 ReadWriteMany 共享访问。将参考图片放入该卷的 `inputs/reference.png`，然后应用配置：
+
+```bash
+DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
+foretoken deploy "$DEPLOYMENT" --timeout 1h
+FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
+REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
+mkdir -p ./data
+```
+
+以下请求选择名为 `h3` 的模型服务，输入路径相对于视频存储卷根目录：
+
+```bash
+curl --fail-with-body "$FRONTEND_URL/v1/videos" \
+  -H "Host: $REQUEST_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "modelServiceRef": {"name": "h3"},
+    "request": {
+      "task": "fl2va",
+      "prompt": "A sailboat crossing a calm bay at sunrise",
+      "width": 1024, "height": 576,
+      "numFrames": 124, "fps": 24, "numInferenceSteps": 50,
+      "inputFiles": [{
+        "field": "input_reference",
+        "path": "inputs/reference.png",
+        "contentType": "image/png"
+      }]
+    }
+  }'
+```
+
+响应包含任务 `id`、状态地址 `status_url` 和视频地址 `content_url`。继续使用同一个前端地址，将下表的 `{id}` 替换为返回的任务 ID：
+
+| 操作 | 接口 | 说明 |
+| --- | --- | --- |
+| 查看状态 | `GET /v1/videos/{id}` | 等待 `phase` 为 `Succeeded`；`Failed` 时查看 `reason` 和 `message` |
+| 保存视频 | `GET /v1/videos/{id}/content` | 生成成功后，用 `curl --output ./data/video.mp4` 保存响应 |
+| 取消任务 | `POST /v1/videos/{id}/cancel` | 请求取消，后端计算可能仍在结束中 |
+| 删除任务 | `DELETE /v1/videos/{id}` | 清理任务及其文件 |
+
+取消和删除请求返回 `202` 后继续由服务处理。以上配置保留结果一天，从任务结束起算；到期后自动清理，原始参考文件保留。
+
+## 配置准入规则
+
+要限制等待中的文本请求，在部署的 `frontend.yaml` 已有 `spec` 下添加 `admission`：
+
+```yaml
+spec:
+  admission:
+    maxWaitingRequests: 128
+    queueTimeout: 30s
+```
+
+同一 FrontendService 的所有副本按模型共享等待上限，正在准备输入的请求也计入其中。`queueTimeout` 限制后端接收前的等待与准备时长。批量输入和 `best_of` 按生成序列计数；这些规则不适用于视频接口。
+
+按[修改服务配置](#修改服务配置)应用 YAML。响应开始前，队列已满或准入等待超时返回 503，请求总超时返回 504，批次超过容量返回 400。启用限额时，已在等待的请求可能被拒绝。
+
+限制单个模型实例已接收的工作，见[实例并发上限](../../docs/inference-parameters_zh.md#实例并发上限)；查看等待和派发指标，见[可观测性](../../observability/README_zh.md)。
+
+### 调用方限额与优先级
+
+需要区分调用方时，在等待上限之外添加 `roleRules`：
+
+```yaml
+spec:
+  roleRules:
+    - role: role1
+      priority: 10
+      perCaller:
+        maxWaitingRequests: 8
+        maxConcurrentRequests: 4
+    - role: role2
+      priority: 0
+      perCaller:
+        maxWaitingRequests: 32
+        maxConcurrentRequests: 8
+```
+
+每个调用方分别计量等待和并发数量，跨前端副本共享。`maxConcurrentRequests` 统计已派发但尚未结束的工作，取消后仍在执行的请求也计入其中。分词、token 计数和 token ID 转文本只占等待容量。
+
+可派发请求中，`priority` 越大越先派发；同优先级在各前端内按调用方轮转，保持调用方内部的请求顺序。并发已满的调用方不阻塞其他调用方。如需同时启用 vLLM 队列的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
+
+角色规则需要接入认证网关，缺少已认证身份或角色不匹配的请求会被拒绝。网关接入方式见[准入生命周期](../../docs/development/admission-rules_zh.md#网关接入)，缓存共享方式见[前缀缓存隔离](../../docs/inference-parameters_zh.md#前缀缓存隔离)。
+
+### 为单个模型覆盖配置
+
+`ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应的前端默认配置。要让一个模型在前端不限流，同时设置 `admission: {}` 和 `roleRules: []`；前端省略这两项时默认不限流。
+
+模型角色规则中的 `roleRules[].allowedPools` 通过 `spec.modelPools` 的名称限制可用 Pool。分离式部署必须为每个必需执行阶段保留一个 Pool。
+
+## 修改服务配置
+
+修改部署 YAML 后，再执行 `foretoken deploy` 即可。例如，在 `examples/quickstart/frontend.yaml` 已有的 `spec` 中调整日志级别和请求时限：
+
+```yaml
+spec:
+  logLevel: debug
+  timeouts:
+    request: 15m
+    streamIdle: 5m
+```
+
+重新部署快速开始示例：
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+命令等待配置生效后退出。[路由策略](src/router/README_zh.md)、准入规则、日志级别和请求时限支持在线更新；配置无效时保留原设置。
+
+| 设置 | 用途 |
+| --- | --- |
+| `timeouts.request` | 请求总时长 |
+| `timeouts.streamIdle` | 响应数据块之间的最大间隔，不超过 `request` |
+| `timeouts.drain` | 退出时等待已接收请求完成的时长，默认 `10m`；修改它会替换前端 Pod |
+| `logLevel` | 可选 `trace`、`debug`、`info`（默认）、`warn`、`error`、`off` |
+
+请求时限的修改用于新请求。限制输入长度时，设置 `ModelService.spec.maxInputTokens`，或对应的 `spec.modelPools[].maxInputTokens`，再重新部署。该设置支持在线更新，与引擎的输入输出合计上下文上限分别配置。
+
+## 运维
+
+使用 `foretoken status` 查看部署状态，使用 `foretoken delete` 删除部署，均传入对应配置目录。
+
+| 接口 | 用途 |
+| --- | --- |
+| `/healthz` | 进程存活状态 |
+| `/readyz` | 已加载有效路由配置、可以接收 HTTP 请求 |
+| `/statusz` | 服务和缓存索引状态 |
+| `/metrics` | Prometheus 指标 |
+
+模型启动或切换时，HTTP 前端保持可访问。合法的空模型配置也可接收 HTTP 请求，此时推理请求返回 HTTP 503。服务就绪状态见 `/statusz` 中的 `serving_ready`。
+
+网关配置见[网关模式](../../README_zh.md#网关模式)。TLS 和身份认证由集群入口配置，运维接口的访问范围由网络策略控制。

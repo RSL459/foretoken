@@ -47,7 +47,9 @@ type modelServerTelemetry struct {
 }
 
 type frontendDiagnostics struct {
-	ActiveGeneration *uint64 `json:"active_generation"`
+	ActiveGeneration   *uint64 `json:"active_generation"`
+	TargetGeneration   *uint64 `json:"target_generation"`
+	ConfigurationError *string `json:"configuration_error"`
 }
 
 // ModelGroupDrainClient observes frontend generations and controls group-local admission.
@@ -66,26 +68,35 @@ func newHTTPModelGroupDrainClient() ModelGroupDrainClient {
 
 // FrontendGeneration reads the active serving snapshot generation from one frontend Pod.
 func (client *httpModelGroupDrainClient) FrontendGeneration(ctx context.Context, endpoint string) (uint64, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/statusz", nil)
+	diagnostics, err := readFrontendDiagnostics(ctx, client.client, endpoint)
 	if err != nil {
 		return 0, err
-	}
-	response, err := client.client.Do(request)
-	if err != nil {
-		return 0, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("frontend status returned HTTP %d", response.StatusCode)
-	}
-	var diagnostics frontendDiagnostics
-	if err := json.NewDecoder(response.Body).Decode(&diagnostics); err != nil {
-		return 0, fmt.Errorf("decode frontend status: %w", err)
 	}
 	if diagnostics.ActiveGeneration == nil {
 		return 0, fmt.Errorf("frontend has no active serving generation")
 	}
 	return *diagnostics.ActiveGeneration, nil
+}
+
+// readFrontendDiagnostics is shared by configuration acknowledgement and route withdrawal.
+func readFrontendDiagnostics(ctx context.Context, transport *http.Client, endpoint string) (frontendDiagnostics, error) {
+	var diagnostics frontendDiagnostics
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/statusz", nil)
+	if err != nil {
+		return diagnostics, err
+	}
+	response, err := transport.Do(request)
+	if err != nil {
+		return diagnostics, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return diagnostics, fmt.Errorf("frontend status returned HTTP %d", response.StatusCode)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&diagnostics); err != nil {
+		return diagnostics, fmt.Errorf("decode frontend status: %w", err)
+	}
+	return diagnostics, nil
 }
 
 // CloseAdmission closes model-server admission and returns its current drain telemetry.
@@ -169,7 +180,7 @@ func (reconciler *ModelGroupReconciler) reconcileDelete(ctx context.Context, gro
 		return ctrl.Result{}, err
 	}
 	if !withdrawn {
-		if err := reconciler.updateDrainStatus(ctx, group, group.Status.DrainStartedAt, false, true, false, "WaitingForRouting", "Waiting for every ready frontend Pod to install the withdrawal snapshot"); err != nil {
+		if err := reconciler.updateDrainStatus(ctx, group, group.Status.DrainStartedAt, false, true, false, "WaitingForRouting", "Waiting for every frontend Pod to install the withdrawal snapshot"); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, nil
@@ -211,7 +222,7 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 			continue
 		}
 		configMap := new(corev1.ConfigMap)
-		key := client.ObjectKey{Namespace: frontend.Namespace, Name: frontendServingConfigMapName(frontend)}
+		key := client.ObjectKey{Namespace: frontend.Namespace, Name: frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion)}
 		if err := reconciler.Get(ctx, key, configMap); err != nil {
 			if apierrors.IsNotFound(err) {
 				return false, nil
@@ -235,11 +246,8 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 			if !pod.DeletionTimestamp.IsZero() {
 				continue
 			}
-			// Every surviving replica must observe the withdrawal before deletion. An unready
-			// replica may later rejoin the Service, so it cannot be excluded from the barrier.
-			if !podReady(pod) {
-				return false, nil
-			}
+			// Observe every surviving replica, including those made unready by the
+			// withdrawal of their last backend. Serving readiness is not a routing ACK.
 			endpoint, err := frontendPodEndpoint(pod)
 			if err != nil {
 				return false, err
@@ -251,6 +259,19 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 			if generation < snapshot.Version {
 				return false, nil
 			}
+		}
+		// A legacy write may succeed before the current protocol's publication. Check the
+		// durable floor after Pod observation, including versions not yet loaded by any Pod.
+		reader := reconciler.APIReader
+		if reader == nil {
+			reader = reconciler.Client
+		}
+		latest := new(inferencev1alpha1.FrontendService)
+		if err := reader.Get(ctx, client.ObjectKeyFromObject(frontend), latest); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		if latest.UID != frontend.UID || latest.Status.ServingSnapshotVersion != snapshot.Version || latest.Status.ServingConfigVersion != frontend.Status.ServingConfigVersion {
+			return false, nil
 		}
 	}
 	return true, nil
@@ -286,7 +307,7 @@ func podReady(pod *corev1.Pod) bool {
 
 func frontendPodEndpoint(pod *corev1.Pod) (string, error) {
 	if pod.Status.PodIP == "" {
-		return "", fmt.Errorf("ready frontend Pod %q has no Pod IP", pod.Name)
+		return "", fmt.Errorf("frontend Pod %q has no Pod IP", pod.Name)
 	}
 	for _, container := range pod.Spec.Containers {
 		for _, port := range container.Ports {
@@ -296,7 +317,7 @@ func frontendPodEndpoint(pod *corev1.Pod) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("ready frontend Pod %q has no %q port", pod.Name, frontendHTTPPortName)
+	return "", fmt.Errorf("frontend Pod %q has no %q port", pod.Name, frontendHTTPPortName)
 }
 
 func (reconciler *ModelGroupReconciler) drainClient() ModelGroupDrainClient {
