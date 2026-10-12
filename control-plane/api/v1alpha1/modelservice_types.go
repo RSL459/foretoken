@@ -288,6 +288,11 @@ type ModelServiceSpec struct {
 	// +optional
 	Observability *ModelObservability `json:"observability,omitempty"`
 
+	// RouterPipeline overrides selected frontend routing slots for this model and its execution stages.
+	// Omitted slots inherit; supplied algorithms and parameters replace the entire slot.
+	// +optional
+	RouterPipeline *ModelRouterPipeline `json:"routerPipeline,omitempty"`
+
 	// Admission replaces the frontend's entire admission block; omission uses its defaults.
 	// +optional
 	Admission *AdmissionConfig `json:"admission,omitempty"`

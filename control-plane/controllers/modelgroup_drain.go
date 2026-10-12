@@ -220,20 +220,35 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 		if !frontend.DeletionTimestamp.IsZero() {
 			continue
 		}
-		configMap := new(corev1.ConfigMap)
-		key := client.ObjectKey{Namespace: frontend.Namespace, Name: frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion)}
-		if err := reconciler.Get(ctx, key, configMap); err != nil {
-			if apierrors.IsNotFound(err) {
+		var snapshotVersion uint64
+		withdrawnViews := make(map[string]bool)
+		for index, protocol := range frontendServingConfigVersions(frontend) {
+			configMap := new(corev1.ConfigMap)
+			key := client.ObjectKey{Namespace: frontend.Namespace, Name: frontendServingConfigMapName(frontend, protocol)}
+			if err := reconciler.Get(ctx, key, configMap); apierrors.IsNotFound(err) {
+				if index == 0 {
+					return false, nil
+				}
+				continue
+			} else if err != nil {
+				return false, fmt.Errorf("get frontend serving snapshot for drain: %w", err)
+			}
+			if !metav1.IsControlledBy(configMap, frontend) {
+				return false, fmt.Errorf("ConfigMap %q is not controlled by FrontendService", configMap.Name)
+			}
+			var snapshot servingSnapshot
+			if err := json.Unmarshal([]byte(configMap.Data[servingSnapshotKey]), &snapshot); err != nil {
+				return false, fmt.Errorf("decode frontend serving snapshot for drain: %w", err)
+			}
+			if servingSnapshotContainsRouteTarget(snapshot, routeTargetID) || snapshot.Version == 0 {
 				return false, nil
 			}
-			return false, fmt.Errorf("get frontend serving snapshot for drain: %w", err)
-		}
-		var snapshot servingSnapshot
-		if err := json.Unmarshal([]byte(configMap.Data[servingSnapshotKey]), &snapshot); err != nil {
-			return false, fmt.Errorf("decode frontend serving snapshot for drain: %w", err)
-		}
-		if servingSnapshotContainsRouteTarget(snapshot, routeTargetID) {
-			return false, nil
+			if index == 0 {
+				snapshotVersion = snapshot.Version
+			} else if snapshot.Version != snapshotVersion {
+				return false, nil
+			}
+			withdrawnViews[configMap.Name] = true
 		}
 
 		var pods corev1.PodList
@@ -242,8 +257,11 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 		}
 		for podIndex := range pods.Items {
 			pod := &pods.Items[podIndex]
-			if !pod.DeletionTimestamp.IsZero() {
+			if !pod.DeletionTimestamp.IsZero() || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 				continue
+			}
+			if !withdrawnViews[frontendPodServingConfigMapName(pod)] {
+				return false, nil
 			}
 			// Observe every surviving replica, including those made unready by the
 			// withdrawal of their last backend. Serving readiness is not a routing ACK.
@@ -255,7 +273,7 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 			if err != nil {
 				return false, fmt.Errorf("observe frontend Pod %q: %w", pod.Name, err)
 			}
-			if generation < snapshot.Version {
+			if generation < snapshotVersion {
 				return false, nil
 			}
 		}
@@ -269,7 +287,7 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 		if err := reader.Get(ctx, client.ObjectKeyFromObject(frontend), latest); err != nil {
 			return false, client.IgnoreNotFound(err)
 		}
-		if latest.UID != frontend.UID || latest.Status.ServingSnapshotVersion != snapshot.Version || latest.Status.ServingConfigVersion != frontend.Status.ServingConfigVersion {
+		if latest.UID != frontend.UID || latest.Status.ServingSnapshotVersion != snapshotVersion || latest.Status.ServingConfigVersion != frontend.Status.ServingConfigVersion {
 			return false, nil
 		}
 	}
