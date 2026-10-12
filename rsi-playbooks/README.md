@@ -6,6 +6,22 @@ Foretoken is an inference infrastructure framework designed for RSI (Recursive S
 
 These playbooks provide task guidance, experimental methods, and reusable knowledge. Validated findings are incorporated to make subsequent optimization work more effective.
 
+## Run with a coding agent
+
+Open this checkout in Claude Code or Codex and ask the agent to run an RSI task, or invoke the repository's `rsi` skill explicitly:
+
+```text
+# Claude Code
+/rsi Run rsi-playbooks/tasks/qwen-decode.md
+
+# Codex
+$rsi Run rsi-playbooks/tasks/qwen-decode.md
+```
+
+The skill uses native workers, includes a follow-up reminder in their completion results, and assigns a separate agent to observe GPU usage and experiment progress. It does not schedule periodic prompts for the main agent. Ask to pause or stop RSI in the same conversation; resuming requires an explicit request.
+
+Claude Code additionally loads a one-shot Stop reminder when the skill is invoked. Codex uses the shared instructions without installing hooks. Ordinary sessions do not load RSI hooks. If a session was already open when these skills were added, use `/reload-skills` in Claude Code; Codex detects skill changes automatically, with a restart if the skill does not appear.
+
 ## Design goals
 
 - Rapid deployment: apply code changes quickly to inference services in the target cluster.

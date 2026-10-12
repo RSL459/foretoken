@@ -6,6 +6,22 @@ Foretoken 是一个面向 RSI（Recursive Self-Improvement，递归自提升）�
 
 这套手册提供任务指导、实验方法与可复用经验，并持续吸收经过验证的发现，帮助后续迭代更有效地开展优化。
 
+## 通过编码 Agent 执行
+
+在当前仓库中打开 Claude Code 或 Codex，让 Agent 执行 RSI 任务，也可以显式调用仓库提供的 `rsi` skill：
+
+```text
+# Claude Code
+/rsi 执行 rsi-playbooks/tasks/qwen-decode_zh.md
+
+# Codex
+$rsi 执行 rsi-playbooks/tasks/qwen-decode_zh.md
+```
+
+Skill 使用原生子 Agent 派工，在完成结果中附带续派提醒，并安排独立 Agent 观察 GPU 使用与实验进展，不给主 Agent 设置周期提醒。在同一对话中要求暂停或停止即可；恢复执行需要明确提出。
+
+Claude Code 在调用 skill 时额外加载一次性的结束提醒；Codex 使用共用指令，不安装 hooks。普通会话不加载 RSI hooks。如果添加 skill 时会话已经打开，Claude Code 可执行 `/reload-skills`；Codex 会自动发现 skill 变化，未出现时重新打开会话。
+
 ## 设计目标
 
 - 快速部署：将代码改动快速更新到目标集群中的推理服务。
