@@ -13,7 +13,7 @@ Minimum concurrently working subagents: 6
 Maximum concurrently working subagents: 20
 Minimum parallel experiments: 2
 Maximum parallel experiments: have the agent determine the limit from available resources and per-experiment requirements, and record it in the experiment notes
-Parallel scheduling: reduce idle resources through useful work; apply the minimum counts while independent tasks can progress, and allow lower counts during isolated measurements or dependency waits rather than maintaining them throughout
+Parallel scheduling: reduce idle resources through useful parallel investigation, implementation, and experiments
 Evaluation workloads: measure concurrency 1 and 16 separately per service using random-length workloads and StudyChat conversations; see the full commands under "Evaluation commands" below
 Accuracy evaluation: consider foretoken eval only when changes may affect accuracy; run it at most once per 20 completed performance iterations, not automatically every 20 iterations
 Allowed changes: source code, configuration, and other implementation artifacts may be changed within the precision and resource constraints above. Optimization directions include, but are not limited to, deployment configuration, concurrency and batching, parallelism, prefill/decode disaggregation, inference engines and scheduling, kernel optimization and fusion, compilation and graph execution, communication, memory management, KV caching and offloading, speculative decoding, sampling, routing and load balancing, admission and queueing, autoscaling, and CPU/I/O optimization
