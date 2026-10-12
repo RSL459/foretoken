@@ -25,7 +25,7 @@ Deliverables (<iteration> is the approach name passed to --iteration):
   - Comparative analysis: record values and percentage changes against the initial approach and previous iteration under the same workload, with explanations, in the "Comparative analysis" section of the same iteration.md.
   - Evidence: record W&B links, plots, and raw result paths in the "Evidence" section of the same iteration.md; retain automatically saved run artifacts under results/qwen-decode/iterations/<iteration>/runs/.
   - Final approach: record the retained approach, its code/configuration, per-workload measurements, and an iteration comparison summary in results/qwen-decode/notes/experiment.md.
-  - User-facing summary: publish the main conclusions, iteration comparisons, key plots, and W&B links from experiment.md to a report page the user can access directly, such as Lark, and deliver its link.
+  - User-facing summary: create agent-playbooks/tasks/qwen-decode/<experiment>/ using the experiment name. Summarize the conclusions, iteration comparisons, and W&B links from experiment.md in that directory's README.md; place key plots in figures/ and reference them with relative paths. Deliver the summary file path.
 ```
 
 See [optimization tasks](README.md#autonomous-execution) for execution and resource scheduling, and the [experiment records guide](../experiment-records.md) for recording results.
