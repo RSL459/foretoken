@@ -8,12 +8,12 @@ Optimization objectives: improve single-request decode speed and total output th
 Precision: fixed BF16
 Deployment layout: unrestricted; examples include colocated serving and prefill/decode disaggregation
 Per-service configuration: at most 8 GPUs per service; agent-selected GPU count within this limit, parallelism, CPU cores and memory
-Available resources: 2×8 MetaX C500 GPUs, with 64 available CPU cores and 1 TiB memory per node
+Available resources: 2 nodes, each with 8 available MetaX C500 GPUs, 64 CPU cores, and 1 TiB memory
 Minimum concurrently working subagents: 6
 Maximum concurrently working subagents: 20
 Minimum parallel experiments: 2
 Maximum parallel experiments: have the agent determine the limit from available resources and per-experiment requirements, and record it in the experiment notes
-Parallel scheduling: reduce idle resources through useful parallel investigation, implementation, and experiments
+Parallel scheduling: use both nodes for parallel experiments, allocating candidates by per-experiment resource needs; keep preparing candidates through parallel investigation and implementation
 Evaluation workloads: measure concurrency 1 and 16 separately per service using random-length workloads and StudyChat conversations; see the full commands under "Evaluation commands" below
 Accuracy evaluation: run foretoken eval as needed for changes that may affect accuracy, at most once per 20 completed performance iterations
 Allowed changes: source code, configuration, and other implementation artifacts may be changed within the precision and resource constraints above. Optimization directions include, but are not limited to, deployment configuration, concurrency and batching, parallelism, prefill/decode disaggregation, inference engines and scheduling, kernel optimization and fusion, compilation and graph execution, communication, memory management, KV caching and offloading, speculative decoding, sampling, routing and load balancing, admission and queueing, autoscaling, and CPU/I/O optimization
@@ -25,7 +25,7 @@ Deliverables (<iteration> is the approach name passed to --iteration):
   - Performance metrics: record output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16 for each workload in the "Performance metrics" table in the same iteration.md.
   - Comparative analysis: record values and percentage changes against the initial approach and previous iteration under the same workload, with explanations, in the "Comparative analysis" section of the same iteration.md.
   - Evidence: record W&B links, plots, and raw result paths in the "Evidence" section of the same iteration.md; retain automatically saved run artifacts under results/qwen-decode/iterations/<iteration>/runs/.
-  - Execution efficiency: record the time-weighted mean number of subagents actively executing tasks over the full interval from task start to finish, mean GPU/CPU utilization, and mean memory occupancy in the "Execution efficiency" section of results/qwen-decode/notes/experiment.md. State the observation interval, resource scope, sampling coverage, and reasons for low utilization, with references to raw records.
+  - Execution efficiency: record the time-weighted mean number of subagents actively executing tasks over the full interval from task start to finish, and report mean GPU/CPU utilization and mean memory occupancy separately for both nodes in the "Execution efficiency" section of results/qwen-decode/notes/experiment.md. State the observation interval, resource scope, sampling coverage, and reasons for low utilization, with references to raw records.
   - Final approach: record the retained approach, its code/configuration, per-workload measurements, and an iteration comparison summary in results/qwen-decode/notes/experiment.md.
   - User-facing summary: create rsi-playbooks/tasks/qwen-decode/<experiment>/ using the experiment name. Summarize the conclusions, iteration comparisons, execution efficiency, and W&B links from experiment.md in that directory's report.md; place key plots in figures/ and reference them with relative paths. Deliver the summary file path.
 ```
