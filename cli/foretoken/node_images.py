@@ -157,25 +157,30 @@ class NodeImageStore:
         if image in self.owned_images():
             self._pin(image)
 
-    def pin_recorded(self, image: str, digest: str) -> None:
-        """Protect a persisted source output whose node content still matches its producer record."""
-        if image in self.owned_images() or not self.matches(image, digest):
+    def pin_records(self, records: list[tuple[str, str]]) -> None:
+        """Protect recorded source outputs, reading owned references once for this batch."""
+        if not records:
             return
-        output = self.run(
-            [*self.containerd(), "images", "list", f"name=={json.dumps(image)}"],
-            capture=True,
-        )
-        for line in output.splitlines()[1:]:
-            labels = dict(
-                label.split("=", 1)
-                for label in line.split()[-1].split(",")
-                if "=" in label
+        owned = set(self.owned_images())
+        for image, digest in records:
+            if image in owned or not self.matches(image, digest):
+                continue
+            output = self.run(
+                [*self.containerd(), "images", "list", f"name=={json.dumps(image)}"],
+                capture=True,
             )
-            if labels.get(_IMAGE_OWNER_LABEL) not in {None, "foretoken"}:
-                return
-            if labels.get(SOURCE_BUILD_BINDING_LABEL) not in {None, self.binding}:
-                return
-            self._pin(image)
+            for line in output.splitlines()[1:]:
+                labels = dict(
+                    label.split("=", 1)
+                    for label in line.split()[-1].split(",")
+                    if "=" in label
+                )
+                if labels.get(_IMAGE_OWNER_LABEL) not in {None, "foretoken"}:
+                    continue
+                if labels.get(SOURCE_BUILD_BINDING_LABEL) not in {None, self.binding}:
+                    continue
+                self._pin(image)
+                owned.add(image)
 
     def _pin(self, image: str) -> None:
         """Claim a source output reference and pin it before consumers can be scheduled."""

@@ -850,6 +850,7 @@ def reconcile_source_images(
             ) as store:
                 if not uninstall:
                     # Persisted producer records authorize migrating an unlabeled source output.
+                    records = []
                     for state in states.values():
                         recorded = state.get("build", {})
                         if recorded.get("binding") != binding:
@@ -857,7 +858,8 @@ def reconcile_source_images(
                         digests = recorded.get("digests", {}).get(node, {})
                         for component, image in recorded.get("images", {}).items():
                             if image in retained and component in digests:
-                                store.pin_recorded(image, digests[component])
+                                records.append((image, digests[component]))
+                    store.pin_records(records)
                 store.release_except(retained)
 
 
