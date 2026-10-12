@@ -7,7 +7,7 @@ Models: Qwen3.5-35B-A3B
 Precision: fixed BF16
 Deployment layout: unrestricted; examples include colocated serving and prefill/decode disaggregation
 Per-service configuration: at most 8 GPUs per service; agent-selected GPU count within this limit, parallelism, CPU cores and memory
-Available resources: 2*8 MetaX C500 GPUs; determine and record available CPU cores and memory from the execution environment
+Available resources: 2×8 MetaX C500 GPUs, with 64 available CPU cores and 1 TiB memory per node
 Minimum concurrently working subagents: 6
 Maximum concurrently working subagents: 20
 Minimum parallel experiments: 2
@@ -22,3 +22,29 @@ Deliverables: full iteration history with motivation, approach and changes, meas
 ```
 
 See [optimization tasks](README.md#autonomous-execution) for execution and resource scheduling, and the [experiment records guide](../experiment-records.md) for recording results.
+
+## Evaluation commands
+
+Run from the repository root, replacing the deployment directory and W&B API key placeholders. Run the first two commands with `--max-concurrency 1` and `16`. Size request, warmup, and evaluation samples to fit the iteration budget, keeping reference and candidate settings identical. See [recipes](../../benchmarks/docs/recipes.md) for more workloads.
+
+```bash
+export WANDB_API_KEY="<your-wandb-api-key>"
+
+# Every performance iteration: vary input and output lengths.
+foretoken perf path/to/qwen-deployment --dataset random \
+  --min-prompt-length 128 --max-prompt-length 4096 \
+  --min-output-length 128 --max-output-length 512 \
+  --max-concurrency 1 --num-prompts 16 --warmup-requests 4 \
+  --random-seed 0 --temperature 0 --output experiment,raw,plot,wandb
+
+# Required for the final retained approach; optional during iterations: natural answers.
+foretoken perf path/to/qwen-deployment \
+  --prompt "Explain the trade-offs between tensor parallelism and pipeline parallelism." \
+  --max-concurrency 1 --num-prompts 16 --max-tokens 2048 \
+  --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb
+
+# Optional: only for accuracy-affecting changes within the frequency limit above.
+foretoken eval path/to/qwen-deployment \
+  --tasks piqa,arc_easy,arc_challenge,hellaswag,winogrande \
+  --num_fewshot 0 --limit 100 --output experiment,plot,wandb
+```
