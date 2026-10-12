@@ -13,19 +13,22 @@ Minimum concurrently working subagents: 6
 Maximum concurrently working subagents: 20
 Minimum parallel experiments: 2
 Maximum parallel experiments: have the agent determine the limit from available resources and per-experiment requirements, and record it in the experiment notes
+Parallel scheduling: reduce idle resources through useful work; apply the minimum counts while independent tasks can progress, and allow lower counts during isolated measurements or dependency waits rather than maintaining them throughout
 Evaluation workloads: measure concurrency 1 and 16 separately per service using random-length workloads and StudyChat conversations; see the full commands under "Evaluation commands" below
 Accuracy evaluation: consider foretoken eval only when changes may affect accuracy; run it at most once per 20 completed performance iterations, not automatically every 20 iterations
-Allowed changes: unrestricted within the precision and resource constraints above, including deployment configuration, concurrency and batching, parallelism, prefill/decode disaggregation, inference engines and scheduling, kernel optimization and fusion, compilation and graph execution, communication, memory management, KV caching and offloading, speculative decoding, sampling, routing and load balancing, admission and queueing, autoscaling, and CPU/I/O optimization
-Maximum time per experiment iteration: 10 minutes
-Work duration: optimize autonomously for up to 12 hours from the start of task execution
-Expected outcome / completion criteria: no fixed metric thresholds; continue maximizing throughput and minimizing TPOT until no further optimization opportunities remain or the time budget expires
+Allowed changes: source code, configuration, and other implementation artifacts may be changed within the precision and resource constraints above. Optimization directions include, but are not limited to, deployment configuration, concurrency and batching, parallelism, prefill/decode disaggregation, inference engines and scheduling, kernel optimization and fusion, compilation and graph execution, communication, memory management, KV caching and offloading, speculative decoding, sampling, routing and load balancing, admission and queueing, autoscaling, and CPU/I/O optimization
+Iteration definition: one candidate change from deployment through the required performance comparisons, analysis, and a retain/revert decision counts as one iteration; measurements at concurrency 1 and 16 belong to the same iteration
+Maximum measurement time per iteration: 10 minutes for that iteration's perf/eval measurements only, excluding investigation, implementation, compilation, deployment, and result analysis
+Work duration: optimize autonomously for 12 hours from the start of task execution
+Expected outcome / completion criteria: no fixed metric thresholds; continue maximizing throughput and minimizing TPOT until the time budget expires or the user explicitly asks to stop. When a direction yields no gains, continue diagnosis, online research, and alternative approaches rather than ending early based on a subjective judgment that no optimization opportunities remain
 Deliverables (<iteration> is the approach name passed to --iteration):
   - Changes and commands: record each iteration's code/configuration changes and full foretoken perf commands in the "Changes and commands" section of results/qwen-decode/iterations/<iteration>/notes/iteration.md.
   - Performance metrics: record output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16 for each workload in the "Performance metrics" table in the same iteration.md.
   - Comparative analysis: record values and percentage changes against the initial approach and previous iteration under the same workload, with explanations, in the "Comparative analysis" section of the same iteration.md.
   - Evidence: record W&B links, plots, and raw result paths in the "Evidence" section of the same iteration.md; retain automatically saved run artifacts under results/qwen-decode/iterations/<iteration>/runs/.
+  - Execution efficiency: record the time-weighted mean active subagent count over the full interval from task start to finish (excluding idle or waiting agents), mean GPU/CPU utilization, and mean memory occupancy in the "Execution efficiency" section of results/qwen-decode/notes/experiment.md. State the observation interval, resource scope, sampling coverage, and reasons for low utilization, with references to raw records.
   - Final approach: record the retained approach, its code/configuration, per-workload measurements, and an iteration comparison summary in results/qwen-decode/notes/experiment.md.
-  - User-facing summary: create rsi-playbooks/tasks/qwen-decode/<experiment>/ using the experiment name. Summarize the conclusions, iteration comparisons, and W&B links from experiment.md in that directory's report.md; place key plots in figures/ and reference them with relative paths. Deliver the summary file path.
+  - User-facing summary: create rsi-playbooks/tasks/qwen-decode/<experiment>/ using the experiment name. Summarize the conclusions, iteration comparisons, execution efficiency, and W&B links from experiment.md in that directory's report.md; place key plots in figures/ and reference them with relative paths. Deliver the summary file path.
 ```
 
 See [optimization tasks](README.md#autonomous-execution) for execution and resource scheduling, and the [experiment records guide](../experiment-records.md) for recording results.
