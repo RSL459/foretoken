@@ -38,7 +38,7 @@ Receive this through the native completion result, without a separate reminder m
 
 Create one native background supervisor with the task, complete node list, experiment directory, deadline, and resource ownership. It owns observation, analysis, and any task-local GPU collectors it starts; deployments and worker scheduling remain with the main agent. Exclude the supervisor from the working-subagent count. Supply the following instructions:
 
-- Keep GPU collection continuous across deployment, measurement, and result analysis. Reuse existing telemetry with retained history covering the assigned GPUs on every task node. Where coverage is missing, start a persistent collector using the installed device tools, record its process identity and output location, and verify that timestamped samples continue to arrive. Reuse a running collector rather than starting one for each analysis window.
+- Keep GPU collection continuous across deployment, measurement, and result analysis. Reuse existing telemetry with retained history covering the assigned GPUs on every task node. Where coverage is missing, use the bundled [GPU collector](scripts/gpu_usage.py) as described below, record its process identity and output location, and verify that timestamped samples continue to arrive. Reuse a running collector rather than starting one for each analysis window.
 - Record the sampling interval separately from the analysis interval. Append samples with node, GPU identity, timestamp, and utilization to the experiment's raw records. Record collection failures and gaps explicitly; missing samples are unknown, not zero. Collection must continue while you analyze results, send messages, or wait for a response.
 - Periodically read newly completed time windows and compute per-node means, idle durations, and sampling coverage in the shell. Use bounded reads or waits within the shell tool's timeout; these consume the continuous data stream rather than restarting collection. Track the last analyzed timestamp so windows are not repeatedly processed. Keep normal summaries in your own context and continue observation without finishing after every window. Do not schedule periodic prompts for the main agent.
 - Check sample freshness as part of each analysis. If collection stops, inspect its process and errors, restore the task-owned collector after confirming the previous instance has exited, and record the gap. If the harness cannot sustain independent analysis, report that limitation once; preserve the collector's recorded identity so the main agent can manage its lifecycle.
@@ -47,6 +47,36 @@ Create one native background supervisor with the task, complete node list, exper
 - Give task-owned collectors the task deadline and an explicit stop mechanism so they can exit without waiting for a model decision. On pause, stop, or completion, stop those collectors, verify their exit, and return observation coverage and GPU utilization evidence. Keep reused monitoring services running; their lifecycle belongs to their existing owner.
 
 Keep worker reassignment in the native completion flow above; the supervisor does not maintain a second worker registry or infer agent counts from GPU usage. Do not require CPU utilization or memory occupancy reports.
+
+## Collect GPU usage
+
+Run `scripts/gpu_usage.py` from this skill on each GPU host using Python 3.11+ and the installed `nvidia-smi` or `mx-smi`. It uses only the standard library; a host without a checkout needs only a copy of this script. Use the existing remote job manager or a task-owned persistent shell session so collection survives the supervisor's analysis and SSH disconnection.
+
+From the checkout root on each host, set `GPU_RUN` to a new directory under the experiment's results, `GPU_INDICES` to that node's assigned host indices (comma-separated), and `DEADLINE` to the task's absolute ISO timestamp with UTC offset. Start once:
+
+```bash
+python3 -I .agents/skills/rsi/scripts/gpu_usage.py collect \
+  --output "$GPU_RUN" --gpus "$GPU_INDICES" --deadline "$DEADLINE"
+```
+
+The collector prints its PID and output directory, then appends to `samples.jsonl` every 10 seconds. Use `--interval` to change the sampling interval. Backend detection selects the installed device tool; use `--backend nvidia` or `--backend metax` when both exist. Omit `--gpus` only when the task owns all visible GPUs, and omit `--deadline` only for a task without a time budget. Existing sample files are never overwritten; each resumed collection uses a new directory.
+
+For periodic analysis, set `WINDOW_START` and `WINDOW_END` to the next completed window's ISO timestamps. Read the files on their host or through existing shared storage; the summary command may also read copies on the supervisor's machine. It does not start or interrupt collection:
+
+```bash
+python3 -I .agents/skills/rsi/scripts/gpu_usage.py summarize "$GPU_RUN" \
+  --since "$WINDOW_START" --until "$WINDOW_END"
+```
+
+Pass additional run directories to summarize multiple nodes over the same window. The JSON includes per-GPU and per-node time-weighted utilization, sampling coverage, zero-utilization seconds, last sample times, and query errors. Each reading covers at most one sampling interval; uncovered time remains unknown. Check coverage and freshness alongside means. Zero utilization describes device activity, not whether an experiment should be running.
+
+Request a stop on the collecting host:
+
+```bash
+python3 -I .agents/skills/rsi/scripts/gpu_usage.py stop "$GPU_RUN"
+```
+
+The stop marker, deadline, SIGINT, or SIGTERM ends collection after any in-flight query (bounded to 10 seconds). Confirm the final `end` record and process exit before releasing the collector. Keep its samples for the experiment report; on resumption start a new run directory. Do not signal a reused PID or stop shared monitoring.
 
 ## Pause or finish
 
