@@ -157,25 +157,30 @@ class NodeImageStore:
         if image in self.owned_images():
             self._pin(image)
 
-    def pin_recorded(self, image: str, digest: str) -> None:
-        """Protect a persisted source output whose node content still matches its producer record."""
-        if image in self.owned_images() or not self.matches(image, digest):
+    def pin_records(self, records: list[tuple[str, str]]) -> None:
+        """Protect recorded source outputs, reading owned references once for this batch."""
+        if not records:
             return
-        output = self.run(
-            [*self.containerd(), "images", "list", f"name=={json.dumps(image)}"],
-            capture=True,
-        )
-        for line in output.splitlines()[1:]:
-            labels = dict(
-                label.split("=", 1)
-                for label in line.split()[-1].split(",")
-                if "=" in label
+        owned = set(self.owned_images())
+        for image, digest in records:
+            if image in owned or not self.matches(image, digest):
+                continue
+            output = self.run(
+                [*self.containerd(), "images", "list", f"name=={json.dumps(image)}"],
+                capture=True,
             )
-            if labels.get(_IMAGE_OWNER_LABEL) not in {None, "foretoken"}:
-                return
-            if labels.get(SOURCE_BUILD_BINDING_LABEL) not in {None, self.binding}:
-                return
-            self._pin(image)
+            for line in output.splitlines()[1:]:
+                labels = dict(
+                    label.split("=", 1)
+                    for label in line.split()[-1].split(",")
+                    if "=" in label
+                )
+                if labels.get(_IMAGE_OWNER_LABEL) not in {None, "foretoken"}:
+                    continue
+                if labels.get(SOURCE_BUILD_BINDING_LABEL) not in {None, self.binding}:
+                    continue
+                self._pin(image)
+                owned.add(image)
 
     def _pin(self, image: str) -> None:
         """Claim a source output reference and pin it before consumers can be scheduled."""
@@ -235,15 +240,22 @@ class NodeImageStore:
             )
             for reference in sorted(references):
                 self._pin(reference)
-        self._import_layout(layout, [*command, "--index-name", image, "-"])
+        # ctr 1.x has already stored and pinned the content graph. Sending its
+        # index again triggers unpack without rewriting every blob a second time.
+        self._import_layout(
+            layout, [*command, "--index-name", image, "-"], metadata_only=major == 1
+        )
 
-    def _import_layout(self, layout: str, command: list[str]) -> None:
-        """Stream GNU tar directly to the node client without a workstation transfer."""
+    def _import_layout(
+        self, layout: str, command: list[str], *, metadata_only: bool = False
+    ) -> None:
+        """Stream the OCI archive, or its index for already stored content, to the node client."""
+        members = "oci-layout index.json" if metadata_only else "."
         self.run(
             [
                 "bash",
                 "-ec",
-                'set -o pipefail; layout=$1; shift; tar -C "$layout" -cf - . | "$@"',
+                f'set -o pipefail; layout=$1; shift; tar -C "$layout" -cf - {members} | "$@"',
                 "import",
                 layout,
                 *command,

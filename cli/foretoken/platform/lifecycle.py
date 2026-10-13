@@ -516,7 +516,7 @@ class PlatformLifecycle:
             else (),
         )
 
-        source_executor = None
+        installation_workers = ThreadPoolExecutor(max_workers=2)
         source_future = None
         dependencies: Future[None] = Future()
         # Only the worker enters source contexts. Join it before the outer stack
@@ -549,11 +549,21 @@ class PlatformLifecycle:
                     saved_arguments=source_build_arguments,
                     before_delivery=dependencies.result,
                 )
-                source_executor = ThreadPoolExecutor(max_workers=1)
-                source_future = source_executor.submit(
+                source_future = installation_workers.submit(
                     source_artifacts.enter_context, context
                 )
+            elif not kubectl.exists("namespace", platform.namespace):
+                kubectl.run(["create", "namespace", platform.namespace])
 
+            # A new Prometheus installation must establish its CRDs before restoring
+            # custom log-chart monitoring resources. Existing monitoring can update in parallel.
+            log_future = (
+                installation_workers.submit(
+                    self._logs.install, log_config, command.timeout
+                )
+                if managed_prometheus_exists or not install_managed_prometheus
+                else None
+            )
             if install_managed_prometheus:
                 helm.install_prometheus(
                     managed_prometheus,
@@ -624,8 +634,10 @@ class PlatformLifecycle:
                     timeout_seconds=timeout_seconds(command.timeout),
                 )
 
-            log_endpoint, log_storage_statefulset = self._logs.install(
-                log_config, command.timeout
+            log_endpoint, log_storage_statefulset = (
+                log_future.result()
+                if log_future is not None
+                else self._logs.install(log_config, command.timeout)
             )
             dependencies.set_result(None)
             source_images = (
@@ -638,8 +650,7 @@ class PlatformLifecycle:
         finally:
             # Resolve dependency success or failure before joining: the source
             # worker may be waiting to deliver node images immediately before Helm.
-            if source_executor is not None:
-                source_executor.shutdown(wait=True)
+            installation_workers.shutdown(wait=True)
 
         helm.install_platform(
             release=platform,
