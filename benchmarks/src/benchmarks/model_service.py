@@ -11,6 +11,7 @@ import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -106,7 +107,19 @@ class ModelService:
         }
         if len(identities) != 1:
             raise ValueError("The deployment must select one model/tokenizer identity")
-        return identities.pop()
+        source, tokenizer = identities.pop()
+        if source == "local" and not Path(tokenizer).expanduser().exists():
+            from benchmarks.datasets.huggingface import find_local_tokenizer_path
+
+            # Relative deployment directories may become remote PVCs. Only reuse
+            # an explicit data root whose tokenizer is readable by this client.
+            for cache in self.deployment.runtime_caches:
+                data_root = Path(cache.directory).expanduser()
+                if data_root.is_absolute():
+                    local = find_local_tokenizer_path(tokenizer, data_root=data_root)
+                    if local is not None:
+                        return source, local
+        return source, tokenizer
 
     def select_models(self, models: Iterable[str]) -> ModelService:
         """Align result and observation scope with the models selected by prepared requests."""

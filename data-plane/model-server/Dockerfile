@@ -61,7 +61,7 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
       printf '[url "%s/"]\n\tinsteadOf = https://github.com/\n' \
         "${FORETOKEN_GITHUB_MIRROR%/}" > /root/.gitconfig; \
     fi \
-    && if [ -n "${FORETOKEN_CARGO_REGISTRY}" ]; then \
+    && if [ -n "${FORETOKEN_CARGO_REGISTRY}" ] && [ "${FORETOKEN_CARGO_REGISTRY}" != "sparse+https://index.crates.io/" ]; then \
       mkdir -p /workspace/.cargo; \
       printf '[source.crates-io]\nreplace-with = "foretoken-mirror"\n\n[source.foretoken-mirror]\nregistry = "%s"\n' \
         "${FORETOKEN_CARGO_REGISTRY}" > /workspace/.cargo/config.toml; \

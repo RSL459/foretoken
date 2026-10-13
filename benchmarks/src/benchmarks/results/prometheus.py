@@ -85,14 +85,16 @@ class PrometheusObserver:
             self._stop.wait(_SAMPLE_INTERVAL_SECONDS)
 
     def _spec_selectors(self) -> tuple[str, str]:
-        """Scope stage rules and raw counters to this model's selected ModelServices."""
+        """Scope stage rules and counters to workloads observed during this run."""
         namespace = json.dumps(self._service.model_service_refs[0].namespace)
         model = f",model_name={json.dumps(self._service.model)}" if self._service.model else ""
         services = json.dumps("|".join(re.escape(ref.name) for ref in self._service.model_service_refs))
+        groups = json.dumps("|".join(re.escape(name) for name in self._resources.group_names))
+        pods = json.dumps("|".join(re.escape(name) for name in self._resources.pod_names))
         common = f'namespace={namespace},modelservice=~{services}{model}'
         return (
-            f'{common},model_role=~"aggregate|decode"',
-            f'{common},endpoint="model-server",inference_foretoken_io_model_role=~"aggregate|decode"',
+            f'{common},model_group=~{groups},model_role=~"aggregate|decode"',
+            f'{common},pod=~{pods},endpoint="model-server",inference_foretoken_io_model_role=~"aggregate|decode"',
         )
 
     def _read_sample(self) -> dict[str, Any]:
@@ -102,9 +104,10 @@ class PrometheusObserver:
         namespace_label = json.dumps(namespace)
         model_filter = f",model_name={json.dumps(self._service.model)}" if self._service.model else ""
         groups = "|".join(re.escape(name) for name in self._resources.group_names)
-        if not groups:
+        if not groups or not self._resources.pod_names:
             return {"observed_at": time.time(), "queries": {}, "gpu_devices": None}
         group_scope = f'namespace={namespace_label},model_group=~{json.dumps(groups)}'
+        targets = json.dumps("|".join(re.escape(uid) for uid in self._resources.group_uids))
         expressions = {
             "requests_running": (
                 f"foretoken:model_server_requests_running:sum{{{group_scope}}}"
@@ -139,7 +142,7 @@ class PrometheusObserver:
             "routing_share_rate": (
                 "sum by(model_name,model_role,route_target_id,data_parallel_rank) "
                 f"(rate(foretoken_router_target_selections_total{{namespace={namespace_label}"
-                f"{model_filter}}}[1m]))"
+                f",route_target_id=~{targets}{model_filter}}}[1m]))"
             ),
         }
         containers = self._container_selector()
@@ -253,8 +256,8 @@ class PrometheusObserver:
         }
 
     def _measure_spec_window(self, duration_seconds: float, ended_at: float) -> dict[str, Any] | None:
-        """Estimate measured-window counters at a fixed end time, including counter resets."""
-        if self._kubectl is None or self._prometheus is None:
+        """Estimate measured-window counters for observed Pods, including counter resets."""
+        if self._kubectl is None or self._prometheus is None or not self._resources.pod_names:
             return None
         _, raw = self._spec_selectors()
         window_ms = round(duration_seconds * 1000)
