@@ -2,7 +2,7 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Name the executor, assigned writer, and independent reviewer. After each perf/eval command, the executor analyzes the result and the writer incorporates that interpretation, linking supporting records under `../runs/`. Keep independent review separately attributed in the same note; it does not replace the executor's analysis. The lead accepts the record and makes the decision rather than writing it.
+Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Name the executor, assigned writer, and independent reviewer. After each perf/eval command, the executor analyzes the result and the writer incorporates that interpretation, linking supporting records under `../runs/`. Keep independent review separately attributed in the same note; it does not replace the executor's analysis. The lead reviews the record and makes the decision; any writing contributions are coordinated with the assigned writer.
 
 ## Question and analysis
 

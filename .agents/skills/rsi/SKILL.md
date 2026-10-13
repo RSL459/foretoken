@@ -22,19 +22,19 @@ Include every node listed in the task in the experiment plan. Check availability
 
 ## Set up the team and assignments
 
-The lead owns understanding the goal and constraints, conceiving the overall approach, decomposing and prioritizing tasks, integrating evidence, reflecting on hypotheses and results, adjusting direction, coordinating resources and staffing, acceptance, and user delivery. Delegate concrete execution: detailed research, deep code analysis and design, implementation, integration edits, deployment, measurement, and experiment-record writing. A worker's completion or blockage calls for a new assignment, not for the lead to take over execution.
+The lead owns understanding the goal and constraints, conceiving the overall approach, decomposing and prioritizing tasks, integrating evidence, reflecting on hypotheses and results, adjusting direction, coordinating resources and staffing, acceptance, and user delivery. Distribute research, code analysis, implementation, deployment, measurement, and recording across the team. Participate in concrete execution when useful while maintaining the overall direction, assignments, and resource coordination.
 
-Choose and reflect on directions using the task goal, measured bottlenecks, and members' code-analysis and research evidence. Exploration is not limited to easy parameter adjustments; the lead judges which methods and deeper investigations are worthwhile for the task, and revisits the approach when progress stalls.
+Choose and reflect on optimization directions using the task goal and available evidence. The lead selects suitable methods and revisits the approach as new findings emerge.
 
 At execution start, load the roles below into native workers. Keep role context across related assignments, while giving each assignment a concrete question and deliverable. Pass absolute paths to [the role contract](roles/common.md), the role file, task, applicable repository instructions, original evidence, and assigned output paths. Include the scope, deadline, authorized resources, dependencies, writer ownership, teammate addresses, and conditions for returning or stopping. Require workers to read those inputs themselves.
 
 | Role instructions | Initial assignment and scaling | Record ownership |
 | --- | --- | --- |
 | [Direction and progress](roles/direction.md) | One advisor ranks directions, reflects on progress, and recommends a return to the main line. | Experiment overview: priorities, open questions, linked iterations, and the lead's decisions. |
-| [Code and bottleneck analysis](roles/bottleneck.md) | At least one global analyst. The lead chooses the total, preferably at least one per active direction; multiple analysts can divide a direction by stage or hypothesis. | Evidence and proposed measurements supplied to the assigned iteration writer. |
+| [Code and bottleneck analysis](roles/bottleneck.md) | At least one agent analyzes the system's end-to-end code path and measured bottlenecks. Prefer dedicated analysts for each active optimization direction, with several allowed on one direction. The lead chooses their number and scope. | Evidence and proposed measurements supplied to the assigned iteration writer. |
 | [Experiment review and attribution](roles/experiment-review.md) | Independent reviewers assigned by direction and candidate; no self-review of an implemented candidate. | Assigned iteration notes, with execution analysis and independent review separately attributed. |
 | [Knowledge research and exploration](roles/research.md) | Researchers assigned by direction and current bottleneck question. | Assigned research notes and reusable guidance. |
-| [Experiment efficiency](roles/efficiency.md) | One supervisor covers all task nodes, continuous GPU collection, and periodic analysis of execution efficiency. | Collector records and evidence supplied to the overview writer. |
+| [Experiment efficiency](roles/efficiency.md) | One supervisor covers continuous GPU collection and periodic analysis of experiments and useful agent parallelism, using native status and member progress updates. | Collector records and evidence supplied to the overview writer. |
 
 Explicitly assign owners for implementation, integration, deployment, evaluation, and recording; these may be separate workers or compatible assignments on existing workers. Keep one owner per resource lifecycle and one writer per file or explicitly separated section.
 
@@ -43,6 +43,16 @@ Maintaining the number of actually working agents and their useful tasks is a st
 When native shared Task tools are available, the lead creates work items and dependencies, assigning owners or authorizing self-claim of ready, unowned work within a stated scope and resource allocation. Workers may claim only within that authorization. Without Task tools, workers make directed requests and wait for explicit lead assignments; do not build a replacement queue, registry, or timer. Members may exchange evidence and challenge findings directly, keeping the lead informed of blockers and proposed priority or resource changes.
 
 On restart, read existing experiment records, timing, resource/process ownership, and native task state. Check which workers actually exist; rebuild the team and reassign unfinished work when the harness has not restored them. Preserve the original budget and notes. Do not assume saved worker names represent live members.
+
+## Work in parallel worktrees
+
+Use independent Git worktrees for concurrent code changes and experimental candidates. A member may own a worktree, or a candidate group may share one with explicit file ownership. Read-only research and review can read the relevant worktree without creating another. The lead coordinates creation through native Git tools and records the agreed base, branch, absolute worktree path, responsible members, assigned resources, and result location in the existing experiment overview.
+
+Give each member the paths for its actual checkout and evidence. Run edits, builds, deployment commands, and validation against that checkout. Give concurrent experiments distinct deployment identities, writable runtime caches, and result directories through the existing deployment mechanisms; reuse read-only model data where appropriate. Worktree isolation separates source changes, while the task's resource allocation determines how many experiments can run together. Take GPU counts and group counts from the task.
+
+Before a measurement or review, identify the candidate's actual source and runtime configuration, including any uncommitted changes. Reviewers inspect that candidate rather than the lead's checkout. After deciding which changes to retain, assign integration into the agreed branch, resolve interactions, and validate the integrated result. Coordinate shared Git operations; each worktree has its own index, but branches and stashes belong to the same repository.
+
+Remove an experimental worktree only after its changes and evidence have been retained or explicitly discarded and its members, builds, and services no longer use it. Preserve unfinished work on pause, and reuse or reassign the worktree deliberately on resumption.
 
 ## Advance each iteration
 
@@ -53,7 +63,7 @@ Every worker must actively send the lead results, evidence, the next useful acti
 3. Reviewers share findings with the global analyst and researcher to reassess bottlenecks and applicability. The lead decides retain/refine/revert; an assigned worker performs the resulting edits or deployment. The reviewer records the decision, and the direction advisor updates the overview.
 4. Request direction review on a contradicted hypothesis, important blocker, or costly side issue. Respond to actionable efficiency findings with an assignment or resource decision, and tell the relevant member what outcome to check.
 
-Use the existing experiment and iteration records. Assigned writers incorporate peer evidence without concurrent overwrites; independent reviewers preserve the executor's interpretation and add their own attributed findings. The lead accepts or requests corrections rather than editing records. End each handoff with useful assigned work or a truthful wait/termination decision. Do not poll or keep agents busy merely to satisfy a count.
+Use the existing experiment and iteration records. Assigned writers incorporate peer evidence without concurrent overwrites; independent reviewers preserve the executor's interpretation and add their own attributed findings. Coordinate any lead contributions with the assigned writer. End each handoff with useful assigned work or a truthful wait/termination decision. Do not poll or keep agents busy merely to satisfy a count.
 
 ## Collect GPU usage
 

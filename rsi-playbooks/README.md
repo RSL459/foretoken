@@ -26,7 +26,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_CODE_GOAL_CHECKIN_MINUTES=0 claude
 This enables Agent Teams for this session and disables timed goal check-ins and automatic retries. Paste the following into a session started with these options. Replace the file path to use your own task:
 
 ```text
-/goal Use the RSI skill and an Agent Team to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. As lead, develop the approach, break down tasks, reflect on findings, and keep the team moving; delegate execution to members. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
+/goal Use the RSI skill and an Agent Team to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. As lead, develop the approach, break down tasks, reflect on findings, and keep the team moving, participating in execution when useful. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
 ```
 
 The lead uses one goal for the overall outcome and team progress, while members work within their roles. To pause, use `/goal clear` to end automatic continuation, then ask the team to stop this task's experiments and collectors.
@@ -36,7 +36,7 @@ The lead uses one goal for the overall outcome and team progress, while members 
 Open Codex in the repository and paste:
 
 ```text
-Use the RSI skill to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. As lead, develop the approach, break down tasks, reflect on findings, and keep the team moving; delegate execution through native agents. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
+Use the RSI skill to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. As lead, develop the approach, break down tasks, reflect on findings, and coordinate native agents, participating in execution when useful. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
 ```
 
 Codex uses the same roles through the native delegation, messaging, and follow-up tools available in the session, not Claude's Agent Team or `/goal`.
@@ -47,17 +47,23 @@ The lead assigns these roles initially and keeps their context for related follo
 
 | Role | Responsibility and staffing |
 | --- | --- |
-| Lead | Conceives and reflects on optimization directions beyond easy parameter adjustments; owns task breakdown, evidence synthesis, priorities, resources, staffing, acceptance, and user delivery. Delegates concrete execution. |
+| Lead | Develops, reflects on, and chooses optimization directions; owns task breakdown, evidence synthesis, resource coordination, useful parallel work, and delivery, participating in execution when useful. |
 | Direction and progress | One independent advisor reviews direction and priorities and writes the experiment overview. |
-| Code and bottleneck analysis | At least one global analyst; the lead chooses the total, preferably at least one per active direction, with more for distinct stages or hypotheses. |
+| Code and bottleneck analysis | Investigates code and measurements to locate performance bottlenecks. At least one agent analyzes the system's end-to-end execution path. Prefer dedicated analysts for each active optimization direction; a direction may have several, with staffing chosen by the lead. |
 | Experiment review and attribution | Independent reviewers by direction and candidate check behavior, comparison conditions, and gains, and write iteration notes. No self-review. |
 | Knowledge research and exploration | Researchers by direction examine original sources and upstream practice, proposing applicable methods and recording findings. |
-| Experiment efficiency | One supervisor owns continuous GPU collection and periodic analysis across task nodes, reporting actionable findings. |
+| Experiment efficiency | One supervisor continuously collects GPU data across all task nodes, periodically analyzes experiment efficiency, inspects agent status, and asks members about progress to check useful parallel work. Alerts the lead to idle resources, stalled tasks, or insufficient parallelism. |
 | Implementation and experiment execution | Explicit owners implement, integrate, deploy, and evaluate candidates, supplying changes, raw results, and interpretation. |
 
 Working-agent counts include analysts, researchers, reviewers, and execution workers while they are doing assigned work. Direction and efficiency advisors are additional. The lead arranges useful work within task and harness limits and addresses staffing shortfalls.
 
 Members exchange evidence directly and request new work on completion or blockage; the lead assigns follow-up work or adjusts responsibilities. Where shared task tools are available, members may also claim ready work within their authorization. The overview and iteration notes each have an assigned writer, and the lead accepts their outputs. On resumption, preserve the original budget and records and recreate missing members.
+
+### Parallel workspaces
+
+Use independent Git worktrees (separate working directories of the same repository) for concurrent changes and experiments, organized by member or experiment group. The lead coordinates the base revision, owners, resources, and result locations. Each group edits, builds, deploys, and measures from its own checkout, using distinct deployment identities, writable caches, and result directories. Read-only research and review can read the relevant checkout directly.
+
+Experiment counts and GPU allocations come from the task. Reviewers examine each candidate's actual code and results; after selecting retained changes, the lead arranges integration and validation. Remove worktrees once changes and evidence are preserved and their users have finished.
 
 ## Design goals
 

@@ -2,7 +2,7 @@
 
 [English](iteration-template.md) | 简体中文
 
-编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。注明执行者、记录负责人和独立审查者。每次 perf/eval 结束后，执行者分析本次结果，由记录负责人整合测量与解释，支撑证据引用本轮 `../runs/` 中的记录。独立审查单独注明来源，不代替执行者自身的分析；主 Agent 验收记录并作出决定，不代写。
+编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。注明执行者、记录负责人和独立审查者。每次 perf/eval 结束后，执行者分析本次结果，由记录负责人整合测量与解释，支撑证据引用本轮 `../runs/` 中的记录。独立审查单独注明来源，不代替执行者自身的分析；主 Agent 审阅记录并作出决定，参与写作时与记录负责人协调。
 
 ## 问题与分析
 
