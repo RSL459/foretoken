@@ -36,7 +36,7 @@ At execution start, load the roles below into native workers. Keep role context 
 | [Code and bottleneck analysis](roles/bottleneck.md) | At least one agent analyzes the system's end-to-end code path and measured bottlenecks. Prefer dedicated analysts for each active optimization direction, with several allowed on one direction. The lead chooses their number and scope. | Evidence and proposed measurements supplied to the assigned iteration writer. |
 | [Experiment review and attribution](roles/experiment-review.md) | Independent reviewers assigned by direction and candidate; no self-review of an implemented candidate. | Assigned iteration notes and reusable experimental findings in `rsi-playbooks/guidance/`, coordinated with the researcher. |
 | [Knowledge research and exploration](roles/research.md) | Researchers assigned by direction and current bottleneck question. | Assigned research notes and reusable guidance. |
-| [Experiment efficiency](roles/efficiency.md) | One supervisor covers continuous GPU collection and periodic analysis of experiments and useful agent parallelism, using native status and member progress updates. | Collector records and evidence supplied to the overview writer. |
+| [Team efficiency](roles/efficiency.md) | One supervisor covers the whole team's work efficiency and resource utilization, including handoffs, duplicate work, blockers, useful parallelism, and continuous GPU collection. | Collector records and evidence supplied to the overview writer. |
 
 Explicitly assign owners for implementation, integration, deployment, evaluation, and recording; these may be separate workers or compatible assignments on existing workers. Keep one owner per resource lifecycle and one writer per file or explicitly separated section.
 

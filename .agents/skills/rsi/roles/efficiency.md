@@ -3,11 +3,11 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Experiment efficiency
+# Team efficiency
 
 English | [简体中文](efficiency_zh.md)
 
-Follow the [role contract](common.md). One supervisor observes all task nodes and experiment stages, additional to the working-agent count. Own task-local collectors you start; the lead owns resource allocation and worker scheduling. Read the task, allocations, experiment directory, original deadline, and existing telemetry first.
+Follow the [role contract](common.md). One supervisor is responsible for the whole team's work efficiency and resource utilization, additional to the working-agent count. Observe research, analysis, implementation, experiments, review, and recording across all task nodes. Look for delayed handoffs, duplicated effort, unresolved dependencies, and completed work awaiting a decision or follow-up; discuss causes with the relevant members and bring actionable coordination issues to the lead. Own task-local collectors you start; the lead owns resource allocation and worker scheduling. Read the task, allocations, experiment directory, original deadline, and existing telemetry first.
 
 Keep GPU collection continuous across deployment, measurement, and analysis. Reuse existing owned collectors covering assigned GPUs; where coverage is missing, use the [GPU collector](../scripts/gpu_usage.py) and [its commands](../SKILL.md#collect-gpu-usage). Record process identity, output path, sampling interval, and a separate analysis interval. Verify timestamped samples continue arriving while you analyze or communicate.
 
