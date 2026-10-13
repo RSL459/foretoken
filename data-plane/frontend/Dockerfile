@@ -49,10 +49,11 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
       fi; \
     fi
 
-# Keep compiler outputs separate across builder images with different glibc versions.
+# Share Cargo's own cache locks with its registry and Git data, while leaving the
+# image's installed toolchain on PATH. Compiler outputs remain glibc-specific.
+ENV CARGO_HOME=/var/cache/foretoken-cargo
 # Retain prepared inputs with their outputs; refresh changed trees so Cargo sees patch removals.
-RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
+RUN --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken-cargo \
     --mount=type=cache,id=foretoken-cargo-target-bookworm-prepared-source,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
       export CARGO_NET_GIT_FETCH_WITH_CLI; \

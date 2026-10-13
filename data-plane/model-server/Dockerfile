@@ -75,10 +75,11 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
       fi; \
     fi
 
-# Bullseye cannot load procedural macros linked against the frontend builder's newer glibc.
+# Share Cargo's own cache locks with its registry and Git data. Bullseye cannot
+# load procedural macros linked against the frontend builder's newer glibc.
+ENV CARGO_HOME=/var/cache/foretoken-cargo
 # Retain prepared inputs with their outputs; refresh changed trees so Cargo sees patch removals.
-RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
+RUN --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken-cargo \
     --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
       export CARGO_NET_GIT_FETCH_WITH_CLI; \

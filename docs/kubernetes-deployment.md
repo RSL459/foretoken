@@ -78,7 +78,7 @@ Deploy and update code:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-After editing the checkout, run the same command again. See [Deploy Foretoken from Source](custom-deployment.md#deploy-and-update-code) for engine checkouts and runtime changes.
+After editing the checkout, run the same command again. See [Deploy Foretoken from Source](custom-deployment.md#deploy-a-model-service) for engine checkouts and runtime changes.
 
 ## 4. Remove Foretoken
 

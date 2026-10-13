@@ -77,6 +77,8 @@ foretoken deploy examples/quickstart --timeout 20m
 
 This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. The example uses the repository-root `./data` directory for model files and runtime cache. More deployments are available in [`examples/`](examples/).
 
+To try different code changes side by side, see [parallel candidates](docs/custom-deployment.md#run-candidates-in-parallel); to modify vLLM, see [local engine source](docs/custom-deployment.md#edit-an-inference-engine).
+
 ### 4. Send a test request
 
 ```bash
@@ -87,10 +89,6 @@ curl --fail-with-body --no-buffer \
   -H "Content-Type: application/json" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
-
-### Iterate on source
-
-After a source installation, edit the checkout and rerun the deploy command to update the service. See [Deploy Foretoken from Source](docs/custom-deployment.md) for engine checkouts and runtime changes.
 
 ### 5. Evaluate and profile the service
 
