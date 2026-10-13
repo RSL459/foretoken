@@ -45,7 +45,7 @@ const (
 // ScalingMetricsProvider supplies one read-only, target-attributed metrics snapshot.
 // Implementations collect metrics without mutating Kubernetes resources or autoscaling state.
 type ScalingMetricsProvider interface {
-	Snapshot(context.Context, core.TargetID) (core.MetricsSnapshot, error)
+	Snapshot(context.Context, core.TargetID, bool) (core.MetricsSnapshot, error)
 }
 
 // ModelServiceReconciler compiles ModelService intent and owns ModelPool specs.
@@ -541,6 +541,15 @@ func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Cont
 	if template.Backend == "vllm" {
 		selection.ApplicationURL = reconciler.ApplicationURL
 		if template.SourceRevision != "" {
+			publishedImage, err := reconciler.ApplicationFiles.ResolveImage(ctx, "model-server", template.SourceRevision, image)
+			if err != nil {
+				return nil, err
+			}
+			// Source files also run under Nsight, but their ordinary runtime image
+			// cannot replace the platform's diagnostic tools and launch environment.
+			if imageProfile != "nsight" {
+				selection.Image = publishedImage
+			}
 			selection.ApplicationURL = reconciler.ApplicationFiles.Ref("model-server", template.SourceRevision)
 		}
 	}

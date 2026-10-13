@@ -403,6 +403,12 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	if !retained {
 		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy()}
 		if sourceRevision != "" {
+			image, err := profile.ApplicationFiles.ResolveImage(ctx, "frontend", sourceRevision, profile.Image)
+			if err != nil {
+				statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ApplicationResolutionFailed", FailureMessage: err.Error()})
+				return ctrl.Result{}, errors.Join(err, statusErr)
+			}
+			selection.Image = image
 			selection.ApplicationURL = profile.ApplicationFiles.Ref("frontend", sourceRevision)
 		}
 	} else {

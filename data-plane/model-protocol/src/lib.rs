@@ -218,6 +218,28 @@ pub struct TelemetryResponse {
     pub e2e_seconds: CumulativeHistogram,
 }
 
+/// One EngineCore's scheduler token demand, distinct from allocated KV cache occupancy.
+/// The model-server publishes complete rank coverage for token-load autoscaling consumers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchedulerLoad {
+    pub data_parallel_rank: u32,
+    pub queued_prefill_tokens: u64,
+    pub scheduled_decode_kv_tokens: u64,
+    pub queued_decode_kv_tokens: u64,
+    pub context_length: u64,
+    pub kv_capacity_tokens: u64,
+}
+
+/// Versioned scheduler-demand response consumed only by the control-plane collector.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchedulerLoadResponse {
+    pub version: u8,
+    pub collected_at_unix_ms: u64,
+    pub engines: Vec<SchedulerLoad>,
+}
+
 /// Group-local route used by the frontend KV indexer to consume normalized deltas.
 pub const KV_INDEX_DELTA_PATH: &str = "/v1/internal/kv-index/delta";
 
