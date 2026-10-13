@@ -144,9 +144,9 @@ impl KvCostScorer {
 }
 
 impl RouteScorer for KvCostScorer {
-    /// Requests live prefix observations before cache-aware scoring.
+    /// Requests cache observations only when the cost model enables cache credit.
     fn needs_kv_prefix(&self) -> bool {
-        true
+        self.overlap_score_credit != 0.0
     }
 
     /// Reserves effective prefill tokens until the first response; Decode has no prompt work left.
@@ -158,6 +158,9 @@ impl RouteScorer for KvCostScorer {
     ) -> usize {
         if !self.tracks_prefill(candidate) {
             return 0;
+        }
+        if !self.needs_kv_prefix() {
+            return request.token_count();
         }
         let Some(block_size) = candidate.kv_block_size else {
             return request.token_count();
@@ -189,15 +192,6 @@ impl RouteScorer for KvCostScorer {
         ] {
             if !value.is_finite() || value < 0.0 {
                 return Err(format!("{name} must be finite and non-negative"));
-            }
-        }
-        for (name, value) in [
-            ("host_cache_hit_weight", config.host_cache_hit_weight),
-            ("disk_cache_hit_weight", config.disk_cache_hit_weight),
-            ("shared_cache_multiplier", config.shared_cache_multiplier),
-        ] {
-            if value > 1.0 {
-                return Err(format!("{name} must be between 0 and 1"));
             }
         }
         *self = config;
@@ -237,8 +231,15 @@ impl RouteScorer for KvCostScorer {
                     return super::cost_score(None);
                 };
                 let size = block_size.get() as usize;
-                let cache = CacheCostInput::read(request, candidate, kv_prefix_indexer, size);
-                super::cost_score(Some(self.worker_cost(request, candidate, &cache, size, minimum)))
+                // Load-only policies neither credit cache tiers nor discount reservations.
+                let cache = if self.needs_kv_prefix() && candidate.role != ModelServerRole::Decode {
+                    CacheCostInput::read(request, candidate, kv_prefix_indexer, size)
+                } else {
+                    CacheCostInput::default()
+                };
+                super::cost_score(Some(
+                    self.worker_cost(request, candidate, &cache, size, minimum),
+                ))
             })
             .collect()
     }
