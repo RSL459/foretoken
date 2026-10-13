@@ -96,15 +96,13 @@ Add `--gateway-section-name LISTENER` only when more than one listener matches.
 
 ### Current source
 
-Build and install from the repository root. The cluster needs a default StorageClass for compiler caches; see the [source deployment guide](../docs/custom-deployment.md) for storage overrides.
+The cluster needs a default StorageClass. Run from the Foretoken repository root:
 
 ```bash
 foretoken install -e .
 ```
 
-This binds the checkout to the target cluster for subsequent source updates.
-
-After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
+`foretoken deploy` then uses the code in your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/custom-deployment.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/custom-deployment.md#edit-an-inference-engine).
 
 A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 

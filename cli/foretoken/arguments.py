@@ -55,6 +55,8 @@ class DeployCommand:
     kustomize_path: str
     timeout: str
     profile: ProfileCommand | None = None
+    editable: str | None = None
+    engine_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -237,7 +239,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "-e",
         "--editable",
         metavar="PATH",
-        help="build Foretoken images and bind this workstation's source root for subsequent deploy updates",
+        help="build the shared Foretoken platform and runtime defaults from this checkout",
     )
     install.add_argument(
         "--engine-source", action="append", metavar="[ENGINE=]PATH",
@@ -316,6 +318,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "kustomize_path",
         metavar="PATH",
         help="Kustomize root containing one frontend and one or more models",
+    )
+    deploy.add_argument(
+        "-e", "--editable", metavar="PATH",
+        help="build this checkout's runtime applications (defaults to the current Foretoken checkout on a source-installed platform)",
+    )
+    deploy.add_argument(
+        "--engine-source", action="append", metavar="[ENGINE=]PATH",
+        help="select an engine checkout for this source worktree; repeat for vllm-metax",
     )
     _add_wait_timeout_argument(deploy, "serving readiness or capture completion")
     add_profile_arguments(deploy)
@@ -477,7 +487,10 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             )
             if parsed_args.profile else None
         )
-        return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout, capture)
+        return DeployCommand(
+            parsed_args.kustomize_path, parsed_args.timeout, capture,
+            parsed_args.editable, tuple(parsed_args.engine_source or ()),
+        )
     if parsed_args.command == "delete":
         return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "profile":

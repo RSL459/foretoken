@@ -96,15 +96,13 @@ foretoken install \
 
 ### 当前源码
 
-从仓库根目录构建并安装。集群需有保存编译缓存的默认存储类（StorageClass）；自定义存储设置见[源码部署指南](../docs/custom-deployment_zh.md)。
+集群需有默认存储类（StorageClass）。在 Foretoken 仓库根目录运行：
 
 ```bash
 foretoken install -e .
 ```
 
-命令将源码目录与目标集群关联，后续从该目录更新服务。
-
-修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
+部署时，`foretoken deploy` 会使用当前 Foretoken 目录中的代码。并行运行不同代码版本，见[多版本部署示例](../docs/custom-deployment_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/custom-deployment_zh.md#修改推理引擎)。
 
 当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 

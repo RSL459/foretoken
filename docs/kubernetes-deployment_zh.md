@@ -78,7 +78,7 @@ workload:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-修改源码后，继续执行同一条命令。引擎源码和运行环境设置见[从源码部署 Foretoken](custom-deployment_zh.md#部署与更新代码)。
+修改源码后，继续执行同一条命令。引擎源码和运行环境设置见[从源码部署 Foretoken](custom-deployment_zh.md#部署模型服务)。
 
 ## 4. 删除 Foretoken
 
