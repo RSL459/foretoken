@@ -13,6 +13,8 @@ Turn research findings, failure causes, and unproductive detours into reusable k
 
 Raw artifacts preserve commands, configurations, versions, metrics, and outputs. Iteration notes explain the question, changes, results, and next steps. See the [experiment records guide](../../experiment-records.md) for recording instructions.
 
+Keep raw results from concurrent experiments in separate candidate directories. Workers give Recorders the worktree containing the actual changes, source version, deployment and run identity, commands, result locations, and their interpretation. Recorders read evidence from the corresponding candidate, check comparison conditions and attribution, and promptly return questions requiring further measurement to Workers. Assign authors to files or sections in shared records so documentation can progress alongside the next research iteration.
+
 Extract useful insights from reference reading, source analysis, and experiments:
 
 - Effective improvements: why they work and which models, workloads, hardware, and implementation conditions they suit.

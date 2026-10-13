@@ -13,6 +13,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 原始产物保存命令、配置、版本、指标和输出，迭代说明解释本轮问题、改动、结果和下一步。记录方式见[实验记录手册](../../experiment-records_zh.md)。
 
+并行实验的原始结果保留在各候选的独立目录中。Worker 向 Recorder 提供实际改动所在的 worktree、源码版本、部署与运行身份、命令、结果位置和自身解释。Recorder 从对应候选读取证据，核对对照条件与归因，及时把待补测的问题交回 Worker。明确共同记录中各文件或章节的作者，让记录整理与下一轮研究并行推进。
+
 从资料阅读、源码分析和实验中提炼有用的认识：
 
 - 有效改进：为什么有效，适合什么模型、负载、硬件和实现条件。
