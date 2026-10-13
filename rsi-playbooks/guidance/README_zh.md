@@ -1,9 +1,15 @@
-# 参考资料与知识
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+-->
+
+# 优化指导
 
 [English](README.md) | 简体中文
 
-这里整理理解和优化推理系统所需的知识，包括研究论文、工程实践、架构解析、历史实验及其结论。
+结合研究方法与技术知识了解系统现状，提出自己的设计，并从实验中持续学习。
 
-补充资料时，说明它解决的问题、核心思路和适用条件，链接原始来源，并区分资料中的结论与在 Foretoken 中验证过的结果。
+- [元知识](meta-knowledge/README_zh.md)：寻找资料、定位瓶颈、选择研究方向、设计改进与记录经验。
+- [技术知识](knowledge/README_zh.md)：推理原理、实现思路，以及带有适用条件和依据的可复用发现。
 
-具体技巧的写法见[知识条目模板](../templates/guidance-template_zh.md)。
+按当前问题选读，并用新的研究与实验结果补充、修正知识。命令和实验产物的用法见[实验记录手册](../experiment-records_zh.md)。

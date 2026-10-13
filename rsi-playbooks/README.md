@@ -18,7 +18,7 @@ cd foretoken
 Open Claude Code or Codex in this directory and paste the following prompt. Replace the file path to use your own task:
 
 ```text
-Use the RSI skill to optimize the inference system according to rsi-playbooks/tasks/qwen-decode.md. Read the task and prior experiment records, then carry out research, implementation, deployment, evaluation, and analysis. Keep assigning parallel work and use all available nodes to advance experiments until the task's completion criteria are met. Save the results and deliver the optimization conclusions as specified in the task.
+Use the RSI skill to optimize the inference system according to rsi-playbooks/tasks/qwen-decode.md. Read the task, prior experiment records, and relevant guidance under rsi-playbooks/guidance/, then carry out research, design, implementation, deployment, evaluation, and analysis. Keep assigning parallel work and use all available nodes to advance experiments until the task's completion criteria are met. Save the results and deliver the optimization conclusions as specified in the task.
 ```
 
 ## Design goals
