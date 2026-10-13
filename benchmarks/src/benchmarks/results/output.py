@@ -29,16 +29,22 @@ from benchmarks.config.benchmark import (
     WandbRunConfig,
 )
 from benchmarks.model_service import ModelService
-from benchmarks.results.console import capture_run_logs, log_benchmark_summary
+from benchmarks.results.console import (
+    capture_run_logs,
+    log_benchmark_summary,
+    print_result_location,
+)
 from benchmarks.results.environment import (
     ApplicationSources,
     client_environment,
     serving_environment,
 )
 from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
+from benchmarks.results.progress import HttpProgress
 from benchmarks.results.prometheus import PrometheusObserver
 from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.responses import ResponseWriter
+from benchmarks.results.timeseries import ELAPSED_TIME
 from benchmarks.results.wandb import publish_http_wandb
 
 logger = logging.getLogger(__name__)
@@ -60,6 +66,7 @@ class BenchmarkRun:
     time_origin: float | None = None
     # Quality evaluations have an execution status independent of the model's score.
     exit_code: int | None = None
+    cumulative_published: bool = False
 
 
 class ResultSink(Protocol):
@@ -171,7 +178,7 @@ class BenchmarkArtifactSink:
         if run.measurements is not None and "raw_output" not in run.artifacts:
             slo = run.metrics.get("slo") or {}
             slo_met = slo.get("request_slo_met")
-            write_json(
+            run.artifacts["raw_output"] = write_json(
                 self.output_dir,
                 "raw_output.json",
                 [
@@ -275,12 +282,14 @@ class WandbSink:
             raise
         if self._run is None:
             raise RuntimeError("W&B initialization returned no run")
-        logger.info(
-            "W&B logging enabled: project=%s name=%s group=%s",
-            wandb_config.project,
-            self.run_name,
-            self.group or "-",
-        )
+        if self._run.url:
+            print_result_location(f"W&B results: {self._run.url}")
+        self._run.define_metric(ELAPSED_TIME, hidden=True)
+        self._run.define_metric("Cumulative/*", step_metric=ELAPSED_TIME, step_sync=False)
+
+    def log_progress(self, row: dict[str, Any]) -> None:
+        """Queue a live measurement snapshot through the owned SDK run."""
+        self._run.log(row)
 
     def publish(self, run: BenchmarkRun) -> None:
         """Publish benchmark content through the adapter selected by ResultOutputs."""
@@ -289,23 +298,6 @@ class WandbSink:
         try:
             self.publisher(self._run, run)
             if "warmup_metrics" in run.artifacts:
-                warmup = json.loads(run.artifacts["warmup_metrics"].read_text(encoding="utf-8"))
-                comparison = []
-                if "latency" in run.metrics:
-                    for key, unit in (("latency", "s"), ("ttft", "s"), ("tpot", "s")):
-                        for statistic in ("mean", "p50", "p95", "p99"):
-                            comparison.append([f"{key} {statistic} ({unit})", warmup[key][statistic], run.metrics[key][statistic]])
-                    comparison.append(["Request throughput (req/s)", warmup["throughput"]["requests_per_second"], run.metrics["throughput"]["requests_per_second"]])
-                else:
-                    for key in ("e2e_s", "queue_wait_s", "server_generation_s"):
-                        comparison.append([f"{key} (s)", warmup.get(key), run.metrics.get(key)])
-                comparison.extend((
-                    ["Requests", warmup["request_num"], run.metrics["request_num"]],
-                    ["Success rate (%)", warmup["success_rate"] * 100, run.metrics["success_rate"] * 100],
-                ))
-                self._run.log({"Phases/Warmup vs measurement": wandb.Table(
-                    columns=["Metric", "Warmup", "Measurement"], data=comparison,
-                )})
                 artifact = wandb.Artifact(f"warmup-{self._run.id}", type="benchmark-warmup")
                 for name in ("warmup_metrics", "warmup_raw_output"):
                     artifact.add_file(str(run.artifacts[name]), name=run.artifacts[name].name)
@@ -321,8 +313,6 @@ class WandbSink:
                 artifact = wandb.Artifact(f"plots-{self._run.id}", type="benchmark-plots")
                 artifact.add_dir(str(directory))
                 self._run.log_artifact(artifact)
-                for image in sorted(directory.glob("*.png")):
-                    self._run.log({f"Plots/{image.stem}": wandb.Image(str(image))})
         except wandb.errors.Error:
             logger.exception("W&B publication failed")
             raise
@@ -334,7 +324,14 @@ class WandbSink:
         if run is None:
             return
         try:
-            run.finish(exit_code=exit_code)
+            try:
+                log_path = Path(self.execution_dir) / "run.log"
+                if log_path.is_file():
+                    artifact = wandb.Artifact(f"logs-{run.id}", type="benchmark-logs")
+                    artifact.add_file(str(log_path), name="run.log")
+                    run.log_artifact(artifact)
+            finally:
+                run.finish(exit_code=exit_code)
         except wandb.errors.Error:
             logger.exception("W&B finalization failed")
             raise
@@ -539,17 +536,7 @@ class ResultOutputs:
             )
         else:
             self._temporary_execution_dir = True
-            if outputs.includes("wandb"):
-                os.makedirs(outputs.output_dir, exist_ok=True)
-                timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-                self._execution_dir = mkdtemp(
-                    prefix=f"{self.directory_prefix}{timestamp}-",
-                    dir=outputs.output_dir,
-                )
-            else:
-                self._execution_dir = mkdtemp(
-                    prefix="foretoken-benchmark-"
-                )
+            self._execution_dir = mkdtemp(prefix="foretoken-benchmark-")
 
         try:
             os.makedirs(self.execution_dir, exist_ok=True)
@@ -635,6 +622,13 @@ class ResultOutputs:
         if start_observers:
             self.start_observers()
 
+    def http_progress(self, *, stream: bool) -> HttpProgress | None:
+        """Connect the HTTP runner to the selected live W&B destination."""
+        for sink in self._sinks:
+            if isinstance(sink, WandbSink):
+                return HttpProgress(sink.log_progress, stream=stream)
+        return None
+
     def start_observers(self) -> None:
         """Capture serving state and start resource sampling immediately before measurement."""
         outputs = self.benchmark.outputs
@@ -712,6 +706,8 @@ class ResultOutputs:
         """Close every sink once without replacing an active benchmark failure."""
         failed = exc_type is not None or self._exit_code != 0
         self._exit_code = 1 if failed else 0
+        if exc_value is not None:
+            logger.error("Benchmark failed: %s", exc_value)
         try:
             try:
                 return self._resources.__exit__(
@@ -774,13 +770,12 @@ class ResultOutputs:
             self._exit_code = run.exit_code
         elif int(run.metrics["success_num"]) == 0:
             self._exit_code = 1
-        if self.benchmark.outputs.includes("quiet"):
-            run.artifacts["console_log"] = Path(self.execution_dir) / "run.log"
-            if run.measurements is not None and run.metrics["failed_num"]:
-                logger.error(
-                    "%s/%s requests failed; see %s",
-                    run.metrics["failed_num"], run.metrics["request_num"], self.execution_dir,
-                )
+        if self.benchmark.outputs.includes("quiet") and run.measurements is not None and run.metrics["failed_num"]:
+            logger.error(
+                "%s/%s requests failed; see %s",
+                run.metrics["failed_num"], run.metrics["request_num"],
+                self.execution_dir if self.benchmark.outputs.saves_local else "W&B result artifacts",
+            )
         observer = self._replica_observer
         self._replica_observer = None
         if observer is not None:

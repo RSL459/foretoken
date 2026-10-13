@@ -33,6 +33,7 @@ from benchmarks.results.output import (
     resolved_load_record,
     write_json,
 )
+from benchmarks.results.progress import HttpProgress
 from benchmarks.runs.scheduling import run_schedule
 
 logger = logging.getLogger(__name__)
@@ -95,12 +96,14 @@ class HttpBenchmark:
         label: str = "",
         output_dir: str | None = None,
         wandb_group: str | None = None,
+        outputs: ResultOutputs | None = None,
     ) -> None:
         self.benchmark = benchmark
         self.service = service
         self.label = label
         self.output_dir = output_dir
         self.wandb_group = wandb_group
+        self.outputs = outputs
 
     async def _execute_episode(
         self,
@@ -114,6 +117,7 @@ class HttpBenchmark:
         phase: str,
         itl: ITLStatistics,
         group_itl: dict[str, dict[str, ITLStatistics]],
+        progress: HttpProgress | None = None,
     ) -> EpisodeResult:
         """Advance one conversation, retaining recorded or generated history and request failures."""
         result = EpisodeResult([])
@@ -216,6 +220,8 @@ class HttpBenchmark:
             generated_text = response.pop("generated_text")
             response.pop("tool_calls")
             result.records.append(response)
+            if progress is not None:
+                progress.observe(request_measurement(response, progress.origin))
             if not response["success"]:
                 break
             if episode.conversation:
@@ -262,13 +268,11 @@ class HttpBenchmark:
     async def _run(self) -> BenchmarkRun:
         """Prepare requests, drain independent warmup, then observe and publish the formal phase."""
         benchmark = self.benchmark
-        with ResultOutputs(
-            benchmark,
-            self.service,
-            label=self.label,
-            output_dir=self.output_dir,
-            wandb_group=self.wandb_group,
-        ) as outputs:
+        context = nullcontext(self.outputs) if self.outputs is not None else ResultOutputs(
+            benchmark, self.service, label=self.label,
+            output_dir=self.output_dir, wandb_group=self.wandb_group,
+        )
+        with context as outputs:
             workload = HttpWorkload(benchmark, self.service)
             actual_models = {
                 workload.builder.model_for(task.metadata) for task in workload.tasks
@@ -338,6 +342,7 @@ class HttpBenchmark:
                 measured_itl = ITLStatistics()
                 measured_groups: dict[str, dict[str, ITLStatistics]] = {}
                 outputs.start_observers()
+                progress = outputs.http_progress(stream=benchmark.generation.stream)
                 profile = outputs.create_profile()
                 with profile if profile is not None else nullcontext():
 
@@ -353,22 +358,28 @@ class HttpBenchmark:
                             "measurement",
                             measured_itl,
                             measured_groups,
+                            progress,
                         )
 
                     logger.info(
                         "Measurement: %s HTTP requests",
                         workload.request_count or "duration-bounded",
                     )
-                    episodes, duration, origin = await run_schedule(
-                        measured_episodes,
-                        measure,
-                        benchmark.load,
-                        seed=workload.dataset.random_seed,
-                        trace_start=workload.trace_start
-                        if workload.trace_events is not None
-                        else None,
-                        before_first=profile.start if profile is not None else None,
-                    )
+                    async with asyncio.TaskGroup() as tasks:
+                        sampler = tasks.create_task(progress.sample()) if progress is not None else None
+                        try:
+                            episodes, duration, origin = await run_schedule(
+                                measured_episodes, measure, benchmark.load,
+                                seed=workload.dataset.random_seed,
+                                trace_start=workload.trace_start if workload.trace_events is not None else None,
+                                before_first=profile.start if profile is not None else None,
+                                on_start=progress.start if progress is not None else None,
+                            )
+                        finally:
+                            if sampler is not None:
+                                sampler.cancel()
+                    if progress is not None:
+                        progress.emit(duration)
             records = sorted(
                 (row for item in episodes for row in item.records),
                 key=lambda row: row["started_at"],
@@ -466,6 +477,7 @@ class HttpBenchmark:
                 measurements=measurements,
                 artifacts=artifacts,
                 time_origin=origin,
+                cumulative_published=progress is not None,
             )
             outputs.publish(run)
             return run
