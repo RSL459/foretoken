@@ -103,10 +103,6 @@ RUN --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken-cargo
       "data-plane/target/release/${FORETOKEN_MODEL_SERVER_BINARY}" \
       /out/model-server
 
-# Python-only deployments reuse the published executable and replace this directory.
-FROM scratch AS python-export
-COPY data-plane/model-server/python/ /python/
-
 FROM scratch AS source-export
 COPY --from=builder /out/model-server /bin/foretoken-model-server
 COPY data-plane/model-server/python/ /python/

@@ -528,22 +528,29 @@ class EditableDeployment:
                 revision = bundle["revision"]
                 staging = builder.root + "/output/" + revision
                 payload = staging + "/payload"
-                dockerfile = f"data-plane/{component}/Dockerfile"
-                arguments = dict(build["arguments"])
-                if component == "model-server":
-                    arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"][
-                        "model_image"
-                    ]
-                python_only = bundle.get("python_only", False)
-                if python_only:
-                    # Preserve deletion of the last Python file as an empty export.
-                    builder.run(["mkdir", "-p", builder.workspace + "/data-plane/model-server/python"])
-                builder.build(
-                    dockerfile,
-                    target="python-export" if python_only else "source-export",
-                    destination=payload,
-                    arguments=arguments,
-                )
+                if bundle.get("python_only", False):
+                    # Export the synchronized tree without depending on the checkout's
+                    # Dockerfile. Replacing the payload preserves deletions on retries.
+                    builder.run([
+                        "sh", "-ec",
+                        'rm -rf "$2"; mkdir -p "$2/python"; '
+                        'if test -d "$1"; then cp -pR "$1/." "$2/python/"; fi',
+                        "export-python",
+                        builder.workspace + "/data-plane/model-server/python",
+                        payload,
+                    ])
+                else:
+                    arguments = dict(build["arguments"])
+                    if component == "model-server":
+                        arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"][
+                            "model_image"
+                        ]
+                    builder.build(
+                        f"data-plane/{component}/Dockerfile",
+                        target="source-export",
+                        destination=payload,
+                        arguments=arguments,
+                    )
                 if component == "model-server" and build_engine:
                     builder.build(
                         "deploy/inference-engines/source-build.Dockerfile",
