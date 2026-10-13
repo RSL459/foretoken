@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Scoring expected queue, prefill, and decode latency at the candidate-average request length.
+//! Scoring prefill and decode latency at the eligible target-average request length.
 
 use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, RoutingProgress};
 use foretoken_kv_indexer::KvPrefixIndexer;
+use std::collections::BTreeSet;
 
 /// Prefers lower expected latency using daily request lengths and cumulative latency means.
 #[derive(Default)]
@@ -21,13 +22,17 @@ impl RouteScorer for LeastLatencyScorer {
         routing_progress: &RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Vec<RouteScore> {
-        // Estimate a common request length from positive per-candidate means, not pooled samples.
+        // Metrics belong to targets, so expanding DP ranks must not reweight their means.
         // Length observations contribute even when another metric leaves that candidate unscored.
+        let mut seen_targets = BTreeSet::new();
         let mut prompt_sum = 0.0;
         let mut prompt_count = 0;
         let mut generation_sum = 0.0;
         let mut generation_count = 0;
         for candidate in candidates {
+            if !candidate.stage_eligible || !seen_targets.insert(&candidate.route_target_id) {
+                continue;
+            }
             let Some(stats) = &candidate.route_target_stats else {
                 continue;
             };
@@ -61,7 +66,7 @@ impl RouteScorer for LeastLatencyScorer {
                     return super::cost_score(None);
                 };
                 let metric = &stats.request_cost;
-                let (Some(queue), Some(prompt), Some(prefill), Some(generation), Some(decode)) = (
+                let (Some(_), Some(prompt), Some(prefill), Some(generation), Some(decode)) = (
                     metric.queue_seconds,
                     stats.prompt_tokens_per_request,
                     metric.prefill_seconds,
@@ -81,12 +86,13 @@ impl RouteScorer for LeastLatencyScorer {
                     guess_generation_tokens
                 };
                 // Preserve AIBrix's division-then-multiplication and left-to-right addition.
-                // Foretoken supplies the queue histogram mean, not AIBrix's zero-valued
-                // HistogramMetricValue.GetSimpleValue() adapter result.
+                // AIBrix requires the queue histogram but reads GetSimpleValue(), which is zero.
                 let prefill_latency = prefill.mean() / avg_prompt_tokens * guess_prompt_tokens;
                 let decode_latency =
                     decode.mean() / avg_generation_tokens * guess_generation_tokens;
-                super::cost_score(Some(queue.mean() + prefill_latency + decode_latency))
+                let cost = 0.0 + prefill_latency + decode_latency;
+                // RouteScore has no validity bit; keep undefined costs out of total ordering.
+                super::cost_score(cost.is_finite().then_some(cost))
             })
             .collect()
     }
