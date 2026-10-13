@@ -24,7 +24,8 @@ use crate::instance_admission::{InstanceAdmissionConfig, InstanceAdmissionStatus
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
 use crate::runtime_cache;
 use foretoken_model_protocol::{
-    AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
+    AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, SchedulerLoadResponse,
+    TelemetryResponse,
 };
 
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
@@ -320,6 +321,7 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route("/metrics", get(metrics))
         .route("/v1/internal/metadata", get(metadata))
         .route("/v1/internal/telemetry", get(telemetry))
+        .route("/v1/internal/scheduler-load", get(scheduler_load))
         .route("/v1/internal/admission", get(instance_admission_status))
         .route(
             "/v1/internal/admission/ready",
@@ -478,6 +480,29 @@ async fn metadata(State(state): State<AppState>) -> Json<RuntimeMetadataResponse
 
 async fn telemetry(State(state): State<AppState>) -> Json<TelemetryResponse> {
     Json(telemetry_response(&state))
+}
+
+// Query the engine only on demand; older engines or unsupported layouts keep their
+// existing inference/telemetry paths and report unavailable load to bounded policies.
+// Bound the engine query so a stalled utility cannot retain backend ownership indefinitely.
+async fn scheduler_load(State(state): State<AppState>) -> Response {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        state.backend.scheduler_load(),
+    )
+    .await
+    {
+        Ok(Ok(engines)) => Json(SchedulerLoadResponse {
+            version: 1,
+            collected_at_unix_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock predates Unix epoch")
+                .as_millis() as u64,
+            engines,
+        })
+        .into_response(),
+        Ok(Err(_)) | Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
 }
 
 // The shutdown coordinator closes admission before draining. Return the post-close telemetry

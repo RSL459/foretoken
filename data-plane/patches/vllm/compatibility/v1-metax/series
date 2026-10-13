@@ -15,3 +15,5 @@ common/spec-decode-timing-collector.patch
 common/spec-decode-timing-hooks.patch
 common/shm-nonblocking-read.patch
 compatibility/v1-metax/spec-decode-timing.patch
+common/scheduler-load.patch
+compatibility/v1-current/scheduler-load.patch

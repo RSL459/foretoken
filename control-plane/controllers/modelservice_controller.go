@@ -45,7 +45,7 @@ const (
 // ScalingMetricsProvider supplies one read-only, target-attributed metrics snapshot.
 // Implementations collect metrics without mutating Kubernetes resources or autoscaling state.
 type ScalingMetricsProvider interface {
-	Snapshot(context.Context, core.TargetID) (core.MetricsSnapshot, error)
+	Snapshot(context.Context, core.TargetID, bool) (core.MetricsSnapshot, error)
 }
 
 // ModelServiceReconciler compiles ModelService intent and owns ModelPool specs.
