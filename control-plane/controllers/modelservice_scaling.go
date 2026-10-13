@@ -114,7 +114,7 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 		if pool == nil {
 			replicaState.Transitioning = false
 		}
-		snapshots = append(snapshots, reconciler.scalingSnapshot(ctx, service, target, evaluatedAt, replicaState, scaling))
+		snapshots = append(snapshots, reconciler.scalingSnapshot(ctx, target, evaluatedAt, replicaState, scaling))
 	}
 	decisions, err := scaling.Autoscaler.Plan(snapshots)
 	if err != nil {
@@ -213,10 +213,10 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 }
 
 // scalingSnapshot builds one replica and metrics input for the autoscaling pipeline.
-func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, target core.TargetID, evaluatedAt metav1.Time, replicas core.ReplicaState, scaling modelScalingConfig) core.ScalingSnapshot {
+func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, target core.TargetID, evaluatedAt metav1.Time, replicas core.ReplicaState, scaling modelScalingConfig) core.ScalingSnapshot {
 	metrics := core.MetricsSnapshot{State: core.MetricsUnavailable}
 	if scaling.Autoscaler.Automatic() {
-		needsEngineLoad := service.Spec.Autoscaling.Decision.Algorithm == "dynamo_load" && target.Role != core.RoleEncoder
+		needsEngineLoad := scaling.Autoscaler.RequiresEngineLoad(target.Role)
 		metrics = reconciler.metricsSnapshot(ctx, target, scaling.MetricsMaxAge, needsEngineLoad)
 	}
 	return core.ScalingSnapshot{

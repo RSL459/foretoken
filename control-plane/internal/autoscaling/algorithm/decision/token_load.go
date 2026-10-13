@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Recommends Pool capacity from per-engine token demand and available KV capacity.
 package decision
 
 import (
@@ -11,30 +12,35 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 )
 
-const dynamoLoadName = "dynamo_load"
+const tokenLoadName = "token_load"
 
-// DynamoLoad implements the pinned Dynamo reactive token-load policy for P/D and aggregate Pools.
-// The controller supplies complete rank observations; existing adjustment and lifecycle owners apply capacity.
-type DynamoLoad struct {
+// TokenLoad evaluates scheduler token demand for prefill, decode, and aggregate Pools.
+// Adjustment and controller lifecycle rules determine the capacity actually applied.
+type TokenLoad struct {
 	mode                   string
 	prefillUp, prefillDown float64
 	decodeUp, decodeDown   float64
 }
 
-var dynamoLoadDescriptor = core.DecisionDescriptor{Name: dynamoLoadName, Factory: NewDynamoLoad}
+var tokenLoadDescriptor = core.DecisionDescriptor{Name: tokenLoadName, Factory: NewTokenLoad}
 
-// Name identifies the compiled token-load policy for configuration and status consumers.
-func (DynamoLoad) Name() string { return dynamoLoadName }
+// Name identifies the token-load algorithm for configuration and status consumers.
+func (TokenLoad) Name() string { return tokenLoadName }
 
-// RecommendReplicas evaluates each engine separately and returns a one-Group recommendation.
+// RequiresEngineLoad tells the controller which targets need scheduler token observations.
+func (TokenLoad) RequiresEngineLoad(role core.TargetRole) bool {
+	return role != core.RoleEncoder
+}
+
+// RecommendReplicas evaluates each engine and returns a one-Group capacity recommendation.
 // Scale-down checks redistributed demand; request draining stays with the Group controller.
-func (algorithm DynamoLoad) RecommendReplicas(snapshot core.ScalingSnapshot) (core.ReplicaRecommendation, error) {
+func (algorithm TokenLoad) RecommendReplicas(snapshot core.ScalingSnapshot) (core.ReplicaRecommendation, error) {
 	current := snapshot.Replicas.RequestedReplicas
-	if snapshot.Metrics.State != core.MetricsFresh || !snapshot.Metrics.Window.Complete || len(snapshot.Metrics.EngineLoads) == 0 {
-		return recommendation(current, core.RecommendationInsufficientData, core.RecommendationReasonMetricsUnavailable, "Dynamo load requires complete fresh scheduler token observations"), nil
-	}
 	if snapshot.Target.Role == core.RoleEncoder {
-		return recommendation(current, core.RecommendationInsufficientData, core.RecommendationReasonMetricsUnavailable, "Dynamo load does not define an encoder policy"), nil
+		return recommendation(current, core.RecommendationInsufficientData, core.RecommendationReasonMetricsUnavailable, "token load does not define an encoder policy"), nil
+	}
+	if len(snapshot.Metrics.EngineLoads) == 0 {
+		return recommendation(current, core.RecommendationInsufficientData, core.RecommendationReasonMetricsUnavailable, "token load requires scheduler token observations"), nil
 	}
 	up, down := algorithm.decodeUp, algorithm.decodeDown
 	if snapshot.Target.Role == core.RolePrefill {
@@ -60,29 +66,24 @@ func (algorithm DynamoLoad) RecommendReplicas(snapshot core.ScalingSnapshot) (co
 		maximum = math.Max(maximum, value)
 		inclusiveUp := snapshot.Target.Role == core.RolePrefill || algorithm.mode == "load"
 		if value > up || inclusiveUp && value == up {
-			return recommendation(increment(current), core.RecommendationAvailable, core.RecommendationReasonLoadPressure, fmt.Sprintf("Group %s DP rank %d exceeds its token-load threshold", engine.GroupUID, engine.DataParallelRank)), nil
+			desired := current
+			if desired < math.MaxInt32 {
+				desired++
+			}
+			return recommendation(desired, core.RecommendationAvailable, core.RecommendationReasonLoadPressure, fmt.Sprintf("Group %s DP rank %d exceeds its token-load threshold", engine.GroupUID, engine.DataParallelRank)), nil
 		}
 		inclusiveDown := algorithm.mode == "load" || snapshot.Target.Role == core.RolePrefill && algorithm.mode == "latency"
 		allBelow = allBelow && (value < down || inclusiveDown && value == down)
 	}
-	// Removing one Group redistributes its demand to the remaining Groups. This mirrors
-	// Dynamo's consolidation check without making accepted execution an idle-only gate.
+	// Estimate the highest engine load after one Group's demand is redistributed.
 	if current > 1 && allBelow && maximum*float64(current)/float64(current-1) < up {
 		return recommendation(current-1, core.RecommendationAvailable, core.RecommendationReasonLoadBelowTarget, "all engines remain below saturation after consolidation"), nil
 	}
 	return recommendation(current, core.RecommendationAvailable, core.RecommendationReasonStable, "engine token load keeps current capacity"), nil
 }
 
-func increment(current int32) int32 {
-	if current == math.MaxInt32 {
-		return current
-	}
-	return current + 1
-}
-
-// NewDynamoLoad owns the fixed throughput/latency presets and explicit load-mode thresholds.
-// Unknown or obsolete request-count parameters fail at this configuration boundary.
-func NewDynamoLoad(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
+// NewTokenLoad constructs a preset or explicit-threshold policy for the built-in registry.
+func NewTokenLoad(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
 	mode := "throughput"
 	var prefillUp, prefillDown *uint64
 	var decodeUp, decodeDown *float64
@@ -90,31 +91,31 @@ func NewDynamoLoad(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
 		"mode":                        &mode,
 		"prefillScaleUpQueueTokens":   &prefillUp,
 		"prefillScaleDownQueueTokens": &prefillDown,
-		"decodeScaleUpKVCacheUsage":   &decodeUp,
-		"decodeScaleDownKVCacheUsage": &decodeDown,
+		"decodeScaleUpTokenRatio":     &decodeUp,
+		"decodeScaleDownTokenRatio":   &decodeDown,
 	}); err != nil {
 		return nil, err
 	}
-	policy := DynamoLoad{mode: mode, prefillUp: 1, prefillDown: 0.1, decodeUp: 1, decodeDown: 0.6}
+	policy := TokenLoad{mode: mode, prefillUp: 1, prefillDown: 0.1, decodeUp: 1, decodeDown: 0.6}
 	switch mode {
 	case "throughput", "latency":
 		if prefillUp != nil || prefillDown != nil || decodeUp != nil || decodeDown != nil {
-			return nil, fmt.Errorf("dynamo_load custom thresholds require mode load")
+			return nil, fmt.Errorf("token_load custom thresholds require mode load")
 		}
 		if mode == "latency" {
 			policy.prefillUp, policy.prefillDown, policy.decodeUp, policy.decodeDown = 0.1, 0, 0.4, 0.1
 		}
 	case "load":
 		if prefillUp == nil || prefillDown == nil || decodeUp == nil || decodeDown == nil {
-			return nil, fmt.Errorf("dynamo_load mode load requires all four token/KV thresholds")
+			return nil, fmt.Errorf("token_load mode load requires all four token thresholds")
 		}
 		if *prefillUp <= *prefillDown || !(*decodeDown >= 0 && *decodeUp <= 1 && *decodeUp > *decodeDown) {
-			return nil, fmt.Errorf("dynamo_load scale-up thresholds must exceed scale-down thresholds; KV ratios must be in [0, 1]")
+			return nil, fmt.Errorf("token_load scale-up thresholds must exceed scale-down thresholds; token ratios must be in [0, 1]")
 		}
 		policy.prefillUp, policy.prefillDown = float64(*prefillUp), float64(*prefillDown)
 		policy.decodeUp, policy.decodeDown = *decodeUp, *decodeDown
 	default:
-		return nil, fmt.Errorf("dynamo_load mode must be throughput, latency, or load")
+		return nil, fmt.Errorf("token_load mode must be throughput, latency, or load")
 	}
 	return policy, nil
 }

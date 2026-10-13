@@ -25,6 +25,8 @@ Image and source builds share dependency adaptation in `vllm_patches.py`. Preser
 
 Patches for another library belong in a separate directory alongside `vllm/`.
 
+`common/scheduler-load.patch` owns token-demand accounting. Version-specific scheduler hooks supply all waiting queues and capture decode contexts before scheduling advances token counts. Preempted requests retain their context demand even though their computed-token counter has been reset.
+
 ## Engine completion contract
 
 `rust/engine-request-completion.patch` provides a `RequestCompletion` handle subscribed before transport submission. It confirms termination only from an engine-origin terminal output or finished-request notification. The handle outlives the output consumer: stream drop, an abort acknowledgement, and locally generated abort output cannot complete it. Transport closure ends the observation with an error, not successful termination.
