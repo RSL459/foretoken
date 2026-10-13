@@ -115,16 +115,19 @@ impl RouteScorer for EndpointAttributeScorer {
         let fixed = self.algorithm.normalization.fixed_range.as_ref();
         let (minimum, maximum) = fixed.map_or_else(
             || {
-                values.iter().flatten().fold(
-                    (f64::INFINITY, f64::NEG_INFINITY),
-                    |(min, max), &value| {
+                // Later pipeline stages are visible here but are not selectable endpoints.
+                values
+                    .iter()
+                    .zip(candidates)
+                    .filter(|(_, candidate)| candidate.stage_eligible)
+                    .filter_map(|(value, _)| value.as_ref())
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), &value| {
                         // Use the upstream comparisons, including NaN and signed-zero behavior.
                         (
                             if value < min { value } else { min },
                             if value > max { value } else { max },
                         )
-                    },
-                )
+                    })
             },
             |range| (range.min, range.max),
         );
@@ -137,7 +140,12 @@ impl RouteScorer for EndpointAttributeScorer {
                     Some(value) => {
                         let normalized = (value - minimum) / (maximum - minimum);
                         let normalized = if fixed.is_some() {
-                            normalized.clamp(0.0, 1.0)
+                            // Go's math.Max(0, math.Min(1, x)) canonicalizes negative zero.
+                            if normalized <= 0.0 {
+                                0.0
+                            } else {
+                                normalized.clamp(0.0, 1.0)
+                            }
                         } else {
                             normalized
                         };
