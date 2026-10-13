@@ -289,23 +289,6 @@ class WandbSink:
         try:
             self.publisher(self._run, run)
             if "warmup_metrics" in run.artifacts:
-                warmup = json.loads(run.artifacts["warmup_metrics"].read_text(encoding="utf-8"))
-                comparison = []
-                if "latency" in run.metrics:
-                    for key, unit in (("latency", "s"), ("ttft", "s"), ("tpot", "s")):
-                        for statistic in ("mean", "p50", "p95", "p99"):
-                            comparison.append([f"{key} {statistic} ({unit})", warmup[key][statistic], run.metrics[key][statistic]])
-                    comparison.append(["Request throughput (req/s)", warmup["throughput"]["requests_per_second"], run.metrics["throughput"]["requests_per_second"]])
-                else:
-                    for key in ("e2e_s", "queue_wait_s", "server_generation_s"):
-                        comparison.append([f"{key} (s)", warmup.get(key), run.metrics.get(key)])
-                comparison.extend((
-                    ["Requests", warmup["request_num"], run.metrics["request_num"]],
-                    ["Success rate (%)", warmup["success_rate"] * 100, run.metrics["success_rate"] * 100],
-                ))
-                self._run.log({"Phases/Warmup vs measurement": wandb.Table(
-                    columns=["Metric", "Warmup", "Measurement"], data=comparison,
-                )})
                 artifact = wandb.Artifact(f"warmup-{self._run.id}", type="benchmark-warmup")
                 for name in ("warmup_metrics", "warmup_raw_output"):
                     artifact.add_file(str(run.artifacts[name]), name=run.artifacts[name].name)
@@ -321,8 +304,6 @@ class WandbSink:
                 artifact = wandb.Artifact(f"plots-{self._run.id}", type="benchmark-plots")
                 artifact.add_dir(str(directory))
                 self._run.log_artifact(artifact)
-                for image in sorted(directory.glob("*.png")):
-                    self._run.log({f"Plots/{image.stem}": wandb.Image(str(image))})
         except wandb.errors.Error:
             logger.exception("W&B publication failed")
             raise
