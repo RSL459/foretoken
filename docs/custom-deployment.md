@@ -9,7 +9,7 @@ Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and publishing Jobs, with a default StorageClass for compiler caches and published application files. To override their storage classes, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
+Prepare Python 3.11+, Git, kubectl and Helm, and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass. To use another storage class, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -29,27 +29,42 @@ For a local kind or k3d cluster, build and install without a registry:
 foretoken install -e .
 ```
 
-The same command can switch a CLI-managed release installation to this source checkout. Builds run in the cluster. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
+This installs the shared Foretoken platform; builds run in the cluster. It can also replace a published platform installed through the CLI. For k3d GPU setup, follow [Deploy Foretoken with k3d](k3d-deployment.md). Other Kubernetes clusters need a registry reachable by the builder and nodes; [Deploy Foretoken on Kubernetes](kubernetes-deployment.md#2-install-foretoken-from-source) covers the installation command and registry authentication.
 
-## Deploy and update code
+## Deploy a model service
 
-Deploy the maintained [Quick Start](../README.md#quick-start) on a GPU-enabled cluster:
+From the Foretoken repository root, deploy the Quick Start using the code in this directory:
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-On a source-installed platform, deployment builds from the Foretoken Git checkout containing the current directory. After editing it, run the same command again. To select a checkout from another directory, use `foretoken deploy examples/quickstart -e /path/to/foretoken --timeout 20m`; the Kustomize path still resolves from the current directory.
+This creates a frontend and a `Qwen/Qwen3-0.6B` model service in the `foretoken-demo` namespace, using one GPU. Once deployment completes, send a request:
 
-Deployment builds and selects the frontend and model-server runtime for these services without reinstalling the shared controller or CRDs. Changes to platform code or configuration require an explicit `foretoken install -e .`. Code updates restart affected workloads and may reload model weights. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
+```bash
+FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+```
 
-Changes to CLI Python files take effect from the checkout where the CLI was installed with `pip install -e .`; reinstall when its Python dependencies change.
+Use `foretoken deploy` for frontend and model-server changes, and `foretoken install -e .` for the shared controller and CRDs. Updating a service restarts its processes and may reload model weights.
 
-### Run candidates in separate worktrees
+To deploy from another directory, add `-e` with the path to the Foretoken checkout, for example `foretoken deploy foretoken/examples/quickstart -e foretoken --timeout 20m` from its parent directory. The deployment path remains relative to the directory where the command runs.
 
-Install the shared platform once using the source installation above. Each worktree has its own source state and compiler cache, so different worktrees can build and deploy concurrently. Give each candidate its own Kubernetes namespace to keep its model services and frontend separate.
+CLI changes use the directory where `pip install -e .` was run. Reinstall the CLI when changing its Python dependencies.
 
-From the repository root, create one candidate and a Kustomize overlay of the Quick Start:
+Remove the example when finished:
+
+```bash
+foretoken delete examples/quickstart
+```
+
+### Run candidates in parallel
+
+A Git worktree is a separate code directory for a branch. Give each candidate its own worktree and Kubernetes namespace to build and deploy different changes in parallel. The shared platform only needs to be installed once.
+
+From the repository root, create a candidate and a Kustomize configuration based on the Quick Start:
 
 ```bash
 git worktree add ../candidate-a -b experiment/candidate-a
@@ -87,11 +102,11 @@ foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-This example dynamically provisions a PVC for each candidate, avoiding per-worktree host mounts; to reuse an existing model directory, see [model storage](model-storage.md).
+The candidate uses two GPUs on one node, with tensor parallelism set to two. It gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To share an existing model directory instead, follow [model storage](model-storage.md).
 
-Repeat with different worktree, branch, namespace and iteration names for the other candidates. Eight such deployments request 16 GPUs: each has one single-node model replica requesting two GPUs and explicitly configured for tensor parallelism of two. The cluster also needs enough CPU, memory and platform capacity. If placement matters, add `spec.nodeSelector` to the model configuration; it selects nodes, not particular GPU indices. Use exclusive GPU resources rather than time-sliced replicas for independent physical devices.
+Repeat with different worktree, branch, namespace and iteration names for other candidates. Eight candidates request 16 GPUs, plus CPU and memory for their services and the platform. Use exclusive GPU resources for separate physical devices. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
 
-Keep measurements and output directories within each worktree; use the [experiment records guide](../rsi-playbooks/experiment-records.md) to compare results. Shared CPU, storage and network activity can still affect measurements. Updating a fully occupied GPU cluster can temporarily stop the old candidate while its replacement acquires those devices.
+Results are saved in each worktree. The [experiment records guide](../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
 
 Delete only the candidate's deployment when finished:
 
@@ -103,15 +118,15 @@ Uninstall the platform only after all candidates have finished.
 
 ## Edit an inference engine
 
-To modify vLLM, bind a Git checkout matching the runtime's Python, PyTorch, and accelerator environment. For a checkout at `../vllm`:
+To use vLLM code from a local directory, pass that directory on deployment. It must match the installed runtime's Python, PyTorch and accelerator environment. For vLLM at `../vllm`:
 
 ```bash
 foretoken deploy examples/quickstart --engine-source ../vllm --timeout 20m
 ```
 
-The engine selection is remembered for this worktree. Other worktrees do not inherit its engine paths; select their engine checkouts explicitly when needed. After editing Python, Triton or NVIDIA CUDA/C++ source, rerun `foretoken deploy`; required compilation is automatic. Registry and platform settings come from the shared installation.
+Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, rerun `foretoken deploy`; compilation is automatic. Select the engine directory separately for other worktrees.
 
-For MetaX, native kernels belong to the plugin checkout. Bind it alongside the matching core checkout:
+For MetaX native kernels, also select the plugin directory alongside its matching vLLM directory:
 
 ```bash
 foretoken deploy examples/quickstart \
