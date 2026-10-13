@@ -252,10 +252,10 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 stream=bool(run.metrics["stream"]),
                 slo_met=request_slo_met,
             ),
-            *cumulative_series(
+            *(cumulative_series(
                 run.measurements,
                 stream=bool(run.metrics["stream"]),
-            ),
+            ) if not run.cumulative_published else ()),
         ]
         for field, group_name in (("dataset", "datasets"), ("model", "models"), ("request_class", "request_classes")):
             groups = run.metrics.get(group_name) or {}
@@ -332,7 +332,7 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 sdk_run.log(row)
 
     raw_output = run.artifacts.get("raw_output")
-    if raw_output is not None:
+    if raw_output is not None and run.record["mode"] == "arrival_trace":
         rows = _trace_bucket_rows(
             json.loads(raw_output.read_text(encoding="utf-8"))
         )
@@ -353,7 +353,8 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     observations = [
         run.artifacts[name]
         for name in (
-            "environment", "prometheus_observations", "gpu_allocation", "gpu_allocation_csv", "console_log"
+            "config", "metrics", "raw_output", "environment", "prometheus_observations",
+            "gpu_allocation", "gpu_allocation_csv"
         )
         if name in run.artifacts
     ]
@@ -446,8 +447,6 @@ def publish_slo_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
             f"{prefix}/Stop reason": group["stop_reason"],
         })
     artifact = wandb.Artifact(f"slo-search-{sdk_run.id}", type="benchmark")
-    for name in ("slo_results", "console_log"):
-        if name in run.artifacts:
-            path = run.artifacts[name]
-            artifact.add_file(str(path), name=path.name)
+    path = run.artifacts["slo_results"]
+    artifact.add_file(str(path), name=path.name)
     sdk_run.log_artifact(artifact)

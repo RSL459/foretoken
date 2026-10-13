@@ -14,11 +14,15 @@ foretoken perf examples/quickstart \
 
 `--wandb-entity` selects the account or team. Group and run name are independent. Sweeps and multi-dataset runs generate a group if none is supplied; child labels are appended to their run names. Single runs are ungrouped by default.
 
-The W&B page shows final aggregate metrics, P50/P95/P99 percentile metrics, and time-based, cumulative, and per-request series. Warmup requests are excluded from performance metrics and charts; their records and metrics are retained in the `benchmark-warmup` artifact. Mixed workloads add dataset, model, and request-class breakdown tables and time curves on the same elapsed-time axis, plus a request table with labels and target/actual output tokens. Kustomize runs also show replica-count changes and, when the controller status can be sampled for the full benchmark window, allocated GPU-seconds and GPU-hours by device resource name. Coverage is shown separately; partial samples remain diagnostic and are not presented as total cost. Open a group's Workspace to compare runs; Summary retains the final values. See [Result metrics](../metrics.md#curves) for window definitions.
+The command prints the W&B run link as soon as the run opens, including in quiet mode. During HTTP measurement, cumulative request counts, failures, mean latencies, and throughput are recorded once per second and uploaded during the run. Completed requests contribute to these metrics; throughput uses elapsed measurement time. The final aggregate metrics, P50/P95/P99 values, completion-window curves, and per-request series are published when measurement finishes. Warmup requests are excluded from performance metrics and charts; their records and metrics are retained in the `benchmark-warmup` artifact.
+
+Mixed workloads add dataset, model, and request-class breakdown tables and time curves on the same elapsed-time axis, plus a request table with labels and target/actual output tokens. Kustomize runs also show replica-count changes and, when the controller status can be sampled for the full benchmark window, allocated GPU-seconds and GPU-hours by device resource name. Coverage is shown separately; partial samples remain diagnostic and are not presented as total cost. Open a group's Workspace to compare runs; Summary retains the final values. See [Result metrics](../metrics.md#curves) for window definitions.
 
 With a Kustomize model service and Prometheus, speculative-decoding runs also show [acceptance and stage-time observations](../metrics.md#speculative-decoding-observations). Sweep comparison runs plot the same measured-window summaries.
 
 ![Per-request timings and token counts](../imgs/request-order-wandb.png)
+
+HTTP configuration, metrics, and per-request records, including failure reasons, are downloadable from the run's artifacts. Quiet runs also upload `run.log` after service cleanup.
 
 With `--output local,wandb,plot`, exported figures are available locally and in the `benchmark-plots` artifact, rather than as image panels in the workspace.
 
