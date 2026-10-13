@@ -62,7 +62,7 @@ foretoken delete examples/quickstart
 
 ### 并行运行候选方案
 
-Git worktree 是一个分支的独立代码目录。每个候选使用不同的 worktree 和 Kubernetes 命名空间，即可并行构建、部署不同改动。共享平台只需安装一次。
+Git worktree 是一个分支的独立代码目录。每个候选使用不同的 worktree 和 Kubernetes 命名空间，即可并行构建、部署不同改动。所有候选可以共用已安装的 CLI 和平台。
 
 从仓库根目录创建候选，并通过 Kustomize 配置复用快速开始示例：
 

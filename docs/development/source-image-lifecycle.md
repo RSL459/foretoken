@@ -19,8 +19,10 @@ Serialize source preparation and service submission for the same checkout. Other
 
 Compiler caches are reusable build inputs, not serving state. Coordinate access through the builder, and keep mutable source and export directories from being overwritten by another candidate. Before reusing outputs, stop abandoned publishers that might still read or write them.
 
+For changes confined to the model-server Python directory, reuse the executable and other files from the completed application matching the previous inputs and environment. Replace the entire Python directory, including deletions, and produce another complete application. An unfinished native build is not a reusable base.
+
 ## Serving and cleanup
 
 Publish the environment image and complete application files together in an immutable manifest at the trusted application origin. Controllers resolve and save that selection before creating workloads, so preparation, serving, restarts and scaling use the same code without rereading the manifest. Report deployment success only after that code and its serving routes are ready; rollout and draining remain controller-owned.
 
-Application storage belongs to the platform. Cleanup preserves publications referenced by services, workloads, saved tasks or Helm rollback history, and removes only the publisher's unreferenced files. Candidate deletion removes its deployment, not the shared platform. Uninstall releases managed build resources and local source records while preserving model data.
+Application storage belongs to the platform. Cleanup preserves publications referenced by services, workloads, active publishers, saved tasks or Helm rollback history, and removes only the publisher's unreferenced files. Candidate deletion removes its deployment, not the shared platform. Uninstall releases managed build resources and local source records while preserving model data.

@@ -87,21 +87,47 @@ def publish(
     reuse_previous: bool = False,
     sources: dict | None = None,
     image: str | None = None,
+    python_only: bool = False,
 ) -> Path:
-    """Publish immutable files and provenance, optionally reusing an identical source revision."""
+    """Publish complete immutable files, optionally replacing a completed version's Python tree."""
     if (destination / "manifest.json").is_file():
         return destination
     if not source.is_dir():
         raise FileNotFoundError(f"application export is missing: {source}")
     previous_files = None
-    if reuse_previous and previous is not None and (previous / "manifest.json").is_file():
+    metadata = None
+    if previous is not None and (previous / "manifest.json").is_file():
         metadata = json.loads((previous / "manifest.json").read_text())
         if (
-            metadata.get("binding") == binding
+            reuse_previous
+            and metadata.get("binding") == binding
             and not metadata.get("releaseOwned")
             and metadata.get("image") == image
         ):
             previous_files = metadata["files"]
+    if python_only:
+        if metadata is None:
+            raise FileNotFoundError(f"completed application is missing: {previous}")
+        if "image" in metadata and metadata["image"] != image:
+            raise ValueError("Python-only publication requires the previous environment image")
+        # Reuse only files declared by the completed publication. Replacing the
+        # entire Python subtree makes removals independent of the previous export.
+        inputs = {}
+        for entry in metadata["files"]:
+            relative = Path(entry["path"])
+            if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+                raise ValueError("application manifest contains an invalid file path")
+            if relative.parts[0] != "python":
+                inputs[relative] = previous / relative
+        python = source / "python"
+        if python.is_symlink() or (python.exists() and not python.is_dir()):
+            raise ValueError("Python export must contain a regular Python directory")
+        inputs.update(
+            (path.relative_to(source), path)
+            for path in python.rglob("*")
+        )
+    else:
+        inputs = {path.relative_to(source): path for path in source.rglob("*")}
     destination.parent.mkdir(parents=True, exist_ok=True)
     prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
     if not release_owned:
@@ -114,7 +140,7 @@ def publish(
         staging.mkdir()
         files = []
         unchanged = previous_files is not None
-        for origin in sorted(source.rglob("*")):
+        for relative, origin in sorted(inputs.items()):
             if origin.is_symlink():
                 raise ValueError(
                     f"application exports must not contain symlinks: {origin}"
@@ -125,7 +151,6 @@ def publish(
                 raise ValueError(
                     f"application exports must contain regular files: {origin}"
                 )
-            relative = origin.relative_to(source)
             target = staging / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             mode = (stat.S_IMODE(origin.stat().st_mode) & 0o111) | 0o444
@@ -134,7 +159,7 @@ def publish(
                 old is not None
                 and old.is_file()
                 and ((stat.S_IMODE(old.stat().st_mode) & 0o111) | 0o444) == mode
-                and filecmp.cmp(origin, old, shallow=False)
+                and (origin == old or filecmp.cmp(origin, old, shallow=False))
             ):
                 os.link(old, target)
             else:
@@ -207,6 +232,7 @@ if __name__ == "__main__":
             reuse_previous=json.loads(sys.argv[6]),
             sources=json.loads(sys.argv[7]),
             image=json.loads(sys.argv[8]),
+            python_only=json.loads(sys.argv[9]),
         )
         retained = json.loads(sys.argv[5])
         if retained is not None:

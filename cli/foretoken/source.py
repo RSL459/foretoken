@@ -823,10 +823,13 @@ def reconcile_source_images(
         for name in ("build.json", "install.json")
         if (path := parent / name).is_file()
     }
-    bindings = {state.get("build", {}).get("binding") for state in states.values()} - {
-        None,
-        "",
-    }
+    # Borrowing a platform image creates no node-image ownership. Pending and
+    # completed environment builds remain owners, including after a failed import.
+    bindings = {
+        state.get("build", {}).get("binding")
+        for state in states.values()
+        if state.get("build", {}).get("borrowed_images") is not True
+    } - {None, ""}
     if not uninstall and not bindings:
         return
     config = default_platform_config()

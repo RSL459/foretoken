@@ -139,6 +139,11 @@ class EditableDeployment:
                     },
                 )
                 self.state["build"]["binding"] = self.directory.name
+                # Fresh checkouts borrow platform images. Preserve image cleanup
+                # ownership if this checkout has previously built an environment.
+                self.state["build"]["borrowed_images"] = (
+                    saved is None or saved["build"].get("borrowed_images", False)
+                )
                 if saved is not None:
                     self.state["engines"] = saved.get("engines", {})
                 elif str(self.root) != self.platform["root"]:
@@ -226,9 +231,7 @@ class EditableDeployment:
             elif name.startswith(("control-plane/", "deploy/charts/")):
                 # Shared controllers and platform configuration change only through install.
                 continue
-            elif name.startswith("data-plane/model-server/python/") and name.endswith(
-                ".py"
-            ):
+            elif name.startswith("data-plane/model-server/python/"):
                 components.add("model-server")
             elif name.startswith("data-plane/") and (
                 name.endswith(".rs") or Path(name).name in {"Cargo.toml", "Cargo.lock"}
@@ -273,15 +276,29 @@ class EditableDeployment:
             snapshot, old, self.state["build"]["versions"], changed
         )
         bundles = dict(self.state["bundles"])
+        python_only = all(
+            name.startswith("data-plane/model-server/python/") for name in changed
+        )
         for component in components:
             prior = bundles.get(
                 component,
                 self.state["build"].get("applications", {}).get(component, {}),
             )
-            bundles[component] = {
+            bundle = {
                 "revision": str(uuid.uuid4()),
                 "previous": prior.get("revision", ""),
             }
+            if python_only and component == "model-server" and bundle["previous"]:
+                origin = ApplicationFiles(
+                    self.kubectl,
+                    default_platform_config(self.state["command"]["oci_registry"]).namespace,
+                )
+                manifest = origin.read_manifest(origin.reference(component, bundle["previous"]))
+                # A pending, failed native build is not a reusable executable. Only
+                # the completed publication corresponding to the prior inputs qualifies.
+                if manifest is not None and manifest.get("image") == self.state["runtime"]["model_image"]:
+                    bundle["python_only"] = True
+            bundles[component] = bundle
         self.state.update(inputs=snapshot.name, bundles=bundles)
         _write_json(self.directory / "install.json", self.state)
 
@@ -409,6 +426,12 @@ class EditableDeployment:
             return
 
         origin.prepare(timeout)
+        for component in missing:
+            bundle = self.state["bundles"][component]
+            if bundle.get("python_only") and origin.read_manifest(
+                origin.reference(component, bundle["previous"])
+            ) is None:
+                bundle.pop("python_only")
         build = self.state["build"]
         mount = "/var/cache/foretoken"
         claim = find_build_cache(
@@ -438,12 +461,12 @@ class EditableDeployment:
                 "uid": origin.claim_uid,
             },
         )
-        if (
+        build_engine = (
             "model-server" in missing
-            and self.state.get("engines")
-            and not build["registry"]
-            and origin.node not in build["engine_caches"]
-        ):
+            and bool(self.state.get("engines"))
+            and not self.state["bundles"]["model-server"].get("python_only", False)
+        )
+        if build_engine and not build["registry"] and origin.node not in build["engine_caches"]:
             # A newly prepared origin node needs a cold cache, not another node's native outputs.
             build["engine_caches"][origin.node] = (
                 build["binding"] + "-" + uuid.uuid4().hex
@@ -473,9 +496,7 @@ class EditableDeployment:
             ),
             registry_mirrors=build.get("registry_mirrors", {}),
             node=origin.node,
-            containerd_socket=socket
-            if self.state.get("engines") and "model-server" in missing
-            else "",
+            containerd_socket=socket if build_engine else "",
             credentials=registry_credentials(
                 [
                     build["configuration"]["image"],
@@ -513,13 +534,17 @@ class EditableDeployment:
                     arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"][
                         "model_image"
                     ]
+                python_only = bundle.get("python_only", False)
+                if python_only:
+                    # Preserve deletion of the last Python file as an empty export.
+                    builder.run(["mkdir", "-p", builder.workspace + "/data-plane/model-server/python"])
                 builder.build(
                     dockerfile,
-                    target="source-export",
+                    target="python-export" if python_only else "source-export",
                     destination=payload,
                     arguments=arguments,
                 )
-                if component == "model-server" and self.state.get("engines"):
+                if component == "model-server" and build_engine:
                     builder.build(
                         "deploy/inference-engines/source-build.Dockerfile",
                         target="source-export",
@@ -575,7 +600,8 @@ class EditableDeployment:
                         timeout=timeout,
                         reuse_previous=True,
                         sources=build_sources(snapshot, component),
-                    image=self.state["runtime"]["model_image" if component == "model-server" else "image"],
+                        image=self.state["runtime"]["model_image" if component == "model-server" else "image"],
+                        python_only=bundle.get("python_only", False),
                     )
                 published = {
                     component: future.result() for component, future in futures.items()
