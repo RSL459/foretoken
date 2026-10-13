@@ -8,7 +8,7 @@ State the concrete problem this entry helps investigate. Place technical knowled
 
 Describe an observable cost or failure and explain how the current approach produces it. Identify the relevant model, execution stage, and producer/consumer relationship. Use a small example before introducing detailed interfaces.
 
-Explain what the cited upstream version already implements. Separate a deployed capability, an author's research implementation, and an unimplemented proposal. Existing integration is the starting point for analysis, not a new optimization claim.
+Explain what the cited upstream version already implements and what question remains. Identify whether the approach is deployed, available as a research implementation, or proposed.
 
 ## Mechanism
 
@@ -32,6 +32,6 @@ If measurements exist, state their conditions and origin. Record how far integra
 
 ## Sources and implementation state
 
-Give the check date and the release, commit, paper version, or PR state underlying version-sensitive claims. Link the original method, actual implementation, and relevant measurements. A closed PR alone does not establish that it merged; an old paper's promise of future code does not establish current availability.
+Give the check date and the release, commit, paper version, or PR merge state underlying version-sensitive claims. Link the original method, available implementation, and relevant measurements.
 
 Update this entry and its bilingual category index when new evidence changes the same question. See [recording and learning](../guidance/meta-knowledge/05-recording-and-learning.md) for preserving reusable findings and lessons from inefficient work.

@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 沿加载阶段分析
 
-已读 vLLM [DefaultModelLoader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/default_loader.py)先准备本地或远端文件，根据 index 过滤重复，构造权重迭代器，调用模型的 `load_weights`，再在适用条件下检查参数覆盖。模型构造与加载后处理围绕这条路径。融合参数映射、TP 切分和量化转换属于模型安装代码，而不是通用文件 reader。
+vLLM [DefaultModelLoader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/default_loader.py)先准备本地或远端文件，根据 index 过滤重复，构造权重迭代器，调用模型的 `load_weights`，再在适用条件下检查参数覆盖。模型构造与加载后处理围绕这条路径。融合参数映射、TP 切分和量化转换属于模型安装代码，而不是通用文件 reader。
 
 检查点大小 W 时，顺序读取约为 `T_read = W/B_storage`；启动还包括安装、H2D、转换与运行时准备。真正流水化后，稳定阶段由最慢阶段决定，而非各阶段之和，但启动、排空和模型特有工作仍存在。使用这一估计前应确认实际按块重叠。
 
@@ -31,6 +31,6 @@ Dynamo [weight artifact](https://github.com/ai-dynamo/dynamo/blob/7708f041a965e3
 
 局部对照标准检查点、已有张量过滤和拓扑匹配的 sharded checkpoint，固定模型修订、dtype、rank 几何和转换。记录文件解析、每 rank 实际读取字节、CPU 实体化、H2D、参数安装和加载后处理，核对 logits 与参数覆盖。I/O 减少而启动不变，说明瓶颈在后续；I/O 不变而安装减少，说明省下了转换。
 
-分别测试冷文件系统、热页缓存和重复启动进程。服务侧测进程启动到就绪、首个成功生成及前几次请求，将编译/预热与权重加载分开，保存主机和设备峰值内存。剩余研究是跨真实拓扑变化复现运行时表示、避免重复转换，不是重写已接入的 rank 本地加载。本条目没有 Foretoken 加速实测。
+分别测试冷文件系统、热页缓存和重复启动进程。服务侧测进程启动到就绪、首个成功生成及前几次请求，将编译/预热与权重加载分开，保存主机和设备峰值内存。剩余研究是跨真实拓扑变化复现运行时表示、避免重复转换。
 
 [模型加载与存储](README_zh.md)

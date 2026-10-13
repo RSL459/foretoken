@@ -40,4 +40,4 @@ MNNVL reduce-scatter 按架构、大小和 multicast 存储选择 Lamport、mult
 完整服务比较 TP/PP 配置时保持工作负载与质量检查一致，记录并发一 TPOT、长输入 TTFT、持续吞吐、客户端尾延迟及 KV 容量。
 ## 依据与剩余问题
 
-核对日期：2026-10-14。通读 vLLM [6849ca69 的 custom collective 实现](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/device_communicators/custom_all_reduce.py)，并阅读[并行部署文档](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/serving/parallelism_scaling.md)。选择器与 MNNVL 路径已经实现，剩余工作是目标形状和拓扑测量，不是首次引入 custom collective。跨节点调整前参见[流水线气泡](pipeline-microbatch-bubbles_zh.md)。
+核对日期：2026-10-14。vLLM [6849ca69 的 custom collective 实现](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/device_communicators/custom_all_reduce.py)及[并行部署文档](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/serving/parallelism_scaling.md)。剩余工作是目标形状和拓扑测量。跨节点调整前参见[流水线气泡](pipeline-microbatch-bubbles_zh.md)。

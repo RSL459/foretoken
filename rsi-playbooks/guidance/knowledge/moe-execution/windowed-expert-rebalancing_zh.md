@@ -23,7 +23,7 @@ vLLM 已实现按窗口统计的专家负载均衡 EPLB、冗余专家、异步�
 
 策略尽可能保留原有槽位。异步 worker 保存当前布局快照、计算新布局，把一层需要的权重传到暂存区，确认写入完成后发布待消费结果。前向侧必须安装权重并消费结果，才能复用暂存区。映射与权重应一起生效；只切换 ID 会执行错误参数。
 
-核对的迁移调度器把同一有向 rank 对的传输合并，再把端点互不冲突的 rank 对分为一批；每批一个 rank 最多与一个 peer 通信。仍在同一 GPU 的专家不需要远程复制。这些机制已经存在，不应另外建立一套迁移控制器重复管理。
+核对的迁移调度器把同一有向 rank 对的传输合并，再把端点互不冲突的 rank 对分为一批；每批一个 rank 最多与一个 peer 通信。仍在同一 GPU 的专家不需要远程复制。
 
 ## 适用条件与取舍
 
@@ -41,4 +41,4 @@ vLLM 已实现按窗口统计的专家负载均衡 EPLB、冗余专家、异步�
 
 ## 依据与研究空间
 
-核对日期：2026-10-14。实际阅读 vLLM [commit 6849ca69](https://github.com/vllm-project/vllm/tree/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9) 的[默认策略](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/eplb/policy/default.py)、[异步 worker](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/eplb/async_worker.py)、`migration_scheduler.py` 及[官方 EP 部署指南](https://docs.vllm.ai/en/latest/serving/expert_parallel_deployment/)。值得研究的是负载感知的执行时机与实测成本模型，不是首次实现 EPLB。逐批波动参见[在线副本分配](online-replica-token-assignment_zh.md)。
+核对日期：2026-10-14。vLLM [commit 6849ca69](https://github.com/vllm-project/vllm/tree/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9) 的[默认策略](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/eplb/policy/default.py)、[异步 worker](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/eplb/async_worker.py)、`migration_scheduler.py` 及[官方 EP 部署指南](https://docs.vllm.ai/en/latest/serving/expert_parallel_deployment/)。值得研究的是负载感知的执行时机与实测成本模型。逐批波动参见[在线副本分配](online-replica-token-assignment_zh.md)。

@@ -35,6 +35,6 @@ Hold payload bytes fixed while varying descriptor count, contiguous versus scatt
 
 Next exercise supported layout/TP/block combinations with real KV and compare outputs to local full prefill. Include quantized scales, partial final blocks, cancellation and a delayed asynchronous save. Reverse MultiConnector order and instrument the actual winning source. Compare all-save traffic and completion latency, not only load speed.
 
-The remaining opportunity is reducing exposed descriptor/packing overhead and measuring composition behavior in the target workload. It is not reimplementing already-merged heterogeneous transfer support. P/D placement policy is outside this entry, and no Foretoken performance result is claimed.
+The remaining opportunity is reducing exposed descriptor/packing overhead and measuring composition behavior in the target workload.
 
 [KV cache](README.md)

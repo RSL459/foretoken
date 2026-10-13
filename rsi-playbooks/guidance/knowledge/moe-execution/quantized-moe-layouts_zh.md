@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 checkpoint 标注 FP4 或 FP8，不足以确定可执行的 MoE 表示。打包值、scale 粒度与编码、矩阵方向、路由权重应用位置和最终归约，都影响正确性与速度。只关注字节数，可能得到更快但错误的解释。
 
-FlashInfer 已实现 NVFP4、MXFP8、FP8/FP4 DeepGEMM 等量化 fused-MoE 与 EP 路径，当前接口明确区分激活和权重格式。值得研究的是：在支持路径中减少转换与通信成本，同时保持明确的数值契约；不是脱离具体格式宣称新增“FP4 支持”。
+FlashInfer 已实现 NVFP4、MXFP8、FP8/FP4 DeepGEMM 等量化 fused-MoE 与 EP 路径，当前接口明确区分激活和权重格式。值得研究的是：在支持路径中减少转换与通信成本，同时保持明确的数值契约。
 
 ## 执行机制
 
@@ -40,4 +40,4 @@ FlashInfer 已实现 NVFP4、MXFP8、FP8/FP4 DeepGEMM 等量化 fused-MoE 与 EP
 部署真实完整模型服务，报告未加 profiler 的 TPOT、TTFT、输出长度与任务分数。加入长上下文和混合负载，因为额外工作区可能减少 KV 容量。
 ## 依据与剩余问题
 
-核对日期：2026-10-14。实际阅读 FlashInfer [commit a8e747c3](https://github.com/flashinfer-ai/flashinfer/tree/a8e747c3c1f7dfe5d51fab3883824b15da6829b7) 的 [MoE-EP 架构](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/docs/design_docs/moe_ep_architecture.md)、SM100 调优笔记与 [TRT-LLM FP4 接口](https://docs.flashinfer.ai/generated/flashinfer.fused_moe.trtllm_fp4_block_scale_moe.html)。现有核函数与格式转换已有实现，研究空间是目标负载的格式选择、转换位置及数值归因。选择通信格式前参见[小批调度](small-batch-megakernel-scheduling_zh.md)，不要沿用大批量排名。
+核对日期：2026-10-14。FlashInfer [commit a8e747c3](https://github.com/flashinfer-ai/flashinfer/tree/a8e747c3c1f7dfe5d51fab3883824b15da6829b7) 的 [MoE-EP 架构](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/docs/design_docs/moe_ep_architecture.md)、SM100 调优笔记与 [TRT-LLM FP4 接口](https://docs.flashinfer.ai/generated/flashinfer.fused_moe.trtllm_fp4_block_scale_moe.html)。研究空间是目标负载的格式选择、转换位置及数值归因。选择通信格式前参见[小批调度](small-batch-megakernel-scheduling_zh.md)，不要沿用大批量排名。

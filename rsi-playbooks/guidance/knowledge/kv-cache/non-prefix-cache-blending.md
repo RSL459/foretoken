@@ -19,7 +19,7 @@ The [CacheBlend method, May 2024](https://arxiv.org/html/2405.16444v1) loads a l
 
 A useful example is an instruction in A that changes how a sentence in B should be interpreted. Recomputing only the final question may repair question-to-document attention while leaving B's contextual representations stale. Recomputing some B tokens propagates additional information, but does not necessarily reproduce full prefill. Inter-document reasoning and conflicting instructions make stronger diagnostics than copying a fact from one unchanged document.
 
-## Current implementation, not a future port
+## Current implementation
 
 At the [2026-10-14 snapshot](README.md#evidence-snapshot), LMCache includes both older in-process blending and a multiprocess blend path. The [in-process blender](https://github.com/LMCache/LMCache/blob/4d69cdc43ac9bab9c0c1cd5cac380c480cb32224/lmcache/v1/compute/blend/blender.py) selects tokens on configured check layers using squared L2 key differences in float32, takes a ratio-based top-k, restores sequence order and updates selected K/V. This concrete criterion should not be replaced in a description by an unspecified “important token” score.
 
@@ -33,6 +33,6 @@ Use cached `A`, `B` and `C` separately, then test their permutations, a new syst
 
 Then evaluate multi-hop document questions, contradictory evidence, summarization and multilingual boundary cases. Record quality by case, not only an aggregate average, together with TTFT, recomputed tokens, bytes fetched and failure-driven full recomputation. Profile retrieval separately from selection and model execution.
 
-Open research includes selection stability across models, dependency repair under document reorder, and the quality/cost frontier of recomputation. The paper's reported improvements are tied to its models, workloads and hardware; no Foretoken gain has been reproduced here.
+Open research includes selection stability across models, dependency repair under document reorder, and the quality/cost frontier of recomputation. The paper's reported improvements are tied to its models, workloads and hardware.
 
 [KV cache](README.md)

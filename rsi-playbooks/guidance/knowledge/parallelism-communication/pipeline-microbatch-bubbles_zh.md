@@ -42,4 +42,4 @@ vLLM 已支持 PP、TP/PP 组合和不均匀层切分，官方部署指南建议
 验证输出与多轮缓存增长，再测客户端 TTFT、TPOT、成功数、输出长度，以及请求跨阶段时的取消。profiler 与正常测速分开。
 ## 依据与剩余问题
 
-核对日期：2026-10-14。通读 vLLM [6849ca69 的并行指南](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/serving/parallelism_scaling.md)和 DeepEP [93eb6eb2 README](https://github.com/deepseek-ai/DeepEP/tree/93eb6eb238127e96c6d7a4a625a6dad158348509) 的 PP 接口与条件。剩余工作是目标引擎阶段路径核对、平衡分区及负载相关测量。PP 所替代的通信见[TP 粒度](tensor-parallel-collective-granularity_zh.md)。
+核对日期：2026-10-14。vLLM [6849ca69 的并行指南](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/serving/parallelism_scaling.md)和 DeepEP [93eb6eb2 README](https://github.com/deepseek-ai/DeepEP/tree/93eb6eb238127e96c6d7a4a625a6dad158348509) 的 PP 接口与条件。剩余工作是目标引擎阶段路径核对、平衡分区及负载相关测量。PP 所替代的通信见[TP 粒度](tensor-parallel-collective-granularity_zh.md)。

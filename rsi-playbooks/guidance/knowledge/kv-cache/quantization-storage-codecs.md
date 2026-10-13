@@ -31,6 +31,6 @@ Locally, capture real K/V from the target model and separately sweep key axis, v
 
 For a codec, hold its decoded dtype constant while varying encoded size and transfer bandwidth. If TTFT improves but resident KV bytes do not, the result is transport compression rather than runtime memory compression. For resident quantization, compare equal request counts and then equal memory budgets; the second comparison reveals capacity gains that a one-request test misses.
 
-Service validation needs retrieval, multi-hop reasoning, long generation, code and multilingual inputs, with per-case quality plus TTFT, TPOT, peak memory and completed throughput. Remaining research is model-specific calibration and representation/kernel interoperability, not simply enabling already-supported FP8. No Foretoken quality or performance result is claimed.
+Service validation needs retrieval, multi-hop reasoning, long generation, code and multilingual inputs, with per-case quality plus TTFT, TPOT, peak memory and completed throughput. Remaining research is model-specific calibration and representation/kernel interoperability.
 
 [KV cache](README.md)

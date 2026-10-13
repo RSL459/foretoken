@@ -13,7 +13,7 @@ KV 搬运可能先受描述符构造、布局转换或完成通知限制，而�
 
 先定位源和目标物理范围，注册内存，发布端点元数据，构造所需块的描述符；再提交批次、查询或等待完成，最后允许消费者读取。源和目标分配的寿命必须覆盖整个操作，请求完成与提交传输不是同一个生命周期边界。
 
-已读 Mooncake [Transfer Engine 接口](https://github.com/kvcache-ai/Mooncake/blob/342c8aeece6b4eefb76c6b8b31ccfac8dde07aa3/mooncake-transfer-engine/include/transfer_engine.h)包含单次/批量本地注册、segment 打开、batch 分配和提交，以及 task/batch 状态查询。复用注册区域可以省去重复准备，但需要明确寿命 owner；batch ID 是操作句柄，不代表提交后即可复用缓冲区。
+Mooncake [Transfer Engine 接口](https://github.com/kvcache-ai/Mooncake/blob/342c8aeece6b4eefb76c6b8b31ccfac8dde07aa3/mooncake-transfer-engine/include/transfer_engine.h)包含单次/批量本地注册、segment 打开、batch 分配和提交，以及 task/batch 状态查询。复用注册区域可以省去重复准备，但需要明确寿命 owner；batch ID 是操作句柄，不代表提交后即可复用缓冲区。
 
 可先建模为 `T = T_register + n T_descriptor + T_submit + D/B + T_completion + T_relayout`。64 层分别寻址的许多小范围，即使总载荷 D 不大，也可能需要很多描述符。合并连续范围或采用跨层物理布局可以减少 n；先 gather 到暂存张量则增加拷贝和内存。最优点取决于消息大小、局部性及 attention backend 是否接受该布局。
 
@@ -35,6 +35,6 @@ LMCache [MP retrieve](https://github.com/LMCache/LMCache/blob/4d69cdc43ac9bab9c0
 
 随后使用真实 KV 验证已支持的布局/TP/块大小组合，与本地完整 prefill 输出对照，加入量化 scale、最后不完整块、取消和延迟异步保存。颠倒 MultiConnector 顺序，记录实际加载来源，对比全部保存流量和完成延迟，而不只看读取速度。
 
-剩余空间是减少暴露的描述符/打包开销，以及测清目标负载的组合行为，不是重复实现已经合并的异构传输。P/D 放置策略不属于本条目，也没有 Foretoken 性能实测结论。
+剩余空间是减少暴露的描述符/打包开销，以及测清目标负载的组合行为。
 
 [KV 缓存](README_zh.md)

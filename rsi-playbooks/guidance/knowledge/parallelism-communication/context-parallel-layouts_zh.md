@@ -47,4 +47,4 @@ decode 分别扫描历史长度和并发，覆盖不均分片、空分片、缓�
 完整服务使用长输入、前缀复用和多轮缓存增长，先验证回答质量与位置，再比较未加 profiler 的 TTFT、TPOT。
 ## 依据与剩余问题
 
-核对日期：2026-10-14。实际阅读 [USP 论文](https://arxiv.org/abs/2405.07719)全文，重点算法 1–2、第 3–5 节，以及 [YunChang a5f8f600](https://github.com/feifeibear/long-context-attention/tree/a5f8f600d435ced180a97c91c68e87ff3cfb8f89) README、vLLM [6849ca69 的 CP 指南](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/serving/context_parallel_deployment.md)与 [PCP 缓存操作](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/attention/ops/pcp.py)。剩余问题是目标后端的职责链核对与服务验证，不是重新发明 hybrid SP。
+核对日期：2026-10-14。[USP 论文](https://arxiv.org/abs/2405.07719)，算法 1–2、第 3–5 节；[YunChang a5f8f600](https://github.com/feifeibear/long-context-attention/tree/a5f8f600d435ced180a97c91c68e87ff3cfb8f89) README、vLLM [6849ca69 的 CP 指南](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/serving/context_parallel_deployment.md)与 [PCP 缓存操作](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/attention/ops/pcp.py)。剩余问题是目标后端的职责链核对与服务验证。

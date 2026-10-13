@@ -23,7 +23,7 @@ For example, estimated loads `[100,20,20,20]` and one extra slot suggest replica
 
 The policy preserves existing slots where possible. The async worker snapshots placement, computes the new mapping, transfers one layer's required weights into staging storage, waits for writes to finish, and publishes a pending result. The forward-side consumer must install weights and consume that result before the staging buffer is reused. Mapping and weights must become usable together; publishing only the new IDs would select the wrong parameters.
 
-The checked migration scheduler coalesces transfers for a directed rank pair and groups disjoint endpoint pairs. A rank communicates with at most one peer in each batch. Transfers remaining on the same GPU need no remote copy. This mechanism is already present; adding an independent second migration controller would duplicate ownership.
+The checked migration scheduler coalesces transfers for a directed rank pair and groups disjoint endpoint pairs. A rank communicates with at most one peer in each batch. Transfers remaining on the same GPU need no remote copy.
 
 ## Conditions and trade-offs
 
@@ -41,4 +41,4 @@ Run full-service traffic long enough to include multiple rebalance cycles, not o
 
 ## Sources and research space
 
-Checked 2026-10-14: vLLM commit [6849ca69](https://github.com/vllm-project/vllm/tree/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9), specifically [default policy](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/eplb/policy/default.py), [async worker](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/eplb/async_worker.py), and `migration_scheduler.py`; also the [official EP deployment guide](https://docs.vllm.ai/en/latest/serving/expert_parallel_deployment/). The open design space is workload-aware timing and measured execution-cost estimation, not first-time EPLB support. For per-batch fluctuations, see [online replica assignment](online-replica-token-assignment.md).
+Checked 2026-10-14: vLLM commit [6849ca69](https://github.com/vllm-project/vllm/tree/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9), specifically [default policy](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/eplb/policy/default.py), [async worker](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/eplb/async_worker.py), and `migration_scheduler.py`; also the [official EP deployment guide](https://docs.vllm.ai/en/latest/serving/expert_parallel_deployment/). The open design space is workload-aware timing and measured execution-cost estimation. For per-batch fluctuations, see [online replica assignment](online-replica-token-assignment.md).

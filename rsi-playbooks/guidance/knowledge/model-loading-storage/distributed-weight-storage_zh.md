@@ -19,11 +19,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 当前上游路径
 
-已读 [ModelExpress 架构](https://github.com/ai-dynamo/modelexpress/blob/db0cbce97184d9135d35c7290711f3053b220b6a/docs/ARCHITECTURE.md)和 [vLLM loader](https://github.com/ai-dynamo/modelexpress/blob/db0cbce97184d9135d35c7290711f3053b220b6a/modelexpress_client/python/modelexpress/engines/vllm/loader.py)已有策略链：peer RDMA、满足条件的 server cache、InstantTensor、ModelStreamer、GDS、引擎原生加载。是否可用取决于来源状态与配置。peer 字节通过 NIXL 搬运，不经过中央 server；没有共享存储时，文件缓存流式重建本地 snapshot。这是当前代码，不是尚未合并的优化提案。
+[ModelExpress 架构](https://github.com/ai-dynamo/modelexpress/blob/db0cbce97184d9135d35c7290711f3053b220b6a/docs/ARCHITECTURE.md)和 [vLLM loader](https://github.com/ai-dynamo/modelexpress/blob/db0cbce97184d9135d35c7290711f3053b220b6a/modelexpress_client/python/modelexpress/engines/vllm/loader.py)已有策略链：peer RDMA、满足条件的 server cache、InstantTensor、ModelStreamer、GDS、引擎原生加载。是否可用取决于来源状态与配置。peer 字节通过 NIXL 搬运，不经过中央 server；没有共享存储时，文件缓存流式重建本地 snapshot。
 
 vLLM 已有[原生 ModelExpress wrapper](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/modelexpress_loader.py)。实际 fallback 与兼容条件需继续读 ModelExpress，不能从薄 adapter 推断。选择实时张量时，source/runtime 身份与 worker incarnation 都有意义。
 
-Mooncake [权重管理说明](https://github.com/kvcache-ai/Mooncake/blob/342c8aeece6b4eefb76c6b8b31ccfac8dde07aa3/docs/source/design/mooncake-reshard/weight-management.md)区分已实现的发布/修订元数据、lease 状态和 HA 恢复，与待完成的客户端/RPC 表面及 managed reader 接入。导入完成不证明完整引擎加载链已可生产使用。后续工作应继续检查 `weight_store_manager.cpp` 和 `weight_metadata_store.cpp`。
+Mooncake [权重管理说明](https://github.com/kvcache-ai/Mooncake/blob/342c8aeece6b4eefb76c6b8b31ccfac8dde07aa3/docs/source/design/mooncake-reshard/weight-management.md)区分已实现的发布/修订元数据、lease 状态和 HA 恢复，与待完成的客户端/RPC 表面及 managed reader 接入。后续工作应继续检查 `weight_store_manager.cpp` 和 `weight_metadata_store.cpp`。
 
 Dynamo [weight artifact](https://github.com/ai-dynamo/dynamo/blob/7708f041a965e35374af976ab8ad610b9537e3bc/lib/gpu_memory_service/v1/snapshot/weight_artifact.py)保存对齐 allocation 范围，并恢复到新的 GMS server；不编码张量名称、形状和 dtype。LMCache 的 KV 持久化处理另一类对象，不能作为权重检查点。各版本见[来源快照](README_zh.md#来源快照)。
 
@@ -33,6 +33,6 @@ Dynamo [weight artifact](https://github.com/ai-dynamo/dynamo/blob/7708f041a965e3
 
 分别测一个与多个同时加载目标。peer 时间随目标数增长但文件解析消失，说明源扇出主导；搬运很快而就绪不变，说明最终处理或预热主导。加入源离开和部分搬运，核对 loader 的真实恢复行为。
 
-服务侧验证 logits、生成结果、就绪到可用响应，以及对正在服务的源的影响。剩余空间是兼容表示复用、源扇出和生命周期接入，不是重复写 peer loader，也不是假设 Mooncake 待完成 reader 已闭环。本条目没有 Foretoken 启动收益实测。
+服务侧验证 logits、生成结果、就绪到可用响应，以及对正在服务的源的影响。剩余空间是兼容表示复用、源扇出和生命周期接入。
 
 [模型加载与存储](README_zh.md)

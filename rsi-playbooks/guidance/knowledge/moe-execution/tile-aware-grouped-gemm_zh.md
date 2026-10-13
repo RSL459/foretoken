@@ -45,4 +45,4 @@ y_t = sum_e routing_weight[t,e] * Y_e[t]
 逐层与原始实现和路由对照，再在真实服务运行完整模型。分别测并发一和持续并发下未加 profiler 的 TPOT、TTFT、输出长度与回答质量。
 ## 依据与剩余问题
 
-核对日期：2026-10-14。实际阅读 [SonicMoE 论文](https://arxiv.org/abs/2512.14080)的算法 1–4、第 3–5 节与附录 B/F，以及 [commit 7396f3e](https://github.com/Dao-AILab/sonic-moe/tree/7396f3e604827d8186c2e16e64b28ee33d3defd0) 的 `sonicmoe/functional/forward.py`、`benchmarks/moe-cute.py`。上述机制已有实现，不应写成待开发的新方案。剩余工作是针对目标引擎实际 dispatch 布局与小批形状做集成和测量；通信决定输入布局时，参见[并行与通信](../parallelism-communication/README_zh.md)。
+核对日期：2026-10-14。[SonicMoE 论文](https://arxiv.org/abs/2512.14080)的算法 1–4、第 3–5 节与附录 B/F，以及 [commit 7396f3e](https://github.com/Dao-AILab/sonic-moe/tree/7396f3e604827d8186c2e16e64b28ee33d3defd0) 的 `sonicmoe/functional/forward.py`、`benchmarks/moe-cute.py`。剩余工作是针对目标引擎实际 dispatch 布局与小批形状做集成和测量；通信决定输入布局时，参见[并行与通信](../parallelism-communication/README_zh.md)。

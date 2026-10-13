@@ -50,4 +50,4 @@ Before serving, check physical IDs resolve to byte-equivalent expert representat
 
 ## Sources and remaining work
 
-Checked 2026-10-14: [LPLB README and planner](https://github.com/deepseek-ai/LPLB/tree/0490f79452f7ef277e814449600b1b1dd4c663b3), commit `0490f794`, including `lplb/planner.py` and `lplb/eplb.py`; [current DeepEP](https://github.com/deepseek-ai/DeepEP/tree/93eb6eb238127e96c6d7a4a625a6dad158348509). Current gaps are engine integration, version-compatible workload exchange, and a measured latency break-even—not absence of an online assignment implementation. See [windowed rebalancing](windowed-expert-rebalancing.md) for the slower placement loop.
+Checked 2026-10-14: [LPLB README and planner](https://github.com/deepseek-ai/LPLB/tree/0490f79452f7ef277e814449600b1b1dd4c663b3), commit `0490f794`, including `lplb/planner.py` and `lplb/eplb.py`; [current DeepEP](https://github.com/deepseek-ai/DeepEP/tree/93eb6eb238127e96c6d7a4a625a6dad158348509). Current gaps are engine integration, version-compatible workload exchange, and a measured latency break-even. See [windowed rebalancing](windowed-expert-rebalancing.md) for the slower placement loop.

@@ -35,6 +35,6 @@ Capture real queries and full KV over a long generation. Compare full attention,
 
 Construct two consecutive questions about different early passages. A retained-cache selector can choose a previously unused page on the second query; eviction cannot without reload. Add dispersed multi-fact aggregation, distractor-rich pages and position sweeps. These distinguish recoverability, loose page bounds and insufficient budgets.
 
-At service level, compare quality and completed throughput across context lengths and concurrency, measuring peak memory separately from traffic. The attention owner handles selection kernels; cache research concerns metadata residency, backing-store fetches and quality-aware budgets. Remaining questions include metadata under quantization, page-size trade-offs and dynamic budgets. No Foretoken implementation or speedup is asserted.
+At service level, compare quality and completed throughput across context lengths and concurrency, measuring peak memory separately from traffic. The attention owner handles selection kernels; cache research concerns metadata residency, backing-store fetches and quality-aware budgets. Remaining questions include metadata under quantization, page-size trade-offs and dynamic budgets.
 
 [KV cache](README.md)

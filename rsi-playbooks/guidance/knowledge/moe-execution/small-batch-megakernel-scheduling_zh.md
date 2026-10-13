@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 单请求 decode 可能激活多个专家，却只给每个专家一行输入。大批量 grouped GEMM 配置这时可能主要忙于加载权重和协调执行单元。分开的通信与计算带来启动边界；megakernel 将它们融合后，又需要在一个持久核函数中固定分配 GPU 资源。
 
-FlashInfer 已提供分开的 dispatch/compute/combine 和融合的 MegaMoE 后端，也已有按架构、dtype 区分的配置、离线调优和容量工作区。值得研究的不是再包装一份 DeepGEMM，而是为实际有效 token 数选择合适工作划分，并证明它在哪些负载下优于现有路径。
+FlashInfer 已提供分开的 dispatch/compute/combine 和融合的 MegaMoE 后端，也已有按架构、dtype 区分的配置、离线调优和容量工作区。值得研究的是为实际有效 token 数选择合适工作划分，并证明它在哪些负载下优于现有路径。
 
 ## 执行机制
 
@@ -39,4 +39,4 @@ FlashInfer 已提供分开的 dispatch/compute/combine 和融合的 MegaMoE 后�
 
 ## 依据与剩余问题
 
-核对日期：2026-10-14。实际阅读 FlashInfer [MoE-EP 架构](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/docs/design_docs/moe_ep_architecture.md)及 [SM100 调优笔记](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/flashinfer/moe_ep/kernel_src/sm100/cutedsl_megamoe/TUNING.md)，commit `a8e747c3`。来源包含已实现的能力和有日期的上游测量。剩余问题是确认目标引擎当前配置选择路径并评估低负载表现。本地 I/O 见[分组 GEMM](tile-aware-grouped-gemm_zh.md)，SM 争用见[通信重叠](../parallelism-communication/low-latency-dispatch-overlap_zh.md)。
+核对日期：2026-10-14。FlashInfer [MoE-EP 架构](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/docs/design_docs/moe_ep_architecture.md)及 [SM100 调优笔记](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/flashinfer/moe_ep/kernel_src/sm100/cutedsl_megamoe/TUNING.md)，commit `a8e747c3`。剩余问题是确认目标引擎当前配置选择路径并评估低负载表现。本地 I/O 见[分组 GEMM](tile-aware-grouped-gemm_zh.md)，SM 争用见[通信重叠](../parallelism-communication/low-latency-dispatch-overlap_zh.md)。

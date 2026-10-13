@@ -11,7 +11,7 @@ English | [简体中文](quantized-moe-layouts_zh.md)
 
 A checkpoint labeled FP4 or FP8 does not identify a complete executable MoE representation. Packed values, scale granularity, scale encoding, matrix orientation, routing-weight placement, and final reduction all affect correctness and speed. An optimization that changes only byte count can select a faster but wrong interpretation.
 
-FlashInfer already implements multiple quantized fused-MoE and EP paths, including NVFP4, MXFP8, and FP8/FP4 DeepGEMM backends. Its current API explicitly distinguishes activation and weight formats. The remaining opportunity is to reduce conversion and communication cost in a supported path while preserving a declared numerical contract—not to introduce generic “FP4 support” without an exact format.
+FlashInfer already implements multiple quantized fused-MoE and EP paths, including NVFP4, MXFP8, and FP8/FP4 DeepGEMM backends. Its current API explicitly distinguishes activation and weight formats. The remaining opportunity is to reduce conversion and communication cost in a supported path while preserving a declared numerical contract.
 
 ## Execution mechanism
 
@@ -40,4 +40,4 @@ Exercise uneven and empty experts, hot experts, gate/up conversion, padded dimen
 Run a real full-model service and report unprofiled TPOT, TTFT, output lengths, and task scores. Include long-context and mixed-load conditions because extra workspace can reduce KV capacity.
 ## Sources and remaining work
 
-Checked 2026-10-14: FlashInfer commit [a8e747c3](https://github.com/flashinfer-ai/flashinfer/tree/a8e747c3c1f7dfe5d51fab3883824b15da6829b7), [MoE-EP architecture](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/docs/design_docs/moe_ep_architecture.md), its SM100 tuning notes, and the [TRT-LLM FP4 API](https://docs.flashinfer.ai/generated/flashinfer.fused_moe.trtllm_fp4_block_scale_moe.html). Existing kernels and format conversions are implemented. Research remains in target-workload format choice, conversion placement, and numerical attribution. See [small-batch scheduling](small-batch-megakernel-scheduling.md) before selecting a wire format from a large-batch result.
+Checked 2026-10-14: FlashInfer commit [a8e747c3](https://github.com/flashinfer-ai/flashinfer/tree/a8e747c3c1f7dfe5d51fab3883824b15da6829b7), [MoE-EP architecture](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/docs/design_docs/moe_ep_architecture.md), its SM100 tuning notes, and the [TRT-LLM FP4 API](https://docs.flashinfer.ai/generated/flashinfer.fused_moe.trtllm_fp4_block_scale_moe.html). Research remains in target-workload format choice, conversion placement, and numerical attribution. See [small-batch scheduling](small-batch-megakernel-scheduling.md) before selecting a wire format from a large-batch result.

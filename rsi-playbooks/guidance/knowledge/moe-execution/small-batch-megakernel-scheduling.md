@@ -11,7 +11,7 @@ English | [简体中文](small-batch-megakernel-scheduling_zh.md)
 
 Single-request decode can activate several experts while providing only one row to each. A large-batch grouped GEMM configuration may then spend more time loading weights and coordinating workers than doing useful arithmetic. Splitting communication and computation introduces launch boundaries; fusing them removes boundaries but also fixes the allocation of GPU resources inside one persistent kernel.
 
-FlashInfer already exposes split dispatch/compute/combine and fused MegaMoE backends, with architecture- and dtype-specific configurations. Its current design also provides offline tuning and explicit capacity profiles. The opportunity is not to invent another DeepGEMM wrapper. It is to select a work partition appropriate to actual live tokens and demonstrate where that partition beats the existing one.
+FlashInfer already exposes split dispatch/compute/combine and fused MegaMoE backends, with architecture- and dtype-specific configurations. Its current design also provides offline tuning and explicit capacity profiles. The opportunity is to select a work partition appropriate to actual live tokens and demonstrate where that partition beats the existing one.
 
 ## Execution mechanism
 
@@ -39,4 +39,4 @@ Validate router outputs and numerical behavior before deploying the full model. 
 
 ## Sources and remaining work
 
-Checked 2026-10-14: FlashInfer [MoE-EP architecture](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/docs/design_docs/moe_ep_architecture.md) and [SM100 tuning notes](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/flashinfer/moe_ep/kernel_src/sm100/cutedsl_megamoe/TUNING.md), commit `a8e747c3`. The sources document implemented capabilities and dated upstream measurements. Remaining work is resolving the active target-engine profile path and evaluating its low-load behavior. See [grouped GEMM](tile-aware-grouped-gemm.md) for local I/O and [communication overlap](../parallelism-communication/low-latency-dispatch-overlap.md) for SM competition.
+Checked 2026-10-14: FlashInfer [MoE-EP architecture](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/docs/design_docs/moe_ep_architecture.md) and [SM100 tuning notes](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/flashinfer/moe_ep/kernel_src/sm100/cutedsl_megamoe/TUNING.md), commit `a8e747c3`. Remaining work is resolving the active target-engine profile path and evaluating its low-load behavior. See [grouped GEMM](tile-aware-grouped-gemm.md) for local I/O and [communication overlap](../parallelism-communication/low-latency-dispatch-overlap.md) for SM competition.

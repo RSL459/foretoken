@@ -50,4 +50,4 @@ subject to sum_r x[e,r] = n_e
 
 ## 依据与剩余问题
 
-核对日期：2026-10-14。实际阅读 [LPLB commit 0490f794](https://github.com/deepseek-ai/LPLB/tree/0490f79452f7ef277e814449600b1b1dd4c663b3) 的 README、`lplb/planner.py`、`lplb/eplb.py`，并核对[当前 DeepEP](https://github.com/deepseek-ai/DeepEP/tree/93eb6eb238127e96c6d7a4a625a6dad158348509)。真实缺口是引擎集成、版本兼容的负载交换，以及实测延迟收支区间，不是在线分配算法尚不存在。较慢的布局循环见[窗口重平衡](windowed-expert-rebalancing_zh.md)。
+核对日期：2026-10-14。[LPLB commit 0490f794](https://github.com/deepseek-ai/LPLB/tree/0490f79452f7ef277e814449600b1b1dd4c663b3) 的 README、`lplb/planner.py`、`lplb/eplb.py`及[当前 DeepEP](https://github.com/deepseek-ai/DeepEP/tree/93eb6eb238127e96c6d7a4a625a6dad158348509)。剩余问题是引擎集成、版本兼容的负载交换，以及实测延迟收支区间。较慢的布局循环见[窗口重平衡](windowed-expert-rebalancing_zh.md)。

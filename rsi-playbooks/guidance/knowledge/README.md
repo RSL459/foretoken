@@ -43,9 +43,9 @@ A decode slowdown can involve several categories. For example, use attention or 
 
 ## Reading the evidence
 
-Implementation status is scoped to the cited release, commit, or pull request and its check date. An upstream feature is part of the current comparison, not a new optimization merely because it appears in a paper. Entries identify remaining design questions, including where workload, hardware, or model structure changes the trade-off.
+Implementation status refers to the cited version and check date; reported results retain their source and experimental conditions, with Foretoken measurements linked to experiment records.
 
-Author measurements retain their original conditions. Foretoken measurements belong to linked experiment records; implementation availability alone establishes neither quality nor a service speedup. Research that needs new weights, training, or model changes is distinguished from an execution-only change.
+Entries distinguish existing capabilities from open questions, and execution-only changes from methods requiring new weights, training, or model changes.
 
 ## Add or update knowledge
 

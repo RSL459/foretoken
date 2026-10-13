@@ -31,6 +31,6 @@ Locally compare cold process startup, warm filesystem startup, level-1 sleep/wak
 
 For request restoration, hold token history and model revision fixed; compare full replay, externally restored KV and replay after a new weight revision. Inspect next-token distributions, not just whether an HTTP request succeeds. Weight changes invalidate assumptions about old KV semantics.
 
-At service level, measure the first successful generation after restoration and the next several requests, including long-context and concurrent traffic. Record replay work and effects on co-located services. Remaining research concerns the cheapest sufficient surviving state and its lifecycle, not an unconditional promise of instant resume. No Foretoken recovery time or quality result has been measured.
+At service level, measure the first successful generation after restoration and the next several requests, including long-context and concurrent traffic. Record replay work and effects on co-located services. Remaining research concerns the cheapest sufficient surviving state and its lifecycle.
 
 [Model loading and storage](README.md)

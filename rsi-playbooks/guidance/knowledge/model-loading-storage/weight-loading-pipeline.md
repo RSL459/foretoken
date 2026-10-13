@@ -31,6 +31,6 @@ Dynamo's [weight artifact code](https://github.com/ai-dynamo/dynamo/blob/7708f04
 
 Locally compare standard checkpoint loading, supported tensor filtering and a topology-matched sharded checkpoint. Fix model revision, dtype, rank geometry and transformations. Instrument file resolution, bytes actually read per rank, CPU materialization, H2D, parameter installation and post-load time. Check logits and parameter coverage. A drop in I/O with unchanged startup identifies a later bottleneck; unchanged I/O with less installation time identifies avoided conversion.
 
-Repeat cold filesystem, warm page-cache and repeated process-start cases. At service level, measure process launch to readiness and first successful generation, then the first several requests. Separate compilation/warmup from weight loading and retain peak host/device memory. Remaining research concerns reproducible runtime representations across real topology changes and avoiding repeated transformations. It does not justify rebuilding already-integrated rank-local loading, and no Foretoken acceleration has been measured.
+Repeat cold filesystem, warm page-cache and repeated process-start cases. At service level, measure process launch to readiness and first successful generation, then the first several requests. Separate compilation/warmup from weight loading and retain peak host/device memory. Remaining research concerns reproducible runtime representations across real topology changes and avoiding repeated transformations.
 
 [Model loading and storage](README.md)
