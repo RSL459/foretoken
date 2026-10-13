@@ -1,3 +1,8 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+-->
+
 # Layer-Group Prefill for MoE
 
 English | [简体中文](layered-prefill_zh.md)
@@ -44,9 +49,9 @@ Pausing and resuming by layer is not tied to one GPU, but the reported gains dep
 
 ## Implementation pointers
 
-The [public implementation](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3) uses Nano-vLLM and provides scheduling and benchmark commands.
+The [public implementation](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3) uses Nano-vLLM and provides scheduling and benchmark commands. This snapshot is dated 2026-03-09; the paper's v2 is dated 2026-04-16.
 
-vLLM expresses scheduled work as per-request token counts in [scheduler output](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/v1/core/sched/output.py). Its [Qwen3 MoE forward](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/model_executor/models/qwen3_moe.py) traverses the layers assigned to the current pipeline stage. Layer-group scheduling needs to pass per-request layer progress through these interfaces and retain the state needed to resume across iterations.
+As of 2026-10-14, vLLM's [current scheduler output](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/core/sched/output.py) still expresses per-request token counts without layer-group progress. Its [current Qwen3 MoE forward](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/models/qwen3_moe.py) traverses the pipeline-local layer range without per-request group resumption. These specific interfaces remain relevant porting boundaries; pipeline-parallel layer partitioning alone is not layered prefill.
 
 A port would need the following state and execution changes:
 
@@ -58,5 +63,5 @@ Compare token-chunk and layer-group scheduling on identical request traces. Meas
 
 ## References
 
-- [From Tokens to Layers: Redefining Stall-Free Scheduling for MoE Serving with Layered Prefill, v2](https://arxiv.org/html/2510.08055v2). Main experiments use two H100 80GB GPUs, NVLink, and TP2, with Qwen3-30B-A3B and GPT-OSS-20B on ShareGPT/arXiv serving workloads. Counting bytes loaded for expert weights, the authors report reductions of 12% and 39% for the two workload families.
+- [From Tokens to Layers: Redefining Stall-Free Scheduling for MoE Serving with Layered Prefill, v2](https://arxiv.org/html/2510.08055v2). Main experiments use two H100 80GB GPUs, NVLink, and TP2, with Qwen3-30B-A3B and GPT-OSS-20B on ShareGPT/arXiv serving workloads. For Qwen3-30B-A3B, the authors report expert-weight traffic falling from 28.5 TB to 25.1 TB on ShareGPT (12%) and from 35.6 TB to 21.7 TB on arXiv (39%).
 - [Layered Prefill implementation and reproduction instructions](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3), including dependencies, a FlashAttention patch, serving, and measurement commands.

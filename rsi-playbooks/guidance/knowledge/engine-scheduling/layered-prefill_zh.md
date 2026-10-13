@@ -1,3 +1,8 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+-->
+
 # 按层组推进 MoE 预填充
 
 [English](layered-prefill.md) | 简体中文
@@ -44,9 +49,9 @@ Layered prefill 保留较大的输入批量，改为拆分模型层。一轮只�
 
 ## 实现线索
 
-[公开实现](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3)基于 Nano-vLLM，提供层组调度及基准命令。
+[公开实现](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3)基于 Nano-vLLM，提供层组调度及基准命令。该快照日期为 2026-03-09，论文 v2 日期为 2026-04-16。
 
-vLLM 的[调度输出](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/v1/core/sched/output.py)中，工作量按每请求 token 数表达；[Qwen3 MoE 执行路径](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/model_executor/models/qwen3_moe.py)遍历当前流水线阶段所属层。层组调度需要在这些接口之间传递请求的层进度，并保存跨轮恢复所需的状态。
+截至 2026-10-14，vLLM [当前调度输出](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/core/sched/output.py)仍按每请求 token 数表达工作量，没有层组进度字段；[当前 Qwen3 MoE forward](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/models/qwen3_moe.py)遍历当前流水线阶段层范围，没有逐请求层组恢复。这些具体接口仍是移植需要衔接的边界，pipeline parallelism 的分层本身并非 layered prefill。
 
 迁移时需要设计以下执行状态：
 
@@ -58,5 +63,5 @@ vLLM 的[调度输出](https://github.com/vllm-project/vllm/blob/1be36283678a9a9
 
 ## 参考资料
 
-- [From Tokens to Layers: Redefining Stall-Free Scheduling for MoE Serving with Layered Prefill，v2](https://arxiv.org/html/2510.08055v2)：主实验使用 2 张 H100 80GB、NVLink、TP2，测试 Qwen3-30B-A3B 和 GPT-OSS-20B 的 ShareGPT/arXiv 混合服务负载。作者按专家权重加载字节数统计，报告两类负载分别下降 12% 和 39%。
+- [From Tokens to Layers: Redefining Stall-Free Scheduling for MoE Serving with Layered Prefill，v2](https://arxiv.org/html/2510.08055v2)：主实验使用 2 张 H100 80GB、NVLink、TP2，测试 Qwen3-30B-A3B 和 GPT-OSS-20B 的 ShareGPT/arXiv 混合服务负载。Qwen3-30B-A3B 的专家权重流量在 ShareGPT 上从 28.5 TB 降到 25.1 TB（12%），在 arXiv 上从 35.6 TB 降到 21.7 TB（39%）。
 - [Layered Prefill 实现与复现说明](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3)：包含依赖、FlashAttention 补丁、服务与测量命令。
