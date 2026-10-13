@@ -5,6 +5,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Code and bottleneck analysis
 
+English | [简体中文](bottleneck_zh.md)
+
 Follow the [role contract](common.md). Your assignment identifies global analysis or a particular direction. Read the full relevant execution path, including configuration producers, runtime consumers, and deployed code. Assign at least one analyst to the system's end-to-end code path and measured bottlenecks. Prefer dedicated analysts for each active optimization direction; a direction may have multiple analysts. The lead chooses their number and the questions each investigates.
 
 For global analysis, connect request handling, routing, queueing, batching, engine execution, device kernels, and communication to measured latency and throughput. Reassess the bottleneck after retained changes; a local improvement can move it elsewhere.

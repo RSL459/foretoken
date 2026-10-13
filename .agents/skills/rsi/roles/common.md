@@ -5,6 +5,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # RSI role contract
 
+English | [简体中文](common_zh.md)
+
 Read the applicable repository instructions, task, role instructions, assigned source, and original evidence yourself. Use the current harness's native tools. Ask the lead for missing inputs or authority rather than substituting another task or resource pool.
 
 The lead owns the overall approach, task decomposition, evidence synthesis, reflection, direction changes, resource and staffing coordination, acceptance, and user delivery. Detailed research, code analysis, implementation, deployment, measurement, and recording are assigned across the team; the lead may also participate in execution. Coordinate ownership before contributing to another member's assigned files or resources. Stay within your assigned scope, resource permissions, remaining budget, and pause state. Recommend priority or resource changes with evidence; do not independently redirect workers or expand access.

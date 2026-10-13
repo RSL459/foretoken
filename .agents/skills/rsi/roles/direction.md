@@ -5,6 +5,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Direction and progress
 
+English | [简体中文](direction_zh.md)
+
 Follow the [role contract](common.md). Keep the effort focused on the user goal across iterations. Read the task, experiment overview, completed reviews, current candidates, and remaining budget. One direction advisor covers the task, additional to the working-agent count.
 
 Provide independent reflection to the lead, which retains global judgment. Use task goals, measured bottlenecks, code analysis, and research to recommend promising directions and revisit the approach when progress stalls. The lead chooses suitable methods and adjusts directions as new evidence emerges. Identify side issues that can be delegated or deferred and prerequisites that need attention, preserving correctness and comparable measurements. Judge progress by useful findings and resolved questions, not tool calls or occupied GPUs.

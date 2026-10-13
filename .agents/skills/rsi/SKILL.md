@@ -10,6 +10,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Run an RSI task
 
+English | [简体中文](SKILL_zh.md)
+
 Use the current harness's native delegation, messages, and completion notifications. In an interactive Claude Code session, use an Agent Team with the user's single lead `/goal`; in Codex, use the available native agent tools to carry out the same role protocol. Check actual session capabilities before assigning work: ordinary subagents are not an Agent Team, and Codex does not inherit Claude's Team or `/goal` facilities. Do not launch another agent CLI, change settings to enable teams, add custom hooks, or schedule periodic prompts for the lead.
 
 ## Establish the task
@@ -32,7 +34,7 @@ At execution start, load the roles below into native workers. Keep role context 
 | --- | --- | --- |
 | [Direction and progress](roles/direction.md) | One advisor ranks directions, reflects on progress, and recommends a return to the main line. | Experiment overview: priorities, open questions, linked iterations, and the lead's decisions. |
 | [Code and bottleneck analysis](roles/bottleneck.md) | At least one agent analyzes the system's end-to-end code path and measured bottlenecks. Prefer dedicated analysts for each active optimization direction, with several allowed on one direction. The lead chooses their number and scope. | Evidence and proposed measurements supplied to the assigned iteration writer. |
-| [Experiment review and attribution](roles/experiment-review.md) | Independent reviewers assigned by direction and candidate; no self-review of an implemented candidate. | Assigned iteration notes, with execution analysis and independent review separately attributed. |
+| [Experiment review and attribution](roles/experiment-review.md) | Independent reviewers assigned by direction and candidate; no self-review of an implemented candidate. | Assigned iteration notes and reusable experimental findings in `rsi-playbooks/guidance/`, coordinated with the researcher. |
 | [Knowledge research and exploration](roles/research.md) | Researchers assigned by direction and current bottleneck question. | Assigned research notes and reusable guidance. |
 | [Experiment efficiency](roles/efficiency.md) | One supervisor covers continuous GPU collection and periodic analysis of experiments and useful agent parallelism, using native status and member progress updates. | Collector records and evidence supplied to the overview writer. |
 
@@ -60,7 +62,7 @@ Every worker must actively send the lead results, evidence, the next useful acti
 
 1. Assign distinct code-analysis and research questions in parallel. Members send candidates directly to the direction advisor and relevant peers; the lead selects priorities from their evidence and assigns implementation and experiment owners.
 2. As runs complete, executors send actual changes, commands, runtime identity, raw results, and their interpretation to the independent reviewer. The lead keeps unrelated work moving while review proceeds and bases acceptance on confirmed findings and necessary comparisons.
-3. Reviewers share findings with the global analyst and researcher to reassess bottlenecks and applicability. The lead decides retain/refine/revert; an assigned worker performs the resulting edits or deployment. The reviewer records the decision, and the direction advisor updates the overview.
+3. Reviewers share findings with the global analyst and researcher to reassess bottlenecks and applicability. The lead decides retain/refine/revert; an assigned worker performs the resulting edits or deployment. The reviewer records the decision and works with the researcher to incorporate reusable findings into `rsi-playbooks/guidance/`; the direction advisor updates the overview.
 4. Request direction review on a contradicted hypothesis, important blocker, or costly side issue. Respond to actionable efficiency findings with an assignment or resource decision, and tell the relevant member what outcome to check.
 
 Use the existing experiment and iteration records. Assigned writers incorporate peer evidence without concurrent overwrites; independent reviewers preserve the executor's interpretation and add their own attributed findings. Coordinate any lead contributions with the assigned writer. End each handoff with useful assigned work or a truthful wait/termination decision. Do not poll or keep agents busy merely to satisfy a count.

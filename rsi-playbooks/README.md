@@ -20,10 +20,10 @@ cd foretoken
 Start a dedicated interactive session from this directory:
 
 ```bash
-CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_CODE_GOAL_CHECKIN_MINUTES=0 claude
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 ```
 
-This enables Agent Teams for this session and disables timed goal check-ins and automatic retries. Paste the following into a session started with these options. Replace the file path to use your own task:
+This enables Agent Teams for this session. Paste the following into that session, or one with Teams already enabled. Replace the file path to use your own task:
 
 ```text
 /goal Use the RSI skill and an Agent Team to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. As lead, develop the approach, break down tasks, reflect on findings, and keep the team moving, participating in execution when useful. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
@@ -50,7 +50,7 @@ The lead assigns these roles initially and keeps their context for related follo
 | Lead | Develops, reflects on, and chooses optimization directions; owns task breakdown, evidence synthesis, resource coordination, useful parallel work, and delivery, participating in execution when useful. |
 | Direction and progress | One independent advisor reviews direction and priorities and writes the experiment overview. |
 | Code and bottleneck analysis | Investigates code and measurements to locate performance bottlenecks. At least one agent analyzes the system's end-to-end execution path. Prefer dedicated analysts for each active optimization direction; a direction may have several, with staffing chosen by the lead. |
-| Experiment review and attribution | Independent reviewers by direction and candidate check behavior, comparison conditions, and gains, and write iteration notes. No self-review. |
+| Experiment review and attribution | Independent reviewers by direction and candidate check benchmark shortcuts, comparison conditions, and the source of gains, organize iteration notes, and capture reusable conclusions, applicability, and negative results in `guidance/`. |
 | Knowledge research and exploration | Researchers by direction examine original sources and upstream practice, proposing applicable methods and recording findings. |
 | Experiment efficiency | One supervisor continuously collects GPU data across all task nodes, periodically analyzes experiment efficiency, inspects agent status, and asks members about progress to check useful parallel work. Alerts the lead to idle resources, stalled tasks, or insufficient parallelism. |
 | Implementation and experiment execution | Explicit owners implement, integrate, deploy, and evaluate candidates, supplying changes, raw results, and interpretation. |
