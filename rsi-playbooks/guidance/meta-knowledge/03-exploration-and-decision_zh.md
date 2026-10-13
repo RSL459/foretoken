@@ -51,7 +51,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 按完整研究问题安排 Worker，让独立方向同时推进。给出目标、已有发现、资源范围和交付位置，并保留独立思考空间。Worker 在分配范围内连续完成修改、部署、测量、分析和下一轮设计，与 Researcher 直接讨论机制，与 Recorder 核对证据。至少有一个 Worker 跟进整体执行路径，把局部发现与系统表现联系起来。
 
-按[源码部署指南](../../../docs/custom-deployment_zh.md)安装一次共享平台，为并行候选准备独立 worktree 和 Kubernetes namespace。各自保留可写运行缓存与结果目录，条件允许时共享只读模型数据。Worker 从自己的 worktree 执行 `foretoken deploy`，修改引擎时用 `--engine-source` 关联该候选的引擎源码。后续修改复用同一候选的源码增量更新和编译缓存；不同 worktree 可以并行构建与部署。控制器、CRD 或共享平台配置的改动由主 Agent 协调，显式更新平台。
+安装一次共享平台，再按[并行候选示例](../../../docs/custom-deployment_zh.md#并行运行候选方案)为各候选准备独立 worktree 和 Kubernetes namespace。各自保留可写运行缓存与结果目录，条件允许时共享只读模型数据。Worker 从自己的 worktree 执行 `foretoken deploy`，修改引擎时用 `--engine-source` 关联该候选的引擎源码。后续修改复用同一候选的源码增量更新和编译缓存；不同 worktree 可以并行构建与部署。控制器、CRD 或共享平台配置的改动由主 Agent 协调，显式更新平台。
 
 把研究、实现、构建、测量和分析穿插起来：一个候选构建或等待服务就绪时，其他 Worker 继续推进自己的候选；结果返回后，负责的 Worker 及时解释并开展下一轮。按实际资源安排并发测量，区分候选收益与共享 CPU、存储或网络争用的影响。研究与准备无需一直占用 GPU，Worker 数量也不必与 GPU 实验组数相同。
 
