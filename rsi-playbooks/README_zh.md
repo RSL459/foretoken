@@ -36,10 +36,10 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 在仓库目录打开 Codex，粘贴：
 
 ```text
-使用 RSI skill，按照 rsi-playbooks/tasks/qwen-decode_zh.md 完成推理系统优化并交付规定结果。先阅读任务、已有实验记录和 rsi-playbooks/guidance/ 中的相关指导。主 Agent 负责构思、任务分解、反思和团队推进，通过原生 Agent 协作，并按需要参与具体执行；执行期间维持任务规定的有效工作人数，及时处理结果和成员的新任务请求。遵守任务的资源、时间预算和结束条件，用户要求暂停或停止时停止推进并完成必要收尾。
+/goal 使用 RSI skill，按照 rsi-playbooks/tasks/qwen-decode_zh.md 完成推理系统优化并交付规定结果。先阅读任务、已有实验记录和 rsi-playbooks/guidance/ 中的相关指导。主 Agent 负责构思、任务分解、反思和团队推进，通过原生 Agent 协作，并按需要参与具体执行；执行期间维持任务规定的有效工作人数，及时处理结果和成员的新任务请求。遵守任务的资源、时间预算和结束条件，用户要求暂停或停止时停止推进并完成必要收尾。
 ```
 
-Codex 按当前会话实际提供的原生委派、消息和后续任务工具执行相同角色职责，不使用 Claude 的 Agent Team 或 `/goal`。
+Codex 使用自身的原生 `/goal` 维护任务目标，通过 Agent 工具派工与续派。用 `/goal pause` 暂停目标，并要求成员停止本任务的实验与采集进程；用 `/goal resume` 继续。
 
 ## Agent 分工
 

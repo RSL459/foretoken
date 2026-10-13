@@ -36,10 +36,10 @@ The lead uses one goal for the overall outcome and team progress, while members 
 Open Codex in the repository and paste:
 
 ```text
-Use the RSI skill to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. Read the task, prior experiment records, and relevant guidance under rsi-playbooks/guidance/. As lead, develop the approach, break down tasks, reflect on findings, and coordinate native agents, participating in execution when useful. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
+/goal Use the RSI skill to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. Read the task, prior experiment records, and relevant guidance under rsi-playbooks/guidance/. As lead, develop the approach, break down tasks, reflect on findings, and coordinate native agents, participating in execution when useful. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
 ```
 
-Codex uses the same roles through the native delegation, messaging, and follow-up tools available in the session, not Claude's Agent Team or `/goal`.
+Codex uses its native `/goal` to maintain the task objective and its agent tools for delegation and follow-up. Use `/goal pause` to pause the goal and ask members to stop the task's experiments and collectors; use `/goal resume` to continue.
 
 ## Agent roles
 

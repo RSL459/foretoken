@@ -12,7 +12,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](SKILL_zh.md)
 
-Use the current harness's native delegation, messages, and completion notifications. In an interactive Claude Code session, use an Agent Team with the user's single lead `/goal`; in Codex, use the available native agent tools to carry out the same role protocol. Check actual session capabilities before assigning work: ordinary subagents are not an Agent Team, and Codex does not inherit Claude's Team or `/goal` facilities. Do not launch another agent CLI, change settings to enable teams, add custom hooks, or schedule periodic prompts for the lead.
+Use the current harness's native goal management, delegation, messages, and completion notifications. In Claude Code, use an interactive Agent Team with the user's lead `/goal`. In Codex, use its own `/goal` and native agent tools for the same role protocol. Check the available collaboration tools before assigning work; each harness owns its goal and agent lifecycle. Do not launch another agent CLI, change settings to enable teams, add custom hooks, or schedule periodic prompts for the lead.
 
 ## Establish the task
 

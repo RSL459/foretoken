@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](SKILL.md) | 简体中文
 
-使用当前 harness 的原生委派、消息和完成通知。Claude Code 交互会话采用 Agent Team，由用户设置主 Agent 的单个 `/goal`；Codex 使用当前可用的原生 Agent 工具执行相同角色约定。派工前核对会话能力：普通子 Agent 与 Agent Team 不同，Codex 也不具备 Claude 的 Team 或 `/goal` 接口。不启动另一个 Agent CLI，不修改设置来开启团队，不添加自定义 hook 或主 Agent 周期提醒。
+使用当前 harness 的原生目标管理、委派、消息和完成通知。Claude Code 采用交互式 Agent Team 和用户设置的主 Agent `/goal`；Codex 使用自身的 `/goal` 与原生 Agent 工具执行相同角色约定。派工前核对可用的协作工具，目标与成员生命周期由各自 harness 管理。不启动另一个 Agent CLI，不修改设置来开启团队，不添加自定义 hook 或主 Agent 周期提醒。
 
 ## 明确任务
 
