@@ -68,7 +68,9 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 
 Use `--output local,raw` to save request inputs and response content, including reasoning and tool calls, in `responses.jsonl`. Warmup responses are saved in `warmup_responses.jsonl`.
 
-`quiet` saves preparation and execution logs in `run.log` instead of printing progress; errors remain visible. With W&B selected, this log is also uploaded as an artifact.
+Every run saves preparation and execution logs in `run.log`. `quiet` suppresses terminal progress and summaries while keeping errors visible. With W&B selected, the log is also uploaded as an artifact.
+
+Completed HTTP requests are saved immediately in `raw_output.jsonl`; video requests use `raw_results.jsonl`. These records survive interruption. Completed runs also produce the usual aggregate results. W&B retains the journals as downloadable artifacts.
 
 Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs.
 

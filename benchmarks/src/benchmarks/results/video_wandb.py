@@ -30,6 +30,7 @@ _SAMPLE_FIELDS = (
     "seed",
     "success",
     "status_code",
+    "client_e2e_s",
     "e2e_s",
     "queue_wait_s",
     "server_generation_s",
@@ -54,6 +55,7 @@ def video_metrics_to_wandb(metrics: dict[str, Any]) -> dict[str, float | int]:
     for key in (
         "request_num",
         "success_num",
+        "failed_num",
         "success_rate",
         "e2e_s",
         "queue_wait_s",

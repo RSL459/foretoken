@@ -12,6 +12,48 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.config.evaluation import native_arguments, validate_model_transport
+from benchmarks.integrations.quality import write_progress
+
+
+class EvalScopeProgress:
+    """Read only complete native cache records; prediction and review counts stay separate."""
+
+    def __init__(self) -> None:
+        self.files: dict[Path, tuple[int, set[int]]] = {}
+
+    def read(self, directory: Path, model: str, datasets: list[str]) -> dict[str, int] | None:
+        """Incrementally count unique saved sample IDs, including transactional review reruns."""
+        counts = {}
+        for kind, metric in (
+            ("predictions", "Evaluation/Predictions completed"),
+            ("reviews", "Evaluation/Reviews completed"),
+        ):
+            total = 0
+            cache = directory / kind / model
+            paths = [path for path in cache.glob("*.jsonl")
+                     if any(path.name.startswith(f"{task}_") for task in datasets)]
+            # A review rerun replaces its previous scores only after aggregation succeeds.
+            reruns = {Path(str(path).split(".rerun-", 1)[0]): path
+                      for path in cache.glob("*.jsonl.rerun-*")
+                      if any(path.name.startswith(f"{task}_") for task in datasets)}
+            for path in sorted(set(paths) | set(reruns)):
+                source = reruns.get(path, path)
+                offset, samples = self.files.get(source, (0, set()))
+                try:
+                    with source.open("rb") as stream:
+                        stream.seek(offset)
+                        while line := stream.readline():
+                            if not line.endswith(b"\n"):
+                                break
+                            samples.add(json.loads(line)["index"])
+                            offset = stream.tell()
+                except FileNotFoundError:
+                    # Native aggregation can rename a review rerun during this snapshot.
+                    return None
+                self.files[source] = offset, samples
+                total += len(samples)
+            counts[metric] = total
+        return counts
 
 
 def restore_progress(source: Path, native: Path) -> None:
@@ -64,6 +106,12 @@ def run_evalscope(
     headers.update(service["headers"])
     if headers:
         config.model_args["default_headers"] = headers
+    # Native --use-cache redirects all output to the selected cache directory.
+    write_progress(Path(directory), {
+        "cache_directory": str(Path(config.use_cache or directory).expanduser().resolve()),
+        "model": config.model_id,
+        "datasets": config.datasets,
+    })
     reports = run_task(config)
     # A resumed run writes into its cache. Export only this invocation's returned reports.
     if Path(config.work_dir).resolve() != Path(directory).resolve():

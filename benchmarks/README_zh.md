@@ -68,7 +68,9 @@ foretoken eval examples/quickstart \
 
 使用 `--output local,raw`，将请求输入和响应内容（包括 reasoning 和工具调用）保存到 `responses.jsonl`。预热响应保存在 `warmup_responses.jsonl`。
 
-`quiet` 将准备和执行日志保存到 `run.log`，不打印进度，错误仍会显示。选择 W&B 时，该日志也作为附件上传。
+每次运行都会将准备和执行日志保存到 `run.log`。`quiet` 只关闭终端进度和汇总输出，错误仍会显示。选择 W&B 时，日志也作为附件上传。
+
+HTTP 请求完成后立即写入 `raw_output.jsonl`，视频请求写入 `raw_results.jsonl`；中断后可查看已经完成的请求记录。正常完成的运行还会生成汇总结果。W&B 也会将这些逐条记录保存为可下载的附件。
 
 每次运行在 `results/` 下保存到独立目录；`--output-dir` 修改结果父目录。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。
 
