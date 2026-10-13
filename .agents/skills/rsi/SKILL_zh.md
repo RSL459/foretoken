@@ -52,6 +52,10 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 把实际 checkout 与证据路径交给成员。编辑、构建、部署和验证都针对该 checkout 执行。并行实验通过已有部署机制使用独立的部署身份、可写运行缓存和结果目录，适用时复用只读模型数据。Worktree 隔离源码改动，实验并行数量由任务资源分配决定；GPU 数与实验组数从任务读取。
 
+并行部署候选前，按[源码部署指南](../../../docs/custom-deployment_zh.md)统一准备支持该部署流程的 CLI，并安装或升级共享源码平台。Worker 在自己的 Foretoken worktree 中部署独立 namespace 的 Kustomize 候选，`foretoken deploy` 选择当前 checkout；从其他目录执行时，用 `-e` 指定候选 checkout，并提供部署目录的绝对路径。需要修改引擎时，用 `--engine-source` 绑定各候选独立的引擎 checkout，后续部署沿用该 worktree 记录的选择。CLI 按 checkout 隔离并复用编译缓存。控制器、CRD 或共享平台改动统一通过显式安装更新，不为每个候选重装平台。
+
+独立 worktree 并行推进，在资源允许时交错开展研究、实现、构建、部署、测量和审查。正在测量的源码与运行环境保持不变。同一候选的后续迭代复用已有环境，由部署流程复用缓存并准备所需更新；结果到达后就安排下一项有效工作，而不是等全部候选一起完成。
+
 测量或审查前，确认候选的实际源码和运行配置，包括未提交改动。审查者读取对应候选，而非主 Agent 的工作区。决定保留后，安排合入约定分支、解决相互影响并验证集成结果。协调共享 Git 操作：worktree 的索引独立，分支和 stash 属于同一仓库。
 
 候选改动和证据已保存或明确放弃，且成员、构建和服务都不再使用后，再删除实验 worktree。暂停时保留未完成工作，恢复时明确复用或重新分配工作区。
