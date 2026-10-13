@@ -15,11 +15,49 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-Open Claude Code or Codex in this directory and paste the following prompt. Replace the file path to use your own task:
+### Claude Code
+
+Start a dedicated interactive session from this directory:
+
+```bash
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_CODE_GOAL_CHECKIN_MINUTES=0 claude
+```
+
+This enables Agent Teams for this session and disables timed goal check-ins and automatic retries. Paste the following into a session started with these options. Replace the file path to use your own task:
 
 ```text
-Use the RSI skill to optimize the inference system according to rsi-playbooks/tasks/qwen-decode.md. Read the task and prior experiment records, then carry out research, implementation, deployment, evaluation, and analysis. Keep assigning parallel work and use all available nodes to advance experiments until the task's completion criteria are met. Save the results and deliver the optimization conclusions as specified in the task.
+/goal Use the RSI skill and an Agent Team to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. As lead, develop the approach, break down tasks, reflect on findings, and keep the team moving; delegate execution to members. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
 ```
+
+The lead uses one goal for the overall outcome and team progress, while members work within their roles. To pause, use `/goal clear` to end automatic continuation, then ask the team to stop this task's experiments and collectors.
+
+### Codex
+
+Open Codex in the repository and paste:
+
+```text
+Use the RSI skill to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. As lead, develop the approach, break down tasks, reflect on findings, and keep the team moving; delegate execution through native agents. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
+```
+
+Codex uses the same roles through the native delegation, messaging, and follow-up tools available in the session, not Claude's Agent Team or `/goal`.
+
+## Agent roles
+
+The lead assigns these roles initially and keeps their context for related follow-up work:
+
+| Role | Responsibility and staffing |
+| --- | --- |
+| Lead | Conceives and reflects on optimization directions beyond easy parameter adjustments; owns task breakdown, evidence synthesis, priorities, resources, staffing, acceptance, and user delivery. Delegates concrete execution. |
+| Direction and progress | One independent advisor reviews direction and priorities and writes the experiment overview. |
+| Code and bottleneck analysis | At least one global analyst; the lead chooses the total, preferably at least one per active direction, with more for distinct stages or hypotheses. |
+| Experiment review and attribution | Independent reviewers by direction and candidate check behavior, comparison conditions, and gains, and write iteration notes. No self-review. |
+| Knowledge research and exploration | Researchers by direction examine original sources and upstream practice, proposing applicable methods and recording findings. |
+| Experiment efficiency | One supervisor owns continuous GPU collection and periodic analysis across task nodes, reporting actionable findings. |
+| Implementation and experiment execution | Explicit owners implement, integrate, deploy, and evaluate candidates, supplying changes, raw results, and interpretation. |
+
+Working-agent counts include analysts, researchers, reviewers, and execution workers while they are doing assigned work. Direction and efficiency advisors are additional. The lead arranges useful work within task and harness limits and addresses staffing shortfalls.
+
+Members exchange evidence directly and request new work on completion or blockage; the lead assigns follow-up work or adjusts responsibilities. Where shared task tools are available, members may also claim ready work within their authorization. The overview and iteration notes each have an assigned writer, and the lead accepts their outputs. On resumption, preserve the original budget and records and recreate missing members.
 
 ## Design goals
 
@@ -40,9 +78,9 @@ An iteration covers one candidate change, from deployment through the required p
 4. Analyze the causes and opportunities for improvement, develop your own hypotheses, and design an approach. State the expected effects and choose workloads and metrics that test those hypotheses. If comparable results are unavailable, measure the service before making the change.
 5. Change the code or configuration and update the inference service through the [source deployment workflow](../docs/custom-deployment.md).
 6. Run the selected [evaluations](../benchmarks/README.md) and compare results before and after the change. Use model outputs, logs, and profiling to determine what accounts for the differences.
-7. Record each run and its interpretation following the [experiment records guide](experiment-records.md).
-8. Keep, refine, or revert the change, then choose the next question to investigate. Add reusable findings to the guidance and references.
-9. Optional: review the implementation and raw results for benchmark-specific shortcuts, changes in model behavior, or differences in comparison conditions, and check whether the claimed gains are attributable to the intended change.
+7. Have an independent reviewer examine the implementation and raw results for benchmark shortcuts, changed model behavior, and comparison conditions, assessing attribution and any needed follow-up measurements.
+8. Record each run, its interpretation, and review findings following the [experiment records guide](experiment-records.md).
+9. Keep, refine, or revert the change, then choose the next question to investigate. Add reusable findings to the guidance and references.
 
 ## Choose evaluations
 
