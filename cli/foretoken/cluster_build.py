@@ -315,8 +315,8 @@ class ClusterBuilder(AbstractContextManager):
             key=lambda pod: pod.get("metadata", {}).get("creationTimestamp", ""),
             default=None,
         )
-        # Source operations hold the cluster lock. Stop the previous daemon before
-        # changing its image or placement: the retained PVC still holds its root lock.
+        # The caller owns this binding's operation lock. Stop its previous daemon
+        # before changing image or placement: the PVC still holds its root lock.
         for pod in occupants:
             if pod is reusable:
                 continue

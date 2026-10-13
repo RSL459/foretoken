@@ -39,26 +39,84 @@ Deploy the maintained [Quick Start](../README.md#quick-start) on a GPU-enabled c
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-After editing the checkout, run the same command again. Code updates restart affected workloads and may reload model weights. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
+On a source-installed platform, deployment builds from the Foretoken Git checkout containing the current directory. After editing it, run the same command again. To select a checkout from another directory, use `foretoken deploy examples/quickstart -e /path/to/foretoken --timeout 20m`; the Kustomize path still resolves from the current directory.
 
-Changes to CLI Python files take effect directly from the editable checkout; rerun `pip install -e .` when its Python dependencies change.
+Deployment builds and selects the frontend and model-server runtime for these services without reinstalling the shared controller or CRDs. Changes to platform code or configuration require an explicit `foretoken install -e .`. Code updates restart affected workloads and may reload model weights. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
+
+Changes to CLI Python files take effect from the checkout where the CLI was installed with `pip install -e .`; reinstall when its Python dependencies change.
+
+### Run candidates in separate worktrees
+
+Install the shared platform once using the source installation above. Each worktree has its own source state and compiler cache, so different worktrees can build and deploy concurrently. Give each candidate its own Kubernetes namespace to keep its model services and frontend separate.
+
+From the repository root, create one candidate and a Kustomize overlay of the Quick Start:
+
+```bash
+git worktree add ../candidate-a -b experiment/candidate-a
+cd ../candidate-a
+mkdir -p examples/candidate
+cat > examples/candidate/kustomization.yaml <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: candidate-a
+resources:
+  - ../quickstart
+patches:
+  - target:
+      kind: ModelService
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/gpu/count
+        value: 2
+      - op: replace
+        path: /spec/engineArgs/tensor-parallel-size
+        value: 2
+  - target:
+      kind: RuntimeCache
+    patch: |-
+      - op: replace
+        path: /spec
+        value:
+          initialSize: 20Gi
+          accessMode: ReadWriteOnce
+          retentionPolicy: Delete
+EOF
+
+foretoken deploy examples/candidate --timeout 20m
+foretoken perf examples/candidate --num-prompts 20 \
+  --output experiment --output-dir results/candidates --iteration candidate-a
+```
+
+This example dynamically provisions a PVC for each candidate, avoiding per-worktree host mounts; to reuse an existing model directory, see [model storage](model-storage.md).
+
+Repeat with different worktree, branch, namespace and iteration names for the other candidates. Eight such deployments request 16 GPUs: each has one single-node model replica requesting two GPUs and explicitly configured for tensor parallelism of two. The cluster also needs enough CPU, memory and platform capacity. If placement matters, add `spec.nodeSelector` to the model configuration; it selects nodes, not particular GPU indices. Use exclusive GPU resources rather than time-sliced replicas for independent physical devices.
+
+Keep measurements and output directories within each worktree; use the [experiment records guide](../rsi-playbooks/experiment-records.md) to compare results. Shared CPU, storage and network activity can still affect measurements. Updating a fully occupied GPU cluster can temporarily stop the old candidate while its replacement acquires those devices.
+
+Delete only the candidate's deployment when finished:
+
+```bash
+foretoken delete examples/candidate
+```
+
+Uninstall the platform only after all candidates have finished.
 
 ## Edit an inference engine
 
 To modify vLLM, bind a Git checkout matching the runtime's Python, PyTorch, and accelerator environment. For a checkout at `../vllm`:
 
 ```bash
-foretoken install -e . --engine-source ../vllm
+foretoken deploy examples/quickstart --engine-source ../vllm --timeout 20m
 ```
 
-Retain `--registry` and `--values` when using them. After editing Python, Triton or NVIDIA CUDA/C++ source, use `foretoken deploy` as above; required compilation is automatic.
+The engine selection is remembered for this worktree. Other worktrees do not inherit its engine paths; select their engine checkouts explicitly when needed. After editing Python, Triton or NVIDIA CUDA/C++ source, rerun `foretoken deploy`; required compilation is automatic. Registry and platform settings come from the shared installation.
 
 For MetaX, native kernels belong to the plugin checkout. Bind it alongside the matching core checkout:
 
 ```bash
-foretoken install -e . \
+foretoken deploy examples/quickstart \
   --engine-source ../vllm \
-  --engine-source vllm-metax=../vllm-metax
+  --engine-source vllm-metax=../vllm-metax --timeout 20m
 ```
 
 ### Select a different runtime environment

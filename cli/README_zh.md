@@ -102,9 +102,9 @@ foretoken install \
 foretoken install -e .
 ```
 
-命令将源码目录与目标集群关联，后续从该目录更新服务。
+该命令从源码安装共享平台。后续 `foretoken deploy` 使用当前目录所在的 Foretoken Git 源码树；用 `-e PATH` 可指定其他源码树。每个 worktree 独立保存源码状态和编译缓存，部署只更新所选服务的运行环境。共享控制器或 CRD 的改动需要显式执行 `foretoken install -e .`。
 
-修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
+更新代码与并行 worktree 的用法见[源码部署指南](../docs/custom-deployment_zh.md#部署与更新代码)。部署时通过 `--engine-source [ENGINE=]PATH` 选择[引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)，后续命令会沿用该 worktree 的选择，不继承其他 worktree 的引擎目录。
 
 当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 

@@ -102,9 +102,9 @@ Build and install from the repository root. The cluster needs a default StorageC
 foretoken install -e .
 ```
 
-This binds the checkout to the target cluster for subsequent source updates.
+This installs the shared platform from source. Subsequent `foretoken deploy` commands use the Foretoken Git checkout containing the current directory; add `-e PATH` to select another checkout. Each worktree has its own source state and compiler cache, and deployment updates only the selected services' runtime. Update the shared controller or CRDs explicitly with `foretoken install -e .`.
 
-After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
+See [source deployment](../docs/custom-deployment.md#deploy-and-update-code) for updates and parallel worktrees. On deployment, use `--engine-source [ENGINE=]PATH` to select an [engine checkout](../docs/custom-deployment.md#edit-an-inference-engine). The selection is remembered for that worktree, not inherited from another worktree.
 
 A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 

@@ -22,6 +22,7 @@ from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import DeploymentError, ResourceRef
 
 SOURCE_REVISION = "inference.foretoken.io/source-revision"
+SERVICE_COMPONENTS = {"ModelService": "model-server", "FrontendService": "frontend"}
 _BINDING_LABEL = "inference.foretoken.io/application-publisher-binding"
 
 
@@ -198,6 +199,30 @@ class ApplicationFiles:
         manifest = self.read_manifest(application_url)
         return None if manifest is None else manifest.get("sources")
 
+    def source_images(self, objects: Iterable[dict[str, Any]]) -> set[str]:
+        """Retain environments selected by service intent before controllers publish status."""
+        references = set()
+        for obj in objects:
+            component = SERVICE_COMPONENTS.get(obj.get("kind"))
+            revision = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
+            if component is None or not revision:
+                continue
+            if revision in {".", ".."} or any(char in revision for char in "/\\\\\x00"):
+                raise DeploymentError("source revision must be a single directory segment")
+            references.add(self.reference(component, revision))
+        images = set()
+        for reference in sorted(references):
+            manifest = self.read_manifest(reference)
+            if manifest is None:
+                raise DeploymentError(f"selected application manifest is unavailable: {reference}")
+            if "image" not in manifest:
+                continue
+            image = manifest["image"]
+            if not isinstance(image, str) or not image.strip():
+                raise DeploymentError("application manifest image must be a nonempty string")
+            images.add(image)
+        return images
+
     def prepare(self, timeout: str) -> None:
         """Wait for the file origin and select its volume's current publisher node."""
         kubectl, namespace = self.kubectl, self.namespace
@@ -255,6 +280,7 @@ class ApplicationFiles:
         timeout: str,
         reuse_previous: bool = False,
         sources: dict[str, Any] | None = None,
+        image: str | None = None,
     ) -> str:
         """Publish a compiler export with provenance and return the selected immutable revision."""
         command = [
@@ -268,6 +294,7 @@ class ApplicationFiles:
             json.dumps(self._retained_versions(references)),
             json.dumps(reuse_previous),
             json.dumps(sources),
+            json.dumps(image),
         ]
         with self._publisher(command, builder.binding, timeout, builder=builder) as job:
             self._wait(job, timeout)

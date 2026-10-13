@@ -39,26 +39,84 @@ foretoken install -e .
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-修改源码后，再执行同一条命令。代码更新会重启受影响的工作负载，并可能重新加载模型权重。请求与清理操作见快速开始中的[发送请求](../README_zh.md#4-发送测试请求)和[停止与卸载](../README_zh.md#停止与卸载)。
+平台从源码安装后，部署命令会使用当前目录所在的 Foretoken Git 源码树。修改代码后，再执行同一条命令即可。若要从其他目录指定源码，使用 `foretoken deploy examples/quickstart -e /path/to/foretoken --timeout 20m`；Kustomize 路径仍相对于当前目录解析。
 
-CLI 的 Python 代码直接从 editable 源码目录加载；修改其 Python 依赖后，重新执行 `pip install -e .`。
+部署只为这些服务构建并选择前端和模型服务的运行环境，不会重新安装共享控制器或 CRD。平台代码或配置改动需要显式执行 `foretoken install -e .`。代码更新会重启受影响的工作负载，并可能重新加载模型权重。请求与清理操作见快速开始中的[发送请求](../README_zh.md#4-发送测试请求)和[停止与卸载](../README_zh.md#停止与卸载)。
+
+CLI 的 Python 代码从执行 `pip install -e .` 时关联的源码树加载；修改其 Python 依赖后，需要重新安装。
+
+### 在独立 worktree 中运行候选方案
+
+先按上面的源码安装步骤安装一次共享平台。各 worktree 独立保存源码状态和编译缓存，可以并行构建和部署。每个候选使用不同的 Kubernetes namespace，隔离模型服务与前端。
+
+从仓库根目录创建一个候选，并通过 Kustomize 覆盖快速开始示例：
+
+```bash
+git worktree add ../candidate-a -b experiment/candidate-a
+cd ../candidate-a
+mkdir -p examples/candidate
+cat > examples/candidate/kustomization.yaml <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: candidate-a
+resources:
+  - ../quickstart
+patches:
+  - target:
+      kind: ModelService
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/gpu/count
+        value: 2
+      - op: replace
+        path: /spec/engineArgs/tensor-parallel-size
+        value: 2
+  - target:
+      kind: RuntimeCache
+    patch: |-
+      - op: replace
+        path: /spec
+        value:
+          initialSize: 20Gi
+          accessMode: ReadWriteOnce
+          retentionPolicy: Delete
+EOF
+
+foretoken deploy examples/candidate --timeout 20m
+foretoken perf examples/candidate --num-prompts 20 \
+  --output experiment --output-dir results/candidates --iteration candidate-a
+```
+
+示例为每个候选动态创建 PVC，无需逐个挂载 worktree 的宿主机目录；复用已有模型目录的方式见[模型存储](model-storage_zh.md)。
+
+其他候选沿用同一流程，分别使用不同的 worktree、分支、namespace 和 iteration 名称。八个这样的部署共请求 16 张 GPU：每个候选只有一个单节点模型副本，请求两张 GPU，并单独将张量并行度设为 2。集群还需有足够的 CPU、内存及平台资源。需要限定节点时，在模型配置中添加 `spec.nodeSelector`；它选择节点，不指定 GPU 编号。需要独立物理设备时，应使用独占 GPU 资源，而不是时间切片的逻辑副本。
+
+测量结果和输出目录保留在各自 worktree 中，对照方法见[实验记录手册](../rsi-playbooks/experiment-records_zh.md)。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，更新可能先停止旧候选，待设备释放后启动替代版本。
+
+候选结束后，只删除自己的部署：
+
+```bash
+foretoken delete examples/candidate
+```
+
+所有候选结束后，再统一卸载平台。
 
 ## 修改推理引擎
 
 修改 vLLM 时，关联与运行时 Python、PyTorch 和设备环境匹配的 Git 源码目录。假设源码位于 `../vllm`：
 
 ```bash
-foretoken install -e . --engine-source ../vllm
+foretoken deploy examples/quickstart --engine-source ../vllm --timeout 20m
 ```
 
-原安装使用了 `--registry` 或 `--values` 时，保留这些选项。修改 Python、Triton 或 NVIDIA CUDA/C++ 源码后，继续使用上面的 `foretoken deploy`，所需编译会自动完成。
+引擎选择按当前 worktree 记录，其他 worktree 不继承这些目录；需要修改引擎时，为各自候选明确选择源码目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 源码后，重新执行 `foretoken deploy`，所需编译会自动完成。镜像仓库和平台设置沿用共享安装。
 
 沐曦原生 kernel 由插件源码提供。将插件与匹配的 core 源码一起关联：
 
 ```bash
-foretoken install -e . \
+foretoken deploy examples/quickstart \
   --engine-source ../vllm \
-  --engine-source vllm-metax=../vllm-metax
+  --engine-source vllm-metax=../vllm-metax --timeout 20m
 ```
 
 ### 更换运行环境
