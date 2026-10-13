@@ -5,7 +5,7 @@
 
 [English](autoscaling.md) | [中文](autoscaling_zh.md)
 
-在 `ModelService.spec.autoscaling` 中配置自动扩缩容。Controller 使用已编译的内置算法，用户不需要修改 CRD 或注册算法。
+在 `ModelService.spec.autoscaling` 中配置自动扩缩容。
 
 ## 最小配置
 

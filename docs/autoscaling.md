@@ -5,7 +5,7 @@
 
 [English](autoscaling.md) | [中文](autoscaling_zh.md)
 
-Configure autoscaling in `ModelService.spec.autoscaling`. The controller uses the selected built-in algorithms; users do not edit CRDs or register algorithms.
+Configure autoscaling in `ModelService.spec.autoscaling`.
 
 ## Minimal configuration
 
