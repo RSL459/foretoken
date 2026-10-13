@@ -43,21 +43,20 @@ Codex uses the same roles through the native delegation, messaging, and follow-u
 
 ## Agent roles
 
-The lead assigns these roles initially and keeps their context for related follow-up work:
+Multiple Workers advance optimization directions in parallel, supported by the other roles. The lead sets staffing from task resources and parallelism requirements and retains member context for follow-up work:
 
 | Role | Responsibility and staffing |
 | --- | --- |
 | Lead | Develops, reflects on, and chooses optimization directions; owns task breakdown, evidence synthesis, resource coordination, useful parallel work, and delivery, participating in execution when useful. |
-| Direction and progress | One independent advisor reviews direction and priorities and writes the experiment overview. |
-| Code and bottleneck analysis | Investigates code and measurements to locate performance bottlenecks. At least one agent analyzes the system's end-to-end execution path. Prefer dedicated analysts for each active optimization direction; a direction may have several, with staffing chosen by the lead. |
-| Experiment review and attribution | Independent reviewers by direction and candidate check benchmark shortcuts, comparison conditions, and the source of gains, organize iteration notes, and capture reusable conclusions, applicability, and negative results in `guidance/`. |
+| Direction and progress | One advisor independently examines assumptions, methods, and progress, connects findings across directions, proactively recommends questions to investigate and changes of approach, and writes the experiment overview. |
+| Worker | Owns an optimization direction from code and bottleneck analysis through design, implementation, integration, deployment, measurement, and result analysis. At least one Worker follows the system's end-to-end execution path. Prefer one or more dedicated Workers per active direction; the lead determines total staffing. |
+| Recorder | Independently reviews directions and candidates for benchmark shortcuts, comparison conditions, and the source of gains; owns iteration notes and captures reusable conclusions, applicability, and negative results in `guidance/`. Does not review its own implemented candidate. |
 | Knowledge research and exploration | Researchers by direction examine original sources and upstream practice, proposing applicable methods and recording findings. |
 | Team efficiency | One supervisor covers the whole team's work efficiency and resource utilization. Periodically checks tasks, member progress, and useful parallelism, maintains continuous GPU collection, and follows up on delayed handoffs, duplicate work, blockers, or idle resources. |
-| Implementation and experiment execution | Explicit owners implement, integrate, deploy, and evaluate candidates, supplying changes, raw results, and interpretation. |
 
-Working-agent counts include analysts, researchers, reviewers, and execution workers while they are doing assigned work. Direction and efficiency advisors are additional. The lead arranges useful work within task and harness limits and addresses staffing shortfalls.
+Working-agent counts include Workers, researchers, and Recorders while they are doing assigned work. Direction and efficiency advisors are additional. The lead arranges useful work within task and harness limits and addresses staffing shortfalls.
 
-Members exchange evidence directly and request new work on completion or blockage; the lead assigns follow-up work or adjusts responsibilities. Where shared task tools are available, members may also claim ready work within their authorization. The overview and iteration notes each have an assigned writer, and the lead accepts their outputs. On resumption, preserve the original budget and records and recreate missing members.
+Workers and researchers discuss methods directly. Workers send changes, raw results, and interpretation to Recorders, who return review findings and requests for missing evidence to Workers. The lead coordinates key trade-offs, priorities, and resources. Members request new work on completion or blockage; the lead assigns follow-up work or adjusts responsibilities. Where shared task tools are available, members may also claim ready work within their authorization. The direction advisor owns the overview, Recorders own assigned iteration notes, and the lead accepts their outputs. On resumption, preserve the original budget and records and recreate missing members.
 
 ### Parallel workspaces
 
