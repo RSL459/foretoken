@@ -1,9 +1,15 @@
-# References and Knowledge
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+-->
+
+# Optimization Guidance
 
 English | [简体中文](README_zh.md)
 
-Reference material for understanding and improving inference systems: research papers, engineering practice, architecture explanations, and previous experiments and their findings.
+Use research guidance and technical knowledge to understand the current system, develop your own designs, and learn from experiments.
 
-When adding a reference, explain the problem it addresses, the main idea, and its applicable conditions. Link the original source and distinguish reported results from findings verified in Foretoken.
+- [Meta-knowledge](meta-knowledge/README.md): finding references, diagnosing bottlenecks, choosing research directions, designing improvements, and recording lessons.
+- [Technical knowledge](knowledge/README.md): inference principles, implementation ideas, and reusable findings with their conditions and evidence.
 
-Use the [technique note template](../templates/guidance-template.md) when documenting a specific technique.
+Read the material relevant to the current question and use new findings to improve it. Commands and experiment artifacts are covered by the [experiment records guide](../experiment-records.md).

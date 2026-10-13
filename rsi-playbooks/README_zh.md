@@ -18,7 +18,7 @@ cd foretoken
 在这个目录中打开 Claude Code 或 Codex，粘贴以下指令；使用自己的任务时，替换其中的文件路径：
 
 ```text
-使用 RSI skill，按照 rsi-playbooks/tasks/qwen-decode_zh.md 中的任务要求完成推理系统优化。先阅读任务与已有实验记录，再开展调研、实现、部署、评测和分析。持续安排并行工作，利用全部可用节点推进实验，直到满足任务的结束条件。按任务要求保存结果并交付优化结论。
+使用 RSI skill，按照 rsi-playbooks/tasks/qwen-decode_zh.md 中的任务要求完成推理系统优化。先阅读任务、已有实验记录和 rsi-playbooks/guidance/ 中的相关指导，再开展调研、设计、实现、部署、评测和分析。持续安排并行工作，利用全部可用节点推进实验，直到满足任务的结束条件。按任务要求保存结果并交付优化结论。
 ```
 
 ## 设计目标
