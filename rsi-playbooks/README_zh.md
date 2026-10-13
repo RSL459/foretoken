@@ -26,7 +26,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 该命令仅在本次会话启用 Agent Teams。在此会话或已启用 Team 的会话中粘贴以下指令；自定义任务只需替换文件路径：
 
 ```text
-/goal 使用 RSI skill 和 Agent Team，按照 rsi-playbooks/tasks/qwen-decode_zh.md 完成推理系统优化并交付规定结果。主 Agent 负责构思、任务分解、反思和团队推进，并按需要参与具体执行；执行期间维持任务规定的有效工作人数，及时处理结果和成员的新任务请求。遵守任务的资源、时间预算和结束条件，用户要求暂停或停止时停止推进并完成必要收尾。
+/goal 使用 RSI skill 和 Agent Team，按照 rsi-playbooks/tasks/qwen-decode_zh.md 完成推理系统优化并交付规定结果。先阅读任务、已有实验记录和 rsi-playbooks/guidance/ 中的相关指导。主 Agent 负责构思、任务分解、反思和团队推进，并按需要参与具体执行；执行期间维持任务规定的有效工作人数，及时处理结果和成员的新任务请求。遵守任务的资源、时间预算和结束条件，用户要求暂停或停止时停止推进并完成必要收尾。
 ```
 
 主 Agent 用同一个 goal 管理整体目标和团队推进，成员按各自职责协作。暂停时，用 `/goal clear` 结束自动续轮，再要求团队停止本任务的实验和采集进程。
@@ -36,7 +36,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 在仓库目录打开 Codex，粘贴：
 
 ```text
-使用 RSI skill，按照 rsi-playbooks/tasks/qwen-decode_zh.md 完成推理系统优化并交付规定结果。主 Agent 负责构思、任务分解、反思和团队推进，通过原生 Agent 协作，并按需要参与具体执行；执行期间维持任务规定的有效工作人数，及时处理结果和成员的新任务请求。遵守任务的资源、时间预算和结束条件，用户要求暂停或停止时停止推进并完成必要收尾。
+使用 RSI skill，按照 rsi-playbooks/tasks/qwen-decode_zh.md 完成推理系统优化并交付规定结果。先阅读任务、已有实验记录和 rsi-playbooks/guidance/ 中的相关指导。主 Agent 负责构思、任务分解、反思和团队推进，通过原生 Agent 协作，并按需要参与具体执行；执行期间维持任务规定的有效工作人数，及时处理结果和成员的新任务请求。遵守任务的资源、时间预算和结束条件，用户要求暂停或停止时停止推进并完成必要收尾。
 ```
 
 Codex 按当前会话实际提供的原生委派、消息和后续任务工具执行相同角色职责，不使用 Claude 的 Agent Team 或 `/goal`。
