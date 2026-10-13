@@ -24,7 +24,7 @@ Determine the requested action before starting anything. A pause, stop, or desig
 
 Include every node listed in the task in the experiment plan. Check availability and existing owners, allocate independent candidates by their actual requirements, and record actionable blockers for unused nodes. Distinguish the whole resource pool from a per-service limit.
 
-When using W&B, agree on readable tracking names before parallel runs. Use `--wandb-project` for the shared long-lived project, `--wandb-group` for this optimization task's comparisons, and `--wandb-run-name` for the candidate, workload, concurrency, and repeat. Include model, hardware, and a task date or identifier in the group where needed to distinguish tasks. Keep comparable runs in the same project and group across Workers; preserve existing names on resumption. Record the names and links in the experiment overview so Workers and the Recorder can locate the same results.
+When using W&B, agree on readable tracking names before parallel runs. Use `--wandb-project` for an ongoing optimization topic, with a `foretoken-` prefix and a name identifying the model, hardware, and objective, such as `foretoken-qwen35-metax-inference`. Use one `--wandb-group` per RSI experiment, identified by its date or experiment name, to collect all iterations and parallel candidates. Use `--wandb-run-name` to distinguish the iteration, workload, concurrency, and repeat. All Workers in an experiment share its project and group. Resume with the same names; a new experiment for the same topic uses a new group in the existing project. Record names and run links in the experiment overview and iteration notes so Workers and the Recorder can find and compare results.
 
 ## Set up the team and assignments
 

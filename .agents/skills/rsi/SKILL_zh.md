@@ -19,7 +19,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 把任务列出的全部节点纳入实验安排，确认可用资源和现有使用者，按需求分配独立候选。未使用的节点记录具体阻塞并处理可解决的问题。区分整个资源池与单服务上限。
 
-使用 W&B 时，在并行运行前统一易读的命名。`--wandb-project` 对应长期共用的项目，`--wandb-group` 归集本次优化任务的对照，`--wandb-run-name` 标明候选、负载、并发和重复测量次数。需要区分任务时，在 group 中包含模型、硬件及任务日期或标识。不同 Worker 的可比运行放在同一 project 和 group，恢复任务沿用原命名。在实验总览中记录名称和链接，方便 Worker 与 Recorder 查找同一组结果。
+使用 W&B 时，在并行运行前统一易读的命名。`--wandb-project` 对应持续研究的优化课题，以 `foretoken-` 开头，并用模型、硬件和目标标明课题，例如 `foretoken-qwen35-metax-inference`。一次完整 RSI 实验使用一个 `--wandb-group`，以日期或实验名区分，收拢全部迭代和并行候选；`--wandb-run-name` 区分迭代、负载、并发和重复测量。同一次实验的所有 Worker 共用 project 和 group，恢复时沿用原命名；同一课题新开实验时，在原 project 下使用新的 group。在实验总览和迭代记录中保存名称与运行链接，方便 Worker 和 Recorder 查找、对比结果。
 
 ## 组建团队与派工
 
