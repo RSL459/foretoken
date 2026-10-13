@@ -37,13 +37,3 @@
 需要调度器 token 需求的决策算法实现 `RequiresEngineLoad(role)`，由控制器按需采集并保留各引擎的独立负载；采集失败时，观测标记为不可用。
 
 控制器每轮只构造一次流水线。省略触发或调整阶段时，由组装入口选择 periodic 或 step；具体参数的默认值只由实现负责。新增实现需要重新构建并部署控制器，不采用运行时动态插件。
-
-## 验证
-
-修改本包后运行控制面验证：
-
-```bash
-make -C control-plane verify
-```
-
-`token_load` 的阈值预设和负载重新分配检查参考 NVIDIA Dynamo 的[反应式负载扩缩容方法](https://github.com/ai-dynamo/dynamo/blob/bea55a595a83a84b76183d44516de05f9ea1b2d0/components/src/dynamo/planner/core/load_scaling.py)。

@@ -37,13 +37,3 @@ All stages receive an optional JSON parameters object. Adjustment factories also
 Decision algorithms that consume scheduler token demand implement `RequiresEngineLoad(role)`. The controller collects those observations on demand and preserves each engine's load; collection failures make the observation unavailable.
 
 The controller constructs the pipeline once per reconciliation. Built-in defaults select periodic triggering and step adjustment when those stages are omitted; individual parameter defaults remain in the selected implementation. A new implementation requires rebuilding and deploying the controller, not runtime plugin loading.
-
-## Validation
-
-Use the control-plane verification target after changing this package:
-
-```bash
-make -C control-plane verify
-```
-
-The `token_load` presets and redistribution check are adapted from NVIDIA Dynamo's [reactive load scaling](https://github.com/ai-dynamo/dynamo/blob/bea55a595a83a84b76183d44516de05f9ea1b2d0/components/src/dynamo/planner/core/load_scaling.py).
