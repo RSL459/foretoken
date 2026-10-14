@@ -41,14 +41,14 @@ Inference mechanisms, implementations, and research questions, organized by the 
 
 A decode slowdown can involve several categories. For example, use attention or MoE entries to understand computation, communication entries to inspect rank dependencies, and host/runtime entries to explain launch gaps.
 
-## Reading the evidence
+## References
 
-Implementation status refers to the cited version and check date; reported results retain their source and experimental conditions, with Foretoken measurements linked to experiment records.
+Implementation status refers to the cited version; reported results retain their source and experimental conditions, with Foretoken measurements linked to experiment records.
 
 Entries distinguish existing capabilities from open questions, and execution-only changes from methods requiring new weights, training, or model changes.
 
 ## Add or update knowledge
 
-Use one category directory per technical responsibility and one descriptive file name per question, with an English file and a `_zh.md` counterpart. Category READMEs link entries by the problem they help solve. An entry can compare several papers or implementations; a project name alone is not a reason to create a new category or another note.
+Use one category directory per technical responsibility and one English file per question with a `_zh.md` counterpart. File names and titles should state the goal and specific mechanism; measurement entries should name the diagnostic goal and method rather than only the topic. Category READMEs link entries by the problem they help solve. An entry can compare several papers or implementations; a project name alone is not a reason to create a new category or another note.
 
-The [knowledge template](../../templates/guidance-template.md) provides a structure for the problem, mechanism, applicability, implementation state, and useful experiments. Extend an existing entry when new evidence changes the same question. Preserve explanations of failed approaches and reusable inputs or code, and update the category index. Research methods themselves belong in [meta-knowledge](../meta-knowledge/README.md); run-specific commands and raw results belong in [experiment records](../../experiment-records.md).
+The [knowledge template](../../templates/guidance-template.md) organizes observations and motivation, principles and analysis, design, implementation, impact and results, and references. Extend an existing entry when new evidence changes the same question. Preserve explanations of failed approaches and reusable inputs or code, and update the category index. Research methods themselves belong in [meta-knowledge](../meta-knowledge/README.md); run-specific commands and raw results belong in [experiment records](../../experiment-records.md).

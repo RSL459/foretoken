@@ -38,29 +38,7 @@ Use a title that names the topic directly and add a one-sentence description of 
 
 ## Knowledge note template
 
-Choose and adjust sections to suit the content. Start from the [knowledge note template](../../templates/guidance-template.md).
-
-```markdown
-# Name of the Knowledge or Lesson
-
-## Problem and approach
-What problem needs solving? What is the key finding or method?
-Explain why it works using execution steps, equations, or examples.
-
-## Applicable conditions
-Which models, workloads, hardware, versions, or implementations are involved?
-What are the trade-offs, known issues, and explanations still to be tested?
-
-## Evidence and implementation
-Link original sources, relevant code, and experiment records.
-Identify conclusions reported by sources and those supported by measurements.
-Preserve reusable input construction, experiment entry points, and run procedures.
-
-## Application and next steps
-When is this worth consulting? How can it inform the next analysis or design?
-For inefficient practices, how can similar detours be recognized and avoided early?
-How far have implementation and validation progressed, and what remains unresolved?
-```
+Use the [knowledge note template](../../templates/guidance-template.md): observations and motivation, principles and analysis, design, implementation, impact and results, and references. Start from the observed behavior, explain its causes and the method's mechanism, then connect implementation choices to their effects. Name the file and title for the goal and technique.
 
 ## Update and use the knowledge in subsequent research
 

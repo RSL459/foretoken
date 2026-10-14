@@ -9,15 +9,13 @@ English | [简体中文](README_zh.md)
 
 Cache contents, residency and movement determine reuse cost and capacity. Request routing and prefill/decode placement belong to serving guidance; attention execution belongs to attention guidance.
 
-- Does loading saved KV actually beat recomputing it? [Tiered offload and asynchronous prefetch](tiered-offload-prefetch.md) models the exposed transfer cost, staging capacity and reuse lifetime.
-- Can cached documents be reused after their order or preceding context changes? [Non-prefix reuse and CacheBlend](non-prefix-cache-blending.md) explains positional correction, selective recomputation and remaining semantic error.
-- Which compression reduces runtime memory, and which only reduces storage or wire bytes? [KV quantization and storage codecs](quantization-storage-codecs.md) separates KIVI, calibrated FP8 and CacheGen.
-- Can fewer KV reads preserve answers without permanently deleting information? [Query-aware selection and eviction](query-aware-selection.md) distinguishes Quest's page selection from irreversible cache eviction.
-- Why is a fast network still slow or incompatible? [Transfer layout, registration and connector composition](transfer-layout-registration.md) follows descriptors, geometry, completion and multi-connector ownership.
+- Does loading saved KV actually beat recomputing it? [Hide KV Loading Latency Through Tiered Prefetch](hide-kv-loading-latency-through-tiered-prefetch.md) models the exposed transfer cost, staging capacity and reuse lifetime.
+- Can cached documents be reused after their order or preceding context changes? [Reuse Non-Prefix Document KV Through Selective Recomputation](reuse-document-kv-with-selective-recompute.md) explains positional correction, selective recomputation and remaining semantic error.
+- Which compression reduces runtime memory, and which only reduces storage or wire bytes? [Choose KV Quantization or Storage Codecs for Compression](choose-kv-quantization-or-storage-codecs-for-compression.md) separates KIVI, calibrated FP8 and CacheGen.
+- Can fewer KV reads preserve answers without permanently deleting information? [Reduce KV Reads Through Query-Aware Page Selection](reduce-kv-reads-through-query-aware-page-selection.md) distinguishes Quest's page selection from irreversible cache eviction.
+- Why is a fast network still slow or incompatible? [Reduce KV Transfer Overhead: Layouts, Registration, and Connectors](reduce-kv-transfer-overhead-layouts-registration-and-connectors.md) follows descriptors, geometry, completion and multi-connector ownership.
 
-## Evidence snapshot
-
-Checked 2026-10-14 against these upstream revisions, all committed on 2026-10-13 UTC:
+## References
 
 - [LMCache `dev`](https://github.com/LMCache/LMCache/tree/4d69cdc43ac9bab9c0c1cd5cac380c480cb32224): tiered storage, prefetch and blending.
 - [Mooncake `main`](https://github.com/kvcache-ai/Mooncake/tree/342c8aeece6b4eefb76c6b8b31ccfac8dde07aa3): registered-memory transfers.

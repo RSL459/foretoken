@@ -1,37 +1,29 @@
-# Knowledge or Experience Title
+# Goal and Technique
 
 English | [简体中文](guidance-template_zh.md)
 
-Open with the technical problem and its cause, then explain the mechanism and implementation. Place technical knowledge under the category that owns the mechanism in [`guidance/knowledge/`](../guidance/knowledge/README.md); research methods belong in `guidance/meta-knowledge/`. Adapt the sections below to the question rather than filling every heading mechanically.
+Name the file and title for the goal and specific technique; measurement entries name the diagnostic goal and method. Place technical entries in the appropriate [knowledge category](../guidance/knowledge/README.md) and organize the following content around the topic.
 
-## Problem and current approach
+## Observations and Motivation
 
-Describe an observable cost or failure and explain how the current approach produces it. Identify the relevant model, execution stage, and producer/consumer relationship. Use a small example before introducing detailed interfaces.
+Start with the observed behavior, the conditions that produce it, and its impact, such as changes in latency, throughput, memory traffic, or quality under a specific workload. Explain where the existing approach encounters a bottleneck or limitation and what should improve.
 
-Explain what the cited upstream version already implements and what question remains. Identify whether the approach is deployed, available as a research implementation, or proposed.
+## Principles and Analysis
 
-## Mechanism
+Explain the mechanism and its causal relationships through examples, equations, or execution steps. Identify the computation, memory traffic, communication, or waiting it saves and the costs it adds. Explain how shapes, workloads, or hardware change the trade-off, using comparisons to distinguish competing explanations.
 
-Follow one execution from inputs through computation, state changes, communication, and output. Explain why each important design choice reduces work or changes the trade-off. Define symbols in any cost model and distinguish estimates from measured results.
+## Design
 
-For methods requiring a draft model, calibration, distillation, or changed weights, describe their source, training or preparation, and availability. For stateful methods, explain reuse, invalidation, and recovery where they affect the idea.
+Describe how the approach organizes computation, data, state, and coordination. Explain the important choices and trade-offs through one complete execution, showing how the parts work together and why they are arranged that way.
 
-## Applicable conditions and trade-offs
+## Implementation
 
-State the shapes, workloads, hardware, precision, versions, and quality requirements that materially affect the result. Explain added computation, memory, transfers, waiting, or preparation. Include supported counterexamples or failed attempts that change when the method is useful.
+Describe available code, key interfaces, and the actual execution path. State the model, hardware, precision, version, and dependency requirements that affect use. For methods requiring training or new weights, explain how to obtain and prepare them. Preserve reusable code and run entry points.
 
-## Implementation and research questions
+## Impact and Results
 
-Link the concrete implementation or public artifact. Explain the remaining question at the correct layer: algorithm, kernel, engine, request service, or resource orchestration. Keep a research hypothesis distinct from an observed implementation gap.
+Explain changes in performance, quality, memory, or resource cost and the conditions under which they hold. Measurements identify their source, workload, and comparison; analytical predictions state their assumptions. Attribute gains to the relevant changes and explain limiting costs, counterexamples, or failed approaches.
 
-## Experiments that distinguish the choices
+## References
 
-Describe representative inputs, comparison conditions, and the observations that would support or reject the explanation. Preserve reusable input construction, code, and run entry points. Connect local numerical and timing results to the target model and service workload.
-
-If measurements exist, state their conditions and origin. Record how far integration and validation have progressed, and what evidence is still needed. Link raw runs rather than copying their full logs into the entry.
-
-## Sources and implementation state
-
-Give the check date and the release, commit, paper version, or PR merge state underlying version-sensitive claims. Link the original method, available implementation, and relevant measurements.
-
-Update this entry and its bilingual category index when new evidence changes the same question. See [recording and learning](../guidance/meta-knowledge/05-recording-and-learning.md) for preserving reusable findings and lessons from inefficient work.
+Link original papers, implementations, and relevant experiments. Version-sensitive statements point to the corresponding paper version, release, or source location.

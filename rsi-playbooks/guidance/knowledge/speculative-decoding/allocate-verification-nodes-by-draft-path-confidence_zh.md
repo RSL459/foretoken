@@ -1,0 +1,48 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+-->
+
+# 按草稿路径置信度分配候选树验证节点
+
+[English](allocate-verification-nodes-by-draft-path-confidence.md) | 简体中文 | [推测解码](README_zh.md)
+
+## 要优化什么
+
+候选树为同一个预测位置准备替代分支，能够挽救较早的错误猜测。但目标模型需要计算所有保留节点，而响应只提交一条路径。树大小既不是输出长度，也不是接受长度。值得研究的是固定节点预算应该分给哪些路径，以及分支如何改变调度、attention 执行和 graph 形状。
+
+EAGLE-2 的上下文相关动态扩展是既有工作，SGLang 已提供深度、分支数和验证容量。对当前训练型 draft，置信度应该评价可到达的整条路径，而部署时的树与链比较，必须包含它们各自允许或禁止的调度行为。
+
+一个目标模型和一个训练好的 EAGLE 辅助模块就能展开多分支；分支是同一模块的不同候选执行，不是多个 draft 模型。模块仍需与目标匹配，树结构不能生成训练权重。EAGLE-3 可替换辅助模块的训练来源，同时继续使用树形候选流程。
+
+## 生成、验证、校正与提交
+
+从已提交前缀出发，用辅助模块扩展有希望的前沿节点，保留候选概率与父节点关系。EAGLE-2 用根到节点路径上 draft 置信度的乘积评价节点。扩展完成后，再在所有节点中排序、截取验证预算，并保持祖先闭包：没有父节点，子节点就没有可验证的历史。原论文的排序使祖先得分不低于后代，并在同分时优先浅节点。
+
+将保留节点展平输入目标模型，但位置与树 mask 只允许每个节点看到已提交前缀及自身祖先，不能让兄弟分支互相 attention。得到的目标 logits 对应不同因果历史，不是一条按展平顺序连接的序列。
+
+贪心解码沿目标选择寻找对应子节点；找不到匹配候选时输出目标校正，结束该路径。随机采样需要使用引擎实际的树采样与校正算法，包括候选概率和兄弟分支记账。逐节点独立做 p/q 检查，再挑“接受最深”的分支，并不足以证明正确性。最终只提交选中路径及校正或 bonus 输出，废弃其他兄弟与后代。下一轮只能看到这段已提交历史。
+
+## 成本模型与小例子
+
+对 N 个验证节点，可比较“期望提交路径长度 /（draft 扩展时间 + 目标验证时间(N、前缀、mask/backend) + 采样和压紧时间）”。节点存活率之和可用于扩展启发式，但并非任意随机树验证器的期望输出：分支互斥，具体概率耦合也会影响结果。
+
+设一个未实测的八节点树，把六个节点花在置信度 0.3 的首候选后面。所有后代都继承这份不确定性，增加一个强的首层替代分支，可能比再深入一层更有价值。反过来，可预测的代码续写可能更适合窄而深的链。同为八节点，draft launch 次数、祖先计算、attention mask 和提交长度也可能不同。目标 LM head 仍会为最终没有输出的节点生成行。
+
+SGLang 提交 `e9400c5a8f3a0d0312a37aecef694f5edfd69341` 中，`--speculative-num-steps`、`--speculative-eagle-topk`、`--speculative-num-draft-tokens` 分别控制深度、分支和容量。自动选择时三项均不设置；手工比较时三项都明确设置。topk=1 会将容量调整为 steps+1。文档中的 overlap scheduler 只支持 topk=1，显式宽树要用另一条调度路径。因此公平研究必须报告 overlap 状态，避免把失去主机/设备重叠产生的损失误归因于树本身。
+
+## 实验与未解决问题
+
+先选公开且匹配的 EAGLE3 配对，固定 target/draft 权重。第一组以相同目标节点预算比较链、窄树和宽树，隔离节点分配效果；第二组分别比较各自最优服务配置，评价实际部署收益。接受阈值保持精确默认值，不能暗中改成近似验证来提高接受率。
+
+记录展开与保留节点数、前沿深度、首次不匹配处的分支覆盖、目标计算行数、选中路径长度、压紧时间、graph 填充和推测显存。时间线要区分串行 draft 轮次与并行目标工作。负载同时包含较早存在歧义的续写、确定性较高的复制/代码片段和混合批次，避免仅用一种任务得出深度或宽度的普遍结论。
+
+在匹配数值路径下检查贪心输出一致性；随机采样检查分布，而不是要求同 seed 文本相同。让 EOS 或取消发生在非首分支，直接检查废弃分支没有泄露到输出、计数器和后续位置。服务侧观察 TTFT 尾部、输出间隔、完成时间、吞吐、SLO 容量和显存限制的并发。树接受率增加本身不代表收益。
+
+继续研究的对象包括量化后置信度校准、无需额外同步的小规模有效前沿，以及早期替代分支是否值得额外布局和调度成本。这些是已有算法之外的负载与实现问题。非 attention 状态恢复见[循环状态推测回放](../attention-state/reduce-recurrent-state-writes-with-replay-buffers_zh.md)，不能把保留一个树节点等同于保留完整可恢复状态。
+
+## 参考
+
+- [EAGLE-2 原论文 v2](https://arxiv.org/html/2406.16858v2)：动态扩展、路径得分、重排序和树 mask（2024）。
+- [固定提交的 SGLang 指南](https://github.com/sgl-project/sglang/blob/e9400c5a8f3a0d0312a37aecef694f5edfd69341/docs/docs/advanced_features/speculative_decoding.mdx)：当前参数和 overlap 条件。[EAGLE worker](https://github.com/sgl-project/sglang/blob/e9400c5a8f3a0d0312a37aecef694f5edfd69341/python/sglang/srt/speculative/eagle_worker_v2.py) 是当前 worker 执行入口。
+- [EAGLE-3 原论文](https://arxiv.org/html/2503.01840)界定特征条件 draft 的独立训练来源；对应职责详见[训练对齐](improve-draft-rollouts-through-self-conditioned-training_zh.md)。
