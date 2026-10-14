@@ -26,9 +26,9 @@ Explain causes around a specific question, with evidence and applicable conditio
 
 ## Preserve usable entry points
 
-Alongside conclusions, preserve implementation locations, input construction methods, focused experiment scripts, run commands, and result links. Explain how to obtain the same shapes, layouts, and state, and which question the experiment answered, so subsequent agents can reproduce, modify, or extend it quickly.
+Knowledge entries explain reusable input construction, algorithms, and implementation conditions, linking stable code locations and supporting experiments. Explain how shapes, layouts, and state affect the mechanism so readers can reproduce or adapt it.
 
-For candidates with local gains, state how far full-model and service validation has progressed and what remains to be addressed. Keep experiments and implementations in accessible locations and cite stable paths or versions from the knowledge notes.
+Keep complete run commands, experiment scripts, validation progress, and remaining work in the experiment records. Technical entries describe mechanisms and established effects rather than task-specific execution plans.
 
 - Put technical principles, implementation experience, and optimization findings in [technical knowledge](../knowledge/README.md).
 - Put search, analysis, decision-making, design, and learning methods in [meta-knowledge](README.md).

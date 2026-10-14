@@ -15,6 +15,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 负责分配的迭代记录，通常为 `iterations/<iteration>/notes/iteration.md`，使用[迭代模板](../../../../rsi-playbooks/templates/iteration-template_zh.md)。纳入改动、命令、运行版本与身份、测量、失败或中断的运行，以及执行者解释，并保留作者归属。独立的行为与归因审查另行记录。追加 Worker 对实验候选的处理结果、主 Agent 的保留或集成决定，以及实际代码和部署状态，注明时间、来源和证据链接。结论变化时按[记录手册](../../../../rsi-playbooks/experiment-records_zh.md#完善实验说明)追加更正或替代决定，保留旧条目。保留已完成运行的原始输出，并在对应候选与负载记录中保存约定的 W&B project、group、易读的 run name 和运行链接。主 Agent 提供的内容也由指定作者纳入记录。
 
-将可复用、经过审查的发现沉淀到[优化指导](../../../../rsi-playbooks/guidance/README_zh.md)。按 guidance 索引归档：可复用的研究、诊断、设计和迭代经验放入方法指导，具体技术机制、适用条件、实测收益及有用负结果放入技术知识。优先更新同主题条目，并链接支撑实验。与 Advisor 合作补充来源和解释，每份指导文件约定一名作者。逐次运行细节留在迭代记录中，公开指导不包含私有环境信息。
+将可复用发现沉淀到[优化指导](../../../../rsi-playbooks/guidance/README_zh.md)。研究与设计的方法放入元知识，具体技术机制、方案设计、实现与效果放入[知识库](../../../../rsi-playbooks/guidance/knowledge/README_zh.md)，沿用其中的短文件名约定和[条目模板](../../../../rsi-playbooks/templates/guidance-template_zh.md)，优先扩充同主题条目。Advisor 提供可追溯的解释与来源，Worker 提供本地证据。资料研究本身也可以形成知识，无需先有本地测量，但要区分来源报告与 Foretoken 实测。每份条目约定一名作者；任务建议、待做实验和运行细节留在实验记录中，公开指导不包含私有环境信息。
 
 将审查证据直接发给相关 Advisor 和负责该方向的 Worker，并主动向主 Agent 报告哪些结论有证据支持、需要补测或应撤回。需要补测时，说明哪项对照可以解答问题。等待证据期间继续其他已分配的审查，任务完成或无法推进时按共用约定交接。执行分配的审查和记录时计入有效工作人数。

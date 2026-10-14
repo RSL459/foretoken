@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 阅读任务、相关代码与架构、实际执行路径、历史实验和当前结果，熟悉 Foretoken 及上游依赖已有的能力。将模型算子、调度、通信、内存、路由和部署成本与目标负载联系起来，判断真正的瓶颈，而不只盯着眼前代码或最大的局部指标。
 
-参考[优化指导](../../../../rsi-playbooks/guidance/README_zh.md)，搜索论文、官方文档、社区讨论、issue、PR 和上游实现，寻找灵感，并追溯到原始来源和实际代码。解释机制、适用条件、精度假设、集成位置和预期成本，区分上游结论与本地实测。探索不同解释和方法，包括当前候选清单之外的方向。
+从[知识总索引](../../../../rsi-playbooks/guidance/knowledge/README_zh.md)理解相关机制，参考[资料研究方法](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search_zh.md)搜索论文、官方文档、社区讨论、issue、PR 和上游实现，寻找灵感。回到原始来源和当前代码，核对引用版本、实现状态与测量条件。解释机制、适用条件、精度假设、集成位置和预期成本，区分上游结论与本地实测。探索不同解释和方法，包括当前候选清单之外的方向。
 
 ## 持续反思，提供有效反馈
 

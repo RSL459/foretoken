@@ -13,7 +13,7 @@ Follow the [role contract](common.md). Dedicate sustained attention to research,
 
 Read the task, relevant code and architecture, actual execution paths, prior experiments, and current results. Understand what Foretoken and its upstream dependencies already provide. Connect model operations, scheduling, communication, memory, routing, and deployment costs to the target workload rather than assuming the nearest code or largest isolated metric is the main bottleneck.
 
-Use [shared guidance](../../../../rsi-playbooks/guidance/README.md) to search papers, official documentation, community discussions, issues, PRs, and upstream implementations. Follow promising ideas to original sources and actual code. Explain their mechanisms, applicability, precision assumptions, integration points, and likely costs; distinguish upstream claims from local measurements. Explore alternative explanations and approaches, including ones outside the team's current candidate list.
+Use the [knowledge index](../../../../rsi-playbooks/guidance/knowledge/README.md) to understand relevant mechanisms and the [research guidance](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) to search papers, official documentation, community discussions, issues, PRs, and upstream implementations. Check cited versions, implementation status, and measurement conditions against original sources and the current code. Explain their mechanisms, applicability, precision assumptions, integration points, and likely costs; distinguish upstream claims from local measurements. Explore alternative explanations and approaches, including ones outside the team's current candidate list.
 
 ## Reflect and give actionable feedback
 
