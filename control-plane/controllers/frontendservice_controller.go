@@ -69,18 +69,19 @@ type GatewayParent struct {
 
 // FrontendRuntimeProfile contains platform-owned frontend settings and an optional production Gateway.
 type FrontendRuntimeProfile struct {
-	ApplicationFiles  runtimeconfig.ApplicationFiles
-	ApplicationURL    string
-	SourceMode        bool
-	SourceRevision    string
-	Image             string
-	WorkerImage       string
-	Port              int32
-	ImagePullSecrets  []corev1.LocalObjectReference
-	RuntimeCache      *inferencev1alpha1.RuntimeCacheBinding
-	HuggingFaceAccess *inferencev1alpha1.HuggingFaceAccess
-	AdmissionStore    *inferencev1alpha1.AdmissionStoreConnection
-	Gateway           *GatewayParent
+	ApplicationFiles     runtimeconfig.ApplicationFiles
+	ApplicationURL       string
+	SourceMode           bool
+	SourceRevision       string
+	Image                string
+	WorkerImage          string
+	Port                 int32
+	ImagePullSecrets     []corev1.LocalObjectReference
+	RuntimeCache         *inferencev1alpha1.RuntimeCacheBinding
+	VideoStorageIdentity *inferencev1alpha1.StorageIdentity
+	HuggingFaceAccess    *inferencev1alpha1.HuggingFaceAccess
+	AdmissionStore       *inferencev1alpha1.AdmissionStoreConnection
+	Gateway              *GatewayParent
 }
 
 // FrontendServiceReconciler owns the frontend workload and its optional HTTPRoute.
@@ -102,14 +103,7 @@ func (reconciler *FrontendServiceReconciler) SetupWithManager(manager ctrl.Manag
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{})
-	if reconciler.CacheProfile.ClaimName != "" {
-		builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
-			if object.GetName() != reconciler.CacheProfile.ClaimName {
-				return nil
-			}
-			return reconciler.frontendsInNamespace(ctx, object)
-		}))
-	}
+	builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsForClaim))
 	if reconciler.RuntimeProfile.Gateway != nil {
 		builder = builder.Owns(&gatewayv1.HTTPRoute{})
 	}
@@ -186,6 +180,24 @@ func (reconciler *FrontendServiceReconciler) frontendsForPod(ctx context.Context
 		if slices.ContainsFunc(frontendServingConfigVersions(frontend), func(version uint32) bool {
 			return configuration.Name == frontendServingConfigMapName(frontend, version)
 		}) && routingControllerOwnerMatches(configuration, inferencev1alpha1.GroupVersion.String(), "FrontendService", frontend.Name, frontend.UID) {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(frontend)})
+		}
+	}
+	return requests
+}
+
+// frontendsForClaim refreshes consumers when a borrowed cache or video claim changes identity.
+func (reconciler *FrontendServiceReconciler) frontendsForClaim(ctx context.Context, object client.Object) []reconcile.Request {
+	var frontends inferencev1alpha1.FrontendServiceList
+	if err := reconciler.List(ctx, &frontends, client.InNamespace(object.GetNamespace())); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "list frontends for storage claim")
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(frontends.Items))
+	for index := range frontends.Items {
+		frontend := &frontends.Items[index]
+		video := frontend.Spec.VideoTasks
+		if object.GetName() == reconciler.CacheProfile.ClaimName || video != nil && video.ClaimName == object.GetName() {
 			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(frontend)})
 		}
 	}
@@ -482,6 +494,14 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		}
 	}
 
+	if storage := frontend.Spec.VideoTasks; storage != nil {
+		identity, err := videoOutputIdentity(ctx, reconciler.APIReader, frontend.Namespace, storage.ClaimName)
+		if err != nil {
+			statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "VideoStorageProjectionFailed", FailureMessage: err.Error()})
+			return ctrl.Result{}, errors.Join(err, statusErr)
+		}
+		profile.VideoStorageIdentity = &identity
+	}
 	deployment, service, route, err := frontendDesiredResources(frontend, profile)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})

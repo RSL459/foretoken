@@ -294,9 +294,18 @@ class Helm(HelmClient):
     def install_log_collector(
         self, release: ReleaseRef, values: dict[str, Any], timeout: str
     ) -> None:
-        """Install node collectors through the upstream Fluent Bit chart."""
+        """Install node collectors without relocating their existing checkpoints and buffers."""
         chart = self._config.log_collector
-        values = _merge_values(self._stored_chart_values(release), values)
+        stored = self._stored_chart_values(release)
+        # The tail database and unsent chunks must survive collector upgrades in place.
+        for volume in stored.get("daemonSetVolumes", []):
+            if volume["name"] == "state" and "hostPath" in volume:
+                values["daemonSetVolumes"] = [
+                    {**item, "hostPath": volume["hostPath"]} if item["name"] == "state" else item
+                    for item in values["daemonSetVolumes"]
+                ]
+                break
+        values = _merge_values(stored, values)
         with self._prepared_chart(chart.source, chart.version) as prepared:
             args = self._managed_chart_args(release, str(prepared), timeout)
             args.extend(["--reset-values", "--values", "-"])
@@ -681,14 +690,6 @@ class Helm(HelmClient):
                 ):
                     if reference := document["data"][key]:
                         images[path] = reference
-            if (
-                document["kind"] == "ConfigMap"
-                and document["metadata"]
-                .get("labels", {})
-                .get("foretoken.io/application-files")
-                == "configuration"
-            ):
-                images["applicationFiles.clientImage"] = document["data"]["clientImage"]
             if document["kind"] not in {"Deployment", "DaemonSet", "StatefulSet"}:
                 continue
             for container in document["spec"]["template"]["spec"]["containers"]:
@@ -713,6 +714,9 @@ class Helm(HelmClient):
                 if container["name"] == "manager":
                     images["image.repository"] = container["image"]
                     for argument in container.get("args", ()):
+                        if argument.startswith("--application-files="):
+                            application = json.loads(argument.removeprefix("--application-files="))
+                            images["applicationFiles.clientImage"] = application["image"]
                         if argument.startswith("--gpu-resource-name="):
                             runtime_backend = GPU_RESOURCE_BACKENDS.get(
                                 argument.removeprefix("--gpu-resource-name=")

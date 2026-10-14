@@ -78,8 +78,6 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	}
 	automountToken := false
 	enableServiceLinks := true
-	runAsNonRoot := true
-	fileSystemGroup := int64(65532)
 	allowPrivilegeEscalation := false
 	readOnlyRootFilesystem := true
 	terminationGracePeriodSeconds := drainSeconds + 5
@@ -154,7 +152,10 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_FRONTEND_UID", Value: string(frontend.UID)},
 		)
 		volumes = append(volumes, corev1.Volume{Name: "video-task-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: storage.ClaimName}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: "video-task-storage", MountPath: videoTaskOutputMount})
+		mounts = append(mounts,
+			corev1.VolumeMount{Name: "video-task-storage", MountPath: videoTaskOutputMount + "/tasks", SubPath: "tasks"},
+			corev1.VolumeMount{Name: "video-task-storage", MountPath: videoTaskOutputMount + "/inputs", SubPath: "inputs", ReadOnly: true},
+		)
 	}
 
 	deployment := &appsv1.Deployment{
@@ -172,11 +173,6 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 					ImagePullSecrets:              slices.Clone(profile.ImagePullSecrets),
 					TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
 					Volumes:                       volumes,
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot:   &runAsNonRoot,
-						FSGroup:        &fileSystemGroup,
-						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-					},
 					Containers: []corev1.Container{{
 						Name:            "frontend",
 						Image:           profile.Image,
@@ -197,12 +193,19 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			},
 		},
 	}
-	if cache := profile.RuntimeCache; cache != nil && cache.DirectoryOwner != nil {
-		securityContext := deployment.Spec.Template.Spec.SecurityContext
-		securityContext.RunAsUser = &cache.DirectoryOwner.UID
-		securityContext.RunAsGroup = &cache.DirectoryOwner.GID
-	}
 	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationURL, "foretoken-frontend")
+	cacheAccess := runtimeconfig.CacheStorageAccess(profile.RuntimeCache)
+	accesses := []runtimeconfig.VolumeAccess{cacheAccess}
+	if frontend.Spec.VideoTasks != nil {
+		if profile.VideoStorageIdentity == nil {
+			return nil, nil, nil, fmt.Errorf("video storage identity was not resolved")
+		}
+		accesses = append(accesses, runtimeconfig.VolumeAccess{
+			Name: "video-task-storage", Identity: *profile.VideoStorageIdentity,
+			Directories: []string{"tasks", "inputs"},
+		})
+	}
+	runtimeconfig.ConfigurePodStorage(&deployment.Spec.Template.Spec, profile.ApplicationFiles.Image, cacheAccess.Identity, accesses...)
 	serviceType := corev1.ServiceTypeClusterIP
 	if profile.Gateway == nil {
 		serviceType = corev1.ServiceTypeLoadBalancer

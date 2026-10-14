@@ -114,9 +114,7 @@ spec:
               readOnly: true
             {{- end }}
           args:
-            {{- if or $sourceMode $application $frontendApplication $modelApplication }}
             - {{ printf "--application-files=%s" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "image" $applicationClient "mountPath" $applicationMount "script" (.Files.Get "files/application-download.py") | toJson) | quote }}
-            {{- end }}
             {{- with $application }}
             - {{ printf "--video-worker-application-url=%s" . | quote }}
             {{- end }}

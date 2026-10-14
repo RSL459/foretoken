@@ -103,16 +103,7 @@ func (files ApplicationFiles) Configure(template *corev1.PodTemplateSpec, contai
 	}
 	template.Annotations["inference.foretoken.io/application-url"] = reference
 	pod := &template.Spec
-	// Download under an explicit workload identity without changing persistent-volume ownership.
-	user, group := int64(65532), int64(65532)
-	if context := pod.SecurityContext; context != nil {
-		if context.RunAsUser != nil {
-			user = *context.RunAsUser
-		}
-		if context.RunAsGroup != nil {
-			group = *context.RunAsGroup
-		}
-	}
+	// Storage projection supplies the same Pod identity to the downloader and executable.
 	noEscalation, readOnly := false, true
 	pod.Volumes = append(pod.Volumes, corev1.Volume{
 		Name: "application", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
@@ -122,7 +113,6 @@ func (files ApplicationFiles) Configure(template *corev1.PodTemplateSpec, contai
 		Command:      []string{"python", "-c", files.Script, reference, files.MountPath},
 		VolumeMounts: []corev1.VolumeMount{{Name: "application", MountPath: files.MountPath}},
 		SecurityContext: &corev1.SecurityContext{
-			RunAsUser: &user, RunAsGroup: &group,
 			AllowPrivilegeEscalation: &noEscalation, ReadOnlyRootFilesystem: &readOnly,
 			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},

@@ -141,6 +141,10 @@ type ModelGroupECRuntimeConfig struct {
 	// +kubebuilder:validation:MaxLength=253
 	SharedStorageClaim string `json:"sharedStorageClaim"`
 
+	// SharedStorageIdentity fixes the claim's filesystem identity for this execution cohort.
+	// +optional
+	SharedStorageIdentity *StorageIdentity `json:"sharedStorageIdentity,omitempty"`
+
 	// SharedStoragePath is the fixed in-container connector path.
 	// +kubebuilder:validation:Pattern=`^/[^[:space:]]*$`
 	// +kubebuilder:validation:MaxLength=256
