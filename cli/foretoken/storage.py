@@ -9,12 +9,14 @@ import copy
 import json
 import os
 import subprocess
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from foretoken.kubernetes import Kubectl
+from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import (
     DeploymentError,
     ForetokenDeployment,
@@ -95,13 +97,15 @@ class DirectoryVolumes:
             resolved, hostnames, directory_owner = _resolve_directory(
                 cache, deployment.path, context, nodes
             )
+            if not context.startswith("k3d-"):
+                directory_owner = self.read_directory_owner(matching[0])
+                if directory_owner is None:
+                    directory_owner = self._remote_directory_owner(resolved, nodes, timeout)
             if directory_owner is not None:
                 uid, gid = directory_owner
                 annotations[self.directory_owner_annotation] = f"{uid}:{gid}"
-            elif context.startswith("k3d-"):
+            else:
                 annotations.pop(self.directory_owner_annotation, None)
-            # Remote paths retain the declared identity; the workstation cannot
-            # inspect ownership on the node's filesystem.
             locations.append((cache, resolved, hostnames))
             spec["directory"] = resolved
 
@@ -131,6 +135,112 @@ class DirectoryVolumes:
                     f"PVC/{claim['metadata']['name']} is not owned by RuntimeCache/{cache.name}"
                 )
             self._bind(claim, path, hostnames, timeout)
+
+    def _remote_directory_owner(
+        self, path: str, nodes: tuple[dict[str, Any], ...], timeout: str
+    ) -> tuple[int, int] | None:
+        """Read directory identity on every eligible node before applying cache consumers."""
+        seconds = timeout_seconds(timeout)
+        configurations = json.loads(self.kubectl.run(
+            ["get", "configmaps", "-A", "-l", "foretoken.io/application-files=configuration", "-o", "json"],
+            timeout=seconds,
+        ).stdout)["items"]
+        if len(configurations) != 1:
+            raise DeploymentError("automatic directory ownership discovery requires a current platform; run `foretoken install` first")
+        configuration = configurations[0]
+        namespace = configuration["metadata"]["namespace"]
+        origin = json.loads(self.kubectl.run(
+            ["get", "deployment", configuration["metadata"]["name"], "-n", namespace, "-o", "json"],
+            timeout=seconds,
+        ).stdout)
+        owners = set()
+        for node in nodes:
+            print(f"Reading directory owner on {node['metadata']['name']}: {path}", flush=True)
+            name = "foretoken-directory-owner-" + uuid.uuid4().hex[:12]
+            job = {
+                "apiVersion": "batch/v1", "kind": "Job",
+                "metadata": {"name": name, "namespace": namespace},
+                "spec": {
+                    "backoffLimit": 0,
+                    "activeDeadlineSeconds": max(1, int(timeout_seconds(timeout))),
+                    "ttlSecondsAfterFinished": 60,
+                    "template": {"spec": {
+                        "nodeName": node["metadata"]["name"],
+                        "restartPolicy": "Never",
+                        "automountServiceAccountToken": False,
+                        "imagePullSecrets": origin["spec"]["template"]["spec"].get("imagePullSecrets", []),
+                        "securityContext": {
+                            "runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
+                            "seccompProfile": {"type": "RuntimeDefault"},
+                        },
+                        "containers": [{
+                            "name": "owner", "image": configuration["data"]["clientImage"],
+                            "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
+                            "terminationMessagePolicy": "FallbackToLogsOnError",
+                            "command": ["python", "-I", "-B", "-c",
+                                        "import os; s=os.stat('/directory'); print(f'{s.st_uid}:{s.st_gid}')"],
+                            "securityContext": {
+                                "allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                                "capabilities": {"drop": ["ALL"]},
+                            },
+                            "volumeMounts": [{"name": "directory", "mountPath": "/directory", "readOnly": True}],
+                        }],
+                        "volumes": [{"name": "directory", "hostPath": {"path": path, "type": "Directory"}}],
+                    }},
+                },
+            }
+            created = json.loads(self.kubectl.run(
+                ["create", "-f", "-", "-o", "json"], input_text=json.dumps(job), timeout=seconds
+            ).stdout)["metadata"]
+            try:
+                deadline = time.monotonic() + timeout_seconds(timeout)
+                while True:
+                    current = json.loads(self.kubectl.run(
+                        ["get", "job", name, "-n", namespace, "-o", "json"],
+                        timeout=max(1, deadline - time.monotonic()),
+                    ).stdout)
+                    conditions = current.get("status", {}).get("conditions", [])
+                    if any(c["type"] == "Complete" and c["status"] == "True" for c in conditions):
+                        break
+                    failed = next((c for c in conditions if c["type"] == "Failed" and c["status"] == "True"), None)
+                    if failed or time.monotonic() >= deadline:
+                        reason = failed.get("message", "Job failed") if failed else "timed out"
+                        details = self.kubectl.run(
+                            ["describe", "pods", "-n", namespace, "-l", "batch.kubernetes.io/controller-uid=" + created["uid"]],
+                            timeout=seconds,
+                        ).stdout
+                        raise DeploymentError(f"cannot read owner of {path} on {node['metadata']['name']}: {reason}\n{details}")
+                    time.sleep(1)
+                output = self.kubectl.run(
+                    ["logs", "job/" + name, "-n", namespace, "-c", "owner"],
+                    timeout=max(1, deadline - time.monotonic()),
+                ).stdout.strip()
+                uid, gid = map(int, output.split(":"))
+                owners.add((uid, gid))
+            finally:
+                current = json.loads(self.kubectl.run(
+                    ["get", "job", name, "-n", namespace, "--ignore-not-found", "-o", "json"], timeout=seconds,
+                ).stdout or "null")
+                if current is not None and current["metadata"]["uid"] == created["uid"]:
+                    try:
+                        self.kubectl.run(
+                            ["delete", "--raw", f"/apis/batch/v1/namespaces/{namespace}/jobs/{name}", "-f", "-"],
+                            input_text=json.dumps({
+                                "apiVersion": "v1", "kind": "DeleteOptions",
+                                "preconditions": {"uid": created["uid"]}, "propagationPolicy": "Foreground",
+                            }), timeout=seconds,
+                        )
+                    except DeploymentError:
+                        current = json.loads(self.kubectl.run(
+                            ["get", "job", name, "-n", namespace, "--ignore-not-found", "-o", "json"], timeout=seconds,
+                        ).stdout or "null")
+                        if current is not None and current["metadata"]["uid"] == created["uid"]:
+                            raise
+                    self.kubectl.wait_deleted("jobs", created, timeout)
+        if len(owners) != 1:
+            raise DeploymentError(f"directory {path} has different owners across nodes")
+        uid, gid = owners.pop()
+        return (uid, gid) if uid != 0 else None
 
     def _bind(
         self,
