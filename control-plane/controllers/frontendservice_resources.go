@@ -6,7 +6,6 @@
 package controllers
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -24,12 +23,36 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-func frontendServingConfigMapName(frontend *inferencev1alpha1.FrontendService) string {
+// frontendServingConfigMapName keeps each application's immutable Pod volume on its supported protocol.
+func frontendServingConfigMapName(frontend *inferencev1alpha1.FrontendService, version uint32) string {
 	name := frontend.Name + "-serving"
-	if len(name) <= 63 {
-		return name
+	if len(name) > 63 {
+		name = kvChildName(name, string(frontend.UID))
 	}
-	return kvChildName(name, string(frontend.UID))
+	if version > frontendAdmissionConfigVersion {
+		name += fmt.Sprintf("-v%d", version)
+	}
+	return name
+}
+
+// frontendServingConfigVersions lists the selected protocol first and older views retained during rollout.
+// Publication, membership watches, and drain share the same ConfigMap identity range.
+func frontendServingConfigVersions(frontend *inferencev1alpha1.FrontendService) []uint32 {
+	versions := []uint32{frontend.Status.ServingConfigVersion}
+	for version := frontend.Status.ServingConfigVersion; version > frontendAdmissionConfigVersion; version-- {
+		versions = append(versions, version-1)
+	}
+	return versions
+}
+
+// frontendPodServingConfigMapName reads the Pod's actual serving mount independently of protocol annotations.
+func frontendPodServingConfigMapName(pod *corev1.Pod) string {
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Name == "serving" && volume.ConfigMap != nil {
+			return volume.ConfigMap.Name
+		}
+	}
+	return ""
 }
 
 // Derive the frontend workload, stable Service, and optional gateway route as one desired-state
@@ -44,9 +67,9 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		return nil, nil, nil, fmt.Errorf("parse frontend request timeout: %w", err)
 	}
 	requestTimeout := gatewayv1.Duration(fmt.Sprintf("%ds", requestTimeoutSeconds))
-	streamIdleSeconds, err := durationSeconds(frontend.Spec.Timeouts.StreamIdle)
+	drainSeconds, err := durationSeconds(frontend.Spec.Timeouts.Drain)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("parse frontend stream idle timeout: %w", err)
+		return nil, nil, nil, fmt.Errorf("parse frontend drain timeout: %w", err)
 	}
 	labels := map[string]string{frontendServiceLabel: frontend.Name}
 	replicas := int32(1)
@@ -59,16 +82,12 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	fileSystemGroup := int64(65532)
 	allowPrivilegeEscalation := false
 	readOnlyRootFilesystem := true
-	terminationGracePeriodSeconds := requestTimeoutSeconds + 5
-	servingConfigMap := frontendServingConfigMapName(frontend)
+	terminationGracePeriodSeconds := drainSeconds + 5
+	servingConfigMap := frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion)
 	if frontend.Spec.RouterPipeline.Filter.Algorithm == "" ||
 		frontend.Spec.RouterPipeline.Scorer.Algorithm == "" ||
 		frontend.Spec.RouterPipeline.Picker.Algorithm == "" {
 		return nil, nil, nil, fmt.Errorf("frontend routerPipeline was not defaulted")
-	}
-	routerPipeline, err := json.Marshal(frontend.Spec.RouterPipeline)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("encode router pipeline: %w", err)
 	}
 	cacheMountPath := "/var/cache/foretoken"
 	if profile.RuntimeCache != nil {
@@ -78,20 +97,21 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	frontendEnv := []corev1.EnvVar{
 		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
 		{Name: "FORETOKEN_SERVING_SNAPSHOT", Value: "/etc/foretoken/serving/serving.json"},
+		{Name: "FORETOKEN_FRONTEND_UID", Value: string(frontend.UID)},
+		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: "HF_HOME", Value: modelRoot},
 		{Name: runtimeconfig.ModelRootEnv, Value: modelRoot},
-		{Name: "FORETOKEN_REQUEST_TIMEOUT_SECONDS", Value: strconv.FormatInt(requestTimeoutSeconds, 10)},
-		{Name: "FORETOKEN_STREAM_IDLE_SECONDS", Value: strconv.FormatInt(streamIdleSeconds, 10)},
+		{Name: "FORETOKEN_DRAIN_SECONDS", Value: strconv.FormatInt(drainSeconds, 10)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
-		{Name: "FORETOKEN_ROUTER_PIPELINE", Value: string(routerPipeline)},
 	}
-	annotations := map[string]string{frontendServingConfigAnnotation: fmt.Sprint(frontendServingConfigVersion)}
+	annotations := map[string]string{frontendServingConfigAnnotation: fmt.Sprint(frontend.Status.ServingConfigVersion)}
 	if profile.ApplicationURL != "" {
 		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: profile.ApplicationFiles.Directory()})
 	}
 	if profile.SourceRevision != "" {
 		annotations[runtimeconfig.SourceRevisionAnnotation] = profile.SourceRevision
 	}
+	frontendEnv = append(frontendEnv, runtimeconfig.AdmissionStoreEnv(profile.AdmissionStore)...)
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {

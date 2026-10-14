@@ -6,6 +6,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -112,6 +113,14 @@ type ApplicationSelection struct {
 	ApplicationURL string `json:"applicationURL,omitempty"`
 	// +optional
 	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+	// AdmissionStore retains the ledger connection selected with this executable application.
+	// +optional
+	AdmissionStore *AdmissionStoreConnection `json:"admissionStore,omitempty"`
+	// InstanceAdmissionProtocol pins the instance configuration interface of this executable.
+	// Zero retains startup-only limits; one selects live file configuration.
+	// +optional
+	// +kubebuilder:validation:Maximum=1
+	InstanceAdmissionProtocol uint32 `json:"instanceAdmissionProtocol,omitempty"`
 }
 
 // NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
@@ -173,10 +182,14 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxProperties=16
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// MaxInputTokens is the immutable prompt admission limit for this Pool.
+	// PrefixCacheIsolation pins the model's cache policy for this execution cohort.
 	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
+	PrefixCacheIsolation *bool `json:"prefixCacheIsolation,omitempty"`
+
+	// InstanceAdmission retains the immutable startup limit of a protocol-zero application.
+	// Live-file applications use ModelPoolSpec.InstanceAdmission instead.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
 
 	// InternalGenerateRequestBodyLimitBytes is the resolved group-local generate
 	// request body limit.
@@ -211,6 +224,11 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 
+	// Env retains the compiled runtime environment in dependency order.
+	// +optional
+	// +listType=atomic
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
 	// Profiling is the service-selected instrumentation for this Pool's processes.
 	// +optional
 	Profiling *ProfilingConfig `json:"profiling,omitempty"`
@@ -230,6 +248,15 @@ type ModelPoolSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	DesiredGroups int32 `json:"desiredGroups"`
 
+	// MaxInputTokens is the live prompt limit published to routing clients.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
+
+	// InstanceAdmission is the live acceptance limit published to each instance ingress.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
+
 	Template NormalizedPoolTemplate `json:"template"`
 }
 
@@ -243,6 +270,12 @@ type ModelPoolStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
 	PreparedRevision string `json:"preparedRevision,omitempty"`
+
+	// InstanceAdmissionVersion is reserved before publishing an instance configuration.
+	// It prevents ConfigMap restoration from rolling the publication version backward.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	InstanceAdmissionVersion uint64 `json:"instanceAdmissionVersion,omitempty"`
 
 	// +optional
 	// +listType=map

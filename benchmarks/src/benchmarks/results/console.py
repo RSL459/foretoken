@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+import sys
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from io import TextIOBase
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
@@ -30,55 +32,107 @@ def configure_logging(console_enabled: bool) -> None:
     logging.getLogger("fontTools").setLevel(logging.WARNING)
 
 
+class _RunLogStream(TextIOBase):
+    """Fan out quiet output to active command and child logs through one handler filter."""
+
+    def __init__(self, console: TextIO) -> None:
+        self.console = console
+        self.logs: list[TextIO] = []
+        self.handlers: dict[
+            logging.StreamHandler, tuple[int, Callable[[logging.LogRecord], bool]]
+        ] = {}
+
+    def write(self, text: str) -> int:
+        """Retain raw progress in every enclosing run without printing it."""
+        for log in self.logs:
+            log.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        """Flush every active log before publication or SDK shutdown."""
+        for log in self.logs:
+            log.flush()
+
+    def isatty(self) -> bool:
+        """Disable terminal-only progress formatting in retained logs."""
+        return False
+
+    def capture_handlers(self) -> None:
+        """Intercept console handlers once, including handlers added by nested adapters."""
+        root = logging.getLogger()
+        loggers = [root] + [
+            item for item in list(root.manager.loggerDict.values())
+            if isinstance(item, logging.Logger)
+        ]
+        for item in loggers:
+            for handler in item.handlers:
+                if (
+                    not isinstance(handler, logging.StreamHandler)
+                    or isinstance(handler, logging.FileHandler)
+                    or handler in self.handlers
+                ):
+                    continue
+                stream = handler.stream
+                if isinstance(stream, _RunLogStream):
+                    stream = self.console
+
+                def capture(
+                    record: logging.LogRecord, *, handler=handler, stream=stream
+                ) -> bool:
+                    text = handler.format(record) + handler.terminator
+                    self.write(text)
+                    if record.levelno >= logging.ERROR:
+                        stream.write(text)
+                        stream.flush()
+                    return False
+
+                self.handlers[handler] = (handler.level, capture)
+                handler.addFilter(capture)
+                handler.setLevel(logging.DEBUG)
+
+    def restore_handlers(self) -> None:
+        """Restore console filters and levels when the outer command releases capture."""
+        for handler, (level, capture) in self.handlers.items():
+            handler.removeFilter(capture)
+            handler.setLevel(level)
+            if handler.stream is self:
+                handler.setStream(self.console)
+
+
+def print_result_location(message: str) -> None:
+    """Show a result path or link even in quiet mode and retain it in active run logs."""
+    stream = sys.stderr
+    if isinstance(stream, _RunLogStream):
+        print(message, file=stream)
+        stream = stream.console
+    print(message, file=stream, flush=True)
+
+
 @contextmanager
 def capture_run_logs(directory: str, *, quiet: bool) -> Iterator[None]:
-    """Keep quiet-run output in its result directory while forwarding logging errors.
+    """Capture command and nested run output while forwarding logging errors to the console.
 
-    ResultOutputs owns this scope from preparation through sink cleanup. Existing
-    console handlers retain their formatter; raw progress and SDK output use the
-    same log. Nested runs restore their enclosing run's streams on exit.
+    Each nested run receives its own logging records and raw progress; enclosing
+    logs retain the complete execution. Only the outer scope changes handlers.
     """
     if not quiet:
         yield
         return
     root = logging.getLogger()
     root_level = root.level
-    loggers = [root] + [
-        item for item in list(root.manager.loggerDict.values())
-        if isinstance(item, logging.Logger)
-    ]
-    handlers = {
-        handler for item in loggers for handler in item.handlers
-        if isinstance(handler, logging.StreamHandler)
-        and not isinstance(handler, logging.FileHandler)
-    }
-    restored = []
+    enclosing = sys.stdout if isinstance(sys.stdout, _RunLogStream) else None
+    stream = enclosing or _RunLogStream(sys.stderr)
     with (Path(directory) / "run.log").open("a", encoding="utf-8", buffering=1) as log:
+        stream.logs.append(log)
         try:
             root.setLevel(logging.INFO)
-            for handler in handlers:
-                stream, level = handler.stream, handler.level
-
-                def capture(record: logging.LogRecord, *, handler=handler, stream=stream) -> bool:
-                    text = handler.format(record) + handler.terminator
-                    log.write(text)
-                    if record.levelno >= logging.ERROR:
-                        stream.write(text)
-                        stream.flush()
-                    return False
-
-                # Filtering also handles dynamic stderr handlers whose stream is
-                # read-only. An enclosing run retains shared logging records;
-                # nested runs capture their own raw progress below.
-                handler.addFilter(capture)
-                handler.setLevel(logging.DEBUG)
-                restored.append((handler, level, capture))
-            with redirect_stdout(log), redirect_stderr(log):
+            stream.capture_handlers()
+            with redirect_stdout(stream), redirect_stderr(stream):
                 yield
         finally:
-            for handler, level, capture in restored:
-                handler.removeFilter(capture)
-                handler.setLevel(level)
+            stream.logs.remove(log)
+            if enclosing is None:
+                stream.restore_handlers()
             root.setLevel(root_level)
 
 

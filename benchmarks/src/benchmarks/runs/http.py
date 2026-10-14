@@ -18,6 +18,7 @@ from benchmarks.datasets.workload import HttpWorkload, RequestEpisode
 from benchmarks.integrations.openai import OpenAILoadClient
 from benchmarks.model_service import ModelService
 from benchmarks.profiling.capture import BenchmarkProfile
+from benchmarks.results.itl import ITLStatistics
 from benchmarks.results.metrics import (
     RequestMeasurement,
     percentile_summary,
@@ -32,6 +33,7 @@ from benchmarks.results.output import (
     resolved_load_record,
     write_json,
 )
+from benchmarks.results.progress import HttpProgress
 from benchmarks.runs.scheduling import run_schedule
 
 logger = logging.getLogger(__name__)
@@ -53,7 +55,20 @@ def request_measurement(record: dict[str, Any], origin: float) -> RequestMeasure
         ttft=record["ttft"],
         latency=record["latency"],
         tpot=record["tpot"],
-        itl_samples=tuple(record["inter_token_latencies"]),
+        itl_summary=record["itl_summary"],
+        request_id=record["request_id"],
+        phase=record["phase"],
+        source_id=record["source_id"],
+        scheduled_at=record["scheduled_at"] - origin
+        if record["scheduled_at"] is not None
+        else None,
+        send_delay=record["send_delay"],
+        finish_reason=record["finish_reason"],
+        response_id=record["response_id"],
+        response_model=record["response_model"],
+        content_characters=record["content_characters"],
+        reasoning_characters=record["reasoning_characters"],
+        transport_completed=record["transport_completed"],
         input_tokens=record["input_tokens"],
         output_tokens=record["output_tokens"],
         cached_input_tokens=record["cached_input_tokens"],
@@ -81,12 +96,14 @@ class HttpBenchmark:
         label: str = "",
         output_dir: str | None = None,
         wandb_group: str | None = None,
+        outputs: ResultOutputs | None = None,
     ) -> None:
         self.benchmark = benchmark
         self.service = service
         self.label = label
         self.output_dir = output_dir
         self.wandb_group = wandb_group
+        self.outputs = outputs
 
     async def _execute_episode(
         self,
@@ -97,6 +114,10 @@ class HttpBenchmark:
         scheduled_at: float,
         deadline: float | None,
         profile: BenchmarkProfile | None,
+        phase: str,
+        itl: ITLStatistics,
+        group_itl: dict[str, dict[str, ITLStatistics]],
+        progress: HttpProgress | None = None,
     ) -> EpisodeResult:
         """Advance one conversation, retaining recorded or generated history and request failures."""
         result = EpisodeResult([])
@@ -117,7 +138,17 @@ class HttpBenchmark:
                     },
                 )
                 result.conversation_attempted = True
-            response = await client.send(request)
+            response = await client.send(
+                request,
+                request_id=f"{phase}:{index}:{turn_index}",
+                phase=phase,
+                source_id=episode.task.id,
+                conversation_id=f"{episode.task.id}:{index}"
+                if episode.conversation
+                else None,
+                turn=turn_index if episode.conversation else None,
+                retain_history=generated_history and episode.conversation,
+            )
             if (
                 generated_history
                 and turn_index < len(episode.turns) - 1
@@ -129,6 +160,15 @@ class HttpBenchmark:
                 )
             if profile is not None:
                 profile.response_received(response["success"])
+            planned = (
+                phase == "measurement"
+                and turn_index == 0
+                and (episode.trace is not None or self.benchmark.load.arrival_rate > 0)
+            )
+            response["scheduled_at"] = scheduled_at if planned else None
+            response["send_delay"] = (
+                max(0.0, response["started_at"] - scheduled_at) if planned else None
+            )
             metadata = episode.task.metadata
             response.update(
                 conversation_id=f"{episode.task.id}:{index}"
@@ -163,15 +203,31 @@ class HttpBenchmark:
                     if response["ttft"] is not None
                     else None,
                 )
+            request_itl = response.pop("itl")
+            response["itl_summary"] = request_itl.summary()
+            if response["success"]:
+                itl.merge(request_itl)
+                for field, dimension in (
+                    ("dataset", "datasets"),
+                    ("model", "models"),
+                    ("request_class", "request_classes"),
+                ):
+                    name = response.get(field)
+                    if name is not None:
+                        group_itl.setdefault(dimension, {}).setdefault(
+                            name, ITLStatistics()
+                        ).merge(request_itl)
+            generated_text = response.pop("generated_text")
+            response.pop("tool_calls")
             result.records.append(response)
+            if progress is not None:
+                progress.observe(request_measurement(response, progress.origin))
             if not response["success"]:
                 break
             if episode.conversation:
                 context.extend(turn.request.body["messages"])
                 if generated_history:
-                    context.append(
-                        {"role": "assistant", "content": response["generated_text"]}
-                    )
+                    context.append({"role": "assistant", "content": generated_text})
                 elif turn.answer is not None:
                     context.append(turn.answer)
                 result.conversation_completed = turn_index == len(episode.turns) - 1
@@ -212,13 +268,11 @@ class HttpBenchmark:
     async def _run(self) -> BenchmarkRun:
         """Prepare requests, drain independent warmup, then observe and publish the formal phase."""
         benchmark = self.benchmark
-        with ResultOutputs(
-            benchmark,
-            self.service,
-            label=self.label,
-            output_dir=self.output_dir,
-            wandb_group=self.wandb_group,
-        ) as outputs:
+        context = nullcontext(self.outputs) if self.outputs is not None else ResultOutputs(
+            benchmark, self.service, label=self.label,
+            output_dir=self.output_dir, wandb_group=self.wandb_group,
+        )
+        with context as outputs:
             workload = HttpWorkload(benchmark, self.service)
             actual_models = {
                 workload.builder.model_for(task.metadata) for task in workload.tasks
@@ -233,14 +287,26 @@ class HttpBenchmark:
             async with OpenAILoadClient(
                 benchmark,
                 self.service,
+                response_writer=outputs.create_response_writer(),
                 max_connections=benchmark.load.max_concurrency
                 if benchmark.load.max_concurrency > 0
                 else None,
             ) as client:
+                warmup_itl = ITLStatistics()
+                warmup_groups: dict[str, dict[str, ITLStatistics]] = {}
 
                 async def execute(index, episode, scheduled_at, deadline):
                     return await self._execute_episode(
-                        client, workload, index, episode, scheduled_at, deadline, None
+                        client,
+                        workload,
+                        index,
+                        episode,
+                        scheduled_at,
+                        deadline,
+                        None,
+                        "warmup",
+                        warmup_itl,
+                        warmup_groups,
                     )
 
                 if benchmark.load.warmup_requests:
@@ -267,14 +333,19 @@ class HttpBenchmark:
                         stream=benchmark.generation.stream,
                         arrival_rate=-1.0,
                         concurrency=benchmark.load.max_concurrency,
+                        itl_summary=warmup_itl.summary(),
                     )
                     failed = next((row for row in records if not row["success"]), None)
                     if failed is not None:
                         raise ValueError(f"Warmup failed: {failed['error']}")
 
+                measured_itl = ITLStatistics()
+                measured_groups: dict[str, dict[str, ITLStatistics]] = {}
                 outputs.start_observers()
+                progress = outputs.http_progress(stream=benchmark.generation.stream)
                 profile = outputs.create_profile()
                 with profile if profile is not None else nullcontext():
+
                     async def measure(index, episode, scheduled_at, deadline):
                         return await self._execute_episode(
                             client,
@@ -284,22 +355,31 @@ class HttpBenchmark:
                             scheduled_at,
                             deadline,
                             profile,
+                            "measurement",
+                            measured_itl,
+                            measured_groups,
+                            progress,
                         )
 
                     logger.info(
                         "Measurement: %s HTTP requests",
                         workload.request_count or "duration-bounded",
                     )
-                    episodes, duration, origin = await run_schedule(
-                        measured_episodes,
-                        measure,
-                        benchmark.load,
-                        seed=workload.dataset.random_seed,
-                        trace_start=workload.trace_start
-                        if workload.trace_events is not None
-                        else None,
-                        before_first=profile.start if profile is not None else None,
-                    )
+                    async with asyncio.TaskGroup() as tasks:
+                        sampler = tasks.create_task(progress.sample()) if progress is not None else None
+                        try:
+                            episodes, duration, origin = await run_schedule(
+                                measured_episodes, measure, benchmark.load,
+                                seed=workload.dataset.random_seed,
+                                trace_start=workload.trace_start if workload.trace_events is not None else None,
+                                before_first=profile.start if profile is not None else None,
+                                on_start=progress.start if progress is not None else None,
+                            )
+                        finally:
+                            if sampler is not None:
+                                sampler.cancel()
+                    if progress is not None:
+                        progress.emit(duration)
             records = sorted(
                 (row for item in episodes for row in item.records),
                 key=lambda row: row["started_at"],
@@ -320,6 +400,7 @@ class HttpBenchmark:
                 else None,
                 include_normalized_throughput=workload.trace_events is None,
                 slo_criteria=criteria,
+                itl_summary=measured_itl.summary(),
             )
             metrics.update(
                 summarize_measurement_groups(
@@ -330,6 +411,12 @@ class HttpBenchmark:
                     reported_concurrency=benchmark.load.max_concurrency,
                     slo_criteria=criteria,
                     include_single_dataset=workload.dataset_tasks is not None,
+                    itl_summaries={
+                        dimension: {
+                            name: stats.summary() for name, stats in groups.items()
+                        }
+                        for dimension, groups in measured_groups.items()
+                    },
                 )
             )
             attempted = sum(item.conversation_attempted for item in episodes)
@@ -382,6 +469,7 @@ class HttpBenchmark:
                         }
                         for row, item in zip(records, measurements)
                     ],
+                    compact=True,
                 )
             run = BenchmarkRun(
                 record=record,
@@ -389,6 +477,7 @@ class HttpBenchmark:
                 measurements=measurements,
                 artifacts=artifacts,
                 time_origin=origin,
+                cumulative_published=progress is not None,
             )
             outputs.publish(run)
             return run

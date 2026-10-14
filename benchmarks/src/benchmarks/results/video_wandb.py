@@ -87,13 +87,6 @@ def publish_video_wandb(
         run.artifacts["raw_results"].read_text(encoding="utf-8")
     )
     sdk_run.log(video_metrics_to_wandb(run.metrics))
-    warmup_path = run.artifacts.get("warmup_raw_output")
-    if warmup_path is not None:
-        warmup_rows = json.loads(warmup_path.read_text(encoding="utf-8"))
-        sdk_run.log({"Warmup/video_requests": wandb.Table(
-            columns=list(_SAMPLE_FIELDS),
-            data=[[result.get(field_name) for field_name in _SAMPLE_FIELDS] for result in warmup_rows],
-        )})
 
     rows = [
         [result.get(field_name) for field_name in _SAMPLE_FIELDS]
@@ -131,7 +124,7 @@ def publish_video_wandb(
         name=f"{config.name}-{sdk_run.id}",
         type="video-generation-benchmark",
     )
-    for name in ("config", "raw_results", "metrics", "console_log"):
+    for name in ("config", "raw_results", "metrics"):
         path = run.artifacts.get(name)
         if path is not None and path.is_file():
             artifact.add_file(str(path), name=path.name)

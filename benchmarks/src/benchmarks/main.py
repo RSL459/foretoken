@@ -23,7 +23,7 @@ from benchmarks.results.console import (
     print_model_service,
 )
 from benchmarks.results.experiment import experiment_output
-from benchmarks.results.output import BenchmarkRun
+from benchmarks.results.output import BenchmarkRun, ResultOutputs
 from benchmarks.runs.http import HttpBenchmark
 from benchmarks.runs.slo import SloAutoTuneBenchmark
 from benchmarks.runs.video import run_video_benchmark
@@ -36,11 +36,13 @@ logger = logging.getLogger(__name__)
 def run_benchmark(
     benchmark: BenchmarkConfig,
     service: ModelService,
+    *,
+    outputs: ResultOutputs | None = None,
 ) -> BenchmarkRun:
     """Execute an SLO search or measurement on a prepared service."""
     if benchmark.slo.search:
-        return SloAutoTuneBenchmark(benchmark, service).run()
-    return HttpBenchmark(benchmark, service).run()
+        return SloAutoTuneBenchmark(benchmark, service, outputs=outputs).run()
+    return HttpBenchmark(benchmark, service, outputs=outputs).run()
 
 
 def _run_video(arguments: Sequence[str], *, command_name: str) -> None:
@@ -77,11 +79,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                 run = ParameterSweepBenchmark(benchmark).run()
             else:
                 benchmark.validate()
-                with resolve_benchmark_service(benchmark) as service:
+                with (
+                    ResultOutputs(benchmark, None) as outputs,
+                    resolve_benchmark_service(benchmark) as service,
+                ):
                     if benchmark.service.kustomize_path and not quiet:
                         print_model_service(service)
                     logger.info("%s", format_benchmark_config(benchmark, service))
-                    run = run_benchmark(benchmark, service)
+                    run = run_benchmark(benchmark, service, outputs=outputs)
             if run.metrics["success_num"] == 0:
                 raise SystemExit(1)
     except (DeploymentError, ValueError, wandb.errors.Error) as exc:

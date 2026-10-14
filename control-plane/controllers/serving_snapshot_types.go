@@ -9,24 +9,45 @@ import inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v
 
 const servingSnapshotKey = "serving.json"
 
+// servingSettings groups process-local rules that share the snapshot publication boundary.
+type servingSettings struct {
+	RouterPipeline        inferencev1alpha1.RouterPipeline `json:"router_pipeline"`
+	RequestTimeoutSeconds int64                            `json:"request_timeout_seconds"`
+	StreamIdleSeconds     int64                            `json:"stream_idle_seconds"`
+	LogLevel              string                           `json:"log_level"`
+}
+
 type servingSnapshot struct {
-	Version           uint64                                       `json:"version"`
-	Models            []servingSnapshotModel                       `json:"models"`
-	Admission         map[string]inferencev1alpha1.AdmissionConfig `json:"admission"`
-	Groups            []servingSnapshotGroup                       `json:"groups"`
-	PDComponents      []servingSnapshotPDComponent                 `json:"pd_components,omitempty"`
-	PDPipelineScopes  []servingSnapshotPDPipelineScope             `json:"pd_pipeline_scopes,omitempty"`
-	EPDComponents     []servingSnapshotEPDComponent                `json:"epd_components,omitempty"`
-	EPDPipelineScopes []servingSnapshotEPDPipelineScope            `json:"epd_pipeline_scopes,omitempty"`
+	Settings          servingSettings                     `json:"settings"`
+	Version           uint64                              `json:"version"`
+	FrontendInstances []string                            `json:"frontend_instances"`
+	BackendInstances  []string                            `json:"backend_instances"`
+	Models            []servingSnapshotModel              `json:"models"`
+	Admission         map[string]servingSnapshotAdmission `json:"admission"`
+	Groups            []servingSnapshotGroup              `json:"groups"`
+	PDComponents      []servingSnapshotPDComponent        `json:"pd_components,omitempty"`
+	PDPipelineScopes  []servingSnapshotPDPipelineScope    `json:"pd_pipeline_scopes,omitempty"`
+	EPDComponents     []servingSnapshotEPDComponent       `json:"epd_components,omitempty"`
+	EPDPipelineScopes []servingSnapshotEPDPipelineScope   `json:"epd_pipeline_scopes,omitempty"`
+}
+
+// servingSnapshotAdmission contains the effective per-model settings consumed by the frontend.
+type servingSnapshotAdmission struct {
+	MaxWaitingRequests *uint32                      `json:"maxWaitingRequests,omitempty"`
+	QueueTimeout       inferencev1alpha1.Duration   `json:"queueTimeout,omitempty"`
+	RoleRules          []inferencev1alpha1.RoleRule `json:"roleRules,omitempty"`
 }
 
 type servingSnapshotModel struct {
+	ServiceGeneration     int64                                   `json:"service_generation"`
 	ServiceUID            string                                  `json:"service_uid"`
 	Model                 string                                  `json:"model"`
 	Source                inferencev1alpha1.ModelSource           `json:"source"`
 	Revision              string                                  `json:"revision"`
 	Tokenizer             string                                  `json:"tokenizer"`
 	TokenizerRevision     string                                  `json:"tokenizer_revision"`
+	PrefixCacheIsolation  *bool                                   `json:"prefix_cache_isolation,omitempty"`
+	RouterPipeline        *inferencev1alpha1.ModelRouterPipeline  `json:"router_pipeline,omitempty"`
 	SelectedPoolRevisions []inferencev1alpha1.ServingPoolRevision `json:"selected_pool_revisions,omitempty"`
 	Topology              string                                  `json:"topology"`
 	Capabilities          []string                                `json:"capabilities,omitempty"`
@@ -41,21 +62,22 @@ type servingSnapshotScalingTarget struct {
 }
 
 type servingSnapshotGroup struct {
-	RouteTargetID     string                        `json:"route_target_id"`
-	ServiceUID        string                        `json:"service_uid"`
-	PoolUID           string                        `json:"pool_uid"`
-	PoolName          string                        `json:"pool_name"`
-	Model             string                        `json:"model"`
-	Source            inferencev1alpha1.ModelSource `json:"source"`
-	Revision          string                        `json:"revision"`
-	Tokenizer         string                        `json:"tokenizer"`
-	TokenizerRevision string                        `json:"tokenizer_revision"`
-	MaxInputTokens    *int32                        `json:"max_input_tokens,omitempty"`
-	Capabilities      []string                      `json:"capabilities,omitempty"`
-	Endpoint          string                        `json:"endpoint"`
-	KVScopeID         string                        `json:"kv_scope_id"`
-	KVLookupScope     string                        `json:"kv_lookup_scope,omitempty"`
-	DataParallelSize  int32                         `json:"data_parallel_size"`
+	RouteTargetID        string                        `json:"route_target_id"`
+	ServiceUID           string                        `json:"service_uid"`
+	PoolUID              string                        `json:"pool_uid"`
+	PoolName             string                        `json:"pool_name"`
+	Model                string                        `json:"model"`
+	Source               inferencev1alpha1.ModelSource `json:"source"`
+	Revision             string                        `json:"revision"`
+	Tokenizer            string                        `json:"tokenizer"`
+	TokenizerRevision    string                        `json:"tokenizer_revision"`
+	PrefixCacheIsolation *bool                         `json:"prefix_cache_isolation,omitempty"`
+	MaxInputTokens       *int32                        `json:"max_input_tokens,omitempty"`
+	Capabilities         []string                      `json:"capabilities,omitempty"`
+	Endpoint             string                        `json:"endpoint"`
+	KVScopeID            string                        `json:"kv_scope_id"`
+	KVLookupScope        string                        `json:"kv_lookup_scope,omitempty"`
+	DataParallelSize     int32                         `json:"data_parallel_size"`
 }
 
 // servingSnapshotParallelism is the controller-owned execution topology used by KV transfer.
@@ -81,6 +103,7 @@ type servingSnapshotPDComponent struct {
 	Revision                 string                        `json:"revision"`
 	Tokenizer                string                        `json:"tokenizer"`
 	TokenizerRevision        string                        `json:"tokenizer_revision"`
+	PrefixCacheIsolation     *bool                         `json:"prefix_cache_isolation,omitempty"`
 	MaxInputTokens           *int32                        `json:"max_input_tokens,omitempty"`
 	ProfileName              string                        `json:"profile_name"`
 	ProfileRevision          string                        `json:"profile_revision"`
@@ -113,6 +136,7 @@ type servingSnapshotEPDComponent struct {
 	Revision                 string                        `json:"revision"`
 	Tokenizer                string                        `json:"tokenizer"`
 	TokenizerRevision        string                        `json:"tokenizer_revision"`
+	PrefixCacheIsolation     *bool                         `json:"prefix_cache_isolation,omitempty"`
 	MaxInputTokens           *int32                        `json:"max_input_tokens,omitempty"`
 	Capabilities             []string                      `json:"capabilities"`
 	Endpoint                 string                        `json:"endpoint"`

@@ -155,10 +155,7 @@ impl RouteScorer for EndpointAttributeScorer {
                         }
                     }
                 };
-                RouteScore {
-                    preference,
-                    ..RouteScore::default()
-                }
+                RouteScore { preference }
             })
             .collect()
     }

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+common/python-profiling.patch
+compatibility/v1-031/python-profiling.patch
+common/engine-abort-completion.patch
+common/prefix-cache-lookup.patch
+common/offload-prefix-lookup.patch
+compatibility/v1-modern-offload-prefix.patch
+compatibility/v1-031/mooncake-prefix-lookup.patch
+common/ready-logprobs.patch
+common/metax-dp-ep-shared-expert-serialization.patch
+common/spec-decode-timing-collector.patch
+common/spec-decode-timing-hooks.patch
+common/shm-nonblocking-read.patch
+compatibility/v1-031/spec-decode-timing.patch
+common/scheduler-load.patch
+compatibility/v1-031/scheduler-load.patch

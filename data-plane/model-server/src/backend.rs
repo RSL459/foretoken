@@ -4,9 +4,10 @@
 //! Engine-neutral HTTP-facing boundary and the thin vLLM EngineCore adapter.
 
 use async_trait::async_trait;
+use foretoken_model_protocol::SchedulerLoad;
 use futures::{Stream, StreamExt};
+use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use thiserror::Error;
@@ -21,14 +22,20 @@ pub use foretoken_model_protocol::{
     CumulativeHistogram, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
 };
 
-/// Stream shape shared by production vLLM and deterministic test backends.
+/// Engine-neutral output stream consumed by internal HTTP handlers.
 pub type TokenStream = Pin<Box<dyn Stream<Item = Result<TokenEvent, BackendError>> + Send>>;
+
+/// Output delivery and engine-origin termination have separate lifetimes.
+/// The API execution owner retains completion even after its HTTP consumer disconnects.
+pub struct BackendGeneration {
+    pub stream: TokenStream,
+    pub completion: Pin<Box<dyn Future<Output = Result<(), BackendError>> + Send>>,
+}
 
 /// Cumulative backend observations included in a telemetry snapshot.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BackendTelemetry {
     pub data_parallel_ranks: Vec<foretoken_model_protocol::DataParallelTelemetry>,
-    pub running_requests: u64,
     pub max_concurrent_requests: Option<u64>,
     pub scheduler_running_requests: Option<u64>,
     pub scheduler_waiting_requests: Option<u64>,
@@ -120,14 +127,24 @@ impl BackendError {
 /// Minimal inference backend operations that this group-local server needs.
 #[async_trait]
 pub trait Backend: Send + Sync {
-    /// Starts one request for the generate handler and returns its owned terminal-event stream.
-    async fn generate(&self, request: GenerateInput) -> Result<TokenStream, BackendError>;
+    /// Submits one request and returns separate output and engine-completion ownership to the API task.
+    async fn generate(&self, request: GenerateInput) -> Result<BackendGeneration, BackendError>;
 
     /// Cancels request IDs supplied by the abort handler; backend ownership remains unchanged.
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError>;
 
+    /// Observes reusable prefixes in every local scheduler without allocating request capacity.
+    async fn local_prefixes(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError>;
+
     /// Returns a snapshot published by telemetry handlers without transferring backend ownership.
     fn telemetry(&self) -> BackendTelemetry;
+
+    /// Reads scheduler-owned token demand for the optional autoscaling observation endpoint.
+    /// Failure leaves ordinary inference and telemetry available without inventing zero load.
+    async fn scheduler_load(&self) -> Result<Vec<SchedulerLoad>, BackendError>;
 
     /// Renders the OpenMetrics payload published by the metrics handler as an owned response body.
     fn render_openmetrics(&self) -> Result<String, MetricsError>;
@@ -136,7 +153,6 @@ pub trait Backend: Send + Sync {
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
 pub struct VllmBackend {
     llm: RwLock<Option<Llm>>,
-    running_requests: Arc<AtomicU64>,
     max_concurrent_requests: Option<u64>,
     engine_labels: Vec<EngineLabels>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
@@ -157,7 +173,6 @@ impl VllmBackend {
             .collect();
         Self {
             llm: RwLock::new(Some(llm)),
-            running_requests: Arc::new(AtomicU64::new(0)),
             max_concurrent_requests,
             engine_labels,
             boundary_latency: Arc::new(Mutex::new(BoundaryLatencyMetrics::new())),
@@ -211,45 +226,16 @@ impl VllmBackend {
     }
 }
 
-struct InflightGuard {
-    running_requests: Arc<AtomicU64>,
-    released: AtomicBool,
-}
-
-impl InflightGuard {
-    fn accepted(running_requests: Arc<AtomicU64>) -> Arc<Self> {
-        running_requests.fetch_add(1, Ordering::AcqRel);
-        Arc::new(Self {
-            running_requests,
-            released: AtomicBool::new(false),
-        })
-    }
-
-    fn release(&self) {
-        if !self.released.swap(true, Ordering::AcqRel) {
-            self.running_requests.fetch_sub(1, Ordering::AcqRel);
-        }
-    }
-}
-
-impl Drop for InflightGuard {
-    fn drop(&mut self) {
-        self.release();
-    }
-}
-
 /// Restore external request identity and track engine-boundary latency without consumer delay.
 fn tracked_stream<S>(
     stream: S,
     request_id: String,
     started_at: Instant,
-    running_requests: Arc<AtomicU64>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
 ) -> TokenStream
 where
     S: Stream<Item = Result<vllm_llm::GenerateOutput, vllm_llm::Error>> + Send + 'static,
 {
-    let inflight = InflightGuard::accepted(running_requests);
     // Relay vLLM output through a bounded task so the returned HTTP stream owns cancellation while
     // the adapter records only engine-boundary latency, not downstream consumer backpressure.
     let (sender, mut receiver) = mpsc::channel(1);
@@ -264,20 +250,16 @@ where
                 item = stream.next() => item,
             };
             let Some(item) = item else {
-                inflight.release();
                 return;
             };
             let (event, terminal) = match item {
-                Ok(output) if output.finish_reason == Some(FinishReason::Error) => {
-                    inflight.release();
-                    (
-                        Ok(TokenEvent::Error {
-                            request_id: request_id.clone(),
-                            code: TokenErrorCode::RequestFailed,
-                        }),
-                        true,
-                    )
-                }
+                Ok(output) if output.finish_reason == Some(FinishReason::Error) => (
+                    Ok(TokenEvent::Error {
+                        request_id: request_id.clone(),
+                        code: TokenErrorCode::RequestFailed,
+                    }),
+                    true,
+                ),
                 Ok(mut output) => {
                     let now = Instant::now();
                     generation_tokens += output.token_ids.len() as u64;
@@ -312,16 +294,10 @@ where
                             );
                         }
                     }
-                    if terminal {
-                        inflight.release();
-                    }
                     output.request_id.clone_from(&request_id);
                     (Ok(TokenEvent::Token(Box::new(output.into()))), terminal)
                 }
-                Err(error) => {
-                    inflight.release();
-                    (Err(BackendError::from_llm(error)), true)
-                }
+                Err(error) => (Err(BackendError::from_llm(error)), true),
             };
             match sender.try_send(event) {
                 Ok(()) => {}
@@ -348,7 +324,10 @@ where
 
 #[async_trait]
 impl Backend for VllmBackend {
-    async fn generate(&self, mut request: GenerateInput) -> Result<TokenStream, BackendError> {
+    async fn generate(
+        &self,
+        mut request: GenerateInput,
+    ) -> Result<BackendGeneration, BackendError> {
         // HTTP decoding discards backend hints; headless EngineCore skips frontend
         // validation and retains its first grammar backend. Use Xgrammar consistently
         // so JSON and structural-tag requests work regardless of arrival order.
@@ -363,19 +342,67 @@ impl Backend for VllmBackend {
             .generate(request.into())
             .await
             .map_err(BackendError::from_llm)?;
-        Ok(tracked_stream(
-            stream,
-            request_id,
-            started_at,
-            self.running_requests.clone(),
-            self.boundary_latency.clone(),
-        ))
+        let completion = stream.completion();
+        Ok(BackendGeneration {
+            stream: tracked_stream(
+                stream,
+                request_id,
+                started_at,
+                self.boundary_latency.clone(),
+            ),
+            completion: Box::pin(async move {
+                completion
+                    .wait()
+                    .await
+                    .map_err(BackendError::from_engine_client)
+            }),
+        })
     }
 
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError> {
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
         llm.abort(request_ids).await.map_err(BackendError::from_llm)
+    }
+
+    async fn local_prefixes(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError> {
+        let guard = self.llm.read().await;
+        let client = guard
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?
+            .engine_core_client();
+        // Each scheduler reports its own rank; cache contents are not a consensus value.
+        let observations = client
+            .call_utility::<serde_json::Value, _>(
+                "get_prefix_cache_hit",
+                (
+                    &request.prompt_token_ids,
+                    request.cache_salt.as_deref(),
+                    request.lora_name.as_deref(),
+                    request
+                        .multimodal
+                        .iter()
+                        .map(|feature| {
+                            serde_json::json!({
+                                "identifier": feature.identifier,
+                                "offset": feature.offset,
+                                "length": feature.length,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                    request.lora_path.as_deref(),
+                ),
+            )
+            .await
+            .map_err(BackendError::from_engine_client)?;
+        // Native dictionaries encode tiers as strings; rmpv's enum decoder expects arrays.
+        observations
+            .into_iter()
+            .map(|value| serde_json::from_value(value).map_err(|_| BackendError::Protocol))
+            .collect()
     }
 
     fn telemetry(&self) -> BackendTelemetry {
@@ -388,7 +415,6 @@ impl Backend for VllmBackend {
 
         BackendTelemetry {
             data_parallel_ranks: vllm.data_parallel_ranks,
-            running_requests: self.running_requests.load(Ordering::Acquire),
             max_concurrent_requests: self.max_concurrent_requests,
             scheduler_running_requests: vllm.scheduler_running_requests,
             scheduler_waiting_requests: vllm.scheduler_waiting_requests,
@@ -403,5 +429,19 @@ impl Backend for VllmBackend {
 
     fn render_openmetrics(&self) -> Result<String, MetricsError> {
         METRICS.render().map_err(|_| MetricsError)
+    }
+
+    async fn scheduler_load(&self) -> Result<Vec<SchedulerLoad>, BackendError> {
+        let guard = self.llm.read().await;
+        let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
+        let loads = llm
+            .engine_core_client()
+            .call_utility::<Option<SchedulerLoad>, _>("get_scheduler_load", ())
+            .await
+            .map_err(BackendError::from_engine_client)?;
+        loads
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(BackendError::Unavailable)
     }
 }

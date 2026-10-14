@@ -24,8 +24,9 @@ const ROUTING_STAGES: [RoutingStage; 3] = [
     RoutingStage::Prefill,
     RoutingStage::Decode,
 ];
-const OUTCOMES: [&str; 7] = [
+const OUTCOMES: [&str; 8] = [
     "selected",
+    "busy",
     "no_matching_target",
     "no_matching_decode",
     "invalid_filter",
@@ -149,7 +150,10 @@ pub(crate) struct RouterMetricsScope {
 
 impl RouterMetricsScope {
     /// Registers bounded model and target labels before the Router begins serving requests.
-    pub(crate) fn new(inventory: &dyn RouteInventory, algorithms: [&'static str; 3]) -> Self {
+    pub(crate) fn new(
+        inventory: &dyn RouteInventory,
+        algorithms: impl Fn(&str, RoutingStage) -> [&'static str; 3],
+    ) -> Self {
         let routes = inventory.model_routes().routes();
         let models = routes
             .iter()
@@ -160,7 +164,9 @@ impl RouterMetricsScope {
         let mut candidate_labels = HashSet::new();
         for model_name in models {
             for round in ROUTING_STAGES {
-                for (stage, algorithm) in ["filter", "scorer", "picker"].into_iter().zip(algorithms)
+                for (stage, algorithm) in ["filter", "scorer", "picker"]
+                    .into_iter()
+                    .zip(algorithms(&model_name, round))
                 {
                     stage_labels.insert(StageLabels {
                         model_name: model_name.clone(),
@@ -278,7 +284,8 @@ impl RouterMetricsScope {
     ) {
         let outcome = match result {
             Ok(_) => "selected",
-            Err(RouteError::NoMatchingRouteTarget { .. }) => "no_matching_target",
+            Err(RouteError::Busy) => "busy",
+            Err(RouteError::NoCompatibleTarget { .. }) => "no_matching_target",
             Err(RouteError::NoMatchingDecode { .. }) => "no_matching_decode",
             Err(
                 RouteError::InvalidFilterIndex { .. } | RouteError::DuplicateFilterIndex { .. },

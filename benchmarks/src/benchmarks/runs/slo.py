@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -103,11 +104,13 @@ class SloAutoTuneBenchmark:
         *,
         label: str = "",
         output_dir: str | None = None,
+        outputs: ResultOutputs | None = None,
     ) -> None:
         self.benchmark = benchmark
         self.service = service
         self.label = label
         self.output_dir = output_dir
+        self.outputs = outputs
 
     def _run_probe(
         self,
@@ -275,10 +278,12 @@ class SloAutoTuneBenchmark:
                 ))
             return selected
 
-        with ResultOutputs(
+        context = nullcontext(self.outputs) if self.outputs is not None else ResultOutputs(
             self.benchmark, None, output_dir=self.output_dir,
             directory_prefix="slo-", sink_factory=sinks,
-        ) as outputs:
+        )
+        with context as outputs:
+            outputs.sink_factory = sinks
             outputs.open(record)
             probes: list[dict[str, Any]] = []
             groups: list[dict[str, Any]] = []
