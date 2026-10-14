@@ -96,15 +96,13 @@ Add `--gateway-section-name LISTENER` only when more than one listener matches.
 
 ### Current source
 
-Build and install from the repository root. The cluster needs a default StorageClass for compiler caches; see the [source deployment guide](../docs/custom-deployment.md) for storage overrides.
+The cluster needs a default StorageClass. Run from the Foretoken repository root:
 
 ```bash
 foretoken install -e .
 ```
 
-This binds the checkout to the target cluster for subsequent source updates.
-
-After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
+`foretoken deploy` then uses the code in your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/custom-deployment.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/custom-deployment.md#edit-an-inference-engine).
 
 A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 
@@ -148,7 +146,7 @@ Reapply the installation command after changing either setting. Set `enabled: fa
 
 ### Installation options
 
-Use `--values` only to override platform image, runtime, or hardware settings. Without an override, each installation selects public sources for default platform images and Chart downloads. Chart downloads and image pulls during source builds can fall back to the original source when an automatically selected mirror fails. Use `--oci-registry` to select a registry explicitly; image references supplied through values remain unchanged. Source selection runs on the CLI host, so the selected registry must also be reachable from the cluster nodes.
+Use `--values` to customize platform settings. Without an override, each installation selects public sources for default platform images and Chart downloads. Chart downloads and image pulls during source builds can fall back to the original source when an automatically selected mirror fails. Use `--oci-registry` to select a registry explicitly; image references supplied through values remain unchanged. Source selection runs on the CLI host, so the selected registry must also be reachable from the cluster nodes.
 
 Model services are reached through an IP address outside the cluster. k3d, k3s, and cloud clusters assign one automatically. Clusters built with kubeadm, RKE2, or kubespray have no address assignment by default, so installation there ends with `LoadBalancer support Not verified`. Give Foretoken a range of unused addresses in the nodes' subnet, confirmed with the cluster administrator, and it assigns them to services:
 
@@ -168,7 +166,7 @@ See the [multi-model example](../examples/multi-model-quickstart/README.md) for 
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-The command applies the configuration and deploys these services with the runtime version provided by the current platform, updating existing services as well.
+The command applies the configuration, deploys the selected services, and updates existing services.
 
 While waiting, it shows service status and streams Pod and container logs with source prefixes. It exits when every service reports Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
 

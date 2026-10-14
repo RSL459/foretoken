@@ -68,8 +68,8 @@ def prepare_patches(
     patches = []
     if metax:
         configuration = json.loads((METAX_ROOT / "source-environment.json").read_text())
-        # SDK backports belong to the core version selected by this manifest.
-        # Custom runtime sources retain their own SDK adaptations.
+        # SDK backports target the manifest's core version. Custom runtimes
+        # provide their own matching SDK adaptations.
         if (
             Version(version).base_version
             == Version(configuration["core"]["version"]).base_version
@@ -125,6 +125,9 @@ def compile_native(source: Path, cache: Path, version: str) -> None:
         FETCHCONTENT_BASE_DIR=str(cache / "dependencies"),
         CCACHE_DIR=str(cache / "ccache"),
     )
+    if getattr(torch.version, "maca", None):
+        # The SDK CMake wrapper must preserve failures before its cleanup commands.
+        environment["BASH_ERREXIT"] = "1"
     if not environment.get("TORCH_CUDA_ARCH_LIST"):
         # Upstream CMake selects its supported architectures for CPU-only builds.
         environment.pop("TORCH_CUDA_ARCH_LIST", None)
@@ -169,8 +172,15 @@ def export_overlay(
         # A namespace package would let Python select the image's old regular package.
         raise RuntimeError(f"engine source must provide {package}/__init__.py")
     runtime = package_directory(package)
-    # Repository bookkeeping and bytecode caches are not runtime package assets.
-    excluded = {".git", ".gitkeep", ".gitignore", ".gitattributes", ".gitmodules", "__pycache__"}
+    # Keep package assets, including hidden native libraries, but not repository metadata.
+    excluded = {
+        ".git",
+        ".gitkeep",
+        ".gitignore",
+        ".gitattributes",
+        ".gitmodules",
+        "__pycache__",
+    }
     # Ordinary Python modules come only from source. The image supplies native
     # libraries and generated/vendor packages.
     for path in runtime.rglob("*"):
@@ -189,8 +199,10 @@ def export_overlay(
     native = cache / "native-install"
     if (native / package).is_dir():
         shutil.copytree(
-            native / package, destination / package,
-            dirs_exist_ok=True, ignore=shutil.ignore_patterns(*excluded),
+            native / package,
+            destination / package,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(*excluded),
         )
         known = json.loads((cache / "native-files.json").read_text())
         for name in known:

@@ -29,18 +29,6 @@ Foretoken 会为该配置创建目录型存储。删除服务时目录会保留�
 
 远程集群会自动将 `../../data` 这样的相对目录转换为动态 PVC，因此 Quick Start 的 YAML 无需修改。多节点集群使用 `ReadWriteMany` 共享模型文件和运行时数据；单节点集群会自动使用 `ReadWriteOnce`。需要选择特定 StorageClass、容量、访问模式或最大容量时，在 `cache.yaml` 中设置对应字段；绝对 `directory` 仍表示目标节点或所有目标节点共享文件系统上已经存在的路径。
 
-绝对节点目录属于非 root 用户、且希望服务使用该身份运行时，在 RuntimeCache 中声明目录的实际 UID 和 GID：
-
-```yaml
-metadata:
-  annotations:
-    inference.foretoken.io/directory-owner: "1000:1000"
-spec:
-  directory: /srv/foretoken/data
-```
-
-后续部署继续保留该注解。CLI 无法从工作站检查远端节点的目录所有者；本机 k3d 则会从实际挂载目录自动识别身份。相对目录转换为动态 PVC 时，会移除这一目录专用设置。
-
 ## 使用已有模型
 
 将完整模型目录放在数据根目录下：

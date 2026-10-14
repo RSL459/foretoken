@@ -29,18 +29,6 @@ Existing deployments can keep their current path. Changing the directory of an a
 
 For a remote cluster, the deploy command automatically converts a relative directory such as `../../data` into a dynamic PVC, so the Quick Start YAML does not need to change. Multi-node clusters keep `ReadWriteMany` for shared model and runtime data; a single-node cluster uses `ReadWriteOnce` automatically. To select a particular StorageClass, size, access mode, or maximum size, set those fields in `cache.yaml`; an absolute `directory` remains a host path that must already exist on the target node or shared filesystem.
 
-For an absolute node directory owned by a non-root user, declare its numeric UID and GID on the RuntimeCache when workloads should run as that identity:
-
-```yaml
-metadata:
-  annotations:
-    inference.foretoken.io/directory-owner: "1000:1000"
-spec:
-  directory: /srv/foretoken/data
-```
-
-Use the directory's actual identity and retain the annotation in subsequent deployments. The CLI cannot inspect a remote node's filesystem ownership. Local k3d instead discovers the owner from its host bind mount; conversion to a dynamic PVC removes this directory-specific setting.
-
 ## Use an existing model
 
 Place a complete model directory below the data root:

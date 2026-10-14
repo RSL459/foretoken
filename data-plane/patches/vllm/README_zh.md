@@ -25,6 +25,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 其他库的补丁放在与 `vllm/` 同级的独立目录中。
 
+`common/scheduler-load.patch` 负责统计 token 需求，各版本的调度器适配负责传入全部等待队列，并在调度更新 token 计数前采集 decode 上下文。请求被抢占后，计算进度虽然清零，其上下文需求仍需保留。
+
 ## 引擎完成契约
 
 `rust/engine-request-completion.patch` 提供在传输提交前订阅的 `RequestCompletion`。只有引擎返回的终止输出或已完成请求通知能确认执行结束。该信号独立于输出消费者，丢弃流、收到 abort 应答或客户端本地产生 abort 输出都不能完成它。传输关闭会让观测以错误结束，不能当作成功终止。

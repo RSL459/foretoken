@@ -1378,27 +1378,6 @@ class Helm(HelmClient):
             time.sleep(min(1, max(0, deadline - time.monotonic())))
         raise DeploymentError(f"Timed out waiting for {release.display_name} controller leadership")
 
-    def update_control_plane_application(
-        self, root: Path, reference: str, timeout: str
-    ) -> None:
-        """Select published control-plane files through the existing Helm release lifecycle."""
-        release = self.platform_release()
-        args = self._upgrade_install_args(
-            release,
-            str(root / "deploy/charts/foretoken"),
-            ((self._config.install_source_label, "source"),),
-        )
-        args.extend(
-            [
-                "--reuse-values",
-                "--set-string",
-                f"controller.applicationURL={reference}",
-            ]
-        )
-        self._finish_upgrade(args, timeout)
-        self.run(args)
-        self._wait_control_plane(release, timeout)
-
     def application_history(self) -> set[str] | None:
         """Retain application publications selected by available Helm revisions."""
         return self._history_references(application_references)

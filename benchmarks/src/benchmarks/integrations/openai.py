@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Self
 
@@ -155,6 +155,7 @@ class OpenAILoadClient:
         conversation_id: str | None,
         turn: int | None,
         retain_history: bool = False,
+        on_start: Callable[[str, float], None] | None = None,
     ) -> dict[str, Any]:
         """Send a prepared request and measure its timing, usage, and protocol failures."""
         request_fields = request.body
@@ -163,6 +164,8 @@ class OpenAILoadClient:
         target_length = request.output_tokens
         model = request_fields["model"]
         started_at = time.perf_counter()
+        if on_start is not None:
+            on_start(request_id, started_at)
         timing = ChatStreamTiming()
         input_tokens: int | None = None
         output_tokens: int | None = None

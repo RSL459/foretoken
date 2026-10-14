@@ -96,15 +96,13 @@ foretoken install \
 
 ### 当前源码
 
-从仓库根目录构建并安装。集群需有保存编译缓存的默认存储类（StorageClass）；自定义存储设置见[源码部署指南](../docs/custom-deployment_zh.md)。
+集群需有默认存储类（StorageClass）。在 Foretoken 仓库根目录运行：
 
 ```bash
 foretoken install -e .
 ```
 
-命令将源码目录与目标集群关联，后续从该目录更新服务。
-
-修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
+部署时，`foretoken deploy` 会使用当前 Foretoken 目录中的代码。并行运行不同代码版本，见[多版本部署示例](../docs/custom-deployment_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/custom-deployment_zh.md#修改推理引擎)。
 
 当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 
@@ -148,7 +146,7 @@ modelDistribution:
 
 ### 安装选项
 
-自定义平台镜像、runtime 或硬件设置时使用 `--values`。没有显式覆盖时，每次安装会为默认平台镜像和 Chart 下载选择公共来源。自动选中的代理失败时，Chart 下载和源码构建中的镜像拉取可回退到源站。通过 `--oci-registry` 指定仓库，values 中明确填写的镜像地址保持不变。选源在运行 CLI 的机器上执行，所选仓库也需要能从集群节点访问。
+需要自定义平台设置时，使用 `--values`。没有显式覆盖时，每次安装会为默认平台镜像和 Chart 下载选择公共来源。自动选中的代理失败时，Chart 下载和源码构建中的镜像拉取可回退到源站。通过 `--oci-registry` 指定仓库，values 中明确填写的镜像地址保持不变。选源在运行 CLI 的机器上执行，所选仓库也需要能从集群节点访问。
 
 模型服务通过一个集群外可访问的 IP 提供服务。k3d、k3s 和云上集群会自动分配这个 IP；用 kubeadm、RKE2 或 kubespray 搭建的集群默认没有地址分配能力，安装结尾会提示 `LoadBalancer support Not verified`。此时向集群管理员确认一段节点网段内未被占用的 IP 交给 Foretoken，由它分配给服务：
 
@@ -168,7 +166,7 @@ loadBalancer:
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-命令会应用配置，使用当前平台提供的运行版本部署服务，并更新已有服务。
+命令会应用配置，部署所选服务，并更新已有服务。
 
 等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。所有服务 Ready 且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
 

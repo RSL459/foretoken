@@ -94,7 +94,7 @@ class ModelService:
 
     @property
     def tokenizer_identity(self) -> tuple[str, str]:
-        """Return the selected model's source and tokenizer for client-side evaluation."""
+        """Return the selected source and client-side tokenizer, reusing deployment directories."""
         if not self.model:
             raise ValueError("Automatic tokenizer resolution requires one selected model; pass --model or a tokenizer override")
         if self.deployment is None:
@@ -111,14 +111,13 @@ class ModelService:
         if source == "local" and not Path(tokenizer).expanduser().exists():
             from benchmarks.datasets.huggingface import find_local_tokenizer_path
 
-            # Relative deployment directories may become remote PVCs. Only reuse
-            # an explicit data root whose tokenizer is readable by this client.
             for cache in self.deployment.runtime_caches:
-                data_root = Path(cache.directory).expanduser()
-                if data_root.is_absolute():
-                    local = find_local_tokenizer_path(tokenizer, data_root=data_root)
-                    if local is not None:
-                        return source, local
+                if not cache.directory:
+                    continue
+                data_root = self.deployment.path / Path(cache.directory).expanduser()
+                local = find_local_tokenizer_path(tokenizer, data_root=data_root)
+                if local is not None:
+                    return source, local
         return source, tokenizer
 
     def select_models(self, models: Iterable[str]) -> ModelService:

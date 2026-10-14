@@ -11,11 +11,17 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from benchmarks.config.evaluation import EvaluationConfig, deployment_labels
+from benchmarks.integrations.evalscope.evaluation import EvalScopeProgress
+from benchmarks.integrations.quality import PROGRESS_FILENAME
 from benchmarks.model_service import ModelService, resolve_model_service
 from benchmarks.results.evaluation import (
     evaluation_comparison_sinks,
@@ -27,7 +33,34 @@ from benchmarks.results.output import BenchmarkRun, ResultOutputs, wandb_run_tim
 logger = logging.getLogger(__name__)
 
 
-def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -> int:
+def _poll_progress(
+    evaluator: str, native: Path, stop: Event, publish: Callable[[dict[str, Any]], None],
+) -> None:
+    """Observe durable native completions independently of evaluator stdout and flush on shutdown."""
+    started = time.monotonic()
+    previous = None
+    reader = EvalScopeProgress() if evaluator == "evalscope" else None
+    while True:
+        # A stop received during publication still requires a final snapshot read.
+        stopping = stop.is_set()
+        path = native / PROGRESS_FILENAME
+        if path.is_file():
+            snapshot = json.loads(path.read_text(encoding="utf-8"))
+            counts = reader.read(
+                Path(snapshot["cache_directory"]), snapshot["model"], snapshot["cache_files"],
+            ) if reader else snapshot
+            if counts is not None and counts != previous:
+                publish({"Evaluation/Elapsed (s)": time.monotonic() - started, **counts})
+                previous = counts
+        if stopping:
+            return
+        stop.wait(1)
+
+
+def _execute(
+    config: EvaluationConfig, service: ModelService, directory: Path,
+    publish_progress: Callable[[dict[str, Any]], None],
+) -> int:
     """Stream native progress into a retained log; interrupt and reap the child before service cleanup."""
     native = directory / "native"
     native.mkdir()
@@ -48,6 +81,7 @@ def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -
     # Keep the caller's cwd: upstream config, cache and task paths remain relative to it.
     with (
         (directory / "evaluator.log").open("w", encoding="utf-8") as log,
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="evaluation-progress") as executor,
         subprocess.Popen(
             [sys.executable, "-u", "-m", "benchmarks.integrations.quality"],
             stdin=subprocess.PIPE,
@@ -59,16 +93,19 @@ def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -
             bufsize=1,
         ) as process,
     ):
+        stop = Event()
+        progress = executor.submit(_poll_progress, config.evaluator, native, stop, publish_progress)
         try:
             process.stdin.write(json.dumps(payload))
             process.stdin.close()
             for line in process.stdout:
+                if progress.done():
+                    progress.result()
                 if service.api_key and service.api_key != "EMPTY":
                     line = line.replace(service.api_key, "[redacted]")
                 log.write(line)
                 log.flush()
-                if not config.outputs.includes("quiet"):
-                    print(line, end="", flush=True)
+                print(line, end="", flush=True)
             return process.wait()
         except BaseException:
             if process.poll() is None:
@@ -79,34 +116,49 @@ def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -
                     process.kill()
                     process.wait()
             raise
+        finally:
+            stop.set()
+            progress.result()
 
 
 def run_evaluation(
-    config: EvaluationConfig, service: ModelService, *, output_dir: str | None = None
+    config: EvaluationConfig,
+    service: ModelService,
+    *,
+    output_dir: str | None = None,
+    outputs: ResultOutputs | None = None,
 ) -> BenchmarkRun:
-    """Execute one evaluator and publish scores; a comparison owns its child failure status."""
+    """Publish one evaluation, borrowing entered outputs when the caller owns service cleanup."""
     record: dict[str, Any] = {
         "mode": "evaluation",
         "evaluator": config.evaluator,
         "model": service.model,
     }
-    with ResultOutputs(
-        config,
-        service,
-        directory_prefix="eval-",
-        output_dir=output_dir,
-        sink_factory=lambda directory: evaluation_sinks(config, record, directory),
-    ) as outputs:
-        outputs.open(record)
-        directory = Path(outputs.execution_dir).resolve()
+    output_context = (
+        nullcontext(outputs)
+        if outputs is not None
+        else ResultOutputs(config, service, directory_prefix="eval-", output_dir=output_dir)
+    )
+    with output_context as active_outputs:
+        active_outputs.service = service
+        active_outputs.sink_factory = lambda directory: evaluation_sinks(config, record, directory)
+        active_outputs.open(record)
+        directory = Path(active_outputs.execution_dir).resolve()
         logger.info(
             "Evaluation: %s | model=%s | artifacts=%s",
             config.evaluator,
             service.model,
             directory,
         )
+        progress_writer = active_outputs.create_request_writer("evaluation_progress")
+
+        def publish_progress(row: dict[str, Any]) -> None:
+            """Retain each measured snapshot before sending it to live destinations."""
+            progress_writer.write(row)
+            active_outputs.publish_progress(row, axis="Evaluation/Elapsed (s)")
+
         started = time.monotonic()
-        code = _execute(config, service, directory)
+        code = _execute(config, service, directory, publish_progress)
         metrics = read_quality_metrics(config.evaluator, directory / "native")
         run = BenchmarkRun(
             record=record,
@@ -118,7 +170,7 @@ def run_evaluation(
             },
             exit_code=code,
         )
-        outputs.publish(run)
+        active_outputs.publish(run)
         if code:
             logger.error(
                 "%s failed (exit %s); see %s", config.evaluator, code, directory / "evaluator.log"

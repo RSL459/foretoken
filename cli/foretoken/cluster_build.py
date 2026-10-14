@@ -19,6 +19,7 @@ import uuid
 from contextlib import AbstractContextManager
 from decimal import Decimal
 from pathlib import Path
+from threading import Lock
 from typing import Any, Self
 
 import yaml
@@ -235,6 +236,7 @@ class ClusterBuilder(AbstractContextManager):
         self.root = f"{self.mount}/build/{binding}"
         self.workspace = f"{self.root}/workspace"
         self._created = False
+        self._image_lock = Lock()
         self._generated_layouts: dict[str, dict[str, str]] = {}
         self._image_builds: dict[str, tuple[list[str], str]] = {}
         self._used_images: set[str] = set()
@@ -313,8 +315,8 @@ class ClusterBuilder(AbstractContextManager):
             key=lambda pod: pod.get("metadata", {}).get("creationTimestamp", ""),
             default=None,
         )
-        # Source operations hold the cluster lock. Stop the previous daemon before
-        # changing its image or placement: the retained PVC still holds its root lock.
+        # The caller owns this binding's operation lock. Stop its previous daemon
+        # before changing image or placement: the PVC still holds its root lock.
         for pod in occupants:
             if pod is reusable:
                 continue
@@ -339,7 +341,13 @@ class ClusterBuilder(AbstractContextManager):
             self.name = reusable["metadata"]["name"]
             print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
             self.run(
-                ["rm", "-rf", "--", self.root + "/transfers", self.root + "/output"]
+                [
+                    "sh",
+                    "-ec",
+                    'rm -rf -- "$1/transfers" "$1/output" "$1/results"; mkdir -p "$1/results"',
+                    "prepare",
+                    self.root,
+                ]
             )
             return self
         image = self.image
@@ -379,7 +387,7 @@ class ClusterBuilder(AbstractContextManager):
                     "command": [
                         "sh",
                         "-ec",
-                        '''mount="$(dirname "$(dirname "$1")")"
+                        """mount="$(dirname "$(dirname "$1")")"
 mkdir -p "$mount" "$1"
 chown 1000:1000 "$mount" "$mount/build" "$(dirname "$1")" "$1"
 chmod 2775 "$mount" "$mount/build" "$(dirname "$1")" "$1"
@@ -393,7 +401,7 @@ else
 fi
 chown 1000:1000 "$1/buildkit.toml"
 chmod 600 "$1/buildkit.toml"
-''',
+""",
                         "prepare",
                         self.root,
                         *gc_limits,
@@ -541,7 +549,13 @@ chmod 600 "$1/buildkit.toml"
                 ]
             )
             self.run(
-                ["rm", "-rf", "--", self.root + "/transfers", self.root + "/output"]
+                [
+                    "sh",
+                    "-ec",
+                    'rm -rf -- "$1/transfers" "$1/output" "$1/results"; mkdir -p "$1/results"',
+                    "prepare",
+                    self.root,
+                ]
             )
         except BaseException as error:
             self.__exit__(type(error), error, error.__traceback__)
@@ -550,24 +564,26 @@ chmod 600 "$1/buildkit.toml"
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         """Retain successful builders and clean transient or failed build state."""
-        if self._image_builds:
-            self.run(["rm", "-rf", "--", self.root + "/transfers"])
-        if exc_type is not None and self._created:
-            self.kubectl.run(
-                [
-                    "delete",
-                    "pod",
-                    self.name,
-                    "-n",
-                    self.namespace,
-                    "--ignore-not-found",
-                    "--wait=true",
-                    "--timeout=" + self.timeout,
-                ]
-            )
-            self._created = False
+        if exc_type is not None:
+            # A failed daemon may no longer accept exec. Retire a new Pod directly;
+            # the next successful entry removes partial exports from a reused cache.
+            if self._created:
+                self.kubectl.run(
+                    [
+                        "delete",
+                        "pod",
+                        self.name,
+                        "-n",
+                        self.namespace,
+                        "--ignore-not-found",
+                        "--wait=true",
+                        "--timeout=" + self.timeout,
+                    ]
+                )
+                self._created = False
             return
-        if exc_type is None and self._used_images:
+        self.run(["rm", "-rf", "--", self.root + "/results", self.root + "/transfers"])
+        if self._used_images:
             path = self.root + "/images.json"
             layouts = self.read_json(path)
             stale = [
@@ -809,6 +825,48 @@ rm -rf "$incoming"
         self._save_layout(name, layout, digest)
         return {"path": layout, "digest": digest, "nodeDigest": images[name]}
 
+    def _context_digest(self, layout: dict[str, str]) -> str:
+        """Resolve a single-image index for BuildKit without changing export identities."""
+        digest = layout["digest"]
+        descriptor = self.read_json(
+            layout["path"] + "/blobs/" + digest.replace(":", "/", 1)
+        )
+        if descriptor.get("mediaType") not in {
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json",
+        }:
+            return digest
+        manifests = descriptor["manifests"]
+        if len(manifests) != 1:
+            return digest
+        child = manifests[0]
+        if (
+            child["mediaType"]
+            not in {
+                "application/vnd.oci.image.manifest.v1+json",
+                "application/vnd.docker.distribution.manifest.v2+json",
+            }
+            or child.get("annotations", {}).get("vnd.docker.reference.type")
+            == "attestation-manifest"
+        ):
+            return digest
+        manifest = self.read_json(
+            layout["path"] + "/blobs/" + child["digest"].replace(":", "/", 1)
+        )
+        if (
+            manifest.get("artifactType")
+            or manifest.get("subject")
+            or manifest.get("config", {}).get("mediaType")
+            not in {
+                "application/vnd.oci.image.config.v1+json",
+                "application/vnd.docker.container.image.v1+json",
+            }
+        ):
+            return digest
+        # Node export may wrap the same image produced directly by BuildKit.
+        # Its manifest, rather than that wrapper, identifies the build input.
+        return child["digest"]
+
     def build(
         self,
         dockerfile: str,
@@ -820,7 +878,7 @@ rm -rf "$incoming"
         arguments: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Build files or registry images, deferring local OCI export until an output is consumed."""
-        metadata = self.root + "/result.json"
+        metadata = self.root + "/results/" + uuid.uuid4().hex + ".json"
         args = [
             "buildctl",
             "build",
@@ -866,14 +924,20 @@ rm -rf "$incoming"
             dockerfile = generated.removeprefix(self.workspace + "/")
             args[args.index("--opt") + 1] = "filename=" + dockerfile
         for key, value in (arguments or {}).items():
-            local = self._local_image(value) if key.endswith("_IMAGE") else None
+            local = None
+            if key.endswith("_IMAGE"):
+                # Local contexts share OCI exports and their index. Resolve them
+                # atomically; independent buildctl solves run outside this lock.
+                with self._image_lock:
+                    local = self._local_image(value)
             if local:
+                digest = self._context_digest(local)
                 alias = "foretoken-local-" + key.lower().replace("_", "-")
                 args += [
                     "--oci-layout",
                     alias + "=" + local["path"],
                     "--opt",
-                    f"context:{alias}=oci-layout://{alias}@{local['digest']}",
+                    f"context:{alias}=oci-layout://{alias}@{digest}",
                 ]
                 value = alias
             args += ["--opt", f"build-arg:{key}={value}"]
@@ -881,7 +945,9 @@ rm -rf "$incoming"
             # BuildKit mirrors each owned export directory so retries cannot revive removed files.
             output = "type=local,mode=delete,dest=" + destination
         elif self.containerd_socket:
-            output = f"type=image,name={image},oci-mediatypes=true,store=false,push=false"
+            output = (
+                f"type=image,name={image},oci-mediatypes=true,store=false,push=false"
+            )
         else:
             output = f"type=image,name={image},push={str(push).lower()}"
         started = time.monotonic()
@@ -911,7 +977,9 @@ rm -rf "$incoming"
                 f"type=oci,name={image},oci-mediatypes=true,dest={layout},tar=false",
             ]
         )
-        exported = self.read_json(self.root + "/result.json")["containerimage.digest"]
+        exported = self.read_json(args[args.index("--metadata-file") + 1])[
+            "containerimage.digest"
+        ]
         descriptor = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
         if exported != digest or descriptor != digest:
             self.run(["rm", "-rf", "--", layout])

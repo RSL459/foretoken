@@ -69,11 +69,11 @@ class DirectoryVolumes:
                 )
             spec = matching[0].setdefault("spec", {})
             annotations = matching[0]["metadata"].setdefault("annotations", {})
+            annotations.pop(self.directory_owner_annotation, None)
             path = Path(cache.directory)
             if not context.startswith("k3d-") and (
                 not path.is_absolute() or ".." in path.parts
             ):
-                annotations.pop(self.directory_owner_annotation, None)
                 spec.pop("directory", None)
                 spec.setdefault("initialSize", REMOTE_RUNTIME_CACHE_SIZE)
                 schedulable_nodes = tuple(
@@ -98,10 +98,6 @@ class DirectoryVolumes:
             if directory_owner is not None:
                 uid, gid = directory_owner
                 annotations[self.directory_owner_annotation] = f"{uid}:{gid}"
-            elif context.startswith("k3d-"):
-                annotations.pop(self.directory_owner_annotation, None)
-            # Remote node paths retain an explicitly declared identity; their
-            # filesystem owner cannot be inferred from the workstation.
             locations.append((cache, resolved, hostnames))
             spec["directory"] = resolved
 

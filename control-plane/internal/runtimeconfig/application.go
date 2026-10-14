@@ -5,10 +5,16 @@
 package runtimeconfig
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"maps"
+	"net/http"
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -29,6 +35,50 @@ func (files ApplicationFiles) Ref(component, revision string) string {
 		return ""
 	}
 	return strings.TrimRight(files.Origin, "/") + "/" + url.PathEscape(component) + "/" + url.PathEscape(revision)
+}
+
+// ResolveImage reads a newly selected source publication's image for service controllers.
+// Only legacy manifests without an image field use the platform image; redirects are refused.
+func (files ApplicationFiles) ResolveImage(ctx context.Context, component, revision, platformImage string) (string, error) {
+	manifestURL := files.Ref(component, revision) + "/manifest.json"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create %s application manifest request: %w", component, err)
+	}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("fetch %s application manifest: %w", component, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch %s application manifest: HTTP %d", component, response.StatusCode)
+	}
+	payload, err := io.ReadAll(response.Body)
+	if err != nil {
+		return "", fmt.Errorf("read %s application manifest: %w", component, err)
+	}
+	var manifest map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &manifest); err != nil {
+		return "", fmt.Errorf("decode %s application manifest: %w", component, err)
+	}
+	if manifest == nil {
+		return "", fmt.Errorf("%s application manifest must be an object", component)
+	}
+	rawImage, present := manifest["image"]
+	if !present {
+		return platformImage, nil
+	}
+	var image string
+	if err := json.Unmarshal(rawImage, &image); err != nil || strings.TrimSpace(image) == "" {
+		return "", fmt.Errorf("%s application manifest image must be a nonempty string", component)
+	}
+	return image, nil
 }
 
 // Directory returns the completed Pod-local application directory consumed at startup.

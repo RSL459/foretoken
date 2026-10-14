@@ -44,7 +44,7 @@ _HF_FILE_URI_FORMAT = "hf://datasets/<org>/<repo>[@<revision>]/<path>"
 def find_local_tokenizer_path(
     tokenizer_path: str, *, data_root: str | Path | None = None,
 ) -> str | None:
-    """Return a client-readable tokenizer directory under a data root, or None."""
+    """Find client-side tokenizer files below a deployment or configured data root."""
     if Path(tokenizer_path).is_absolute() or tokenizer_path.startswith(("./", "../", "~")):
         return None
     if data_root is None:

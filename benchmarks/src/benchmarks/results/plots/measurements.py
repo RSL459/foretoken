@@ -73,7 +73,7 @@ def _saved_itl_summary(row: dict[str, Any]) -> ITLSummary:
 
 
 def load_http_measurements(raw: list[dict[str, Any]]) -> list[RequestMeasurement]:
-    """Restore saved HTTP requests for plotting and phase-specific W&B curves."""
+    """Restore saved HTTP requests for plotting."""
     return [
         RequestMeasurement(
             started_at=float(row["start_time"]),

@@ -77,6 +77,15 @@ def import_release(
             )
 
 
+def _application_part(path: Path) -> str:
+    """Assign each application file to the build output that replaces it as a group."""
+    if path.parts[0] == "python":
+        return "python"
+    if path.parts[0] in {"engine", "engine-environment.json"}:
+        return "engine"
+    return "rust"
+
+
 def publish(
     source: Path,
     destination: Path,
@@ -86,17 +95,43 @@ def publish(
     release_owned: bool = False,
     reuse_previous: bool = False,
     sources: dict | None = None,
+    image: str | None = None,
+    parts: list[str] | None = None,
 ) -> Path:
-    """Publish immutable files and provenance, optionally reusing an identical source revision."""
+    """Publish a complete application, optionally replacing selected outputs of a completed base."""
     if (destination / "manifest.json").is_file():
         return destination
     if not source.is_dir():
         raise FileNotFoundError(f"application export is missing: {source}")
     previous_files = None
-    if reuse_previous and previous is not None and (previous / "manifest.json").is_file():
+    metadata = None
+    if previous is not None and (previous / "manifest.json").is_file():
         metadata = json.loads((previous / "manifest.json").read_text())
-        if metadata.get("binding") == binding and not metadata.get("releaseOwned"):
+        if (
+            reuse_previous
+            and metadata.get("binding") == binding
+            and not metadata.get("releaseOwned")
+            and metadata.get("image") == image
+        ):
             previous_files = metadata["files"]
+    inputs = {path.relative_to(source): path for path in source.rglob("*")}
+    if parts is not None:
+        if metadata is None:
+            raise FileNotFoundError(f"completed application is missing: {previous}")
+        if metadata.get("image") != image:
+            raise ValueError("partial publication requires the previous environment image")
+        # Exports may include other build outputs. Accept only selected groups,
+        # replacing each in full so deleted files cannot survive from the base.
+        inputs = {
+            relative: path for relative, path in inputs.items()
+            if _application_part(relative) in parts
+        }
+        for entry in metadata["files"]:
+            relative = Path(entry["path"])
+            if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+                raise ValueError("application manifest contains an invalid file path")
+            if _application_part(relative) not in parts:
+                inputs[relative] = previous / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
     prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
     if not release_owned:
@@ -109,7 +144,7 @@ def publish(
         staging.mkdir()
         files = []
         unchanged = previous_files is not None
-        for origin in sorted(source.rglob("*")):
+        for relative, origin in sorted(inputs.items()):
             if origin.is_symlink():
                 raise ValueError(
                     f"application exports must not contain symlinks: {origin}"
@@ -120,7 +155,6 @@ def publish(
                 raise ValueError(
                     f"application exports must contain regular files: {origin}"
                 )
-            relative = origin.relative_to(source)
             target = staging / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             mode = (stat.S_IMODE(origin.stat().st_mode) & 0o111) | 0o444
@@ -129,7 +163,7 @@ def publish(
                 old is not None
                 and old.is_file()
                 and ((stat.S_IMODE(old.stat().st_mode) & 0o111) | 0o444) == mode
-                and filecmp.cmp(origin, old, shallow=False)
+                and (origin == old or filecmp.cmp(origin, old, shallow=False))
             ):
                 os.link(old, target)
             else:
@@ -143,13 +177,17 @@ def publish(
                     "size": target.stat().st_size,
                 }
             )
-        # Reuse follows published bytes and executable modes, not download mirrors or build options.
+        # Reuse requires the same environment, published bytes and executable modes.
         # Comparing the complete manifest also detects files removed from the new export.
         if previous is not None and unchanged and files == previous_files:
             return previous
         (staging / "manifest.json").write_text(
             json.dumps(
-                {"binding": binding, "releaseOwned": release_owned, "files": files, "sources": sources}
+                {
+                    "binding": binding, "releaseOwned": release_owned,
+                    "files": files, "sources": sources,
+                    **({"image": image} if image is not None else {}),
+                }
             )
             + "\n"
         )
@@ -197,6 +235,8 @@ if __name__ == "__main__":
             Path(sys.argv[4]) if sys.argv[4] else None,
             reuse_previous=json.loads(sys.argv[6]),
             sources=json.loads(sys.argv[7]),
+            image=json.loads(sys.argv[8]),
+            parts=json.loads(sys.argv[9]),
         )
         retained = json.loads(sys.argv[5])
         if retained is not None:

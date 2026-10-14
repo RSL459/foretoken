@@ -34,12 +34,6 @@ Each trigger, decision, and adjustment stage owns a compiled descriptor list. Ad
 
 All stages receive an optional JSON parameters object. Adjustment factories also receive the controller-owned recommendation history. Trigger implementations expose their polling interval; the controller owns scheduling and derives observation freshness from that interval. Capacity bounds and lifecycle constraints remain platform responsibilities.
 
+Decision algorithms that consume scheduler token demand implement `RequiresEngineLoad(role)`. The controller collects those observations on demand and preserves each engine's load; collection failures make the observation unavailable.
+
 The controller constructs the pipeline once per reconciliation. Built-in defaults select periodic triggering and step adjustment when those stages are omitted; individual parameter defaults remain in the selected implementation. A new implementation requires rebuilding and deploying the controller, not runtime plugin loading.
-
-## Validation
-
-Use the control-plane verification target after changing this package:
-
-```bash
-make -C control-plane verify
-```

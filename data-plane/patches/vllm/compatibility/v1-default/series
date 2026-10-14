@@ -6,3 +6,5 @@ common/worker-profiling.patch
 common/engine-abort-completion.patch
 common/ready-logprobs.patch
 common/offloading-event-identity.patch
+common/scheduler-load.patch
+compatibility/v1-current/scheduler-load.patch

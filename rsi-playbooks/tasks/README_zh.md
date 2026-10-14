@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-这里定义常用优化任务的目标、范围、约束与交付结果。用[任务模板](../templates/task-template_zh.md)填写模型、资源、负载与目标，Agent 按[通用流程](../README_zh.md#使用步骤)完成分析、设计、实现、验证与记录。
+这里定义常用优化任务的目标、范围、约束与交付结果。用[任务模板](../templates/task-template_zh.md)填写模型、资源、负载与目标，按[通用流程](../README_zh.md#使用步骤)执行。研究方法见[元知识](../guidance/meta-knowledge/README_zh.md)，技术原理与已有经验见[知识库](../guidance/knowledge/README_zh.md)。
 
 ## 自主执行
 
