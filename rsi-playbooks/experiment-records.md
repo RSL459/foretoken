@@ -92,3 +92,5 @@ For example, a reviewer may recommend another comparison, the lead may authorize
 After each run, append its directory or W&B link, the hypothesis tested, differences from the reference, and the supported conclusion. Record failures and interruptions as well. Use the existing [iteration template](templates/iteration-template.md) for the history; there is no need to add mutable decision fields to independent review artifacts. Send contributions to the assigned writer so parallel agents do not overwrite one another's entries.
 
 The overview is a current reading aid, not a second decision history. Refresh it as decisions change and link to the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
+
+Use the [report template](templates/report-template.md) for the user-facing `report.md`: start with a comparison table of measured task metrics and changes from base, briefly describe each iteration, and finish with the retained approach and result links.
