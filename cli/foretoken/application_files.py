@@ -283,7 +283,7 @@ class ApplicationFiles:
         reuse_previous: bool = False,
         sources: dict[str, Any] | None = None,
         image: str | None = None,
-        python_only: bool = False,
+        parts: list[str] | None = None,
     ) -> str:
         """Publish a compiler export with provenance and return the selected immutable revision."""
         command = [
@@ -298,13 +298,13 @@ class ApplicationFiles:
             json.dumps(reuse_previous),
             json.dumps(sources),
             json.dumps(image),
-            json.dumps(python_only),
+            json.dumps(parts),
         ]
-        if python_only and not previous:
-            raise DeploymentError("Python-only publication requires a completed application")
+        if parts is not None and not previous:
+            raise DeploymentError("partial publication requires a completed application")
         with self._publisher(
             command, builder.binding, timeout, builder=builder,
-            source_revision=previous if python_only else "",
+            source_revision=previous if parts is not None else "",
         ) as job:
             self._wait(job, timeout)
             result = self.kubectl.run(

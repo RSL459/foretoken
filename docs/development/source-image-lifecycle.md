@@ -5,7 +5,7 @@
 
 English | [简体中文](source-image-lifecycle_zh.md)
 
-For installation, deployment and parallel candidate commands, see [Deploy Foretoken from Source](../custom-deployment.md). This guide describes the responsibilities to preserve when changing that workflow.
+For installation, deployment and parallel candidate commands, see [Deploy Foretoken from Source](../custom-deployment.md).
 
 ## Installation and deployment
 
@@ -17,9 +17,13 @@ The CLI records engine directory choices per checkout and includes source deleti
 
 Serialize source preparation and service submission for the same checkout. Other checkouts can build concurrently, while platform installation and uninstall exclude those operations. Release source-operation locks before waiting for readiness so deletion can free devices for an unscheduled service.
 
-Compiler caches are reusable build inputs, not serving state. Coordinate access through the builder, and keep mutable source and export directories from being overwritten by another candidate. Before reusing outputs, stop abandoned publishers that might still read or write them.
+Compiler caches speed up builds; running services use published application files. Keep each candidate's writable source and export directories isolated, and stop abandoned publishers before reusing their outputs.
 
-For changes confined to the model-server Python directory, reuse the executable and other files from the completed application matching the previous inputs and environment. Replace the entire Python directory, including deletions, and produce another complete application. An unfinished native build is not a reusable base.
+## Building and publishing applications
+
+Rust executables, Python adapters and inference-engine files have separate build inputs. Rebuild affected outputs and reuse unchanged files only from a completed application matching the previous inputs and runtime environment. Replace each updated group in full, including deletions. If a previous build or publication is incomplete, build the complete application from the current inputs.
+
+Publish the assembled application before submitting it to a service. Each publication contains all files needed to run; its lifetime does not depend on the build cache or the applications it reused.
 
 ## Serving and cleanup
 

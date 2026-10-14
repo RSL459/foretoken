@@ -61,6 +61,12 @@ from foretoken.source import (
     validate_build_inputs,
 )
 
+_APPLICATION_PARTS = {
+    "frontend": ("rust",),
+    "model-server": ("rust", "python", "engine"),
+}
+
+
 class EditableDeployment:
     """Own local source comparison, candidate preparation and target-service activation."""
 
@@ -122,11 +128,7 @@ class EditableDeployment:
         with checkout_operation(self.directory, self.kubectl, timeout):
             path = self.directory / "install.json"
             saved = json.loads(path.read_text()) if path.is_file() else None
-            if (
-                saved is None
-                or saved["platform_uid"] != self.platform["platform_uid"]
-                or saved.get("platform_inputs") != self.platform["inputs"]
-            ):
+            if saved is None:
                 self.state = copy.deepcopy(self.platform)
                 snapshot = self.directory / ("inputs-" + uuid.uuid4().hex)
                 shutil.copytree(self.cluster / self.platform["inputs"], snapshot)
@@ -139,18 +141,28 @@ class EditableDeployment:
                     },
                 )
                 self.state["build"]["binding"] = self.directory.name
-                # Fresh checkouts borrow platform images. Preserve image cleanup
-                # ownership if this checkout has previously built an environment.
-                self.state["build"]["borrowed_images"] = (
-                    saved is None or saved["build"].get("borrowed_images", False)
-                )
-                if saved is not None:
-                    self.state["engines"] = saved.get("engines", {})
-                elif str(self.root) != self.platform["root"]:
+                self.state["build"]["borrowed_images"] = True
+                if str(self.root) != self.platform["root"]:
                     self.state["engines"] = {}
-                self.state["command"]["editable"] = str(self.root)
             else:
                 self.state = saved
+            platform_changed = (
+                self.state["platform_uid"] != self.platform["platform_uid"]
+                or self.state.get("platform_inputs") != self.platform["inputs"]
+            )
+            if platform_changed:
+                # Refresh platform intent, retaining this checkout's input versions
+                # and effective outputs until the environment build succeeds.
+                self.state["command"] = copy.deepcopy(self.platform["command"])
+                self.state["base_image"] = self.platform.get("base_image")
+                for key in ("configuration", "arguments", "registry_mirrors", "runtime_backend", "build_metax_runtime"):
+                    self.state["build"][key] = copy.deepcopy(self.platform["build"][key])
+                self.state["runtime"].update({
+                    key: copy.deepcopy(value)
+                    for key, value in self.platform["runtime"].items()
+                    if key not in {"image", "model_image"}
+                })
+            self.state["command"]["editable"] = str(self.root)
             engines = (
                 engine_source_roots(self.engine_sources) if self.engine_sources
                 else self.state.get("engines", {})
@@ -158,14 +170,15 @@ class EditableDeployment:
             snapshot = self.directory / self.state["inputs"]
             manifest = snapshot / "engine/manifest.json"
             old_engines = set(json.loads(manifest.read_text())) if manifest.is_file() else set()
-            self.environment_changed = old_engines != engines.keys()
+            self.environment_changed = platform_changed or old_engines != engines.keys()
             self.state["engines"] = engines
             self.state["command"]["engine_sources"] = [
                 f"{name}={path}" for name, path in engines.items()
             ]
             _write_json(path, self.state)
             print(f"Source checkout: {self.root}", flush=True)
-            reconcile_source_images(self.kubectl, timeout, checkout=self.directory)
+            if (self.directory / "build.json").is_file():
+                reconcile_source_images(self.kubectl, timeout, checkout=self.directory)
             yield
             reconcile_source_images(self.kubectl, timeout, checkout=self.directory)
 
@@ -208,7 +221,7 @@ class EditableDeployment:
                 flush=True,
             )
             return
-        components: set[str] = set()
+        components: dict[str, set[str]] = {}
         rebuild = False
         for name in changed:
             if name.startswith("engine/"):
@@ -227,12 +240,12 @@ class EditableDeployment:
                 ):
                     rebuild = True
                 else:
-                    components.add("model-server")
+                    components.setdefault("model-server", set()).add("engine")
             elif name.startswith(("control-plane/", "deploy/charts/")):
                 # Shared controllers and platform configuration change only through install.
                 continue
             elif name.startswith("data-plane/model-server/python/"):
-                components.add("model-server")
+                components.setdefault("model-server", set()).add("python")
             elif name.startswith("data-plane/") and (
                 name.endswith(".rs") or Path(name).name in {"Cargo.toml", "Cargo.lock"}
             ):
@@ -243,7 +256,8 @@ class EditableDeployment:
                     if name.startswith("data-plane/model-server/")
                     else {"frontend", "model-server"}
                 )
-                components.update(targets)
+                for component in targets:
+                    components.setdefault(component, set()).add("rust")
             else:
                 rebuild = True
         if rebuild:
@@ -271,15 +285,11 @@ class EditableDeployment:
             unchanged=set(current).difference(changed),
             root=self.root,
         )
-        validate_build_inputs(self.root, snapshot, engines)
         self.state["build"]["versions"] = snapshot_versions(
             snapshot, old, self.state["build"]["versions"], changed
         )
         bundles = dict(self.state["bundles"])
-        python_only = all(
-            name.startswith("data-plane/model-server/python/") for name in changed
-        )
-        for component in components:
+        for component, parts in components.items():
             prior = bundles.get(
                 component,
                 self.state["build"].get("applications", {}).get(component, {}),
@@ -288,22 +298,30 @@ class EditableDeployment:
                 "revision": str(uuid.uuid4()),
                 "previous": prior.get("revision", ""),
             }
-            if python_only and component == "model-server" and bundle["previous"]:
+            required = set(_APPLICATION_PARTS[component])
+            if not engines:
+                required.discard("engine")
+            if parts < required and bundle["previous"]:
                 origin = ApplicationFiles(
                     self.kubectl,
                     default_platform_config(self.state["command"]["oci_registry"]).namespace,
                 )
                 manifest = origin.read_manifest(origin.reference(component, bundle["previous"]))
-                # A pending, failed native build is not a reusable executable. Only
-                # the completed publication corresponding to the prior inputs qualifies.
-                if manifest is not None and manifest.get("image") == self.state["runtime"]["model_image"]:
-                    bundle["python_only"] = True
+                image = self.state["runtime"]["model_image" if component == "model-server" else "image"]
+                # Only a completed publication represents the prior inputs. Pending
+                # or deferred updates require a full build, even after another edit.
+                if manifest is not None and manifest.get("image") == image:
+                    bundle["parts"] = sorted(parts)
             bundles[component] = bundle
         self.state.update(inputs=snapshot.name, bundles=bundles)
         _write_json(self.directory / "install.json", self.state)
 
     def _rebuild(self, timeout: str) -> None:
         """Build candidate environments and applications without changing the shared platform."""
+        # Reclaim unused environments before allocating another. Interrupted
+        # builds were already reconciled when entering the checkout operation.
+        if not (self.directory / "build.json").is_file():
+            reconcile_source_images(self.kubectl, timeout, checkout=self.directory)
         settings = dict(self.state["command"])
         settings.update(values=(), timeout=timeout, editable=str(self.root))
         command = InstallCommand(**settings)
@@ -331,6 +349,8 @@ class EditableDeployment:
             self.state.update(
                 inputs=destination.name, build=prepared.build_state,
                 bundles=prepared.build_state["applications"],
+                platform_uid=self.platform["platform_uid"],
+                platform_inputs=self.platform["inputs"],
             )
             _write_json(self.directory / "install.json", self.state)
             (self.directory / "build.json").unlink(missing_ok=True)
@@ -428,10 +448,10 @@ class EditableDeployment:
         origin.prepare(timeout)
         for component in missing:
             bundle = self.state["bundles"][component]
-            if bundle.get("python_only") and origin.read_manifest(
+            if bundle.get("parts") and origin.read_manifest(
                 origin.reference(component, bundle["previous"])
             ) is None:
-                bundle.pop("python_only")
+                bundle.pop("parts")
         build = self.state["build"]
         mount = "/var/cache/foretoken"
         claim = find_build_cache(
@@ -464,7 +484,9 @@ class EditableDeployment:
         build_engine = (
             "model-server" in missing
             and bool(self.state.get("engines"))
-            and not self.state["bundles"]["model-server"].get("python_only", False)
+            and "engine" in self.state["bundles"]["model-server"].get(
+                "parts", _APPLICATION_PARTS["model-server"]
+            )
         )
         if build_engine and not build["registry"] and origin.node not in build["engine_caches"]:
             # A newly prepared origin node needs a cold cache, not another node's native outputs.
@@ -528,18 +550,8 @@ class EditableDeployment:
                 revision = bundle["revision"]
                 staging = builder.root + "/output/" + revision
                 payload = staging + "/payload"
-                if bundle.get("python_only", False):
-                    # Export the synchronized tree without depending on the checkout's
-                    # Dockerfile. Replacing the payload preserves deletions on retries.
-                    builder.run([
-                        "sh", "-ec",
-                        'rm -rf "$2"; mkdir -p "$2/python"; '
-                        'if test -d "$1"; then cp -pR "$1/." "$2/python/"; fi',
-                        "export-python",
-                        builder.workspace + "/data-plane/model-server/python",
-                        payload,
-                    ])
-                else:
+                parts = bundle.get("parts", _APPLICATION_PARTS[component])
+                if "rust" in parts:
                     arguments = dict(build["arguments"])
                     if component == "model-server":
                         arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"][
@@ -551,6 +563,19 @@ class EditableDeployment:
                         destination=payload,
                         arguments=arguments,
                     )
+                else:
+                    # Clear partial exports before retrying. File-only changes use
+                    # the synchronized workspace, independently of the Dockerfile.
+                    script = 'rm -rf "$1"; mkdir -p "$1"'
+                    if "python" in parts:
+                        script += (
+                            '; mkdir "$1/python"; '
+                            'if test -d "$2"; then cp -pR "$2/." "$1/python/"; fi'
+                        )
+                    builder.run([
+                        "sh", "-ec", script, "export", payload,
+                        builder.workspace + "/data-plane/model-server/python",
+                    ])
                 if component == "model-server" and build_engine:
                     builder.build(
                         "deploy/inference-engines/source-build.Dockerfile",
@@ -608,7 +633,7 @@ class EditableDeployment:
                         reuse_previous=True,
                         sources=build_sources(snapshot, component),
                         image=self.state["runtime"]["model_image" if component == "model-server" else "image"],
-                        python_only=bundle.get("python_only", False),
+                        parts=bundle.get("parts"),
                     )
                 published = {
                     component: future.result() for component, future in futures.items()

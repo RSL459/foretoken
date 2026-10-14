@@ -77,6 +77,15 @@ def import_release(
             )
 
 
+def _application_part(path: Path) -> str:
+    """Assign each application file to the build output that replaces it as a group."""
+    if path.parts[0] == "python":
+        return "python"
+    if path.parts[0] in {"engine", "engine-environment.json"}:
+        return "engine"
+    return "rust"
+
+
 def publish(
     source: Path,
     destination: Path,
@@ -87,9 +96,9 @@ def publish(
     reuse_previous: bool = False,
     sources: dict | None = None,
     image: str | None = None,
-    python_only: bool = False,
+    parts: list[str] | None = None,
 ) -> Path:
-    """Publish complete immutable files, optionally replacing a completed version's Python tree."""
+    """Publish a complete application, optionally replacing selected outputs of a completed base."""
     if (destination / "manifest.json").is_file():
         return destination
     if not source.is_dir():
@@ -105,29 +114,24 @@ def publish(
             and metadata.get("image") == image
         ):
             previous_files = metadata["files"]
-    if python_only:
+    inputs = {path.relative_to(source): path for path in source.rglob("*")}
+    if parts is not None:
         if metadata is None:
             raise FileNotFoundError(f"completed application is missing: {previous}")
-        if "image" in metadata and metadata["image"] != image:
-            raise ValueError("Python-only publication requires the previous environment image")
-        # Reuse only files declared by the completed publication. Replacing the
-        # entire Python subtree makes removals independent of the previous export.
-        inputs = {}
+        if metadata.get("image") != image:
+            raise ValueError("partial publication requires the previous environment image")
+        # Exports may include other build outputs. Accept only selected groups,
+        # replacing each in full so deleted files cannot survive from the base.
+        inputs = {
+            relative: path for relative, path in inputs.items()
+            if _application_part(relative) in parts
+        }
         for entry in metadata["files"]:
             relative = Path(entry["path"])
             if not relative.parts or relative.is_absolute() or ".." in relative.parts:
                 raise ValueError("application manifest contains an invalid file path")
-            if relative.parts[0] != "python":
+            if _application_part(relative) not in parts:
                 inputs[relative] = previous / relative
-        python = source / "python"
-        if python.is_symlink() or (python.exists() and not python.is_dir()):
-            raise ValueError("Python export must contain a regular Python directory")
-        inputs.update(
-            (path.relative_to(source), path)
-            for path in python.rglob("*")
-        )
-    else:
-        inputs = {path.relative_to(source): path for path in source.rglob("*")}
     destination.parent.mkdir(parents=True, exist_ok=True)
     prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
     if not release_owned:
@@ -232,7 +236,7 @@ if __name__ == "__main__":
             reuse_previous=json.loads(sys.argv[6]),
             sources=json.loads(sys.argv[7]),
             image=json.loads(sys.argv[8]),
-            python_only=json.loads(sys.argv[9]),
+            parts=json.loads(sys.argv[9]),
         )
         retained = json.loads(sys.argv[5])
         if retained is not None:
