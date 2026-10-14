@@ -11,7 +11,7 @@ use foretoken_kv_indexer::KvPrefixIndexer;
 pub struct ThroughputScorer;
 
 impl RouteScorer for ThroughputScorer {
-    /// Returns native token costs for Router; candidates missing either mean remain unscored.
+    /// Returns negative weighted token costs; missing or non-finite costs receive negative infinity.
     fn score(
         &self,
         _request: &RouterRequest,

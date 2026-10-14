@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-// SPDX-FileCopyrightText: Copyright The Prometheus Authors
 
 //! Bounded cumulative route-target snapshots and arbitrary-window statistics.
 

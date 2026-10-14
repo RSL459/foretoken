@@ -222,7 +222,7 @@ fn sum_metric<T>(observations: &[T], read: impl Fn(&T) -> Option<u64>) -> Option
 
 /// Reads the two rank-local request-length histograms through prometheus-client's public encoder.
 /// Histogram::get is private in the pinned library. Encoding these in-process handles avoids a
-/// scrape, text endpoint, or Prometheus dependency in the routing control loop.
+/// scrape, text endpoint, or dependency on a Prometheus server in the routing control loop.
 fn request_cost_metrics(labels: &EngineLabels) -> foretoken_model_protocol::RequestCostTelemetry {
     use foretoken_model_protocol::{HistogramMoments, RequestCostTelemetry};
     use prometheus_client::{encoding::text::encode, registry::Registry};

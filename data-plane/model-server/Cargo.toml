@@ -11,7 +11,6 @@ license.workspace = true
 description = "Group-local managed EngineCore and typed streaming API"
 
 [dependencies]
-prometheus-client.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
 axum.workspace = true
@@ -22,6 +21,7 @@ foretoken-artifacts.workspace = true
 foretoken-model-protocol.workspace = true
 foretoken-request-ledger = { path = "../request-ledger" }
 futures.workspace = true
+prometheus-client.workspace = true
 reqwest.workspace = true
 rmp-serde.workspace = true
 rmpv.workspace = true
