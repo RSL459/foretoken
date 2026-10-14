@@ -45,6 +45,8 @@ def find_local_tokenizer_path(
     tokenizer_path: str, *, data_root: str | Path | None = None,
 ) -> str | None:
     """Find client-side tokenizer files below a deployment or configured data root."""
+    if Path(tokenizer_path).is_absolute() or tokenizer_path.startswith(("./", "../", "~")):
+        return None
     if data_root is None:
         data_root = os.environ.get("FORETOKEN_DATA_ROOT")
     if not data_root:
@@ -100,6 +102,10 @@ def resolve_tokenizer_path(tokenizer_path: str, *, source: str = "hf") -> str:
     local = Path(tokenizer_path).expanduser()
     if local.exists():
         return str(local.resolve())
+    if source == "local":
+        configured = find_local_tokenizer_path(tokenizer_path)
+        if configured is not None:
+            return configured
     if source == "local" or local.is_absolute() or tokenizer_path.startswith(("./", "../", "~")):
         raise ValueError(
             f"Tokenizer path does not exist locally: {tokenizer_path!r}; "

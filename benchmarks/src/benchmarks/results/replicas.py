@@ -96,6 +96,11 @@ class KubernetesReplicaObserver:
         return tuple(sorted(self._known_group_names))
 
     @property
+    def group_uids(self) -> tuple[str, ...]:
+        """Return verified routing targets for metric queries, including retired Groups."""
+        return tuple(sorted(self._known_groups))
+
+    @property
     def pod_names(self) -> tuple[str, ...]:
         """Return observed serving Pod names so window queries include Pods replaced during a run."""
         return tuple(sorted({pod["name"] for _, sample in self._workload_samples for pod in sample["pods"]}))
