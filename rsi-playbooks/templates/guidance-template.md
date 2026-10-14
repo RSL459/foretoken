@@ -2,7 +2,7 @@
 
 English | [简体中文](guidance-template_zh.md)
 
-Name the file and title for the goal and specific technique; measurement entries name the diagnostic goal and method. Place technical entries in the appropriate [knowledge category](../guidance/knowledge/README.md) and organize the following content around the topic.
+Use a short target object and core technique for the file name, not a full sentence; let the title express the complete goal and method. Place technical entries in the appropriate [knowledge category](../guidance/knowledge/README.md) and organize the following content around the topic.
 
 ## Observations and Motivation
 
@@ -18,11 +18,11 @@ Describe how the approach organizes computation, data, state, and coordination. 
 
 ## Implementation
 
-Describe available code, key interfaces, and the actual execution path. State the model, hardware, precision, version, and dependency requirements that affect use. For methods requiring training or new weights, explain how to obtain and prepare them. Preserve reusable code and run entry points.
+Explain the core implementation through concise steps, an algorithm, or pseudocode: inputs, key computation or state updates, and outputs. Add code entry points and the model, hardware, precision, and version conditions that affect use. For methods requiring training or new weights, explain how to obtain and prepare them.
 
 ## Impact and Results
 
-Explain changes in performance, quality, memory, or resource cost and the conditions under which they hold. Measurements identify their source, workload, and comparison; analytical predictions state their assumptions. Attribute gains to the relevant changes and explain limiting costs, counterexamples, or failed approaches.
+When reliable measurements are available, give concrete values, the comparison, and the relevant workload, hardware, and precision, linking the original results. Otherwise explain the bottleneck addressed, work reduced, and costs introduced. Attribute the effect to the responsible change. Describe established effects here rather than listing proposed experiments.
 
 ## References
 

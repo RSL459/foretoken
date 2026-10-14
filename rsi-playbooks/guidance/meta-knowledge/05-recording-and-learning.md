@@ -34,11 +34,11 @@ For candidates with local gains, state how far full-model and service validation
 - Put search, analysis, decision-making, design, and learning methods in [meta-knowledge](README.md).
 - Keep each iteration's configurations, logs, and raw results in the experiment directory.
 
-Use a title that names the topic directly and add a one-sentence description of its purpose to the knowledge index. Make entries easy to find by symptom, technical term, or implementation location.
+Use a title that expresses the complete goal and method, and place the note in its category directory. Update the knowledge index when adding a category so readers can find it.
 
 ## Knowledge note template
 
-Use the [knowledge note template](../../templates/guidance-template.md): observations and motivation, principles and analysis, design, implementation, impact and results, and references. Start from the observed behavior, explain its causes and the method's mechanism, then connect implementation choices to their effects. Name the file and title for the goal and technique.
+Use the [knowledge note template](../../templates/guidance-template.md): observations and motivation, principles and analysis, design, implementation, impact and results, and references. Start from the observed behavior, explain its causes and the method's mechanism, then connect implementation choices to their effects. Use a short target object and core technique for the file name, not a full sentence; let the title express the complete goal and method.
 
 ## Update and use the knowledge in subsequent research
 
