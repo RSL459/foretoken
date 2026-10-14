@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](vocabulary-selection-sampling_zh.md)
 
-Use this when filtering or sampling over a large vocabulary remains significant after model-forward optimizations, especially when verification produces several rows per request.
+Large-vocabulary filtering and sampling can remain significant after model-forward optimizations, especially when verification produces several rows per request. Selection algorithms and stage fusion reduce this post-forward work.
 
 ## Selection is not necessarily a full sort
 

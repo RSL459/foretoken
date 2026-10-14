@@ -23,7 +23,7 @@ A useful decomposition is:
 
 `estimated_TTFT = ingress_wait + worker_wait + cache_ready_time + uncached_prefill_time + response_overhead`.
 
-This is an analysis model, not the exact formula used by every router. Cache-ready time depends on where the state resides and whether it is usable before scheduling; an advertised prefix is not necessarily ready device memory. This note evaluates routing consequences and does not implement cache offload.
+This is an analysis model, not the exact formula used by every router. Cache-ready time depends on where the state resides and whether it is usable before scheduling; an advertised prefix is not necessarily ready device memory.
 
 Preble estimates recent compute load, new-request prefill cost, and cache-eviction consequences. DualMap's February 2026 method limits each request to two hash-derived candidates, prefers reuse, and switches to the less-loaded candidate when estimated TTFT violates its SLO. Adaptive prefix keys distribute hot prefixes while retaining locality for colder ones. Queued migrations target the precomputed backup and require estimated positive latency benefit. This is a constrained choice architecture, not a full-fleet optimal search.
 

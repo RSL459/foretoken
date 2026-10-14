@@ -9,7 +9,7 @@ English | [简体中文](encoder-pipeline-cache_zh.md) | [Multimodal generation]
 
 ## When encoding delays first-token delivery
 
-A fast vision kernel can coexist with poor multimodal TTFT when preprocessing, encoder batch formation, embedding transfer, or decoder readiness dominates the request. Encoder separation is already documented in vLLM. The useful research question is how to overlap these stages without retaining embeddings indefinitely or waiting too long to fill a batch. This entry covers encoder execution and handoff; cross-stage placement and cluster resource allocation are separate responsibilities.
+A fast vision kernel can coexist with poor multimodal TTFT when preprocessing, encoder batch formation, embedding transfer, or decoder readiness dominates the request. Encoder separation is already documented in vLLM. The useful research question is how to overlap these stages without retaining embeddings indefinitely or waiting too long to fill a batch.
 
 EAServe, submitted in September 2026, studies adaptive encoder microbatching alongside its broader disaggregated design. Its microbatch policy dispatches on a full batch, an arrival-rate-derived idle gap, or an oldest-request age limit. The policy illustrates a concrete tension: waiting increases device utilization but consumes the request's first-token budget. A fixed large batch is not automatically suitable for sparse traffic.
 

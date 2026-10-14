@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](graph-memory-lifetimes_zh.md)
 
-Use this when graph capture consumes too much memory, outputs become invalid across model steps, or state mutation prevents a captured fast path.
+Graph capture memory, cross-step output validity, and replay-compatible state mutation depend on tensor addresses, lifetimes, and ownership.
 
 ## Stable addresses are not stable values
 

@@ -9,7 +9,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 编码很快，首 token 为什么仍然很慢？
 
-视觉 kernel 很快，多模态 TTFT 仍可能被预处理、等待组批、embedding 传输或下游预填充阻塞。vLLM 已经公开支持编码分离。真正值得研究的是如何重叠这些阶段，既不长期占住 embedding，又不为了凑满批次消耗过多首 token 预算。本篇只讨论编码执行和结果交付，不承担跨阶段放置或集群资源分配。
+视觉 kernel 很快，多模态 TTFT 仍可能被预处理、等待组批、embedding 传输或下游预填充阻塞。vLLM 已经公开支持编码分离。真正值得研究的是如何重叠这些阶段，既不长期占住 embedding，又不为了凑满批次消耗过多首 token 预算。
 
 2026 年 9 月提交的 EAServe 在分离架构中研究自适应编码微批：达到批次上限、出现由到达率推导的空闲间隔，或最老请求达到等待期限时发车。这里的矛盾很具体：多等一会儿能提高设备利用率，也会让请求更晚得到首 token。固定大批次不一定适合稀疏流量。
 

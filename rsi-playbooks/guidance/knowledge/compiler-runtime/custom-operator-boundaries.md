@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](custom-operator-boundaries_zh.md)
 
-Use this when a fast standalone kernel fails to improve a compiled model, graph breaks multiply around it, or a compiler pass no longer recognizes the computation.
+A fast standalone kernel can lose its advantage in a compiled model if its operator boundary introduces graph breaks or prevents compiler passes from recognizing the computation.
 
 ## A kernel is also a compiler interface
 

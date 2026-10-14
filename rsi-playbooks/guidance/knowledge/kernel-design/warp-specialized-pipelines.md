@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](warp-specialized-pipelines_zh.md)
 
-Use warp specialization when a kernel cannot keep data movement, matrix operations, and its epilogue busy at the same time.
-
 ## Divide responsibilities rather than only data
 
 Ordinary parallel decomposition gives different warps different elements of the same computation. Warp specialization gives them different jobs. One partition loads operands, another issues matrix operations, and another converts and stores completed results. These partitions communicate through shared-memory buffers and barriers.

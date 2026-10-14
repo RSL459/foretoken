@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](mla-cache-layouts_zh.md)
 
-Use this entry to separate latent-cache bandwidth, quantization layout, sparse gathers, and schedule overhead in MLA decode.
-
 ## Problem and upstream position
 
 Multi-head Latent Attention (MLA) compresses token history into latent vectors shared by query heads. This reduces cache storage, but decode still reads that history, computes per-head scores, and reduces partial outputs. A small cache representation is not automatically a fast execution path: scale loads, irregular gathers, dequantization, and output projection can become dominant.

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](vocabulary-selection-sampling.md) | 简体中文
 
-模型前向优化后，大词表过滤与采样仍占明显时间，尤其推测验证一次产生多行 logits 时，可从选择算法和阶段融合继续研究。
+模型前向优化后，大词表过滤与采样仍可能占明显时间，尤其推测验证一次产生多行 logits 时。选择算法和阶段融合可减少这部分后处理工作。
 
 ## 选择不一定需要完整排序
 

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](custom-operator-boundaries.md) | 简体中文
 
-独立内核很快，但接入编译模型后没有收益，周围出现更多 graph break，或原有 pass 不再识别计算时，应检查算子的编译接口。
+独立内核即使很快，算子边界引入的 graph break 或对编译 pass 识别计算的阻碍，也可能使它在编译模型中失去优势。
 
 ## 内核也是编译器接口
 

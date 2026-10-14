@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](dense-attention-pipelines_zh.md)
 
-Use this entry when exact dense attention is limited by softmax, rescaling, or pipeline stalls rather than matrix multiplication.
-
 ## Problem and upstream position
 
 Faster Tensor Cores do not accelerate every part of attention equally. For long-context prefill, matrix products can become fast enough that exponentials, row reductions, probability conversion, and output rescaling dominate. Increasing the GEMM tile alone may increase register pressure or move the bottleneck to shared-memory traffic.

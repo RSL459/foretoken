@@ -15,7 +15,7 @@ The inspected vLLM V1 scheduler calls `kv_cache_manager.allocate_slots` while bu
 
 `_preempt_request` releases KV and encoder state, resets computed-token progress, clears speculative tokens, marks the request preempted, and returns it to the waiting queue. If already selected work is removed from the current schedule, the appropriate budget is restored. Resuming requires rebuilding the missing state for the retained request history. Prefix caching may salvage reusable blocks, so reset progress should not be interpreted as a guarantee that every historical token is recomputed.
 
-This is established functionality. vLLM's current optimization guide recommends watching preemption counts and reducing concurrent pressure or supplying more KV space. It identifies recomputation as V1's default rather than presenting CPU swapping as the default remedy. This note concerns running-set selection, not implementation of a new offload tier.
+This is established functionality. vLLM's current optimization guide recommends watching preemption counts and reducing concurrent pressure or supplying more KV space. It identifies recomputation as V1's default rather than presenting CPU swapping as the default remedy.
 
 ## Why admission-time fit is insufficient
 

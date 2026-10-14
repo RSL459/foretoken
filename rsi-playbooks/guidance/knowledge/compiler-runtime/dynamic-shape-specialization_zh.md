@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](dynamic-shape-specialization.md) | 简体中文
 
-服务批次变化导致反复编译、通用符号内核在常见形状上偏慢，或启动阶段的专门化成本过高时，可研究形状策略。
+服务批次变化可能导致反复编译，通用符号内核又可能在常见形状上偏慢。专门化以启动成本换取稳态执行收益。
 
 ## 符号编译与图重放解决不同问题
 

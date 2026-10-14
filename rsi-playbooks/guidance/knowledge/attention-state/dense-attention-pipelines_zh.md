@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](dense-attention-pipelines.md) | 简体中文
 
-当精确稠密注意力受 softmax、输出重缩放或流水线等待限制，而不是矩阵乘法限制时，用本文判断下一步应该优化什么。
-
 ## 问题与当前上游
 
 Tensor Core 的提升不会等比例加速注意力中的所有工作。长上下文 prefill 的矩阵乘法足够快之后，指数运算、行归约、概率转换和输出重缩放可能成为主要成本。单纯扩大 GEMM tile 还可能增加寄存器压力，把瓶颈推向共享内存。
@@ -36,7 +34,7 @@ Blackwell 的异步 MMA 把中间结果写入 Tensor Memory。FlashAttention-4 �
 
 ## 适用条件与取舍
 
-本文核对的快速路径面向 Blackwell CUDA GPU。Hopper 或其他加速器需要匹配各自架构的实现，不能直接复制线程配置。固定版本接口中，SM100/SM110 forward 接受 FP16、BF16 和指定 FP8 格式，同时明确限制 head dimension；FP8 输出为 BF16，descale 也有独立形状要求。BF16 的 128 维 head 不能代表 absorbed MLA 或 FP8 路径。
+FlashAttention-4 的这条快速路径面向 Blackwell CUDA GPU。Hopper 或其他加速器需要匹配各自架构的实现，不能直接复制线程配置。固定版本接口中，SM100/SM110 forward 接受 FP16、BF16 和指定 FP8 格式，同时明确限制 head dimension；FP8 输出为 BF16，descale 也有独立形状要求。BF16 的 128 维 head 不能代表 absorbed MLA 或 FP8 路径。
 
 短 query、小 batch、不等长序列、GQA 打包、分页缓存、因果 mask 和 split-KV 都可能改变调度选择。两 CTA 协作对大 tile 有利，但当独立 query block 已经很多时也可能浪费资源。更快的 prefill 还可能更集中地争抢 GPU，使并发 decode 受影响；孤立内核吞吐不能直接证明服务延迟改善。
 

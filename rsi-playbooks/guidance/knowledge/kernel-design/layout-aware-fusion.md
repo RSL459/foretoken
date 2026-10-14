@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](layout-aware-fusion_zh.md)
 
-Investigate fusion when a layer repeatedly materializes, reshapes, or rereads intermediate tensors around otherwise efficient kernels.
-
 ## Begin with the actual producer and consumer
 
 A normalization or activation can be fast in isolation yet expensive as a sequence of allocations, launches, and full tensor passes. If an intermediate has `N` elements of `s` bytes, removing its standalone write and subsequent read can avoid roughly `2Ns` bytes of logical memory traffic. Actual HBM savings depend on cache residency; this estimate is a hypothesis, not a measured bandwidth result.

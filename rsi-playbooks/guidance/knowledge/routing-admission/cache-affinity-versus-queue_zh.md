@@ -23,7 +23,7 @@ Foretoken 已有 `kv_least_loaded`、`prefix`、`token_load` 和 `two_tier`；�
 
 `estimated_TTFT = ingress_wait + worker_wait + cache_ready_time + uncached_prefill_time + response_overhead`。
 
-这是分析模型，不是所有路由器共同使用的精确公式。缓存准备时间取决于状态所在位置及何时能被调度使用；索引宣称有前缀，不等于设备内存立即就绪。本文只讨论路由后果，不实现 offload。
+这是分析模型，不是所有路由器共同使用的精确公式。缓存准备时间取决于状态所在位置及何时能被调度使用；索引宣称有前缀，不等于设备内存立即就绪。
 
 Preble 估计近期计算负载、新请求 prefill 成本和缓存驱逐后果。DualMap 的 2026 年 2 月方法把请求限制到两个 hash 候选，先偏好复用；若预计 TTFT 超出 SLO，则转向低负载候选。它用自适应 prefix key 分散热点、保留冷前缀局部性，排队迁移仅去预先确定的 backup，且要求预计延迟收益为正。这是一种有限候选架构，不是全舰队最优搜索。
 

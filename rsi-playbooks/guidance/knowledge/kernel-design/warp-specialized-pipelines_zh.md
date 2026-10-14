@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](warp-specialized-pipelines.md) | 简体中文
 
-当一个内核无法同时有效利用数据搬运、矩阵计算和输出阶段时，可以研究 warp specialization：让不同 warp 承担不同职责。
-
 ## 分的是职责，而不只是数据
 
 普通并行分解让不同 warp 处理同一计算的不同元素。Warp specialization 则让一组加载输入、一组发出矩阵指令，另一组转换并写回结果，通过共享内存和 barrier 交接。
@@ -29,7 +27,7 @@ Barrier 的 phase 区分同一槽位的多次使用，上一轮的就绪不能�
 
 因此，即使时间线上交叠更多，额外生产者 warp 仍可能让内核变慢。应比较关键路径与输出速度，而不是同时运行的操作数量。还应与 collective 共同执行，观察是否争用 SM、带宽或共享内存。
 
-继续设计的空间包括职责分配、缓冲深度、累加器归属与输出粒度，均需适配真实层形状。[持久化调度](persistent-tile-scheduling_zh.md)讨论每个执行单元连续领取哪些输出块，本篇讨论单元内部怎样分工。
+继续设计的空间包括职责分配、缓冲深度、累加器归属与输出粒度，均需适配真实层形状。[持久化调度](persistent-tile-scheduling_zh.md)决定每个执行单元连续领取哪些输出块，warp specialization 决定单元内部怎样分工。
 
 ## 能区分原因的实验
 

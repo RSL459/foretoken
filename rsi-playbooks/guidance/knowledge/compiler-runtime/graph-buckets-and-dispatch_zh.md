@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](graph-buckets-and-dispatch.md) | 简体中文
 
-内核启动间隙明显、批次经常走 eager，或图重放的 padding 带来较多无效工作时，应研究实际 graph 分派。
-
 ## 图覆盖率取决于负载
 
 CUDA Graph 用较少的主机提交重放已记录的设备执行，但仍会完成记录中的工作，并要求形状、地址与操作行为相容。服务通常预先捕获一组批次配置，再把请求对应的执行分派到兼容的图。

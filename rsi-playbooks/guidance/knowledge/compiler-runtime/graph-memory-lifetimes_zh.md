@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](graph-memory-lifetimes.md) | 简体中文
 
-图捕获占用过多内存、输出跨模型步失效，或状态修改使快路径无法重放时，应检查地址、数据存活时间与生命周期归属。
+图捕获的内存占用、跨步输出有效性，以及状态修改能否兼容重放，都取决于张量地址、存活时间和生命周期归属。
 
 ## 地址稳定不代表数值不变
 

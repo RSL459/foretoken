@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](persistent-tile-scheduling.md) | 简体中文
 
-矩阵指令本身已经高效，但内核仍受尾部不满一轮的分块、重复准备或缓存复用不足影响时，可以研究持久化调度。
+高效的矩阵指令不能消除尾部不满一轮的分块、重复准备或缓存复用不足。持久化调度改变输出块的分配方式，并复用准备工作。
 
 ## 持久化改变了什么
 

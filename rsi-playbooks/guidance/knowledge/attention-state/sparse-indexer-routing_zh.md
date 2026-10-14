@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](sparse-indexer-routing.md) | 简体中文
 
-当 sparse MLA 已经很快，但历史 token 打分与 top-k 选择仍随上下文增长时，用本文研究选择过程本身。
-
 ## 问题与当前上游
 
 DeepSeek Sparse Attention（DSA）找到相关历史并不是零成本：轻量 indexer 先扫描历史 key，昂贵的 MLA 再读取选中的 token。把消费方限制为固定 top-k 后，indexer 在 decode 中的线性成本、完整 prefill 中的平方级工作可能暴露出来。

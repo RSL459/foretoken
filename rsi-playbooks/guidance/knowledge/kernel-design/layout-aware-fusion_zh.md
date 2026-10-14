@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](layout-aware-fusion.md) | 简体中文
 
-当高效内核之间仍反复生成、重排和读取中间张量时，应从数据生产者与消费者共同研究融合。
-
 ## 从真实上下游开始
 
 一个归一化或激活算子单独看很快，但分配、启动和全张量遍历串起来仍有明显开销。若中间张量有 `N` 个元素，每个 `s` 字节，省去一次独立写回与随后读取，逻辑访存量约减少 `2Ns` 字节。实际 HBM 节省取决于缓存命中，这只是待验证估计。

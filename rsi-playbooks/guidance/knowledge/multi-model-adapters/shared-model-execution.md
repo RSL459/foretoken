@@ -21,7 +21,7 @@ Prism's balloon driver also coordinates model-weight and KV memory demand. Idle-
 
 A capacity relation is sum_j(W_j+K_j+A_j)+R≤C, where W is resident weights, K physical KV, A activations/workspace, R runtime reserve, and C device capacity. Virtual reservation is not another physical K term. If all models peak simultaneously, elasticity cannot make the sum disappear; admission and placement still determine which latency targets are achievable.
 
-The paper uses demand-complementary placement and local slack-aware arbitration. For this entry, their role is to protect memory headroom and avoid uncontrolled contention; cluster placement algorithms are a separate optimization boundary.
+The paper uses demand-complementary placement and local slack-aware arbitration to protect memory headroom and avoid uncontrolled contention.
 
 ## Current availability, models, and precision
 

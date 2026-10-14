@@ -15,7 +15,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 `_preempt_request` 释放 KV 和编码器状态，重置已计算 token 进度，清理推测 token，标记 PREEMPTED，并把请求放回等待队列。若 victim 已进入本轮调度，还需归还对应预算。恢复时要为保留的请求历史重建缺失状态；prefix caching 可能复用部分块，因此重置进度并不意味着历史 token 必然全部重算。
 
-这些都是已有功能。vLLM 官方优化指南建议观察抢占次数，降低并发压力或增加 KV 空间，并明确 V1 默认采用重算，而不是默认 CPU swapping。这里研究运行集合选择，不重复设计新的 offload 层。
+这些都是已有功能。vLLM 官方优化指南建议观察抢占次数，降低并发压力或增加 KV 空间，并明确 V1 默认采用重算，而不是默认 CPU swapping。
 
 ## 为什么初始可放入还不够
 

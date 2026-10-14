@@ -21,7 +21,7 @@ Prism balloon driver 还协调权重与 KV 内存。空闲模型驱逐释放权�
 
 容量关系可写为 sum_j(W_j+K_j+A_j)+R≤C：W 为驻留权重，K 为物理 KV，A 为 activation/workspace，R 为 runtime 预留，C 为设备容量。虚拟预留不是另一个物理 K 项。所有模型同时达到峰值时，弹性不会让总量消失，仍需要 admission 和 placement 决定可满足的目标。
 
-论文采用需求互补的放置与本地 slack-aware 仲裁。本篇只关注它们如何保留内存余量、避免无控制争用；集群放置算法属于另一优化边界。
+论文采用需求互补的放置与本地 slack-aware 仲裁，以保留内存余量、避免无控制争用。
 
 ## 当前可用性、模型与精度
 

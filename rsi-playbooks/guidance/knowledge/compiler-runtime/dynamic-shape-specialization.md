@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](dynamic-shape-specialization_zh.md)
 
-Use this when variable serving batches cause repeated compilation, broad symbolic kernels underperform common shapes, or startup specialization costs outweigh steady-state savings.
+Variable serving batches can cause repeated compilation, while broad symbolic kernels may underperform on common shapes. Specialization trades startup cost for steady-state savings.
 
 ## Symbolic compilation and graph replay solve different problems
 

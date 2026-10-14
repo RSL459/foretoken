@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](graph-buckets-and-dispatch_zh.md)
 
-Investigate graph dispatch when kernel launch gaps remain large, batches frequently run eagerly, or graph padding consumes appreciable work.
-
 ## Graph coverage is a workload property
 
 CUDA Graph replay submits a recorded device execution with fewer host launches. It still executes the recorded work and requires compatible shapes, addresses, and operation behavior. A service therefore captures selected batch configurations and dispatches incoming work to a compatible graph.

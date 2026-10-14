@@ -33,7 +33,7 @@ For CPU execution, current vLLM documentation recommends NUMA-local rank memory 
 
 ## Remaining choices and discriminating experiments
 
-The useful remaining space is placement that matches measured compute, memory bandwidth, NUMA locality, and transfer paths. Quantized weights can reduce transfer volume, but conversion and unsupported mixed-backend operators may erase the gain. Cluster scheduling belongs to a separate owner; this note concerns execution inside a chosen device set.
+The useful remaining space is placement that matches measured compute, memory bandwidth, NUMA locality, and transfer paths. Quantized weights can reduce transfer volume, but conversion and unsupported mixed-backend operators may erase the gain.
 
 Compare an existing single-device path, layer partition, and supported tensor split using one model and dtype. Measure actual device assignment, per-partition time, transfer volume, reduction time, CPU bandwidth, and NUMA placement. Distinguish model loading from steady-state inference. If offloading weights, include every repeated transfer rather than only a cached warmup.
 

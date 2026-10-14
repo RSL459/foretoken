@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](recurrent-speculation-replay_zh.md)
 
-Use this entry when recurrent-state writes or speculative state snapshots dominate hybrid-model execution.
-
 ## Problem and upstream position
 
 A recurrent layer retains a matrix per request rather than token-wise KV. Conventional decode reads and writes that entire matrix each step. Speculative verification may additionally retain intermediate states so rejection can restore the accepted prefix. At high batch, those bytes can dominate even though history length no longer determines the recurrent-state size.

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](persistent-tile-scheduling_zh.md)
 
-Use this when a matrix kernel spends time on poorly filled tile waves, repeated setup, or weak cache reuse despite efficient tensor-core instructions.
+Efficient tensor-core instructions do not eliminate poorly filled tile waves, repeated setup, or weak cache reuse. Persistent scheduling changes how output tiles are assigned and how setup is reused.
 
 ## What persistence changes
 

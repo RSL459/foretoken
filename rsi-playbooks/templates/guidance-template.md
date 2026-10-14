@@ -2,7 +2,7 @@
 
 English | [简体中文](guidance-template_zh.md)
 
-State the concrete problem this entry helps investigate. Place technical knowledge under the category that owns the mechanism in [`guidance/knowledge/`](../guidance/knowledge/README.md); research methods belong in `guidance/meta-knowledge/`. Adapt the sections below to the question rather than filling every heading mechanically.
+Open with the technical problem and its cause, then explain the mechanism and implementation. Place technical knowledge under the category that owns the mechanism in [`guidance/knowledge/`](../guidance/knowledge/README.md); research methods belong in `guidance/meta-knowledge/`. Adapt the sections below to the question rather than filling every heading mechanically.
 
 ## Problem and current approach
 

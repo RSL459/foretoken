@@ -9,7 +9,7 @@ English | [简体中文](streaming-audio-video_zh.md) | [Multimodal generation](
 
 ## What the client is waiting for
 
-Streaming text tokens does not automatically give streaming speech or video. A speech codec decoder may need future codes; a video VAE may wait for a latent chunk; transport may deliver bytes that cannot yet be played. The relevant objective is time to first usable media and sustained delivery without underruns. This entry is external research and engine evidence, not a claim that Foretoken currently supports audio/video generation.
+Streaming text tokens does not automatically give streaming speech or video. A speech codec decoder may need future codes; a video VAE may wait for a latent chunk; transport may deliver bytes that cannot yet be played. The relevant objective is time to first usable media and sustained delivery without underruns.
 
 Qwen2.5-Omni supplies an architectural foundation: Thinker emits text and hidden-state conditioning, Talker emits speech codes, and a chunked waveform path converts them to audio. Current vLLM-Omni documents an asynchronous Qwen3-Omni Thinker→Talker→Code2Wav pipeline and a separate diffusion-video WebSocket API. These are different model and protocol paths; their capabilities should not be collapsed into a generic “realtime multimodal” label.
 

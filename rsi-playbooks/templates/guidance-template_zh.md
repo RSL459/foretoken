@@ -2,7 +2,7 @@
 
 [English](guidance-template.md) | 简体中文
 
-用一句话说明本篇能帮助研究什么具体问题。技术知识放入 [`guidance/knowledge/`](../guidance/knowledge/README_zh.md) 中承担该机制的分类，研究方法放入 `guidance/meta-knowledge/`。按问题调整以下章节，不必机械填满每个标题。
+直接从技术问题及其原因开始，再解释原理与实现。技术知识放入 [`guidance/knowledge/`](../guidance/knowledge/README_zh.md) 中承担该机制的分类，研究方法放入 `guidance/meta-knowledge/`。按问题调整以下章节，不必机械填满每个标题。
 
 ## 问题与现有做法
 

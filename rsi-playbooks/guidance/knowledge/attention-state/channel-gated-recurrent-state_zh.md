@@ -7,13 +7,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](channel-gated-recurrent-state.md) | 简体中文
 
-用本文理解 Kimi Delta Attention 的状态更新，以及 recurrent decode 与分块并行 prefill 为什么有不同成本。
-
 ## 问题与当前上游
 
-线性注意力用固定大小的循环矩阵代替持续增长的逐 token 缓存，但 decode 并不因此变成零成本：每个活跃请求、每层、每个 token 都可能读写一个较大的矩阵。prefill 若逐 token 串行更新，也会损失 GPU 并行能力。
+线性注意力用固定大小的循环矩阵代替持续增长的逐 token 缓存。Decode 为每个活跃请求、每层、每个 token 读取并更新矩阵，状态流量因此成为重要成本。Prefill 一次处理多个 token，需要将相互依赖的更新改写为并行计算。
 
-2025 年 10 月的 Kimi Linear 报告提出 Kimi Delta Attention（KDA），在 Gated DeltaNet（GDN）基础上增加按通道遗忘。Flash Linear Attention（FLA）已提供 chunk 与 fused-recurrent 路径，以及不同后端适配。剩余问题是状态流量、布局、数值和不等长序列执行，不是从零写一条 recurrence。
+2025 年 10 月的 Kimi Linear 报告提出 Kimi Delta Attention（KDA），在 Gated DeltaNet（GDN）基础上增加按通道遗忘。Flash Linear Attention（FLA）已提供 chunk 与 fused-recurrent 路径，以及不同后端适配。进一步优化涉及状态流量、布局、数值和不等长序列执行。
 
 ## 一个 token 怎样更新状态
 

@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](hybrid-prefix-checkpoints_zh.md)
 
-Use this entry when a shared prompt has cached attention KV but cannot resume safely or efficiently from the corresponding recurrent state.
-
 ## Problem and upstream position
 
 A transformer can reuse KV pages for a cached prefix. A hybrid model also needs the recurrent state produced after exactly that prefix, together with any convolution state. Keeping only the state at the end of the previous request is insufficient when two requests diverge earlier.
@@ -27,7 +25,7 @@ The allocator introduces a second geometry. vLLM groups compatible layers into a
 
 ## Conditions and trade-offs
 
-This concerns hybrid models such as attention plus Mamba/GDN, not every model labeled “linear attention.” State components, layer ratios, dtypes, and snapshot size are model-specific. A large FP32 state can make frequent checkpoints expensive; a smaller attention cache does not imply cheap recurrent snapshots.
+For hybrid models combining attention with Mamba/GDN, state components, layer ratios, dtypes, and snapshot size are model-specific. A large FP32 state can make frequent checkpoints expensive; a smaller attention cache does not imply cheap recurrent snapshots.
 
 The v0.30.0 fine-grained option requires `mamba-cache-mode=align`, EAGLE/MTP on the Mamba group, and an explicit `prefix-match-unit` smaller than the Mamba block size. The match unit must divide the applicable cache block sizes; multi-module MTP is excluded by that documentation. Those are version-scoped prerequisites, not advice to enable speculation solely to make every hybrid workload cacheable.
 

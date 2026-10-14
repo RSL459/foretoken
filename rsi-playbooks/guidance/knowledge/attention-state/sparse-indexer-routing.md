@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](sparse-indexer-routing_zh.md)
 
-Use this entry when sparse MLA is already fast but scoring historical tokens and selecting top-k still scale with context length.
-
 ## Problem and upstream position
 
 DeepSeek Sparse Attention (DSA) does not discover relevant history for free. A lightweight indexer first scans historical keys; only then does expensive MLA attend to selected tokens. Reducing the consumer to a fixed top-k can expose the indexer's linear decode cost and quadratic full-prefill work.

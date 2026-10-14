@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](hybrid-prefix-checkpoints.md) | 简体中文
 
-当共享 prompt 的注意力 KV 已缓存，却无法从对应循环状态安全、高效地恢复时，用本文分析检查点边界。
-
 ## 问题与当前上游
 
 普通 transformer 可以复用前缀 KV page。hybrid 模型还需要处理完同一个前缀后得到的循环状态，以及可能存在的卷积状态。若两个请求更早就分叉，只保留上一请求最终状态是不够的。
@@ -27,7 +25,7 @@ vLLM 已支持对齐的 Mamba 检查点；v0.30.0 官方文档还提供有明确
 
 ## 适用条件与取舍
 
-本文讨论 attention 与 Mamba/GDN 等混合模型，不是所有叫“线性注意力”的模型。状态组成、层比例、dtype 和快照大小都依模型而定。较大的 FP32 状态会让频繁检查点昂贵，注意力缓存较小不意味着循环快照便宜。
+Attention 与 Mamba/GDN 等混合模型的状态组成、层比例、dtype 和快照大小都依模型而定。较大的 FP32 状态会让频繁检查点昂贵，注意力缓存较小不意味着循环快照便宜。
 
 v0.30.0 的细粒度选项要求 `mamba-cache-mode=align`、Mamba group 上启用 EAGLE/MTP，并显式设置小于 Mamba block 的 `prefix-match-unit`。该单位必须整除参与缓存的 block size，文档排除了 multi-module MTP。这些是特定版本的前提，不是建议为所有 hybrid 请求仅仅为了缓存而启用 speculative decoding。
 

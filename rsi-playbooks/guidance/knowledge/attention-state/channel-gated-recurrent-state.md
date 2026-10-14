@@ -7,13 +7,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](channel-gated-recurrent-state_zh.md)
 
-Use this entry to understand Kimi Delta Attention's state update and the different costs of recurrent decode and chunk-parallel prefill.
-
 ## Problem and upstream position
 
-Linear attention avoids a growing per-token cache by retaining a fixed-size recurrent matrix. That does not make decode free: every active request may read and write a large matrix at every layer and token. Prefill also cannot simply serialize those updates without sacrificing GPU parallelism.
+Linear attention replaces a growing per-token cache with a fixed-size recurrent matrix. Decode reads and updates that matrix for every active request, layer, and token, making state traffic a significant cost. Prefill processes many tokens at once and needs a parallel formulation of the dependent updates.
 
-Kimi Delta Attention (KDA), introduced in the October 2025 Kimi Linear report, extends Gated DeltaNet (GDN) with channel-wise forgetting. Flash Linear Attention (FLA) already implements both chunk and fused-recurrent paths, including backend-specific adapters. The open questions are state traffic, layout, numerical behavior, and variable-length execution—not whether a recurrence can be written from scratch.
+Kimi Delta Attention (KDA), introduced in the October 2025 Kimi Linear report, extends Gated DeltaNet (GDN) with channel-wise forgetting. Flash Linear Attention (FLA) already implements both chunk and fused-recurrent paths, including backend-specific adapters. Further optimization concerns state traffic, layout, numerical behavior, and variable-length execution.
 
 ## What one token does
 

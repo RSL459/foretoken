@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](recurrent-speculation-replay.md) | 简体中文
 
-当 hybrid 模型主要耗时在循环状态写回或 speculative 中间状态快照时，用本文分析 replay 表示。
-
 ## 问题与当前上游
 
 循环层为每个请求保留矩阵，而不是逐 token KV。普通 decode 每步读写完整矩阵，speculative verify 还可能保存各位置的中间状态，以便拒绝时恢复 accepted prefix。高 batch 下，即使状态大小已经与历史长度无关，这些字节仍可能主导执行。

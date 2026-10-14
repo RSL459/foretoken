@@ -9,7 +9,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 客户端真正等待什么？
 
-文本 token 流不自动等于语音或视频流。语音解码器可能需要未来编码，视频 VAE 可能等待完整 latent 块，网络也可能先送来暂时无法播放的字节。应优化的是首个可用媒体的延迟，以及持续播放时不中断的交付能力。本篇整理外部研究与引擎证据，不声称 Foretoken 当前支持音视频生成。
+文本 token 流不自动等于语音或视频流。语音解码器可能需要未来编码，视频 VAE 可能等待完整 latent 块，网络也可能先送来暂时无法播放的字节。应优化的是首个可用媒体的延迟，以及持续播放时不中断的交付能力。
 
 Qwen2.5-Omni 提供基本架构：Thinker 产生文本与隐藏状态条件，Talker 产生语音编码，再分块还原波形。当前 vLLM-Omni 文档描述异步 Qwen3-Omni Thinker→Talker→Code2Wav 流水，以及独立的扩散视频 WebSocket API。它们属于不同模型与协议，不能统称后就抹去具体边界。
 

@@ -7,8 +7,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](mla-cache-layouts.md) | 简体中文
 
-用本文区分 MLA decode 中的 latent 缓存带宽、量化布局、稀疏读取和调度成本。
-
 ## 问题与当前上游
 
 Multi-head Latent Attention（MLA）把历史 token 压缩为多个 query head 共享的 latent 向量，减少缓存容量。不过 decode 仍要读取历史、计算各 head 的分数，并合并分片输出。缓存小不等于执行快：scale 读取、离散 gather、反量化和输出投影可能成为主要成本。
