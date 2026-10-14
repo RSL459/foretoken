@@ -102,6 +102,14 @@ func (reconciler *FrontendServiceReconciler) SetupWithManager(manager ctrl.Manag
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{})
+	if reconciler.CacheProfile.ClaimName != "" {
+		builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
+			if object.GetName() != reconciler.CacheProfile.ClaimName {
+				return nil
+			}
+			return reconciler.frontendsInNamespace(ctx, object)
+		}))
+	}
 	if reconciler.RuntimeProfile.Gateway != nil {
 		builder = builder.Owns(&gatewayv1.HTTPRoute{})
 	}

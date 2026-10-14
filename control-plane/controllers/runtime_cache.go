@@ -128,7 +128,11 @@ type RuntimeCacheProfile struct {
 // Resolve selects the configured existing claim or the single usable managed cache in a namespace.
 func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient client.Client, namespace string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
 	if profile.ClaimName != "" {
-		return &inferencev1alpha1.RuntimeCacheBinding{ClaimName: profile.ClaimName, MountPath: profile.MountPath}, true, nil
+		claim := new(corev1.PersistentVolumeClaim)
+		if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: profile.ClaimName}, claim); err != nil {
+			return nil, false, fmt.Errorf("read runtime cache claim: %w", err)
+		}
+		return profile.binding(claim.Name, claim.Annotations[directoryOwnerAnnotation])
 	}
 	var caches inferencev1alpha1.RuntimeCacheList
 	if err := kubeClient.List(ctx, &caches, client.InNamespace(namespace)); err != nil {
@@ -150,13 +154,22 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 	if cache.Status.ObservedGeneration != cache.Generation || cache.Status.ClaimName == "" {
 		return nil, false, nil
 	}
-	binding := &inferencev1alpha1.RuntimeCacheBinding{ClaimName: cache.Status.ClaimName, MountPath: profile.MountPath}
-	if value := cache.Annotations[directoryOwnerAnnotation]; cache.Spec.Directory != "" && value != "" {
+	owner := ""
+	if cache.Spec.Directory != "" {
+		owner = cache.Annotations[directoryOwnerAnnotation]
+	}
+	return profile.binding(cache.Status.ClaimName, owner)
+}
+
+// binding resolves the storage identity shared by preparation, serving and file readers.
+func (profile RuntimeCacheProfile) binding(claimName, owner string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
+	binding := &inferencev1alpha1.RuntimeCacheBinding{ClaimName: claimName, MountPath: profile.MountPath}
+	if value := owner; value != "" {
 		uidText, gidText, found := strings.Cut(value, ":")
 		uid, uidErr := strconv.ParseUint(uidText, 10, 32)
 		gid, gidErr := strconv.ParseUint(gidText, 10, 32)
 		if !found || uidErr != nil || gidErr != nil || uid == 0 || uid == 1<<32-1 || gid == 1<<32-1 {
-			return nil, false, fmt.Errorf("RuntimeCache %q has invalid directory owner %q", cache.Name, value)
+			return nil, false, fmt.Errorf("runtime cache claim %q has invalid directory owner %q", claimName, value)
 		}
 		binding.DirectoryOwner = &inferencev1alpha1.RuntimeCacheDirectoryOwner{UID: int64(uid), GID: int64(gid)}
 	}

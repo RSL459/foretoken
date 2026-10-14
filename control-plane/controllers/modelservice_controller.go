@@ -83,6 +83,14 @@ func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager)
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
 		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
 		Watches(&inferencev1alpha1.FrontendService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace))
+	if reconciler.CacheProfile.ClaimName != "" {
+		builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
+			if object.GetName() != reconciler.CacheProfile.ClaimName {
+				return nil
+			}
+			return reconciler.modelServicesInNamespace(ctx, object)
+		}))
+	}
 	if reconciler.Alerts != nil && reconciler.Alerts.watchRules {
 		builder = builder.Owns(&monitoringv1.PrometheusRule{})
 	}
