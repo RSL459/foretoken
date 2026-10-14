@@ -79,10 +79,18 @@ See [plotting examples](../benchmarks/docs/recipes.md#plot-saved-results) to red
 
 ## Complete the experiment notes
 
-After each run, append to the iteration's `notes/iteration.md`:
+Keep execution evidence, the history of judgments, and the current summary distinct:
 
-- The run directory or W&B link, and the change or hypothesis tested.
-- Differences from the reference results, an explanation, and conclusions supported by the evidence.
-- The decision to keep, refine, or revert the change, and the next experiment.
+| Record | How it changes |
+| --- | --- |
+| Completed run artifacts | Preserve the original commands, metrics, responses, and logs. Later analysis links to them. In-progress files remain owned by their runner. |
+| `iterations/<name>/notes/iteration.md` | The assigned Recorder appends run interpretations, independent reviews, decisions, and corrections, with timestamps, sources, and evidence links. |
+| `notes/experiment.md` | The Recorder updates the current approach, open questions and disagreements, and resource arrangements, linking the relevant iteration entries and the lead's decisions. |
 
-At the end of an iteration, summarize the main findings and link the iteration in `notes/experiment.md`. Keep metrics and logs in their original run directories and link to them from the notes. Record the reasons for failed or interrupted runs as well. Use the [experiment and iteration templates](templates/README.md) as a writing reference.
+For example, a reviewer may recommend another comparison, the lead may authorize it, and a later result may justify discarding the candidate. Keep those as separate attributed entries rather than replacing the recommendation with the final decision. Each decision states the action and its scope; a changed decision or correction identifies the earlier entry it supersedes and the new evidence. The Recorder records the decision-maker's actual conclusion, not its own interpretation as a lead decision.
+
+After each run, append its directory or W&B link, the hypothesis tested, differences from the reference, and the supported conclusion. Record failures and interruptions as well. Use the existing [iteration template](templates/iteration-template.md) for the history; there is no need to add mutable decision fields to independent review artifacts. Send contributions to the assigned writer so parallel agents do not overwrite one another's entries.
+
+The overview is a current reading aid, not a second decision history. Refresh it as decisions change and link to the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
+
+Use the [report template](templates/report-template.md) for the user-facing `report.md`: start with a comparison table of measured task metrics and changes from base, briefly describe each iteration, and finish with the retained approach and result links.

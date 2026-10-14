@@ -22,11 +22,9 @@ Choose directions by their importance and potential benefit. Do not limit work t
 
 ## Turn findings into research tasks
 
-The lead and Workers actively formulate concrete questions from references, source code, and measurements. The lead coordinates directions and resources; each Worker owns analysis, design, implementation, deployment, measurement, and interpretation for its assigned question. A task might be to reduce Gated DeltaNet (GDN) input preparation and intermediate writeback, improve work partitioning for small-batch MoE, or investigate a new scheduling or disaggregated architecture.
+The lead, Advisors, and Workers actively formulate concrete questions from references, source code, and measurements. The lead coordinates directions and resources and makes cross-direction decisions; Advisors contribute independent research, alternatives, and counterexamples. Each Worker owns research, analysis, design, implementation, deployment, measurement, and interpretation for its assigned question, without waiting for an Advisor proposal.
 
 For each investigation, state what is known, what should change, and how the next step will produce useful results. If no ready-made switch, script, or tuner exists, reuse upstream capabilities or construct a focused experiment for the question, then proceed into implementation.
-
-For example, if increasing speculative steps raises the number of accepted tokens but barely changes throughput, investigate the separate costs of drafting, verification, sampling, and communication. If sampling is a shared source of overhead, examine work partitioning and data reuse, then propose and compare alternative implementations.
 
 ## Keep digging as results emerge
 
@@ -37,7 +35,7 @@ Once a direction is chosen, give source analysis, experiments, and implementatio
 - Local speedups yield limited service gains: trace the integrated execution and investigate batching, scheduling, data placement, and effects on other stages.
 - Parameter settings repeatedly produce similar results: reconsider their shared execution strategy and explore different algorithms, parallel dimensions, or ways to organize work.
 
-Larger changes can be divided into key hypotheses, a core implementation, and full integration. Address the technical questions that most affect feasibility first, then complete execution with real requests. For Attention/FFN disaggregation, for example, investigate batching requirements, activation transfer, scheduling overlap, and multi-request execution in turn, always keeping the overall objective in view.
+Larger changes can be divided into key hypotheses, a core implementation, and full integration. Address the technical questions that most affect feasibility first, then complete execution with real requests.
 
 ## Maintain the research direction
 
@@ -49,10 +47,10 @@ After a group of experiments, repeated similar results, or before summarizing, r
 
 ## Explore and exchange findings in parallel
 
-Assign complete research questions to Workers so independent directions advance together. Provide objectives, existing findings, resource scope, and delivery locations while leaving room for independent thinking. Within its assignment, each Worker continues through edits, deployment, measurement, analysis, and the next design iteration, discussing mechanisms directly with Researchers and checking evidence with Recorders. At least one Worker follows the end-to-end execution path to connect local findings with system behavior.
+Assign complete research questions to Workers so independent directions advance together. Provide objectives, existing findings, resource scope, and delivery locations while leaving room for independent thinking. Within its assignment, each Worker continues through edits, deployment, measurement, analysis, and the next design iteration, discussing mechanisms directly with Advisors and checking evidence with Recorders. At least one Worker follows the end-to-end execution path to connect local findings with system behavior.
 
 Install the shared platform once, then follow the [parallel candidate example](../../../docs/custom-deployment.md#run-candidates-in-parallel) to give concurrent candidates separate worktrees and Kubernetes namespaces. Keep writable runtime caches and result directories separate; share read-only model data where suitable. Each Worker runs `foretoken deploy` from its own worktree and uses `--engine-source` to bind its candidate's engine checkout when changing engine code. Subsequent edits reuse that candidate's incremental source updates and compiler cache; different worktrees can build and deploy concurrently. The lead coordinates controller, CRD, or shared platform configuration changes and explicitly updates the platform.
 
 Overlap research, implementation, builds, measurements, and analysis. While one candidate builds or waits for readiness, other Workers continue their candidates; when results arrive, the responsible Worker interprets them and starts the next iteration. Schedule concurrent measurements within actual resource capacity, distinguishing candidate gains from contention for shared CPU, storage, or network resources. Research and preparation need not occupy GPUs throughout, and Worker counts need not equal GPU experiment-group counts.
 
-Share reusable implementations, rejected hypotheses, new constraints, and composable changes promptly. The lead combines findings across directions and coordinates code integration and cross-module issues; Workers complete assigned integration and service validation. Measure combined approaches again to understand their shared costs and actual effects. When a direction completes or becomes blocked, its Worker sends the lead evidence, a proposed next action, and a new-task request, retaining context for subsequent work.
+Share reusable implementations, rejected hypotheses, new constraints, and composable changes promptly. The lead combines findings across directions and coordinates code integration and cross-module issues; Workers complete assigned integration and service validation. Measure combined approaches again to understand their shared costs and actual effects. Share intermediate findings while continuing within the assignment. When the question is answered or progress needs a change of scope or resources, send the lead the conclusion, evidence, and proposed next action, retaining context for subsequent work.

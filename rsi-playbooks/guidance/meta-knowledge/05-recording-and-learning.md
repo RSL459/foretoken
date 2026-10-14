@@ -13,7 +13,7 @@ Turn research findings, failure causes, and unproductive detours into reusable k
 
 Raw artifacts preserve commands, configurations, versions, metrics, and outputs. Iteration notes explain the question, changes, results, and next steps. See the [experiment records guide](../../experiment-records.md) for recording instructions.
 
-Keep raw results from concurrent experiments in separate candidate directories. Workers give Recorders the worktree containing the actual changes, source version, deployment and run identity, commands, result locations, and their interpretation. Recorders read evidence from the corresponding candidate, check comparison conditions and attribution, and promptly return questions requiring further measurement to Workers. Assign authors to files or sections in shared records so documentation can progress alongside the next research iteration.
+Keep raw results from concurrent experiments in separate candidate directories. Workers give Recorders the worktree containing the actual changes, source version, deployment and run identity, commands, result locations, and their interpretation. Recorders read evidence from the corresponding candidate, check comparison conditions and attribution, and promptly return questions requiring further measurement to Workers. Recorders append attributed interpretations, independent reviews, decisions, and corrections to their assigned iteration history. The Recorder maintains the overview, linking that history and the lead's actual decisions. Advisors contribute sources and mechanisms to reusable knowledge; agree on one writer per guidance file so recording can progress alongside the next research iteration.
 
 Extract useful insights from reference reading, source analysis, and experiments:
 
@@ -26,9 +26,9 @@ Explain causes around a specific question, with evidence and applicable conditio
 
 ## Preserve usable entry points
 
-Alongside conclusions, preserve implementation locations, input construction methods, focused experiment scripts, run commands, and result links. Explain how to obtain the same shapes, layouts, and state, and which question the experiment answered, so subsequent agents can reproduce, modify, or extend it quickly.
+Knowledge entries explain reusable input construction, algorithms, and implementation conditions, linking stable code locations and supporting experiments. Explain how shapes, layouts, and state affect the mechanism so readers can reproduce or adapt it.
 
-For candidates with local gains, state how far full-model and service validation has progressed and what remains to be addressed. Keep experiments and implementations in accessible locations and cite stable paths or versions from the knowledge notes.
+Keep complete run commands, experiment scripts, validation progress, and remaining work in the experiment records. Technical entries describe mechanisms and established effects rather than task-specific execution plans.
 
 - Put technical principles, implementation experience, and optimization findings in [technical knowledge](../knowledge/README.md).
 - Put search, analysis, decision-making, design, and learning methods in [meta-knowledge](README.md).
