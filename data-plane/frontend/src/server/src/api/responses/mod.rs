@@ -14,13 +14,12 @@ mod types;
 use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::State;
+use crate::runtime::RequestSnapshot;
 use axum::extract::rejection::JsonRejection;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Extension, Json, Router};
-use foretoken_admission::AdmissionApi;
 use foretoken_chat::{ChatEvent, FinishReason};
 use futures::{Stream, StreamExt};
 use serde_json::json;
@@ -43,7 +42,7 @@ pub(super) fn router() -> Router<ApiState> {
 
 /// Lower a Responses request once, then expose the shared chat output as JSON or SSE.
 async fn create(
-    State(state): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     body: Result<Json<ResponsesRequest>, JsonRejection>,
 ) -> Response {
@@ -67,13 +66,7 @@ async fn create(
         Err(error) => return error.into_response(),
     };
     let generated = match state
-        .generate_chat(
-            meta.model.clone(),
-            chat,
-            meta.include_reasoning,
-            timing,
-            AdmissionApi::Responses,
-        )
+        .generate_chat(meta.model.clone(), chat, meta.include_reasoning, timing)
         .await
     {
         Ok(generated) => generated,

@@ -17,6 +17,15 @@ const (
 	MaxInternalGenerateRequestBodyLimitBytes     int64 = 256 * 1024 * 1024
 )
 
+// InstanceAdmissionConfig bounds unfinished generation units accepted by each model instance.
+type InstanceAdmissionConfig struct {
+	// MaxConcurrentRequests includes engine waiting, running, and unfinished submissions.
+	// +kubebuilder:validation:Format=int64
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	MaxConcurrentRequests uint32 `json:"maxConcurrentRequests"`
+}
+
 // ModelTimeouts defines ModelService lifecycle budgets.
 type ModelTimeouts struct {
 	Startup Duration `json:"startup"`
@@ -126,6 +135,15 @@ type ModelPoolTemplate struct {
 	// +optional
 	EngineArgs *EngineArguments `json:"engineArgs,omitempty"`
 
+	// Env replaces the service environment when supplied; an empty map clears inheritance.
+	// +optional
+	// +nullable
+	// +mapType=atomic
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Env *ModelEnvironment `json:"env,omitempty"`
+
 	// MaxInputTokens is the prompt admission limit for requests routed to this Pool.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
@@ -222,6 +240,15 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 
+	// PrefixCacheIsolation selects caller-bound caching when true and unsalted sharing when false.
+	// Omission preserves the request's cache_salt. The setting applies to every Pool and frontend.
+	// +optional
+	PrefixCacheIsolation *bool `json:"prefixCacheIsolation,omitempty"`
+
+	// InstanceAdmission limits accepted unfinished work in each instance; omission is unrestricted.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
+
 	// InternalGenerateRequestBodyLimitBytes is the maximum body size accepted by
 	// a group-local generate endpoint. It defaults to 64 MiB.
 	// +optional
@@ -261,10 +288,20 @@ type ModelServiceSpec struct {
 	// +optional
 	Observability *ModelObservability `json:"observability,omitempty"`
 
-	// Admission replaces the frontend's entire admission block for this model.
-	// Limits apply independently in each frontend replica; omission uses its defaults.
+	// RouterPipeline overrides selected frontend routing slots for this model and its execution stages.
+	// Omitted slots inherit; supplied algorithms and parameters replace the entire slot.
+	// +optional
+	RouterPipeline *ModelRouterPipeline `json:"routerPipeline,omitempty"`
+
+	// Admission replaces the frontend's entire admission block; omission uses its defaults.
 	// +optional
 	Admission *AdmissionConfig `json:"admission,omitempty"`
+
+	// RoleRules replaces the frontend's entire list; an empty list disables role rules.
+	// +optional
+	// +listType=map
+	// +listMapKey=role
+	RoleRules *[]RoleRule `json:"roleRules,omitempty"`
 
 	// Autoscaling is evaluated by the ModelService controller. Algorithms remain
 	// side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
@@ -299,6 +336,15 @@ type ModelServiceSpec struct {
 	// EngineArgs uses the selected backend's native option names without leading --.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
+
+	// Env configures model runtime containers and their child processes.
+	// +optional
+	// +nullable
+	// +mapType=atomic
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Env ModelEnvironment `json:"env,omitempty"`
 }
 
 // AutoscalingStageStatus describes one named pipeline stage result.

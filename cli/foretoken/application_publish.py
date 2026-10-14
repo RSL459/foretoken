@@ -84,12 +84,24 @@ def publish(
     previous: Path | None,
     *,
     release_owned: bool = False,
-) -> None:
-    """Expose an immutable directory, sharing unchanged files with its previous version."""
+    reuse_previous: bool = False,
+    sources: dict | None = None,
+    image: str | None = None,
+) -> Path:
+    """Publish immutable files and provenance, optionally reusing an identical source revision."""
     if (destination / "manifest.json").is_file():
-        return
+        return destination
     if not source.is_dir():
         raise FileNotFoundError(f"application export is missing: {source}")
+    previous_files = None
+    if reuse_previous and previous is not None and (previous / "manifest.json").is_file():
+        metadata = json.loads((previous / "manifest.json").read_text())
+        if (
+            metadata.get("binding") == binding
+            and not metadata.get("releaseOwned")
+            and metadata.get("image") == image
+        ):
+            previous_files = metadata["files"]
     destination.parent.mkdir(parents=True, exist_ok=True)
     prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
     if not release_owned:
@@ -101,6 +113,7 @@ def publish(
         staging = Path(temporary) / "payload"
         staging.mkdir()
         files = []
+        unchanged = previous_files is not None
         for origin in sorted(source.rglob("*")):
             if origin.is_symlink():
                 raise ValueError(
@@ -125,6 +138,7 @@ def publish(
             ):
                 os.link(old, target)
             else:
+                unchanged = False
                 shutil.copyfile(origin, target)
                 target.chmod(mode)
             files.append(
@@ -134,13 +148,22 @@ def publish(
                     "size": target.stat().st_size,
                 }
             )
+        # Reuse requires the same environment, published bytes and executable modes.
+        # Comparing the complete manifest also detects files removed from the new export.
+        if previous is not None and unchanged and files == previous_files:
+            return previous
         (staging / "manifest.json").write_text(
             json.dumps(
-                {"binding": binding, "releaseOwned": release_owned, "files": files}
+                {
+                    "binding": binding, "releaseOwned": release_owned,
+                    "files": files, "sources": sources,
+                    **({"image": image} if image is not None else {}),
+                }
             )
             + "\n"
         )
         staging.rename(destination)
+    return destination
 
 
 def retire(
@@ -176,12 +199,16 @@ if __name__ == "__main__":
     else:
         destination = Path(sys.argv[2])
         binding = sys.argv[3]
-        publish(
+        destination = publish(
             Path(sys.argv[1]),
             destination,
             binding,
             Path(sys.argv[4]) if sys.argv[4] else None,
+            reuse_previous=json.loads(sys.argv[6]),
+            sources=json.loads(sys.argv[7]),
+            image=json.loads(sys.argv[8]),
         )
         retained = json.loads(sys.argv[5])
         if retained is not None:
             retire(destination.parent, binding, set(retained) | {destination.name})
+        print(json.dumps({"revision": destination.name}))

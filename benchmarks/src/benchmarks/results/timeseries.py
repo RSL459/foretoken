@@ -54,76 +54,84 @@ def request_series(
         yield row
 
 
+class CumulativeMetrics:
+    """Accumulate completed request metrics for live and saved-result consumers."""
+
+    def __init__(self, *, stream: bool) -> None:
+        self.stream = stream
+        self.completed = self.succeeded = 0
+        self.input_tokens: int | None = 0
+        self.output_tokens: int | None = 0
+        self.latency = self.ttft = self.tpot = self.itl = 0.0
+        self.ttft_count = self.tpot_count = self.itl_count = 0
+
+    def observe(self, item: RequestMeasurement) -> None:
+        """Add one completed logical HTTP request, including failures in request counts."""
+        self.completed += 1
+        if not item.succeeded:
+            return
+        self.succeeded += 1
+        self.input_tokens = (
+            self.input_tokens + item.input_tokens
+            if self.input_tokens is not None and item.input_tokens is not None else None
+        )
+        self.output_tokens = (
+            self.output_tokens + item.output_tokens
+            if self.output_tokens is not None and item.output_tokens is not None else None
+        )
+        self.latency += item.latency
+        if self.stream:
+            if item.ttft is not None:
+                self.ttft += item.ttft
+                self.ttft_count += 1
+            if item.tpot is not None:
+                self.tpot += item.tpot
+                self.tpot_count += 1
+            if item.itl_summary["count"]:
+                self.itl += item.itl_summary["mean"] * item.itl_summary["count"]
+                self.itl_count += item.itl_summary["count"]
+
+    def row(self, elapsed: float) -> dict[str, Any]:
+        """Publish counts, running mean latencies, and throughput since measurement start."""
+        row: dict[str, Any] = {
+            ELAPSED_TIME: elapsed,
+            "Cumulative/Completed requests": self.completed,
+            "Cumulative/Successful requests": self.succeeded,
+            "Cumulative/Failed requests": self.completed - self.succeeded,
+        }
+        if self.completed:
+            row["Cumulative/Success rate (%)"] = 100 * self.succeeded / self.completed
+        if self.succeeded:
+            row["Cumulative/Mean E2EL (s)"] = self.latency / self.succeeded
+            if self.input_tokens is not None:
+                row["Cumulative/Mean input tokens"] = self.input_tokens / self.succeeded
+            if self.output_tokens is not None:
+                row["Cumulative/Mean output tokens"] = self.output_tokens / self.succeeded
+        if elapsed > 0:
+            row["Cumulative/Request throughput (req/s)"] = self.succeeded / elapsed
+            if self.input_tokens is not None:
+                row["Cumulative/Input token throughput (tokens/s)"] = self.input_tokens / elapsed
+            if self.output_tokens is not None:
+                row["Cumulative/Output token throughput (tokens/s)"] = self.output_tokens / elapsed
+            if self.input_tokens is not None and self.output_tokens is not None:
+                row["Cumulative/Total token throughput (tokens/s)"] = (self.input_tokens + self.output_tokens) / elapsed
+        if self.ttft_count:
+            row["Cumulative/Mean TTFT (s)"] = self.ttft / self.ttft_count
+        if self.tpot_count:
+            row["Cumulative/Mean TPOT (ms)"] = 1000 * self.tpot / self.tpot_count
+        if self.itl_count:
+            row["Cumulative/Mean ITL (ms)"] = 1000 * self.itl / self.itl_count
+        return row
+
+
 def cumulative_series(
     measurements: list[RequestMeasurement], *, stream: bool
 ) -> Iterator[dict[str, Any]]:
-    """Yield running aggregates in request-completion order on the elapsed-time axis."""
-    succeeded = 0
-    input_tokens = output_tokens = 0
-    input_tokens_complete = output_tokens_complete = True
-    latency_total = ttft_total = tpot_total = itl_total = 0.0
-    ttft_count = tpot_count = itl_count = 0
-    ordered = sorted(
-        enumerate(measurements),
-        key=lambda item: (item[1].started_at + item[1].latency, item[0]),
-    )
-    for completed, (_, item) in enumerate(ordered, 1):
-        if item.succeeded:
-            succeeded += 1
-            if item.input_tokens is None:
-                input_tokens_complete = False
-            else:
-                input_tokens += item.input_tokens
-            if item.output_tokens is None:
-                output_tokens_complete = False
-            else:
-                output_tokens += item.output_tokens
-            latency_total += item.latency
-            if stream:
-                if item.ttft is not None:
-                    ttft_total += item.ttft
-                    ttft_count += 1
-                if item.tpot is not None:
-                    tpot_total += item.tpot
-                    tpot_count += 1
-                itl_total += sum(item.itl_samples)
-                itl_count += len(item.itl_samples)
-
-        elapsed = item.started_at + item.latency
-        row: dict[str, Any] = {
-            ELAPSED_TIME: elapsed,
-            "Cumulative/Completed requests": completed,
-            "Cumulative/Successful requests": succeeded,
-            "Cumulative/Failed requests": completed - succeeded,
-            "Cumulative/Success rate (%)": 100.0 * succeeded / completed,
-        }
-        if succeeded:
-            if input_tokens_complete:
-                row["Cumulative/Mean input tokens"] = input_tokens / succeeded
-            if output_tokens_complete:
-                row["Cumulative/Mean output tokens"] = output_tokens / succeeded
-            row["Cumulative/Mean E2EL (s)"] = latency_total / succeeded
-        if elapsed > 0:
-            row["Cumulative/Request throughput (req/s)"] = succeeded / elapsed
-            if input_tokens_complete:
-                row["Cumulative/Input token throughput (tokens/s)"] = (
-                    input_tokens / elapsed
-                )
-            if output_tokens_complete:
-                row["Cumulative/Output token throughput (tokens/s)"] = (
-                    output_tokens / elapsed
-                )
-            if input_tokens_complete and output_tokens_complete:
-                row["Cumulative/Total token throughput (tokens/s)"] = (
-                    input_tokens + output_tokens
-                ) / elapsed
-        if ttft_count:
-            row["Cumulative/Mean TTFT (s)"] = ttft_total / ttft_count
-        if tpot_count:
-            row["Cumulative/Mean TPOT (ms)"] = 1000.0 * tpot_total / tpot_count
-        if itl_count:
-            row["Cumulative/Mean ITL (ms)"] = 1000.0 * itl_total / itl_count
-        yield row
+    """Yield running aggregates in completion order on the elapsed-time axis."""
+    metrics = CumulativeMetrics(stream=stream)
+    for item in sorted(measurements, key=lambda item: item.started_at + item.latency):
+        metrics.observe(item)
+        yield metrics.row(item.started_at + item.latency)
 
 
 def time_series(

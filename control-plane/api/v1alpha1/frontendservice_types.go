@@ -18,6 +18,12 @@ type FrontendTimeouts struct {
 
 	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
 	StreamIdle Duration `json:"streamIdle"`
+
+	// Drain bounds process shutdown independently of live request budgets.
+	// +optional
+	// +kubebuilder:default="10m"
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	Drain Duration `json:"drain,omitempty"`
 }
 
 // RouterAlgorithm names one compiled routing algorithm.
@@ -33,6 +39,7 @@ const (
 )
 
 // RouterStage selects one compiled algorithm and its algorithm-owned parameters.
+// +mapType=atomic
 type RouterStage struct {
 	// +kubebuilder:validation:MinLength=1
 	Algorithm RouterAlgorithm `json:"algorithm"`
@@ -53,6 +60,34 @@ type RouterPipeline struct {
 
 	// +kubebuilder:default={algorithm:gamble_sampling,parameters:{}}
 	Picker RouterStage `json:"picker"`
+}
+
+// RouterPipelineOverride replaces selected routing slots while omitted slots inherit.
+// Each supplied stage replaces both its algorithm and parameters.
+type RouterPipelineOverride struct {
+	// +optional
+	Filter *RouterStage `json:"filter,omitempty"`
+
+	// +optional
+	Scorer *RouterStage `json:"scorer,omitempty"`
+
+	// +optional
+	Picker *RouterStage `json:"picker,omitempty"`
+}
+
+// ModelRouterPipeline overrides frontend routing defaults for a model and its execution stages.
+// Stage-specific slots inherit the model selection unless explicitly replaced.
+type ModelRouterPipeline struct {
+	RouterPipelineOverride `json:",inline"`
+
+	// +optional
+	Encoder *RouterPipelineOverride `json:"encoder,omitempty"`
+
+	// +optional
+	Prefill *RouterPipelineOverride `json:"prefill,omitempty"`
+
+	// +optional
+	Decode *RouterPipelineOverride `json:"decode,omitempty"`
 }
 
 // VideoTaskStorage configures the dedicated PVC shared by the frontend and video workers.
@@ -79,14 +114,26 @@ type FrontendServiceSpec struct {
 	Resources FrontendResources `json:"resources"`
 	Timeouts  FrontendTimeouts  `json:"timeouts"`
 
+	// LogLevel controls frontend diagnostics without replacing the process.
+	// +optional
+	// +kubebuilder:default=info
+	// +kubebuilder:validation:Enum=trace;debug;info;warn;error;off
+	LogLevel string `json:"logLevel,omitempty"`
+
 	// Observability selects frontend-scoped alerts, including shared HTTP failures.
 	// +optional
 	Observability *FrontendObservability `json:"observability,omitempty"`
 
-	// Admission supplies defaults applied independently to each model in each frontend replica.
-	// A ModelService admission block replaces these defaults; omitted defaults are unrestricted.
+	// Admission supplies per-model defaults shared across frontend replicas.
+	// A ModelService admission block replaces these defaults; omission is unrestricted.
 	// +optional
 	Admission *AdmissionConfig `json:"admission,omitempty"`
+
+	// RoleRules supplies per-model caller rules unless the ModelService replaces the list.
+	// +optional
+	// +listType=map
+	// +listMapKey=role
+	RoleRules *[]RoleRule `json:"roleRules,omitempty"`
 
 	// +optional
 	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:gamble_sampling}}
@@ -121,6 +168,11 @@ type FrontendServiceStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ServingSnapshotVersion uint64 `json:"servingSnapshotVersion,omitempty"`
+
+	// AppliedServingSnapshotVersion is the last version confirmed by every observed workload replica.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	AppliedServingSnapshotVersion uint64 `json:"appliedServingSnapshotVersion,omitempty"`
 
 	// +optional
 	// +listType=map

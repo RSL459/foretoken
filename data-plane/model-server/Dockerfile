@@ -5,16 +5,15 @@
 # Build from the repository root so Cargo uses the data-plane workspace and
 # its engine adapters. The inference engine image must provide the Python
 # entrypoint required by the selected adapter. FORETOKEN_VLLM_PYTHON may select
-# an image-specific executable; model-server otherwise uses `python`. The
+# an image-specific executable; model-server otherwise uses `python3`. The
 # current vLLM adapter uses vllm.entrypoints.cli.main.
 
 ARG BASE_IMAGE_REGISTRY=docker.io
 ARG UV_IMAGE_REGISTRY=ghcr.io
-ARG INFERENCE_ENGINE_IMAGE_REGISTRY=ghcr.io
 ARG RUST_BUILDER_IMAGE=${BASE_IMAGE_REGISTRY}/library/rust:1.97.1-bullseye
-ARG INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE_REGISTRY}/shiweijiezero/foretoken/model-server
+ARG INFERENCE_ENGINE_IMAGE
 ARG FORETOKEN_VLLM_PYTHON
-ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.9.10
+ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.12.22
 
 FROM ${UV_IMAGE} AS uv
 
@@ -50,13 +49,9 @@ WORKDIR /workspace
 # Python adapters belong to the file export, not the Rust compilation input.
 COPY --exclude=model-server/python data-plane/ ./data-plane/
 
-# Bullseye cannot load procedural macros linked against the frontend builder's newer glibc.
-# Retain prepared Rust inputs with their outputs, isolated from legacy builders.
-# Copy changed trees afresh so patch removals also receive mtimes Cargo can observe.
+# Lock only upstream preparation so other components can compile independently.
+# Preserve captured Rust sources when completing the upstream tree for patch preparation.
 RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
-    --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
       printf '[url "%s/"]\n\tinsteadOf = https://github.com/\n' \
         "${FORETOKEN_GITHUB_MIRROR%/}" > /root/.gitconfig; \
@@ -66,9 +61,6 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
       printf '[source.crates-io]\nreplace-with = "foretoken-mirror"\n\n[source.foretoken-mirror]\nregistry = "%s"\n' \
         "${FORETOKEN_CARGO_REGISTRY}" > /workspace/.cargo/config.toml; \
     fi \
-    && if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
-      export CARGO_NET_GIT_FETCH_WITH_CLI; \
-    fi \
     && if [ ! -f data-plane/third_party/vllm/vllm/v1/engine/core.py ]; then \
       if [ ! -f /var/cache/vllm/rust/Cargo.toml ]; then \
         git -C /var/cache/vllm init -q \
@@ -76,7 +68,21 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
         && git -C /var/cache/vllm checkout -q --detach FETCH_HEAD; \
       fi \
       && mkdir -p data-plane/third_party/vllm \
-      && git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
+      && if [ -d data-plane/third_party/vllm/rust ]; then \
+        git -C /var/cache/vllm archive HEAD | tar --anchored --exclude=rust -x -C data-plane/third_party/vllm; \
+      else \
+        git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
+      fi; \
+    fi
+
+# Share Cargo's own cache locks with its registry and Git data. Bullseye cannot
+# load procedural macros linked against the frontend builder's newer glibc.
+ENV CARGO_HOME=/var/cache/foretoken-cargo
+# Retain prepared inputs with their outputs; refresh changed trees so Cargo sees patch removals.
+RUN --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken-cargo \
+    --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/data-plane/target,sharing=locked \
+    if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
+      export CARGO_NET_GIT_FETCH_WITH_CLI; \
     fi \
     && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
     && mkdir -p data-plane/target/vllm-rust \
@@ -130,15 +136,18 @@ ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
 # A derived Foretoken image may already contain this exact backport.
 RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
-    "${FORETOKEN_VLLM_PYTHON:-python}" /tmp/vllm-patches/apply.py
+    "${FORETOKEN_VLLM_PYTHON:-python3}" /tmp/vllm-patches/apply.py
 
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 # Precompile installed packages to avoid repeated bytecode compilation at startup.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    python_path=$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
+    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
+    python_path=$("${FORETOKEN_VLLM_PYTHON:-python3}" -c \
       'import sys; print(sys.executable)') \
+    && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
+      'from vllm_patches import repair_installed_dependencies; repair_installed_dependencies()' \
     && backend=$("$python_path" -c \
       'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")') \
     && set -- modelscope==1.35.3 tzdata \
@@ -147,7 +156,8 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     && uv pip install --no-cache --python "$python_path" \
       --constraint /tmp/foretoken-engine-constraints.txt \
       --default-index "${UV_DEFAULT_INDEX}" "$@" \
-    && uv pip check --python "$python_path" \
+    && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
+      'from vllm_patches import install_mooncake_dependencies, check_installed_dependencies; install_mooncake_dependencies(); check_installed_dependencies()' \
     && "$python_path" -c 'import compileall, site; raise SystemExit(not all(compileall.compile_dir(path, quiet=1) for path in site.getsitepackages()))' \
     && rm /tmp/foretoken-engine-constraints.txt
 

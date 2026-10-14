@@ -4,6 +4,7 @@
 //! Candidate scoring and Scorer implementations.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
@@ -37,7 +38,7 @@ pub type RouteSelectionUpdate = Box<dyn FnOnce(&RouteCandidate) + Send>;
 /// Scores and an optional state update for one selection attempt.
 /// Router runs the update only after validating the picker result; failed attempts drop it.
 pub struct ScoringOutcome {
-    /// One numeric or locality score for each candidate supplied to the scorer.
+    /// One numeric preference for each candidate supplied to the scorer.
     pub scores: Vec<RouteScore>,
     /// Captures scoring-time facts needed when the chosen target is committed before dispatch.
     /// Runs under Router's selection lock and must not re-enter routing.
@@ -57,7 +58,6 @@ impl From<Vec<RouteScore>> for ScoringOutcome {
 pub(super) fn cost_score(cost: Option<f64>) -> RouteScore {
     RouteScore {
         preference: cost.map_or(f64::NEG_INFINITY, |cost| -cost),
-        ..RouteScore::default()
     }
 }
 
@@ -83,7 +83,6 @@ pub(super) fn inverse_normalized_scores(
                     (maximum - count) as f64 / (maximum - minimum) as f64
                 }
             },
-            ..RouteScore::default()
         })
         .collect()
 }
@@ -103,7 +102,7 @@ pub(super) fn inverse_normalized_scores(
 ///
 /// Returns one score for every input candidate. A length mismatch is reported as a routing error.
 pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
-    /// Requests live shared-prefix observations before the synchronous routing round.
+    /// Declares that scoring consumes prefix matches, preparing live observations before routing.
     fn needs_kv_prefix(&self) -> bool {
         false
     }
@@ -119,6 +118,20 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
             Err("this scorer accepts no parameters".into())
         }
     }
+
+    /// Prepares changed parameters while retaining algorithm-owned request history.
+    /// Stateful scorers return a new immutable instance without changing the shared state;
+    /// `None` asks the pipeline builder to configure a fresh factory instance instead.
+    fn reconfigure(
+        &self,
+        _parameters: serde_json::Value,
+    ) -> Option<Result<Arc<dyn RouteScorer<C>>, String>> {
+        None
+    }
+
+    /// Publishes shared settings only for an accepted runtime generation, before requests start.
+    /// Stateful implementations reject versions older than or equal to their last activation.
+    fn activate(&self, _snapshot_version: u64) {}
 
     fn score(
         &self,
@@ -149,18 +162,20 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     }
 }
 
+/// Returns the exact rank's observed scheduler request count, preserving missing telemetry.
+fn scheduler_requests(candidate: &RouteCandidate) -> Option<u64> {
+    let stats = candidate.data_parallel_stats()?;
+    Some(
+        stats
+            .scheduler_running_requests?
+            .saturating_add(stats.scheduler_waiting_requests?),
+    )
+}
+
 /// Returns this DP rank's scheduler load; unavailable observations rank after measured loads.
 /// Group-level admission counts cannot be assigned to an individual rank.
 pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
-    candidate
-        .data_parallel_stats()
-        .and_then(|stats| {
-            Some(
-                stats
-                    .scheduler_running_requests?
-                    .saturating_add(stats.scheduler_waiting_requests?),
-            )
-        })
+    scheduler_requests(candidate)
         .and_then(|requests| i64::try_from(requests).ok())
         .unwrap_or(i64::MAX)
 }

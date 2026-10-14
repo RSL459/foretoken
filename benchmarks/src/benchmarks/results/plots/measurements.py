@@ -12,6 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from benchmarks.results.itl import ITLStatistics, ITLSummary
 from benchmarks.results.metrics import RequestMeasurement
 from benchmarks.results.plots.data import Chart, Series, _numeric
 from benchmarks.results.replicas import gpu_allocation_history_rows
@@ -61,15 +62,25 @@ def _rows_chart(
     return charts
 
 
+def _saved_itl_summary(row: dict[str, Any]) -> ITLSummary:
+    """Read scalar ITL records, reducing legacy interval arrays at the file boundary."""
+    if "itl_summary" in row:
+        return row["itl_summary"]
+    statistics = ITLStatistics()
+    for interval in row.get("inter_token_latencies") or ():
+        statistics.observe(interval)
+    return statistics.summary()
+
+
 def load_http_measurements(raw: list[dict[str, Any]]) -> list[RequestMeasurement]:
-    """Restore saved HTTP requests for plotting and phase-specific W&B curves."""
+    """Restore saved HTTP requests for plotting."""
     return [
         RequestMeasurement(
             started_at=float(row["start_time"]),
             ttft=row.get("ttft"),
             latency=float(row["latency"]),
             tpot=row.get("tpot"),
-            itl_samples=tuple(row.get("inter_token_latencies") or ()),
+            itl_summary=_saved_itl_summary(row),
             input_tokens=row.get("input_tokens"),
             output_tokens=row.get("output_tokens"),
             cached_input_tokens=row.get("cached_input_tokens"),
@@ -83,6 +94,17 @@ def load_http_measurements(raw: list[dict[str, Any]]) -> list[RequestMeasurement
             priority=row.get("priority"),
             request_class=row.get("request_class"),
             target_output_tokens=row.get("target_output_tokens"),
+            request_id=row.get("request_id"),
+            phase=row.get("phase"),
+            source_id=row.get("source_id"),
+            finish_reason=row.get("finish_reason"),
+            response_id=row.get("response_id"),
+            response_model=row.get("response_model"),
+            content_characters=row.get("content_characters"),
+            reasoning_characters=row.get("reasoning_characters"),
+            transport_completed=row.get("transport_completed"),
+            scheduled_at=row.get("scheduled_at"),
+            send_delay=row.get("send_delay"),
         )
         for row in raw
     ]
@@ -277,9 +299,18 @@ def _prometheus_charts(source: Path) -> list[Chart]:
     for name in dict.fromkeys(key[0] for key in grouped):
         def display_label(label: str, *, name: str = name) -> str:
             """Show service, group, role and rank without printing raw JSON in figure titles."""
-            if not name.startswith("spec_"):
-                return label
             values = json.loads(label)
+            if name.startswith(("cpu_", "memory_")):
+                same_pod = sum(
+                    1 for metric, other in grouped
+                    if metric == name and json.loads(other).get("pod") == values.get("pod")
+                )
+                return values["pod"] + ("\n" + values["id"].rsplit("/", 1)[-1] if same_pod > 1 else "")
+            if not name.startswith("spec_"):
+                identity = ("pod", "device_id") if values.get("pod") else (
+                    "model_name", "model_group", "model_role", "route_target_id", "data_parallel_rank",
+                )
+                return "\n".join(str(values[key]) for key in identity if values.get(key) is not None) or label
             group = values.get("model_group") or values.get("modelservice") or values.get("model_name")
             role = values.get("model_role") or values.get("inference_foretoken_io_model_role")
             return " / ".join(str(item) for item in (group, role, values.get("engine")) if item is not None)
@@ -297,7 +328,13 @@ def _prometheus_charts(source: Path) -> list[Chart]:
         )
         if series:
             unit = (
-                "GPU s/s"
+                "cores"
+                if name.endswith("_cores")
+                else "bytes"
+                if name.endswith("_bytes")
+                else "µs"
+                if name.endswith("_microseconds")
+                else "GPU s/s"
                 if name in {"spec_draft_gpu_seconds_per_second", "spec_target_forward_gpu_seconds_per_second"}
                 else "tokens/draft"
                 if name == "spec_accepted_tokens_per_draft"
@@ -313,7 +350,12 @@ def _prometheus_charts(source: Path) -> list[Chart]:
                 if name.endswith("_rate")
                 else "requests"
             )
-            title = {
+            label = {
+                "cpu_usage_cores": "CPU usage",
+                "cpu_quota_cores": "CPU quota",
+                "cpu_quota_microseconds": "CPU quota per period",
+                "cpu_throttled_periods_ratio": "Throttled CPU periods",
+                "memory_working_set_bytes": "Container memory working set",
                 "spec_draft_gpu_seconds_per_second": "Draft GPU work",
                 "spec_target_forward_gpu_seconds_per_second": "Target forward GPU work",
                 "spec_draft_time_share_ratio": "Draft GPU-time share",
@@ -321,12 +363,13 @@ def _prometheus_charts(source: Path) -> list[Chart]:
                 "spec_acceptance_ratio": "Draft acceptance",
                 "spec_accepted_tokens_per_draft": "Accepted tokens per draft",
             }.get(name, f"Prometheus · {name.replace('_', ' ')}")
+            title = f"{label} · 1-minute rate" if name in {"cpu_usage_cores", "cpu_throttled_periods_ratio"} else label
             charts.append(
                 Chart(
                     f"prometheus-{name}",
                     title,
                     "Elapsed time (s)",
-                    f"{title if name.startswith('spec_') else name.replace('_', ' ')} ({unit})",
+                    f"{label} ({unit})",
                     series,
                     metric=name,
                 )
@@ -596,6 +639,20 @@ def _distribution_charts(comparison: dict[str, Any]) -> list[Chart]:
                 )
             )
     return charts
+
+
+def comparison_charts(metrics: dict[str, Any]) -> tuple[list[Chart], list[str]] | None:
+    """Read comparison charts and method identities for standalone and experiment exports."""
+    if "evaluation_comparison" in metrics:
+        comparison = metrics["evaluation_comparison"]
+        return _evaluation_comparison_charts(comparison), [method["label"] for method in comparison["methods"]]
+    if "greedy_comparison" in metrics:
+        comparison = metrics["greedy_comparison"]
+        return _greedy_charts(comparison), list(dict.fromkeys(str(row["method"]) for row in comparison["candidates"]))
+    if "distribution_comparison" in metrics:
+        comparison = metrics["distribution_comparison"]
+        return _distribution_charts(comparison), list(dict.fromkeys(str(row["method"]) for row in comparison["candidates"]))
+    return None
 
 
 def _evaluation_comparison_charts(comparison: dict[str, Any]) -> list[Chart]:

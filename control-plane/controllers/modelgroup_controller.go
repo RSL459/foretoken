@@ -61,6 +61,7 @@ const (
 // ModelGroupReconciler owns the Kubernetes workload for one execution Group.
 type ModelGroupReconciler struct {
 	client.Client
+	APIReader             client.Reader
 	DrainClient           ModelGroupDrainClient
 	Now                   func() time.Time
 	ControlPlaneNamespace string
@@ -72,6 +73,7 @@ type ModelGroupReconciler struct {
 
 // SetupWithManager registers the ModelGroup controller and its owned resources.
 func (reconciler *ModelGroupReconciler) SetupWithManager(manager ctrl.Manager) error {
+	reconciler.APIReader = manager.GetAPIReader()
 	builder := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelGroup{}).
 		Owns(&batchv1.Job{}).
@@ -124,6 +126,11 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if group.Spec.NodeCount > 1 && !reconciler.LeaderWorkerSets {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(fmt.Errorf("multi-node Groups require LeaderWorkerSet; run foretoken install to prepare the controller")))
 	}
+	// Report configuration errors before allocating preparation or serving resources.
+	deployment, err := desiredDeployment(group, reconciler.ImagePullSecrets, reconciler.ApplicationFiles)
+	if err != nil {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(err))
+	}
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, group.Namespace); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -152,7 +159,7 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	available, err := reconciler.reconcileWorkload(ctx, group)
+	workload, err := reconciler.reconcileWorkload(ctx, group, deployment)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -163,10 +170,42 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := reconciler.updateStatus(ctx, group, modelGroupMaterializedState(available, scheduling)); err != nil {
+	state := modelGroupMaterializedState(workload.available, scheduling)
+	var remaining time.Duration
+	if workload.createdAt.IsZero() {
+		state.materialized = modelGroupConditionState{status: metav1.ConditionFalse, reason: "ReplacingWorkload", message: "The serving workload waits for its previous workload to be retired"}
+	} else if !workload.available {
+		startup, err := time.ParseDuration(string(group.Spec.Timeouts.Startup))
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("parse ModelGroup startup timeout: %w", err)
+		}
+		now := reconciler.now()
+		started := workload.createdAt
+		// Preparation does not spend the serving budget. Keep one continuous
+		// unavailable interval across container restarts and LWS member replacement.
+		if previous := meta.FindStatusCondition(group.Status.Conditions, conditionWorkloadAvailable); previous != nil {
+			switch previous.Status {
+			case metav1.ConditionFalse:
+				if previous.LastTransitionTime.Time.After(started) {
+					started = previous.LastTransitionTime.Time
+				}
+			case metav1.ConditionTrue:
+				started = now
+			}
+		}
+		state.unavailableSince = metav1.NewTime(started)
+		remaining = started.Add(startup).Sub(now)
+		state.target = conditionState{Status: metav1.ConditionUnknown, Reason: "Starting", Message: "Waiting for the serving workload to become ready"}
+		if remaining <= 0 {
+			state.phase = inferencev1alpha1.ModelGroupPhaseFailed
+			state.target = conditionState{Status: metav1.ConditionFalse, Reason: "StartupDeadlineExceeded", Message: fmt.Sprintf("The serving workload did not become ready within %s; Kubernetes recovery continues", group.Spec.Timeouts.Startup)}
+			remaining = 0
+		}
+	}
+	if err := reconciler.updateStatus(ctx, group, state); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: remaining}, nil
 }
 
 // owningModelPool returns the verified owner for workload reconciliation and scrape identity.
@@ -275,6 +314,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	name := "prepare-" + string(group.UID)
 	env := []corev1.EnvVar{
 		{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON},
+		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: runtimeconfig.ModelPreparationScopeEnv, Value: group.Spec.ModelPoolRef.UID + "/" + group.Spec.Revision},
 		{Name: preparationConfigMapEnv, Value: preparationSourceName(group.Spec)},
 		{Name: preparationNamespaceEnv, Value: group.Namespace},
@@ -333,13 +373,14 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 					Tolerations:                  tolerations,
 					Volumes:                      volumes,
 					Containers: []corev1.Container{{
-						Name:            "model-preparation",
-						Image:           group.Spec.Runtime.Image,
-						ImagePullPolicy: corev1.PullIfNotPresent,
-						Args:            []string{command},
-						Ports:           ports,
-						Env:             env,
-						VolumeMounts:    mounts,
+						Name:                     "model-preparation",
+						Image:                    group.Spec.Runtime.Image,
+						ImagePullPolicy:          corev1.PullIfNotPresent,
+						Args:                     []string{command},
+						Ports:                    ports,
+						Env:                      env,
+						VolumeMounts:             mounts,
+						TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 					}},
 				},
 			},
@@ -353,11 +394,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 }
 
 // reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
-func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment, error) {
-	desired, err := desiredDeployment(group, reconciler.ImagePullSecrets, reconciler.ApplicationFiles)
-	if err != nil {
-		return nil, err
-	}
+func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup, desired *appsv1.Deployment) (*appsv1.Deployment, error) {
 	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
 		return nil, fmt.Errorf("set Deployment owner: %w", err)
 	}
@@ -453,6 +490,14 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: launchEnv, Value: launchJSON},
 		{Name: "FORETOKEN_INTERNAL_LISTEN", Value: fmt.Sprintf("0.0.0.0:%d", group.Spec.Runtime.Port)},
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
+		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
+	}
+	env = append(env, runtimeconfig.AdmissionStoreEnv(group.Spec.Runtime.AdmissionStore)...)
+	if group.Spec.Runtime.InstanceAdmissionProtocol == 0 && group.Spec.Runtime.InstanceAdmission != nil {
+		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MAX_ACCEPTED_REQUESTS", Value: strconv.FormatUint(uint64(group.Spec.Runtime.InstanceAdmission.MaxConcurrentRequests), 10)})
+	}
+	if group.Spec.NodeCount > 1 {
+		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MEMBER_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}})
 	}
 	if group.Spec.Runtime.Backend == "vllm" {
 		env = append(env,
@@ -513,6 +558,11 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}},
 	}
 	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}, {Name: "dshm", MountPath: "/dev/shm"}}
+	if groupUsesLiveInstanceAdmission(group) {
+		volumes = append(volumes, corev1.Volume{Name: instanceAdmissionVolumeName, VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: instanceAdmissionConfigMapName(group.Spec.ModelPoolRef.UID)}}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: instanceAdmissionVolumeName, MountPath: instanceAdmissionDirectory, ReadOnly: true})
+		env = append(env, corev1.EnvVar{Name: instanceAdmissionConfigEnv, Value: instanceAdmissionDirectory + "/" + instanceAdmissionKey})
+	}
 	if group.Spec.Runtime.Backend == "vllm" {
 		volumes = append(volumes, corev1.Volume{Name: "kv-indexer", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: kvIndexerSecretName, Items: []corev1.KeyToPath{{Key: kvIndexerSecretKey, Path: "key"}}}}})
 		mounts = append(mounts, corev1.VolumeMount{Name: "kv-indexer", MountPath: "/etc/foretoken/kv-indexer", ReadOnly: true})
@@ -549,6 +599,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		runtimeClassName = &group.Spec.Accelerator.RuntimeClassName
 	}
 
+	readinessPath := "/readyz"
+	if groupUsesLiveInstanceAdmission(group) {
+		readinessPath = instanceAdmissionReadyPath
+	}
 	deployment := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: appsv1.SchemeGroupVersion.String(), Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{Name: group.Name, Namespace: group.Namespace, Labels: labels},
@@ -589,9 +643,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 						},
 						StartupProbe:             modelServerProbe("/readyz", 10, startupFailureThreshold),
 						LivenessProbe:            modelServerProbe("/healthz", 10, 3),
-						ReadinessProbe:           modelServerProbe("/readyz", 5, 3),
+						ReadinessProbe:           modelServerProbe(readinessPath, 5, 3),
 						TerminationMessagePath:   corev1.TerminationMessagePathDefault,
-						TerminationMessagePolicy: corev1.TerminationMessageReadFile,
+						TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 						Resources:                corev1.ResourceRequirements{Requests: requests, Limits: limits},
 					}},
 				},
@@ -603,7 +657,48 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if err := configureWeightSources(group.Spec, &deployment.Spec.Template); err != nil {
 		return nil, err
 	}
+	container := &deployment.Spec.Template.Spec.Containers[0]
+	if err := configureModelEnvironment(group.Spec, container); err != nil {
+		return nil, err
+	}
 	return deployment, nil
+}
+
+// configureModelEnvironment appends ordered model variables after platform configuration.
+// Platform-owned values must remain consistent with the launch plan and child processes.
+func configureModelEnvironment(spec inferencev1alpha1.ModelGroupSpec, container *corev1.Container) error {
+	managed := make(map[string]bool, len(container.Env))
+	for _, variable := range container.Env {
+		managed[variable.Name] = true
+	}
+	managed["VLLM_USE_MODELSCOPE"] = true
+	managed["USE_PRECOMPILED_KERNEL"] = true
+	// The device plugin supplies allocation variables after Pod template generation.
+	if strings.HasPrefix(spec.Accelerator.DeviceResourceName, "nvidia.com/") {
+		managed["NVIDIA_VISIBLE_DEVICES"] = true
+	}
+	if spec.NodeCount > 1 {
+		managed["LWS_WORKER_INDEX"] = true
+		managed["LWS_LEADER_ADDRESS"] = true
+		managed["VLLM_HOST_IP"] = true
+	}
+	if spec.PDRuntime != nil {
+		managed["MC_FORCE_HCA"] = true
+		managed["MC_FORCE_TCP"] = true
+	}
+	if spec.Runtime.Profiling != nil && spec.Runtime.Profiling.Engine == "nsight" {
+		managed["VLLM_WORKER_MULTIPROC_METHOD"] = true
+	}
+	if spec.Artifacts.Source == inferencev1alpha1.ModelSourceModelScope {
+		managed["MODELSCOPE_CACHE"] = true
+	}
+	for _, variable := range spec.Runtime.Env {
+		if managed[variable.Name] || strings.HasPrefix(variable.Name, "FORETOKEN_") {
+			return fmt.Errorf("env name %q is managed by Foretoken", variable.Name)
+		}
+		container.Env = append(container.Env, *variable.DeepCopy())
+	}
+	return nil
 }
 
 func dns1035NamePart(value string) string {
@@ -636,13 +731,19 @@ func modelGroupServiceName(group *inferencev1alpha1.ModelGroup) string {
 	return serviceNamePrefix + prefix + "-" + identity
 }
 
-// reconcileService applies the stable Service owned by the ModelGroup.
-func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) error {
-	labels := modelGroupLabels(group)
-	selector := maps.Clone(labels)
+// modelGroupServiceSelector selects the sole HTTP ingress, excluding distributed workers.
+func modelGroupServiceSelector(group *inferencev1alpha1.ModelGroup) map[string]string {
+	selector := modelGroupLabels(group)
 	if group.Spec.NodeCount > 1 {
 		selector[lwsv1.WorkerIndexLabelKey] = "0"
 	}
+	return selector
+}
+
+// reconcileService applies the stable Service owned by the ModelGroup.
+func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) error {
+	labels := modelGroupLabels(group)
+	selector := modelGroupServiceSelector(group)
 	// Scrape identity belongs on the Service, independently of workload selectors.
 	// Annotations preserve full resource names beyond the label-value length limit.
 	serviceLabels := maps.Clone(labels)
@@ -822,11 +923,13 @@ type modelGroupConditionState struct {
 type schedulingCapacityState = modelGroupConditionState
 
 type modelGroupStatusState struct {
-	phase        inferencev1alpha1.ModelGroupPhase
-	preparation  modelGroupConditionState
-	materialized modelGroupConditionState
-	available    bool
-	scheduling   schedulingCapacityState
+	phase            inferencev1alpha1.ModelGroupPhase
+	preparation      modelGroupConditionState
+	materialized     modelGroupConditionState
+	available        bool
+	unavailableSince metav1.Time
+	target           conditionState
+	scheduling       schedulingCapacityState
 }
 
 func schedulingNotEvaluated() schedulingCapacityState {
@@ -838,6 +941,7 @@ func modelGroupFailureState(err error) modelGroupStatusState {
 		phase:        inferencev1alpha1.ModelGroupPhaseFailed,
 		preparation:  modelGroupConditionState{status: metav1.ConditionUnknown, reason: "NotEvaluated", message: "Model preparation was not evaluated"},
 		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "UnsupportedProfile", message: err.Error()},
+		target:       conditionState{Status: metav1.ConditionFalse, Reason: "UnsupportedProfile", Message: err.Error()},
 		scheduling:   schedulingNotEvaluated(),
 	}
 }
@@ -874,13 +978,17 @@ func modelGroupMaterializedState(available bool, scheduling schedulingCapacitySt
 	if available {
 		phase = inferencev1alpha1.ModelGroupPhaseReady
 	}
-	return modelGroupStatusState{
+	state := modelGroupStatusState{
 		phase:        phase,
 		preparation:  modelGroupConditionState{status: metav1.ConditionTrue, reason: preparationSourceReadyReason, message: "Model preparation completed using resolved source versions"},
 		materialized: modelGroupConditionState{status: metav1.ConditionTrue, reason: "Applied", message: "Group workload was materialized"},
 		available:    available,
 		scheduling:   scheduling,
 	}
+	if available {
+		state.target = conditionState{Status: metav1.ConditionTrue, Reason: "Ready", Message: "The serving workload is ready"}
+	}
+	return state
 }
 
 // schedulingCapacity reports insufficient capacity only from the scheduler's
@@ -938,7 +1046,19 @@ func (reconciler *ModelGroupReconciler) updateStatus(ctx context.Context, group 
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionModelPreparation, Status: state.preparation.status, Reason: state.preparation.reason, Message: state.preparation.message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadMaterialized, Status: state.materialized.status, Reason: state.materialized.reason, Message: state.materialized.message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionSchedulingCapacity, Status: state.scheduling.status, Reason: state.scheduling.reason, Message: state.scheduling.message, ObservedGeneration: group.Generation})
-	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadAvailable, Status: conditionStatus(state.available), Reason: availabilityReason(state.available), Message: availabilityMessage(state.available), ObservedGeneration: group.Generation})
+	availability := metav1.Condition{Type: conditionWorkloadAvailable, Status: conditionStatus(state.available), Reason: availabilityReason(state.available), Message: availabilityMessage(state.available), ObservedGeneration: group.Generation, LastTransitionTime: metav1.NewTime(reconciler.now())}
+	if state.materialized.status != metav1.ConditionTrue {
+		availability.Status = metav1.ConditionUnknown
+		availability.Reason = "NotMaterialized"
+		availability.Message = state.materialized.message
+	} else if !state.available {
+		availability.LastTransitionTime = state.unavailableSince
+	}
+	meta.SetStatusCondition(&group.Status.Conditions, availability)
+	if state.target.Status == "" {
+		state.target = conditionState{Status: metav1.ConditionUnknown, Reason: state.materialized.reason, Message: state.materialized.message}
+	}
+	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionTargetReady, Status: state.target.Status, Reason: state.target.Reason, Message: state.target.Message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionReady, Status: conditionStatus(state.available), Reason: availabilityReason(state.available), Message: readinessMessage(state.available), ObservedGeneration: group.Generation})
 	if reflect.DeepEqual(base.Status, group.Status) {
 		return nil
@@ -958,9 +1078,9 @@ func availabilityReason(available bool) string {
 
 func availabilityMessage(available bool) string {
 	if available {
-		return "The Group Deployment is available"
+		return "The Group workload is available"
 	}
-	return "The Group Deployment is not yet available"
+	return "The Group workload is not yet available"
 }
 
 func readinessMessage(ready bool) string {

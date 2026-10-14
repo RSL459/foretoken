@@ -14,6 +14,7 @@ import os
 import shutil
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import mean, median, stdev
@@ -175,11 +176,13 @@ def run_sweep(
     mode: str,
     dry_run: bool = False,
     combinations: list[SweepPoint] | None = None,
+    service_resources: ExitStack | None = None,
 ) -> SweepExecution:
     """Run points sequentially and publish one comparison through the existing result lifecycle.
 
-    Adapters own their request event loops and serving resources. Completed point
-    records survive a later failure or interruption, alongside the full plan.
+    Adapters own request event loops and acquire serving resources in the supplied
+    stack. Release those services before result sinks close so final logs include
+    cleanup. Completed point records survive a later failure or interruption.
     """
     if definition.num_runs < 1:
         raise ValueError(f"--num-runs must be >= 1, got {definition.num_runs}")
@@ -233,9 +236,10 @@ def run_sweep(
 
     all_points: list[dict[str, Any]] = []
     artifacts: dict[str, Path] = {}
-    with ResultOutputs(
-        config, None, output_dir=directory, sink_factory=sinks
-    ) as outputs:
+    with (
+        ResultOutputs(config, None, output_dir=directory, sink_factory=sinks) as outputs,
+        service_resources if service_resources is not None else nullcontext(),
+    ):
         experiment_dir = outputs.execution_dir
         artifacts["config"] = write_json(experiment_dir, "config.json", plan)
         outputs.open(plan)

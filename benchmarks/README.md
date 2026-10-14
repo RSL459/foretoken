@@ -61,9 +61,12 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | `wandb` | Print results and upload to W&B |
 | `plot` | Retain results and export PDF, SVG, PNG, and CSV |
 | `experiment` | Organize the run under an experiment iteration and capture its source and command context |
+| `raw` | Also retain actual request and response content for HTTP performance runs, with local results |
 | `local,wandb,plot` | Save results, export figures, and upload to W&B |
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
+
+Use `--output local,raw` to save request inputs and response content, including reasoning and tool calls, in `responses.jsonl`. Warmup responses are saved in `warmup_responses.jsonl`.
 
 `quiet` saves preparation and execution logs in `run.log` instead of printing progress; errors remain visible. With W&B selected, this log is also uploaded as an artifact.
 
@@ -77,8 +80,8 @@ foretoken perf examples/quickstart --num-prompts 20 \
   --iteration baseline
 ```
 
-`perf`, `eval`, and `perf video` share these recording options. Commands with the same directory and iteration name add separate runs; omitting `--iteration` creates a new numbered iteration per command. `experiment` includes local storage and can be combined with `wandb`, `plot`, and `quiet`. See the [playbook guide](../agent-playbooks/README.md#organize-the-records) for the layout, source records, and author-written notes.
+`perf`, `eval`, and `perf video` share these recording options. Commands with the same directory and iteration name add separate runs; omitting `--iteration` creates a new numbered iteration per command. `experiment` includes local storage and can be combined with `wandb`, `plot`, and `quiet`. See the [experiment records guide](../rsi-playbooks/experiment-records.md) for the layout, source records, and author-written notes.
 
 See [performance results](docs/perf/wandb.md) for latency and throughput charts, [quality results](docs/eval/README.md#read-scores) for task scores and native reports, and [profile viewing](docs/profile/README.md#inspect-results) for retained execution captures.
 
-Redraw saved results with `foretoken plot RESULT_DIR`, using the result directory printed by the run. `--columns 2` selects double-column width. See [parameter sweeps](docs/perf/sweep.md) for multi-method comparisons.
+Use `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](docs/recipes.md#plot-saved-results) for metric selection, layout and output locations.
