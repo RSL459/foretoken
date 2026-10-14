@@ -66,11 +66,16 @@ foretoken eval examples/quickstart \
 | `local,quiet` | 保存本地文件，不打印控制台汇总 |
 | `local,wandb,quiet` | 保存并上传结果，不打印控制台汇总 |
 
-使用 `--output local,raw`，将请求输入和响应内容（包括 reasoning 和工具调用）保存到 `responses.jsonl`。预热响应保存在 `warmup_responses.jsonl`。
+本地结果按运行分别保存在 `results/` 下，`--output-dir` 可修改结果父目录。选择 W&B 时，打开终端打印的链接查看进度，在 Artifacts 中下载记录。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。
 
-`quiet` 将准备和执行日志保存到 `run.log`，不打印进度，错误仍会显示。选择 W&B 时，该日志也作为附件上传。
+| 记录 | 用途 |
+| --- | --- |
+| `metrics.json` | 查看最终汇总结果 |
+| `run.log` | 排查准备、执行过程及错误 |
+| `raw_output.jsonl`（HTTP）、`raw_results.jsonl`（视频） | 逐条查看已完成请求，中断后也可用于排查 |
+| `responses.jsonl`，需选择 `--output local,raw` | 查看 HTTP 请求输入和响应内容，包括 reasoning 和工具调用 |
 
-每次运行在 `results/` 下保存到独立目录；`--output-dir` 修改结果父目录。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。
+普通模式和 quiet 模式均记录日志；`quiet` 只关闭终端进度和汇总输出，错误仍会显示。预热记录使用 `warmup_` 文件名前缀。质量评分、框架报告和性能剖析产物见下方专项指南。
 
 使用 `experiment` 将评测归入命名迭代，在包含代码改动的源码目录执行：
 

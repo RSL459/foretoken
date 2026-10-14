@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -117,6 +118,7 @@ class HttpBenchmark:
         phase: str,
         itl: ITLStatistics,
         group_itl: dict[str, dict[str, ITLStatistics]],
+        record_completed: Callable[[dict[str, Any]], None],
         progress: HttpProgress | None = None,
     ) -> EpisodeResult:
         """Advance one conversation, retaining recorded or generated history and request failures."""
@@ -148,6 +150,7 @@ class HttpBenchmark:
                 else None,
                 turn=turn_index if episode.conversation else None,
                 retain_history=generated_history and episode.conversation,
+                on_start=progress.request_started if progress is not None else None,
             )
             if (
                 generated_history
@@ -220,6 +223,7 @@ class HttpBenchmark:
             generated_text = response.pop("generated_text")
             response.pop("tool_calls")
             result.records.append(response)
+            record_completed(response)
             if progress is not None:
                 progress.observe(request_measurement(response, progress.origin))
             if not response["success"]:
@@ -292,6 +296,24 @@ class HttpBenchmark:
                 if benchmark.load.max_concurrency > 0
                 else None,
             ) as client:
+                phase_origin = 0.0
+                progress = None
+
+                def phase_started(origin: float) -> None:
+                    """Align durable records and live series with the scheduler's phase clock."""
+                    nonlocal phase_origin
+                    phase_origin = origin
+                    if progress is not None:
+                        progress.start(origin)
+
+                def record_completed(response: dict[str, Any]) -> None:
+                    """Flush a completed request before live publication or another turn."""
+                    item = request_measurement(response, phase_origin)
+                    writer.write({
+                        **{key: value for key, value in response.items() if key != "started_at"},
+                        **request_measurement_record(item, stream=benchmark.generation.stream),
+                    })
+
                 warmup_itl = ITLStatistics()
                 warmup_groups: dict[str, dict[str, ITLStatistics]] = {}
 
@@ -307,9 +329,11 @@ class HttpBenchmark:
                         "warmup",
                         warmup_itl,
                         warmup_groups,
+                        record_completed,
                     )
 
                 if benchmark.load.warmup_requests:
+                    writer = outputs.create_request_writer("warmup_raw_output")
                     logger.info(
                         "Warmup: %d HTTP requests", benchmark.load.warmup_requests
                     )
@@ -321,6 +345,7 @@ class HttpBenchmark:
                         execute,
                         warmup_load,
                         seed=workload.dataset.random_seed,
+                        on_start=phase_started,
                     )
                     records = sorted(
                         (row for item in warmup for row in item.records),
@@ -339,10 +364,14 @@ class HttpBenchmark:
                     if failed is not None:
                         raise ValueError(f"Warmup failed: {failed['error']}")
 
+                writer = outputs.create_request_writer("raw_output")
                 measured_itl = ITLStatistics()
                 measured_groups: dict[str, dict[str, ITLStatistics]] = {}
                 outputs.start_observers()
-                progress = outputs.http_progress(stream=benchmark.generation.stream)
+                progress = outputs.http_progress(
+                    stream=benchmark.generation.stream,
+                    criteria=benchmark.slo.params[0] if benchmark.slo.params else None,
+                )
                 profile = outputs.create_profile()
                 with profile if profile is not None else nullcontext():
 
@@ -358,6 +387,7 @@ class HttpBenchmark:
                             "measurement",
                             measured_itl,
                             measured_groups,
+                            record_completed,
                             progress,
                         )
 
@@ -373,13 +403,13 @@ class HttpBenchmark:
                                 seed=workload.dataset.random_seed,
                                 trace_start=workload.trace_start if workload.trace_events is not None else None,
                                 before_first=profile.start if profile is not None else None,
-                                on_start=progress.start if progress is not None else None,
+                                on_start=phase_started,
                             )
                         finally:
                             if sampler is not None:
                                 sampler.cancel()
                     if progress is not None:
-                        progress.emit(duration)
+                        progress.emit(duration, final=True)
             records = sorted(
                 (row for item in episodes for row in item.records),
                 key=lambda row: row["started_at"],
@@ -477,7 +507,7 @@ class HttpBenchmark:
                 measurements=measurements,
                 artifacts=artifacts,
                 time_origin=origin,
-                cumulative_published=progress is not None,
+                http_series_published=progress is not None,
             )
             outputs.publish(run)
             return run
