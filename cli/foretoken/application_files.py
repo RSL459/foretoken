@@ -24,6 +24,7 @@ from foretoken.manifest import DeploymentError, ResourceRef
 SOURCE_REVISION = "inference.foretoken.io/source-revision"
 SERVICE_COMPONENTS = {"ModelService": "model-server", "FrontendService": "frontend"}
 _BINDING_LABEL = "inference.foretoken.io/application-publisher-binding"
+_SOURCE_CONSUMER_LABEL = "foretoken.io/application-source-consumer"
 
 
 def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
@@ -103,6 +104,7 @@ def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
                 "inference.foretoken.io/frontend-service",
                 "inference.foretoken.io/model-preparation-group",
                 "foretoken.io/application-files=consumer",
+                _SOURCE_CONSUMER_LABEL + "=true",
             )
         )
         return [obj for future in pending for obj in future.result()]
@@ -281,6 +283,7 @@ class ApplicationFiles:
         reuse_previous: bool = False,
         sources: dict[str, Any] | None = None,
         image: str | None = None,
+        parts: list[str] | None = None,
     ) -> str:
         """Publish a compiler export with provenance and return the selected immutable revision."""
         command = [
@@ -295,8 +298,14 @@ class ApplicationFiles:
             json.dumps(reuse_previous),
             json.dumps(sources),
             json.dumps(image),
+            json.dumps(parts),
         ]
-        with self._publisher(command, builder.binding, timeout, builder=builder) as job:
+        if parts is not None and not previous:
+            raise DeploymentError("partial publication requires a completed application")
+        with self._publisher(
+            command, builder.binding, timeout, builder=builder,
+            source_revision=previous if parts is not None else "",
+        ) as job:
             self._wait(job, timeout)
             result = self.kubectl.run(
                 ["logs", "job/" + job["name"], "-n", self.namespace, "-c", "publish"]
@@ -410,6 +419,7 @@ class ApplicationFiles:
         timeout: str,
         *,
         builder: ClusterBuilder | None = None,
+        source_revision: str = "",
         name: str = "",
         input_name: str = "",
         credentials_secret: str = "",
@@ -524,6 +534,13 @@ class ApplicationFiles:
                 },
             },
         }
+        if source_revision:
+            # Keep publisher cleanup identity while exposing its borrowed files
+            # to the existing cross-binding application reference collection.
+            labels[_SOURCE_CONSUMER_LABEL] = "true"
+            annotations = {SOURCE_REVISION: source_revision}
+            job["metadata"]["annotations"] = annotations
+            job["spec"]["template"]["metadata"]["annotations"] = annotations
         if credentials_secret:
             job["spec"]["template"]["spec"]["containers"][0]["env"] = [
                 {
