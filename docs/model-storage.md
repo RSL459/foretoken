@@ -29,8 +29,6 @@ Existing deployments can keep their current path. Changing the directory of an a
 
 For a remote cluster, the deploy command automatically converts a relative directory such as `../../data` into a dynamic PVC, so the Quick Start YAML does not need to change. Multi-node clusters keep `ReadWriteMany` for shared model and runtime data; a single-node cluster uses `ReadWriteOnce` automatically. To select a particular StorageClass, size, access mode, or maximum size, set those fields in `cache.yaml`; an absolute `directory` remains a host path that must already exist on the target node or shared filesystem.
 
-Foretoken discovers the directory owner automatically, locally for k3d and on the cluster nodes for remote paths. For a non-root owner, frontend and model processes use that user and group to access the cache. Shared directories must have the same ownership on every node; no user or group IDs need to be entered in the deployment.
-
 ## Use an existing model
 
 Place a complete model directory below the data root:
