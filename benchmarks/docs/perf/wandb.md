@@ -16,7 +16,7 @@ Open the run link printed by the command; it also appears in quiet mode. Use `--
 
 ## Follow progress and compare results
 
-During HTTP measurement, each completed request appears in the request-order curves. Cumulative counts, failures, mean latencies, and throughput are sampled once per second. Completion-window curves include P50/P95/P99 and are uploaded as their data becomes complete; an unfinished request can delay earlier windows. Throughput uses completed requests and elapsed measurement time. Final aggregate metrics appear when measurement finishes and remain in Summary.
+Use request-order curves to inspect individual requests, cumulative curves to follow overall progress, and one-second completion windows to compare throughput and P50/P95/P99 latency over time. These views update during HTTP measurement; windows may wait for earlier unfinished requests. Final aggregate metrics appear when measurement finishes and remain in Summary.
 
 ![Per-request timings and token counts](../imgs/request-order-wandb.png)
 
@@ -24,8 +24,8 @@ Mixed workloads include breakdowns by dataset, model, and request class. Kustomi
 
 ## Download records
 
-Open the run's Artifacts to download HTTP configuration, metrics, and per-request records, including failure reasons. Every run retains `run.log`; for sweeps and comparisons, the parent run's log covers shared service preparation and cleanup. Completed request journals remain available after an interruption; see [saved results](../../README.md#read-and-save-results).
+Open the run's Artifacts to download configuration, metrics, request records, and logs. For sweeps and comparisons, use the parent run's log to inspect shared service preparation and cleanup. File contents and output choices are listed in [saved results](../../README.md#read-and-save-results).
 
 Warmup is excluded from performance metrics and panels. Its records remain in the `benchmark-warmup` artifact. Adding `plot` to `--output local,wandb` saves exported figures locally and in the `benchmark-plots` artifact.
 
-See [output settings](../../README.md#read-and-save-results) for other destinations. W&B publication failures make the command fail and preserve the local execution files for inspection.
+If W&B publication fails, the command reports an error and retains the local execution files for inspection.

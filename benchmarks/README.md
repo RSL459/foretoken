@@ -66,13 +66,16 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
 
-Use `--output local,raw` to save request inputs and response content, including reasoning and tool calls, in `responses.jsonl`. Warmup responses are saved in `warmup_responses.jsonl`.
+Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. With W&B selected, open the printed run link to follow progress and download records from Artifacts. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs.
 
-Every run saves preparation and execution logs in `run.log`. `quiet` suppresses terminal progress and summaries while keeping errors visible. With W&B selected, the log is also uploaded as an artifact.
+| Record | Use |
+| --- | --- |
+| `metrics.json` | Read the final aggregate results |
+| `run.log` | Inspect preparation, execution, and errors |
+| `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect requests as they complete, including records retained after interruption |
+| `responses.jsonl`, with `--output local,raw` | Inspect HTTP inputs and response content, including reasoning and tool calls |
 
-Completed HTTP requests are saved immediately in `raw_output.jsonl`; video requests use `raw_results.jsonl`. These records survive interruption. Completed runs also produce the usual aggregate results. W&B retains the journals as downloadable artifacts.
-
-Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs.
+Logs are recorded in both normal and quiet modes. `quiet` suppresses terminal progress and summaries while keeping errors visible. Warmup records use the `warmup_` filename prefix. Quality scores, framework reports, and profiling captures are described in the linked guides below.
 
 Use `experiment` to group measurements under a named iteration. Run from the checkout containing the code changes:
 
