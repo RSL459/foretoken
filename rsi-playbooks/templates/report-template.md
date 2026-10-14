@@ -2,11 +2,11 @@
 
 English | [简体中文](report-template_zh.md)
 
-Use this for the task's `report.md`. Summarize results first, then briefly explain the iterations. Deliver a file by default; publish the same content to a document platform when the user specifies one.
+Use this for the task's `report.md`. Summarize results first, then briefly explain the iterations. Deliver a file by default; keep the report updated on a document platform when the user specifies one.
 
 ## Results summary
 
-Briefly state the final approach and main improvements. Specify the model, software version, hardware, workload, and concurrency. Use separate tables for different conditions, each starting with its initial reference approach (base).
+Briefly state the final approach and main performance changes. Specify the model, software version, hardware, workload, and concurrency. Use separate tables for different conditions, each starting with its initial reference approach (base).
 
 Select metrics from the task. Give each metric a measured-value column and a change-from-base column, with units and improvement direction in the heading.
 

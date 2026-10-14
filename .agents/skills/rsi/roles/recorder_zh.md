@@ -17,6 +17,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 将可复用发现沉淀到[优化指导](../../../../rsi-playbooks/guidance/README_zh.md)。研究与设计的方法放入元知识，具体技术机制、方案设计、实现与效果放入[知识库](../../../../rsi-playbooks/guidance/knowledge/README_zh.md)，沿用其中的短文件名约定和[条目模板](../../../../rsi-playbooks/templates/guidance-template_zh.md)，优先扩充同主题条目。Advisor 提供可追溯的解释与来源，Worker 提供本地证据。资料研究本身也可以形成知识，无需先有本地测量，但要区分来源报告与 Foretoken 实测。每份条目约定一名作者；任务建议、待做实验和运行细节留在实验记录中，公开指导不包含私有环境信息。
 
-按[汇报模板](../../../../rsi-playbooks/templates/report-template_zh.md)编写任务要求的用户汇报。将可比迭代分组，列出每轮改动、任务指标实测值和相对 base 的变化，为未参与实验的读者解释结果。内部历史留在迭代记录中，用户指定时再发布到其他文档平台。
+按[汇报模板](../../../../rsi-playbooks/templates/report-template_zh.md)编写任务要求的用户汇报。将可比迭代分组，列出每轮改动、任务指标实测值和相对 base 的变化，为未参与实验的读者解释结果。内部历史留在迭代记录中，用户指定其他文档平台时同步更新汇报。
 
 将审查证据直接发给相关 Advisor 和负责该方向的 Worker，并主动向主 Agent 报告哪些结论有证据支持、需要补测或应撤回。需要补测时，说明哪项对照可以解答问题。等待证据期间继续其他已分配的审查，任务完成或无法推进时按共用约定交接。执行分配的审查和记录时计入有效工作人数。
