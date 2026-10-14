@@ -19,7 +19,7 @@ kubectl get nodes
 The cluster needs:
 
 - Kubernetes access through `kubectl` and Helm;
-- a default StorageClass for compiler caches;
+- a default StorageClass for platform persistent storage and compiler caches;
 - GPU drivers and the vendor device plugin when deploying GPU models; and
 - a registry reachable by the Build Pods and every node when using source-built images.
 
@@ -78,7 +78,7 @@ Deploy and update code:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-After editing the checkout, run the same command again. Source changes are compiled in BuildKit Pods and published to the workloads; ordinary Python, Triton, Rust, CUDA, and C/C++ changes reuse the runtime image. Continue with [Deploy Foretoken from Source](custom-deployment.md#deploy-and-update-code) for engine checkouts and runtime changes.
+After editing the checkout, run the same command again. See [Deploy Foretoken from Source](custom-deployment.md#deploy-a-model-service) for engine checkouts and runtime changes.
 
 ## 4. Remove Foretoken
 

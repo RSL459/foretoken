@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,8 +56,10 @@ from foretoken.source import (
     forget_install,
     has_source_state,
     prepare_source_images,
+    reconcile_source_images,
     record_install,
     remove_build_caches,
+    resolve_source_base_image,
 )
 
 
@@ -188,19 +191,12 @@ class PlatformLifecycle:
                 f"Helm release {platform.display_name} is not managed by foretoken; "
                 "use its existing Helm lifecycle"
             )
-        if platform_exists:
-            install_source = helm.release_install_source(platform)
-            requested_source = "source" if command.editable is not None else "release"
-            if install_source != requested_source:
-                command_hint = (
-                    "foretoken install -e ."
-                    if install_source == "source"
-                    else "foretoken install"
-                )
-                raise DeploymentError(
-                    f"Helm release {platform.display_name} uses {install_source} images; "
-                    f"run {command_hint}"
-                )
+        install_source = helm.release_install_source(platform) if platform_exists else None
+        if install_source == "source" and command.editable is None:
+            raise DeploymentError(
+                f"Helm release {platform.display_name} uses source images; "
+                "run foretoken install -e ."
+            )
         values = load_platform_values(command.values)
         current_runtime = runtime_overrides_from_values(values)
         stored_values = (
@@ -311,14 +307,22 @@ class PlatformLifecycle:
             else stored_runtime.image
         )
         if command.editable is not None:
-            if source_base_image is not None:
-                source_runtime_image = source_base_image
-            elif current_runtime.image not in {None, "auto"}:
-                source_runtime_image = current_runtime.image or None
-            elif runtime_selection is not None and runtime_selection.backend == "metax":
+            source_runtime_image = resolve_source_base_image(
+                kubectl,
+                Path(command.editable).expanduser().resolve(),
+                configured_runtime_image if install_source == "release" else current_runtime.image,
+                source_base_image,
+            )
+            if (
+                source_runtime_image is None
+                and runtime_selection is not None
+                and runtime_selection.backend == "metax"
+            ):
                 build_metax_runtime = True
             elif (
-                runtime_selection is not None and runtime_selection.backend == "custom"
+                source_runtime_image is None
+                and runtime_selection is not None
+                and runtime_selection.backend == "custom"
             ):
                 raise DeploymentError(
                     "runtime.vllm.image must be set in --values for source builds on "
@@ -497,34 +501,6 @@ class PlatformLifecycle:
             )
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
-        if command.editable is not None:
-            helm.prepare_source_origin(
-                Path(command.editable).expanduser().resolve(),
-                (*stored_values, *values),
-                command.timeout,
-            )
-        source_images = (
-            artifacts.enter_context(
-                prepare_source_images(
-                    command,
-                    platform.namespace,
-                    (*stored_values, *values),
-                    source_runtime_image,
-                    installed_images=(
-                        helm.platform_image_references(platform)
-                        if platform_exists
-                        else None
-                    ),
-                    build_metax_runtime=build_metax_runtime,
-                    runtime_backend=runtime_selection.backend
-                    if runtime_selection
-                    else "nvidia",
-                    saved_arguments=source_build_arguments,
-                )
-            )
-            if command.editable is not None
-            else None
-        )
         load_balancer.apply(load_balancer_plan, command.timeout)
         gateway.apply_before_platform(gateway_plan, command.timeout)
         self._leader_worker.apply(leader_worker_plan, command.timeout)
@@ -539,69 +515,143 @@ class PlatformLifecycle:
             if runtime_selection is not None
             else (),
         )
-        if install_managed_prometheus:
-            helm.install_prometheus(
-                managed_prometheus,
-                tuple(sorted(monitor_namespaces)),
-                managed_prometheus_exists,
-                command.timeout,
-                anonymous_access=grafana_anonymous_access,
-            )
-            mark_managed_metrics_scraper_namespace(
-                kubectl, managed_prometheus.namespace
-            )
-            resource = helm.prometheus_resource(managed_prometheus)
-            selected_prometheus = PrometheusRef(resource.name, resource.namespace, ())
-        if install_managed_dcgm:
-            helm.install_dcgm_exporter(
-                managed_dcgm,
-                observability_labels,
-                nvidia_metrics.node_selector,
-                managed_dcgm_exists,
-                command.timeout,
-                visible_devices=nvidia_metrics.visible_devices,
-            )
-            # The chart permits one unavailable DaemonSet Pod during Helm's
-            # wait, while discovery requires Ready coverage on every GPU node.
-            # Complete the managed rollout before resolving it as existing.
-            kubectl.rollout_status(helm.dcgm_resource(managed_dcgm), command.timeout)
-        if install_managed_metax:
-            metax_exporter.install(
-                metax_metrics.node_names, observability_labels, command.timeout
-            )
 
-        if install_managed_prometheus or install_managed_dcgm or install_managed_metax:
-            verified_discovery = ExporterDiscovery(kubectl, command.timeout)
-            verified_nvidia = NvidiaMetricsDiscovery(verified_discovery).resolve()
-            verified_metax = MetaXMetricsDiscovery(verified_discovery).resolve()
-            verified_exporters = tuple(
-                (name, exporter)
-                for name, exporter in (
-                    (
-                        "DCGM",
-                        verified_nvidia.exporter
-                        if verified_nvidia is not None
-                        else None,
-                    ),
-                    (
-                        "mxExporter",
-                        verified_metax.exporter if verified_metax is not None else None,
-                    ),
+        installation_workers = ThreadPoolExecutor(max_workers=2)
+        source_future = None
+        dependencies: Future[None] = Future()
+        # Only the worker enters source contexts. Join it before the outer stack
+        # closes them, preserving installation errors through normal context exit.
+        source_artifacts = artifacts.enter_context(ExitStack())
+        try:
+            if command.editable is not None:
+                # Bootstrap shared storage and its namespace before Helm releases
+                # can concurrently create resources in that namespace.
+                origin = helm.prepare_source_origin(
+                    Path(command.editable).expanduser().resolve(),
+                    (*stored_values, *values),
+                    command.timeout,
                 )
-                if exporter is not None
-            )
-            verified_discovery.require_prometheus_selection(
-                selected_prometheus, verified_exporters
-            )
-            verified_discovery.require_prometheus_targets(
-                selected_prometheus,
-                verified_exporters,
-                timeout_seconds=timeout_seconds(command.timeout),
-            )
+                context = prepare_source_images(
+                    command,
+                    platform.namespace,
+                    (*stored_values, *values),
+                    source_runtime_image,
+                    origin=origin,
+                    installed_images=(
+                        helm.platform_image_references(platform)
+                        if install_source == "source"
+                        else None
+                    ),
+                    build_metax_runtime=build_metax_runtime,
+                    runtime_backend=runtime_selection.backend
+                    if runtime_selection
+                    else "nvidia",
+                    saved_arguments=source_build_arguments,
+                    before_delivery=dependencies.result,
+                )
+                source_future = installation_workers.submit(
+                    source_artifacts.enter_context, context
+                )
+            elif not kubectl.exists("namespace", platform.namespace):
+                kubectl.run(["create", "namespace", platform.namespace])
 
-        log_endpoint, log_storage_statefulset = self._logs.install(
-            log_config, command.timeout
-        )
+            # A new Prometheus installation must establish its CRDs before restoring
+            # custom log-chart monitoring resources. Existing monitoring can update in parallel.
+            log_future = (
+                installation_workers.submit(
+                    self._logs.install, log_config, command.timeout
+                )
+                if managed_prometheus_exists or not install_managed_prometheus
+                else None
+            )
+            if install_managed_prometheus:
+                helm.install_prometheus(
+                    managed_prometheus,
+                    tuple(sorted(monitor_namespaces)),
+                    managed_prometheus_exists,
+                    command.timeout,
+                    anonymous_access=grafana_anonymous_access,
+                )
+                mark_managed_metrics_scraper_namespace(
+                    kubectl, managed_prometheus.namespace
+                )
+                resource = helm.prometheus_resource(managed_prometheus)
+                selected_prometheus = PrometheusRef(
+                    resource.name, resource.namespace, ()
+                )
+            if install_managed_dcgm:
+                helm.install_dcgm_exporter(
+                    managed_dcgm,
+                    observability_labels,
+                    nvidia_metrics.node_selector,
+                    managed_dcgm_exists,
+                    command.timeout,
+                    visible_devices=nvidia_metrics.visible_devices,
+                )
+                # The chart permits one unavailable DaemonSet Pod during Helm's
+                # wait, while discovery requires Ready coverage on every GPU node.
+                # Complete the managed rollout before resolving it as existing.
+                kubectl.rollout_status(
+                    helm.dcgm_resource(managed_dcgm), command.timeout
+                )
+            if install_managed_metax:
+                metax_exporter.install(
+                    metax_metrics.node_names, observability_labels, command.timeout
+                )
+
+            if (
+                install_managed_prometheus
+                or install_managed_dcgm
+                or install_managed_metax
+            ):
+                verified_discovery = ExporterDiscovery(kubectl, command.timeout)
+                verified_nvidia = NvidiaMetricsDiscovery(verified_discovery).resolve()
+                verified_metax = MetaXMetricsDiscovery(verified_discovery).resolve()
+                verified_exporters = tuple(
+                    (name, exporter)
+                    for name, exporter in (
+                        (
+                            "DCGM",
+                            verified_nvidia.exporter
+                            if verified_nvidia is not None
+                            else None,
+                        ),
+                        (
+                            "mxExporter",
+                            verified_metax.exporter
+                            if verified_metax is not None
+                            else None,
+                        ),
+                    )
+                    if exporter is not None
+                )
+                verified_discovery.require_prometheus_selection(
+                    selected_prometheus, verified_exporters
+                )
+                verified_discovery.require_prometheus_targets(
+                    selected_prometheus,
+                    verified_exporters,
+                    timeout_seconds=timeout_seconds(command.timeout),
+                )
+
+            log_endpoint, log_storage_statefulset = (
+                log_future.result()
+                if log_future is not None
+                else self._logs.install(log_config, command.timeout)
+            )
+            dependencies.set_result(None)
+            source_images = (
+                source_future.result() if source_future is not None else None
+            )
+        except BaseException as error:
+            if not dependencies.done():
+                dependencies.set_exception(error)
+            raise
+        finally:
+            # Resolve dependency success or failure before joining: the source
+            # worker may be waiting to deliver node images immediately before Helm.
+            installation_workers.shutdown(wait=True)
+
         helm.install_platform(
             release=platform,
             source_images=source_images,
@@ -674,6 +724,7 @@ class PlatformLifecycle:
                 source_images.inputs,
                 build_state=source_images.build_state,
             )
+            reconcile_source_images(kubectl, command.timeout)
         _print_plan("Foretoken platform", "Ready", platform.display_name)
         if not load_balancer_plan.install and load_balancer_plan.action != "Reuse":
             _print_plan(
@@ -709,6 +760,9 @@ class PlatformLifecycle:
         unadopted_origin = (
             () if platform_exists else helm.application_origin_resources()
         )
+        admission_claims = {
+            claim["uid"]: claim for claim in helm.admission_store_claims(kubectl)
+        }
         dcgm_exists = helm.release_exists(managed_dcgm)
         dcgm_managed = dcgm_exists and helm.is_cleanup_managed(managed_dcgm)
         prometheus_exists = helm.release_exists(managed_prometheus)
@@ -726,6 +780,7 @@ class PlatformLifecycle:
         if (
             platform_exists
             or unadopted_origin
+            or admission_claims
             or dcgm_managed
             or prometheus_managed
             or metax_managed
@@ -740,12 +795,18 @@ class PlatformLifecycle:
                     for resource in resources
                 )
                 raise DeploymentError(
-                    "delete Foretoken services before uninstalling the platform: "
+                    "delete Foretoken services and wait for their workloads to be removed before uninstalling the platform: "
                     f"{remaining}"
                 )
 
         if platform_exists:
             require_unused_managed_rdma(kubectl, (platform.name, platform.namespace))
+            admission_claims.update(
+                (claim["uid"], claim)
+                for claim in helm.prepare_admission_store_uninstall(
+                    kubectl, command.timeout
+                )
+            )
             _print_plan("Foretoken platform", "Remove", platform.display_name)
         else:
             _print_plan("Foretoken platform", "Skip", "not installed")
@@ -776,6 +837,8 @@ class PlatformLifecycle:
             _print_plan(
                 "Logs", "Remove", release.display_name + " (retain stored logs)"
             )
+        if source_builds:
+            reconcile_source_images(kubectl, command.timeout, uninstall=True)
         self._logs.uninstall(managed_logs, command.timeout)
         if platform_exists:
             helm.uninstall(platform, command.timeout)
@@ -783,6 +846,10 @@ class PlatformLifecycle:
         elif unadopted_origin:
             helm.remove_application_origin(unadopted_origin, command.timeout)
             _print_plan("Application file storage", "Removed", platform.display_name)
+        for claim in admission_claims.values():
+            kubectl.wait_deleted("persistentvolumeclaim", claim, command.timeout)
+        if admission_claims:
+            _print_plan("Admission storage", "Removed", platform.display_name)
         if dcgm_managed:
             helm.uninstall(managed_dcgm, command.timeout)
             _print_plan("NVIDIA DCGM Exporter", "Removed", managed_dcgm.display_name)

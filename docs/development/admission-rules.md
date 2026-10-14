@@ -1,40 +1,52 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# Implementing admission rules
+# Admission lifecycle
 
 English | [简体中文](admission-rules_zh.md)
 
-To add an admission rule, start from [allow_all](../../data-plane/frontend/src/admission/src/algorithm/allow_all.rs), or use [concurrency](../../data-plane/frontend/src/admission/src/algorithm/concurrency.rs) for an example with queuing and resource reservations. To configure an existing rule, see [Frontend admission](../../data-plane/frontend/README.md#configure-admission-rules).
+Admission decides which prepared request can run; Router selects its backend. For user configuration, see [Frontend admission](../../data-plane/frontend/README.md#configure-admission-rules).
 
-## Make the decision
-
-Implement `AdmissionRule::admit`:
-
-```rust
-async fn admit(
-    &self,
-    request: &AdmissionRequest,
-    context: &AdmissionContext<'_>,
-) -> Result<AdmissionPermit, AdmissionError>;
+```text
+Reserve waiting capacity → wait for readiness and prepare input
+→ reserve caller concurrency → route and submit
+→ backend acceptance → execution → confirmed completion
 ```
 
-Use `request` for input summaries and output budgets, and `context` for the deadline and current model observations. Field definitions are in [AdmissionRequest](../../data-plane/frontend/src/admission/src/request.rs) and [AdmissionContext](../../data-plane/frontend/src/admission/src/context.rs).
+## Gateway integration
 
-Return a permit to accept the request or an error to reject it. The rule may wait; the framework handles deadline expiry and caller cancellation. While queued, hold `context.queue.begin_wait()`'s guard to record the wait.
+The gateway authenticates requests and overwrites `x-role` and `x-caller-id` before forwarding them. Use a stable, non-secret identity for caller accounting and prefix cache isolation; frontend access must be restricted to the trusted gateway. Authentication, authorization, and RPM/token quotas remain gateway responsibilities.
 
-For resource-free admission, return `AdmissionPermit::default()`. Otherwise, return `AdmissionPermit::new(reservation)`: the reservation must already own the capacity, release it on drop, and transfer one candidate's share through `split_one()`.
+## Capacity ownership
 
-Update `context.metrics.active` and `context.metrics.queued` only for work units actually reserved or queued by the algorithm. Release the corresponding count with its reservation; splitting transfers already-counted units without incrementing them again. The framework records call results and queue timing separately.
+| Phase | Waiting capacity | Caller concurrency |
+| --- | --- | --- |
+| Readiness waiting, input preparation, or waiting for dispatch | Held | Not held |
+| Submission awaiting acceptance | Held | Held |
+| Backend accepted, including engine queuing | Released | Held |
+| Between execution stages | Released | Held |
+| Completed or confirmed terminated | Released | Released |
 
-## Register the rule
+Reserve a batch's full capacity before submitting any child. Each prompt/candidate combination, including `best_of`, counts once; splitting transfers existing capacity rather than acquiring it again. Tokenization, counting, and detokenization use waiting capacity only. Non-cancelable preparation retains that capacity until the work ends, even if its HTTP request has already ended. One request deadline covers waiting, preparation, retries, and every execution stage.
 
-Provide `from_parameters(Value) -> Result<Self, String>` to validate parameters and construct a model's rule. Add it to `declare_admission_algorithms!` in [algorithm/mod.rs](../../data-plane/frontend/src/admission/src/algorithm/mod.rs); external implementations can register an `AdmissionDescriptor` through `inventory`.
+After acceptance, the backend owns execution and completion. Cancellation requests termination but does not release concurrency until execution ends. Closing an HTTP stream is not completion; uncertain execution must be stopped before its capacity is released. Backend integration details are in the [vLLM completion contract](../../data-plane/patches/vllm/README.md#engine-completion-contract).
 
-Expose new configuration through the shared FrontendService and ModelService admission API and regenerate the CRDs. Optional `capacity`, `requires_ready_runtime`, and `close` methods are documented on [AdmissionRule](../../data-plane/frontend/src/admission/src/lib.rs). `close` must wake algorithm-owned waiters without revoking accepted reservations.
+Only definite nonacceptance permits retry: Router Busy, or backend `503` with `admission_busy` or `admission_unavailable`. Return the dispatch reservation while keeping the original waiting position and deadline. Once any batch child or stage is accepted, do not replay the initial request. Store unavailability prevents new bounded reservations; accepted work continues and completes its accounting when the store recovers.
 
-## Configuration lifecycle
+## Disaggregated execution
 
-Each frontend replica maintains independent rule instances and queues for its models; routing changes retain unchanged rules. Factories validate and construct rules without publishing metrics or changing active requests. The framework activates metrics when the configuration takes effect.
+Prefill/Decode (P/D) and Encoder/Prefill/Decode (E/P/D) share one caller-concurrency reservation per generated sequence. Intermediate stages release their own instance capacity when they finish, while caller concurrency remains held through the next stage. Decode releases it after confirmed completion. Complete the ownership transfer before returning intermediate completion to the next stage. Connector-owned KV and media resources have their own cleanup lifecycle.
 
-A changed model rule stops accepting new requests, cancels waiting attempts, and lets accepted work finish before activating its replacement. New requests receive HTTP 503 during this handover; other models continue independently.
+## Configuration updates
+
+Validate settings before activation; invalid settings leave the working configuration unchanged. Authoritative Pod membership still updates independently so terminated owners can be reclaimed. Confirm bounded settings only after their shared limits take effect.
+
+Limit updates preserve outstanding work, queue order, and original request deadlines. Lower limits do not cancel accepted execution; a waiting batch larger than its new caller-concurrency limit is rejected. Pending requests use current role and Pool rules at dispatch, while already-granted batches retain their decision.
+
+Enabling limits rejects previously untracked requests that have not dispatched, without retroactively counting existing unrestricted execution. Removing a model rejects new and waiting requests while accepted work drains.
+
+Instance acceptance limits are separate from the engine's scheduling limits. A live update changes only new acceptance: existing work and the instance's accepting or draining state remain unchanged. A lower limit takes effect as occupancy falls, and configuration status is confirmed after the requested instances report the new value.
+
+## Observations
+
+Record one admission result at first backend acceptance, CPU-only preparation completion, or terminal failure. Busy retries are not failures. Shared occupancy must be deduplicated across frontend replicas; metrics observe capacity but never grant or release it. See [Observability](../../observability/README.md).

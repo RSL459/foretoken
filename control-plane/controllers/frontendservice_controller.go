@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
+	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -22,9 +24,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -45,8 +50,6 @@ const (
 	frontendRouteAcceptedMessage            = "The HTTPRoute is accepted and resolved"
 	frontendRoutePendingMessage             = "The HTTPRoute is not accepted and resolved"
 	frontendRouteNotRequiredMessage         = "Local mode exposes the frontend through its LoadBalancer Service"
-	frontendRoutingInstalledMessage         = "A routable backend snapshot is installed"
-	frontendRoutingNotInstalledMessage      = "No routable backend snapshot is installed"
 )
 
 var frontendConditionTypes = [...]string{
@@ -76,6 +79,7 @@ type FrontendRuntimeProfile struct {
 	ImagePullSecrets  []corev1.LocalObjectReference
 	RuntimeCache      *inferencev1alpha1.RuntimeCacheBinding
 	HuggingFaceAccess *inferencev1alpha1.HuggingFaceAccess
+	AdmissionStore    *inferencev1alpha1.AdmissionStoreConnection
 	Gateway           *GatewayParent
 }
 
@@ -104,12 +108,80 @@ func (reconciler *FrontendServiceReconciler) SetupWithManager(manager ctrl.Manag
 	if reconciler.Alerts != nil && reconciler.Alerts.watchRules {
 		builder = builder.Owns(&monitoringv1.PrometheusRule{})
 	}
+	workloadPod := func(object client.Object) bool {
+		return object.GetLabels()[frontendServiceLabel] != "" || object.GetLabels()[modelGroupLabel] != ""
+	}
 	return builder.
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsForPod), ctrlbuilder.WithPredicates(predicate.Funcs{
+			CreateFunc: func(event event.CreateEvent) bool { return workloadPod(event.Object) },
+			UpdateFunc: func(event event.UpdateEvent) bool {
+				before, after := event.ObjectOld.(*corev1.Pod), event.ObjectNew.(*corev1.Pod)
+				return workloadPod(before) || workloadPod(after) || before.Status.Phase != after.Status.Phase && (after.Status.Phase == corev1.PodSucceeded || after.Status.Phase == corev1.PodFailed)
+			},
+			DeleteFunc:  func(event.DeleteEvent) bool { return true },
+			GenericFunc: func(event event.GenericEvent) bool { return workloadPod(event.Object) },
+		})).
 		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.ModelPool{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Complete(reconciler)
+}
+
+// frontendsForPod wakes only affected frontends; unpublished Pods are never recognized by provenance.
+// Unlabelled terminal and delete events use the published UID lists instead of broadcasting ordinary Pod updates.
+func (reconciler *FrontendServiceReconciler) frontendsForPod(ctx context.Context, object client.Object) []reconcile.Request {
+	if name := object.GetLabels()[frontendServiceLabel]; name != "" {
+		return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: object.GetNamespace(), Name: name}}}
+	}
+	if object.GetLabels()[modelGroupLabel] != "" {
+		return reconciler.frontendsInNamespace(ctx, object)
+	}
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	var configurations corev1.ConfigMapList
+	if err := reader.List(ctx, &configurations, client.InNamespace(object.GetNamespace()), client.HasLabels{frontendServiceLabel}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "read published instance membership for Pod termination")
+		return reconciler.frontendsInNamespace(ctx, object)
+	}
+	requests := make([]reconcile.Request, 0)
+	for index := range configurations.Items {
+		configuration := &configurations.Items[index]
+		owner := metav1.GetControllerOf(configuration)
+		if owner == nil || owner.APIVersion != inferencev1alpha1.GroupVersion.String() || owner.Kind != "FrontendService" {
+			continue
+		}
+		payload, exists := configuration.Data[servingSnapshotKey]
+		if !exists {
+			continue
+		}
+		snapshot, _, err := readServingPublication([]byte(payload))
+		if err != nil {
+			ctrl.LoggerFrom(ctx).Error(err, "read published instance membership", "configMap", configuration.Name)
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}})
+			continue
+		}
+		uid := string(object.GetUID())
+		if !slices.Contains(snapshot.FrontendInstances, uid) && !slices.Contains(snapshot.BackendInstances, uid) {
+			continue
+		}
+		frontend := new(inferencev1alpha1.FrontendService)
+		if err := reader.Get(ctx, client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}, frontend); apierrors.IsNotFound(err) {
+			continue
+		} else if err != nil {
+			ctrl.LoggerFrom(ctx).Error(err, "read frontend for published instance membership")
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}})
+			continue
+		}
+		if slices.ContainsFunc(frontendServingConfigVersions(frontend), func(version uint32) bool {
+			return configuration.Name == frontendServingConfigMapName(frontend, version)
+		}) && routingControllerOwnerMatches(configuration, inferencev1alpha1.GroupVersion.String(), "FrontendService", frontend.Name, frontend.UID) {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(frontend)})
+		}
+	}
+	return requests
 }
 
 // frontendsInNamespace maps model lifecycle changes to every frontend in the same namespace.
@@ -200,7 +272,11 @@ func (reconciler *FrontendServiceReconciler) placeFrontendCache(ctx context.Cont
 // Reconcile applies frontend resources and keeps readiness fail-closed until a serving snapshot is installed.
 func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	frontend := new(inferencev1alpha1.FrontendService)
-	if err := reconciler.Get(ctx, request.NamespacedName, frontend); err != nil {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	if err := reader.Get(ctx, request.NamespacedName, frontend); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	result, err := reconciler.reconcileFrontend(ctx, frontend)
@@ -221,6 +297,9 @@ func (reconciler *FrontendServiceReconciler) sourceSelectionAllowed(ctx context.
 	if selected := frontend.Status.Application; selected != nil {
 		return selected.DeploymentRevision == frontend.Spec.DeploymentRevision && (selected.SourceRevision == revision || (selected.SourceRevision == "" && selected.ApplicationURL == profile.ApplicationFiles.Ref("frontend", revision))), nil
 	}
+	if frontend.Spec.DeploymentRevision != "" {
+		return false, nil
+	}
 	deployment := new(appsv1.Deployment)
 	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), deployment); err != nil {
 		return false, client.IgnoreNotFound(err)
@@ -229,13 +308,37 @@ func (reconciler *FrontendServiceReconciler) sourceSelectionAllowed(ctx context.
 }
 
 // Serving configuration protocol selected with the frontend application.
-const frontendServingConfigVersion uint32 = 1
+const frontendModelRoutingConfigVersion uint32 = 5
+const frontendServingConfigVersion = frontendModelRoutingConfigVersion
+const frontendCacheIsolationConfigVersion uint32 = 4
+const frontendAdmissionConfigVersion uint32 = 3
 const frontendServingConfigAnnotation = "inference.foretoken.io/serving-config-protocol"
 
 // reconcileFrontend keeps serving state independent of optional alert configuration failures.
 func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Context, frontend *inferencev1alpha1.FrontendService) (ctrl.Result, error) {
 	if !frontend.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
+	}
+	var services inferencev1alpha1.ModelServiceList
+	if err := reconciler.List(ctx, &services, client.InNamespace(frontend.Namespace)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list ModelServices for frontend: %w", err)
+	}
+	_, admissionErr := effectiveModelAdmission(frontend.Spec, inferencev1alpha1.ModelServiceSpec{})
+	if admissionErr == nil {
+		for _, service := range services.Items {
+			if (service.Spec.Backend != "vllm" && service.Spec.Backend != "vllm-omni") || !service.DeletionTimestamp.IsZero() {
+				continue
+			}
+			if _, err := effectiveModelAdmission(frontend.Spec, service.Spec); err != nil {
+				admissionErr = fmt.Errorf("ModelService %q admission: %w", service.Name, err)
+				break
+			}
+		}
+	}
+	if admissionErr != nil {
+		_, membershipErr := reconciler.reconcileServingSnapshot(ctx, frontend, nil, true)
+		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: admissionErr.Error()})
+		return ctrl.Result{}, errors.Join(membershipErr, statusErr)
 	}
 	if err := reconciler.RuntimeProfile.validate(); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeProfileIncomplete", FailureMessage: err.Error()})
@@ -262,23 +365,35 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 			if !metav1.IsControlledBy(current, frontend) {
 				return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: "The existing frontend Deployment belongs to another owner"})
 			}
-			selection = &inferencev1alpha1.ApplicationSelection{
-				Image:              current.Spec.Template.Spec.Containers[0].Image,
-				ApplicationURL:     current.Spec.Template.Annotations["inference.foretoken.io/application-url"],
-				SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
-				DeploymentRevision: deploymentRevision,
-			}
-			base := frontend.DeepCopy()
-			frontend.Status.Application = selection
-			frontend.Status.ServingConfigVersion = 0
-			if current.Spec.Template.Annotations[frontendServingConfigAnnotation] == fmt.Sprint(frontendServingConfigVersion) {
-				frontend.Status.ServingConfigVersion = frontendServingConfigVersion
-			}
-			if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-				return ctrl.Result{}, fmt.Errorf("retain frontend application configuration: %w", err)
-			}
-			if frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
-				return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, deploymentRequired)
+			// Adopting observed state must not consume an explicit request for a new application.
+			if deploymentRevision == "" {
+				selection = &inferencev1alpha1.ApplicationSelection{
+					Image:              current.Spec.Template.Spec.Containers[0].Image,
+					ApplicationURL:     current.Spec.Template.Annotations["inference.foretoken.io/application-url"],
+					SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
+					DeploymentRevision: deploymentRevision,
+				}
+				for _, env := range current.Spec.Template.Spec.Containers[0].Env {
+					if env.Name != runtimeconfig.AdmissionStoreURLEnv {
+						continue
+					}
+					selection.AdmissionStore = &inferencev1alpha1.AdmissionStoreConnection{URL: env.Value}
+					if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+						selection.AdmissionStore.URLSecretRef = env.ValueFrom.SecretKeyRef.DeepCopy()
+					}
+					if err := runtimeconfig.ValidateAdmissionStore(selection.AdmissionStore); err != nil {
+						return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
+					}
+				}
+				base := frontend.DeepCopy()
+				frontend.Status.Application = selection
+				frontend.Status.ServingConfigVersion = 0
+				if version, err := strconv.ParseUint(current.Spec.Template.Annotations[frontendServingConfigAnnotation], 10, 32); err == nil && version >= uint64(frontendAdmissionConfigVersion) && version <= uint64(frontendServingConfigVersion) {
+					frontend.Status.ServingConfigVersion = uint32(version)
+				}
+				if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+					return ctrl.Result{}, fmt.Errorf("retain frontend application configuration: %w", err)
+				}
 			}
 		} else if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
@@ -286,8 +401,14 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	retained := selection != nil && selection.DeploymentRevision == deploymentRevision && (selection.SourceRevision == sourceRevision || (selection.SourceRevision == "" && sourceRevision != "" && selection.ApplicationURL == profile.ApplicationFiles.Ref("frontend", sourceRevision)))
 	if !retained {
-		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision}
+		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy()}
 		if sourceRevision != "" {
+			image, err := profile.ApplicationFiles.ResolveImage(ctx, "frontend", sourceRevision, profile.Image)
+			if err != nil {
+				statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ApplicationResolutionFailed", FailureMessage: err.Error()})
+				return ctrl.Result{}, errors.Join(err, statusErr)
+			}
+			selection.Image = image
 			selection.ApplicationURL = profile.ApplicationFiles.Ref("frontend", sourceRevision)
 		}
 	} else {
@@ -296,33 +417,38 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	// Application selection and its serving protocol advance together. A platform update
 	// leaves an explicitly retained application and its existing configuration untouched.
-	if frontend.Status.Application != nil && frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
-		previous := frontend.Status.Application
-		sameApplication := previous.ApplicationURL == selection.ApplicationURL && (selection.ApplicationURL != "" || previous.Image == selection.Image)
-		if retained || sameApplication {
-			return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, deploymentRequired)
-		}
+	requiresModelRouting := slices.ContainsFunc(services.Items, func(service inferencev1alpha1.ModelService) bool {
+		return service.DeletionTimestamp.IsZero() && (service.Spec.Backend == "vllm" || service.Spec.Backend == "vllm-omni") && service.Spec.RouterPipeline != nil
+	})
+	if retained && (frontend.Status.ServingConfigVersion < frontendAdmissionConfigVersion || requiresModelRouting && frontend.Status.ServingConfigVersion < frontendModelRoutingConfigVersion) {
+		_, membershipErr := reconciler.reconcileServingSnapshot(ctx, frontend, nil, true)
+		statusErr := reconciler.updateStatus(ctx, frontend, deploymentRequired)
+		return ctrl.Result{}, errors.Join(membershipErr, statusErr)
 	}
-	if !reflect.DeepEqual(frontend.Status.Application, selection) || frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
+	selectedVersion := frontend.Status.ServingConfigVersion
+	if !retained {
+		selectedVersion = frontendServingConfigVersion
+	}
+	if !reflect.DeepEqual(frontend.Status.Application, selection) || frontend.Status.ServingConfigVersion != selectedVersion {
 		base := frontend.DeepCopy()
 		frontend.Status.Application = selection
-		frontend.Status.ServingConfigVersion = frontendServingConfigVersion
+		frontend.Status.ServingConfigVersion = selectedVersion
 		if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 			return ctrl.Result{}, fmt.Errorf("persist frontend application selection: %w", err)
 		}
 	}
 	profile.Image, profile.ApplicationURL = selection.Image, selection.ApplicationURL
-	var services inferencev1alpha1.ModelServiceList
-	if err := reconciler.List(ctx, &services, client.InNamespace(frontend.Namespace)); err != nil {
-		return ctrl.Result{}, fmt.Errorf("list ModelServices for frontend: %w", err)
-	}
+	profile.AdmissionStore = selection.AdmissionStore.DeepCopy()
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, frontend.Namespace); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
 	}
-	servingSnapshotInstalled, err := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items)
-	if err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ServingSnapshotProjectionFailed", FailureMessage: err.Error()})
+	published, projectionErr := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items, false)
+	if !published && projectionErr != nil {
+		// Rejected serving intent must not prevent retirement of terminated execution members.
+		_, membershipErr := reconciler.reconcileServingSnapshot(ctx, frontend, nil, true)
+		projectionErr = errors.Join(projectionErr, membershipErr)
 	}
+
 	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, frontend.Namespace)
 	if err != nil {
 		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
@@ -420,15 +546,30 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		currentDeployment.Status.Replicas == targetReplicas &&
 		currentDeployment.Spec.Template.Spec.Containers[0].Image == selection.Image &&
 		currentDeployment.Spec.Template.Annotations["inference.foretoken.io/application-url"] == selection.ApplicationURL
+	configuration := reconciler.observeConfiguration(ctx, frontend, currentDeployment)
+	if projectionErr != nil {
+		configuration = metav1.Condition{Status: metav1.ConditionFalse, Reason: "ServingSnapshotProjectionFailed", Message: projectionErr.Error()}
+		var backendRequired *backendDeploymentRequiredError
+		if errors.As(projectionErr, &backendRequired) {
+			configuration.Reason = "BackendDeploymentRequired"
+		}
+		if errors.Is(projectionErr, errFrontendCacheIsolationUnsupported) {
+			configuration.Reason = "FrontendDeploymentRequired"
+		}
+	}
 	state := frontendState{
+		Configuration:  configuration,
 		Materialized:   applyDeployment,
 		Available:      available,
 		ExecutionReady: executionReady,
 		RouteRequired:  routeRequired,
 		RouteReady:     routeReady,
-		RoutingReady:   available && servingSnapshotInstalled,
 	}
-	return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, state)
+	result := ctrl.Result{}
+	if configuration.Status != metav1.ConditionTrue {
+		result.RequeueAfter = time.Second
+	}
+	return result, reconciler.updateStatus(ctx, frontend, state)
 }
 
 func (profile FrontendRuntimeProfile) validate() error {
@@ -513,7 +654,7 @@ type frontendState struct {
 	Available      bool
 	RouteRequired  bool
 	RouteReady     bool
-	RoutingReady   bool
+	Configuration  metav1.Condition
 	FailureReason  string
 	FailureMessage string
 }
@@ -552,12 +693,15 @@ func (reconciler *FrontendServiceReconciler) updateStatus(ctx context.Context, f
 		} else {
 			setFrontendCondition(frontend, frontendConditionRouteReady, metav1.ConditionTrue, "NotRequired", frontendRouteNotRequiredMessage)
 		}
+		if state.Configuration.Status == metav1.ConditionTrue {
+			frontend.Status.AppliedServingSnapshotVersion = frontend.Status.ServingSnapshotVersion
+		}
 		setFrontendCondition(
 			frontend,
 			frontendConditionRoutingReady,
-			conditionStatus(state.RoutingReady),
-			frontendBooleanReason(state.RoutingReady, "Installed", "NotInstalled"),
-			frontendBooleanMessage(state.RoutingReady, frontendRoutingInstalledMessage, frontendRoutingNotInstalledMessage),
+			state.Configuration.Status,
+			state.Configuration.Reason,
+			state.Configuration.Message,
 		)
 		reason, message := frontendReadyFailure(state)
 		setFrontendCondition(frontend, conditionReady, conditionStatus(reason == "Ready"), reason, message)
@@ -585,8 +729,8 @@ func frontendReadyFailure(state frontendState) (string, string) {
 		return "ExecutionPending", "The selected frontend application and target replicas are not ready"
 	case state.RouteRequired && !state.RouteReady:
 		return "RouteNotAccepted", "The HTTPRoute is not accepted and resolved by its Gateway"
-	case !state.RoutingReady:
-		return "RoutingNotReady", frontendRoutingNotInstalledMessage
+	case state.Configuration.Status != metav1.ConditionTrue:
+		return state.Configuration.Reason, state.Configuration.Message
 	default:
 		return "Ready", "The frontend workload and backend routing are ready"
 	}

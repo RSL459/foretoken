@@ -117,30 +117,80 @@ Cancellation and deletion continue after the HTTP `202` response. The configurat
 
 ## Configure admission rules
 
-Admission controls concurrency and queuing for text generation and tokenization. The default is unrestricted (`allow_all`). Set `FrontendService.spec.admission` to provide defaults for every model, for example:
+To limit waiting text requests, add `admission` under `spec` in the deployment's `frontend.yaml`:
 
 ```yaml
 spec:
   admission:
-    algorithm: concurrency
-    parameters:
-      maxConcurrentRequests: 64
+    maxWaitingRequests: 128
+    queueTimeout: 30s
 ```
 
-Limits apply independently per frontend replica, per model; there is no shared frontend-wide limit or queue. Choose the limit for your workload; batches count each output candidate separately. To allow queuing, add `maxQueuedRequests` and optionally `queueTimeout` under `parameters`.
+The waiting limit is shared across all FrontendService replicas, separately for each model, and includes input preparation. `queueTimeout` bounds waiting and preparation before backend acceptance. Batched prompts and `best_of` count each generated sequence. These rules do not apply to video APIs.
 
-A model's `ModelService.spec.admission` replaces the entire frontend default, rather than merging parameters. For example, to leave one model unrestricted:
+Apply the YAML through [Update serving settings](#update-serving-settings). Before a response starts, a full queue or expired admission wait returns 503, the total request timeout returns 504, and a batch exceeding capacity returns 400. Enabling limits can reject requests already waiting.
+
+For limits on accepted work at each model instance, see [Instance concurrency](../../docs/inference-parameters.md#instance-concurrency). Queue and dispatch metrics are described in [Observability](../../observability/README.md).
+
+### Caller limits and priorities
+
+To give callers different limits, add `roleRules` alongside the waiting limit:
 
 ```yaml
 spec:
-  admission:
-    algorithm: allow_all
+  roleRules:
+    - role: role1
+      priority: 10
+      perCaller:
+        maxWaitingRequests: 8
+        maxConcurrentRequests: 4
+    - role: role2
+      priority: 0
+      perCaller:
+        maxWaitingRequests: 32
+        maxConcurrentRequests: 8
 ```
 
-Redeploy the service configuration to apply changes. Admission updates and model additions or removals do not restart frontend Pods. New requests may receive HTTP 503 while that model's rule is being replaced.
+Each caller has separate waiting and concurrency allowances shared across frontend replicas. `maxConcurrentRequests` counts dispatched work until execution ends, including cancelled requests still finishing. Tokenization, token counting, and detokenization use waiting capacity only.
 
-See [Observability](../../observability/README.md) to inspect admission results, or [Implementing admission rules](../../docs/development/admission-rules.md) to add an algorithm.
+Higher `priority` values dispatch first among eligible requests. At equal priority, each frontend rotates between callers and preserves their request order; a caller at its concurrency limit does not block others. To prioritize the vLLM queue as well, set `scheduling-policy: priority` in the model's `engineArgs`.
 
+Role rules require an authentication gateway. Requests without an authenticated identity or matching role are rejected. Gateway integration is described in [Admission lifecycle](../../docs/development/admission-rules.md#gateway-integration); cache sharing is configured through [prefix cache isolation](../../docs/inference-parameters.md#prefix-cache-isolation).
+
+### Override one model
+
+`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults as whole blocks. Set both `admission: {}` and `roleRules: []` to leave one model unrestricted at the frontend; omitting both at the frontend leaves admission unrestricted by default.
+
+A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPools`. A disaggregated model must retain a Pool for every required execution stage.
+
+## Update serving settings
+
+Edit the deployment YAML and run `foretoken deploy` again. For example, change logging and request budgets under the existing `spec` in `examples/quickstart/frontend.yaml`:
+
+```yaml
+spec:
+  logLevel: debug
+  timeouts:
+    request: 15m
+    streamIdle: 5m
+```
+
+Apply the Quick Start configuration:
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+The command waits for changes to take effect. [Routing strategies](src/router/README.md), admission rules, logging, and request timeouts update online; invalid settings leave the working configuration unchanged.
+
+| Setting | Purpose |
+| --- | --- |
+| `timeouts.request` | Total request duration |
+| `timeouts.streamIdle` | Maximum gap between response chunks; must not exceed `request` |
+| `timeouts.drain` | Shutdown wait for accepted requests, default `10m`; changing it replaces frontend Pods |
+| `logLevel` | `trace`, `debug`, `info` (default), `warn`, `error`, or `off` |
+
+Timeout changes apply to new requests. To limit prompt length, set `ModelService.spec.maxInputTokens`, or the corresponding `spec.modelPools[].maxInputTokens`, and redeploy. This setting updates online and is separate from the engine's combined input/output context limit.
 
 ## Operations
 

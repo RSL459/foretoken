@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import time
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -82,23 +83,28 @@ def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -
 
 
 def run_evaluation(
-    config: EvaluationConfig, service: ModelService, *, output_dir: str | None = None
+    config: EvaluationConfig,
+    service: ModelService,
+    *,
+    output_dir: str | None = None,
+    outputs: ResultOutputs | None = None,
 ) -> BenchmarkRun:
-    """Execute one evaluator and publish scores; a comparison owns its child failure status."""
+    """Publish one evaluation, borrowing entered outputs when the caller owns service cleanup."""
     record: dict[str, Any] = {
         "mode": "evaluation",
         "evaluator": config.evaluator,
         "model": service.model,
     }
-    with ResultOutputs(
-        config,
-        service,
-        directory_prefix="eval-",
-        output_dir=output_dir,
-        sink_factory=lambda directory: evaluation_sinks(config, record, directory),
-    ) as outputs:
-        outputs.open(record)
-        directory = Path(outputs.execution_dir).resolve()
+    output_context = (
+        nullcontext(outputs)
+        if outputs is not None
+        else ResultOutputs(config, service, directory_prefix="eval-", output_dir=output_dir)
+    )
+    with output_context as active_outputs:
+        active_outputs.service = service
+        active_outputs.sink_factory = lambda directory: evaluation_sinks(config, record, directory)
+        active_outputs.open(record)
+        directory = Path(active_outputs.execution_dir).resolve()
         logger.info(
             "Evaluation: %s | model=%s | artifacts=%s",
             config.evaluator,
@@ -118,7 +124,7 @@ def run_evaluation(
             },
             exit_code=code,
         )
-        outputs.publish(run)
+        active_outputs.publish(run)
         if code:
             logger.error(
                 "%s failed (exit %s); see %s", config.evaluator, code, directory / "evaluator.log"

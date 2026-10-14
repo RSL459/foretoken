@@ -9,7 +9,6 @@ MODEL_SERVER_IMAGE ?= foretoken-model-server:dev
 OMNI_MODEL_SERVER_IMAGE ?= foretoken-omni-model-server:dev
 VLLM_OMNI_IMAGE ?= foretoken-vllm-omni:dev
 MOONCAKE_IMAGE ?= foretoken-mooncake
-MOONCAKE_VERSION ?=
 
 OCI_REGISTRY := $(patsubst %/,%,$(strip $(FORETOKEN_OCI_REGISTRY)))
 DOCKER_REGISTRY := $(patsubst %/,%,$(or $(strip $(FORETOKEN_DOCKER_IO_REGISTRY)),$(OCI_REGISTRY)))
@@ -94,9 +93,11 @@ image-vllm-metax: mooncake-source
 		-t "$(VLLM_METAX_IMAGE)" .
 
 image-model-server:
-	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \
-		(printf '%s\n' 'Set INFERENCE_ENGINE_IMAGE to a compatible inference engine image.' >&2; exit 1)
-	docker build --build-arg INFERENCE_ENGINE_IMAGE="$(INFERENCE_ENGINE_IMAGE)" \
+	engine_image=$$("$(or $(FORETOKEN_PYTHON),python3)" cli/foretoken/engine_environment.py \
+		--root "$(CURDIR)" --image "$(INFERENCE_ENGINE_IMAGE)" \
+		--docker-registry "$(DOCKER_REGISTRY)") && \
+	docker build \
+		--build-arg INFERENCE_ENGINE_IMAGE="$$engine_image" \
 		$(if $(DOCKER_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(DOCKER_REGISTRY)",) \
 		$(if $(GHCR_REGISTRY),--build-arg UV_IMAGE_REGISTRY="$(GHCR_REGISTRY)",) \
 		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \
@@ -147,6 +148,8 @@ mooncake-source:
 		FORETOKEN_GITHUB_MIRROR="$(FORETOKEN_GITHUB_MIRROR)" \
 		./deploy/mooncake/prepare-source
 
+# Match the standard model-server's transfer package unless a version is selected explicitly.
+image-mooncake: MOONCAKE_VERSION ?= $(shell tr -d '\n' < "$(CURDIR)/data-plane/patches/vllm/mooncake.version")
 image-mooncake: mooncake-source
 	docker build $(if $(BUILD_JOBS),--build-arg BUILD_JOBS=$(BUILD_JOBS),) \
 		$(if $(DOCKER_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(DOCKER_REGISTRY)",) \

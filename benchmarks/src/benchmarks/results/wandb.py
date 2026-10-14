@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 import wandb
 
 from benchmarks.results.metrics import percentile_summary
-from benchmarks.results.plots.measurements import load_http_measurements
 
 if TYPE_CHECKING:
     from benchmarks.results.output import BenchmarkRun
@@ -155,6 +154,16 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         if allocation["gpu_seconds"] is None:
             for resource, seconds in allocation["observed_gpu_seconds"].items():
                 message[f"GPU allocation/{resource}/Observed GPU-seconds (partial)"] = seconds
+    resources = metrics.get("resources")
+    if isinstance(resources, dict):
+        for key, label, scale in (
+            ("cpu_usage_cores", "Resources/Mean CPU usage (cores)", 1),
+            ("cpu_throttled_periods_ratio", "Resources/Throttled CPU periods (%)", 100),
+            ("cpu_throttled_seconds", "Resources/CPU throttled time (s)", 1),
+        ):
+            value = resources.get(key)
+            if value is not None:
+                message[label] = round(float(value) * scale, 4)
     speculative = metrics.get("speculative_decoding")
     if isinstance(speculative, dict):
         for key, name, scale in (
@@ -243,10 +252,10 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 stream=bool(run.metrics["stream"]),
                 slo_met=request_slo_met,
             ),
-            *cumulative_series(
+            *(cumulative_series(
                 run.measurements,
                 stream=bool(run.metrics["stream"]),
-            ),
+            ) if not run.cumulative_published else ()),
         ]
         for field, group_name in (("dataset", "datasets"), ("model", "models"), ("request_class", "request_classes")):
             groups = run.metrics.get(group_name) or {}
@@ -323,20 +332,7 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 sdk_run.log(row)
 
     raw_output = run.artifacts.get("raw_output")
-    warmup_raw = run.artifacts.get("warmup_raw_output")
-    warmup_metrics_path = run.artifacts.get("warmup_metrics")
-    if warmup_raw is not None:
-        raw = json.loads(warmup_raw.read_text(encoding="utf-8"))
-        warmup_measurements = load_http_measurements(raw)
-        duration = float(json.loads(warmup_metrics_path.read_text(encoding="utf-8"))["benchmark_time"]) if warmup_metrics_path is not None else max((item.started_at + item.latency for item in warmup_measurements), default=0.0)
-        sdk_run.log({"Warmup/Requests": wandb.Table(
-            columns=["Request index", "E2EL (s)", "TTFT (s)", "TPOT (ms)", "Success"],
-            data=[[index, item.latency, item.ttft, item.tpot * 1000 if item.tpot is not None else None, item.succeeded] for index, item in enumerate(warmup_measurements, 1)],
-        )})
-        for row in time_series(warmup_measurements, duration=duration, stream=bool(run.metrics["stream"])):
-            sdk_run.log({f"Warmup/{key}": value for key, value in row.items()})
-
-    if raw_output is not None:
+    if raw_output is not None and run.record["mode"] == "arrival_trace":
         rows = _trace_bucket_rows(
             json.loads(raw_output.read_text(encoding="utf-8"))
         )
@@ -357,7 +353,8 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     observations = [
         run.artifacts[name]
         for name in (
-            "prometheus_observations", "gpu_allocation", "gpu_allocation_csv", "console_log"
+            "config", "metrics", "raw_output", "environment", "prometheus_observations",
+            "gpu_allocation", "gpu_allocation_csv"
         )
         if name in run.artifacts
     ]
@@ -372,14 +369,20 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
         from benchmarks.results.plots.measurements import _prometheus_charts
 
         for chart in _prometheus_charts(run.artifacts["prometheus_observations"].parent):
-            if not chart.metric.startswith("spec_"):
+            if chart.metric.startswith("spec_"):
+                group = "Speculative"
+                title = f"{chart.ylabel} · 5-minute observation window"
+            elif chart.metric.startswith(("cpu_", "memory_")):
+                group = "Resources"
+                title = chart.ylabel
+            else:
                 continue
-            sdk_run.log({f"Speculative/{chart.metric}": wandb.plot.line_series(
+            sdk_run.log({f"{group}/{chart.metric}": wandb.plot.line_series(
                 xs=[list(series.x) for series in chart.series],
                 ys=[list(series.y) for series in chart.series],
                 keys=[series.name for series in chart.series],
                 xname="Elapsed time (s)",
-                title=f"{chart.ylabel} · 5-minute observation window",
+                title=title,
             )})
 
 
@@ -444,8 +447,6 @@ def publish_slo_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
             f"{prefix}/Stop reason": group["stop_reason"],
         })
     artifact = wandb.Artifact(f"slo-search-{sdk_run.id}", type="benchmark")
-    for name in ("slo_results", "console_log"):
-        if name in run.artifacts:
-            path = run.artifacts[name]
-            artifact.add_file(str(path), name=path.name)
+    path = run.artifacts["slo_results"]
+    artifact.add_file(str(path), name=path.name)
     sdk_run.log_artifact(artifact)

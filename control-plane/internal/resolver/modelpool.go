@@ -52,6 +52,7 @@ type RuntimeProfile struct {
 	Image              string
 	OmniImage          string
 	NsightImage        string
+	AdmissionStore     *inferencev1alpha1.AdmissionStoreConnection
 	ModelExpress       bool
 	ModelServerPort    int32
 	DeviceResourceName string
@@ -77,23 +78,22 @@ func (resolver StaticModelPoolResolver) Resolve(template inferencev1alpha1.Norma
 
 // ModelGroupTemplate is a resolved Group contract without Pool identity or ordinal.
 type ModelGroupTemplate struct {
-	Revision       string
-	Role           inferencev1alpha1.ModelRole
-	Artifacts      inferencev1alpha1.ModelGroupArtifacts
-	Runtime        inferencev1alpha1.ModelGroupRuntime
-	PDRuntime      *inferencev1alpha1.ModelGroupPDRuntimeConfig
-	RDMA           *inferencev1alpha1.RDMAAllocation
-	ECRuntime      *inferencev1alpha1.ModelGroupECRuntimeConfig
-	KVRuntime      *inferencev1alpha1.ModelGroupKVRuntimeConfig
-	Resources      inferencev1alpha1.ModelResources
-	Timeouts       inferencev1alpha1.ModelTimeouts
-	NodeCount      int32
-	MemberCount    int32
-	Parallelism    inferencev1alpha1.CompiledParallelism
-	MaxInputTokens *int32
-	Features       inferencev1alpha1.ModelFeatures
-	Accelerator    inferencev1alpha1.ModelGroupAccelerator
-	Network        string
+	Revision    string
+	Role        inferencev1alpha1.ModelRole
+	Artifacts   inferencev1alpha1.ModelGroupArtifacts
+	Runtime     inferencev1alpha1.ModelGroupRuntime
+	PDRuntime   *inferencev1alpha1.ModelGroupPDRuntimeConfig
+	RDMA        *inferencev1alpha1.RDMAAllocation
+	ECRuntime   *inferencev1alpha1.ModelGroupECRuntimeConfig
+	KVRuntime   *inferencev1alpha1.ModelGroupKVRuntimeConfig
+	Resources   inferencev1alpha1.ModelResources
+	Timeouts    inferencev1alpha1.ModelTimeouts
+	NodeCount   int32
+	MemberCount int32
+	Parallelism inferencev1alpha1.CompiledParallelism
+	Features    inferencev1alpha1.ModelFeatures
+	Accelerator inferencev1alpha1.ModelGroupAccelerator
+	Network     string
 }
 
 type resolvedModelRuntime struct {
@@ -187,8 +187,12 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		}
 		effective.EngineArgs["load-format"] = apiextensionsv1.JSON{Raw: []byte(`"modelexpress"`)}
 	}
+	rdmaRequired := effective.RequiresRDMA()
+	if rdmaRequired && profile.RDMA == nil {
+		return ModelGroupTemplate{}, fmt.Errorf("engineArgs.all2all-backend=%q requires a platform RDMA allocation", effective.Parallelism.EP.Backend)
+	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if modelExpress || template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
+	if modelExpress || template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
@@ -285,8 +289,16 @@ func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
 
 func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
 	applicationURL := ""
+	var admissionStore *inferencev1alpha1.AdmissionStoreConnection
+	var instanceAdmissionProtocol uint32
 	if template.Application != nil {
 		applicationURL = template.Application.ApplicationURL
+		admissionStore = template.Application.AdmissionStore.DeepCopy()
+		instanceAdmissionProtocol = template.Application.InstanceAdmissionProtocol
+	}
+	var startupAdmission *inferencev1alpha1.InstanceAdmissionConfig
+	if instanceAdmissionProtocol == 0 {
+		startupAdmission = template.InstanceAdmission.DeepCopy()
 	}
 	return ModelGroupTemplate{
 		Role: template.Role,
@@ -300,14 +312,19 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 			ApplicationURL: applicationURL,
 			Backend:        template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
 			EngineArgs:                            runtime.EngineArgs,
+			Env:                                   template.DeepCopy().Env,
+			AdmissionStore:                        admissionStore,
+			PrefixCacheIsolation:                  template.PrefixCacheIsolation,
+			InstanceAdmissionProtocol:             instanceAdmissionProtocol,
+			InstanceAdmission:                     startupAdmission,
 			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache),
 			Profiling:                             template.Profiling.DeepCopy(),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},
 		Resources: *template.Resources.DeepCopy(), Timeouts: template.Timeouts,
 		NodeCount: template.NodeCount, MemberCount: template.MemberCount,
-		Parallelism: runtime.Parallelism, MaxInputTokens: copyInt32(template.MaxInputTokens),
-		Features: *template.Features.DeepCopy(),
+		Parallelism: runtime.Parallelism,
+		Features:    *template.Features.DeepCopy(),
 		Accelerator: inferencev1alpha1.ModelGroupAccelerator{
 			DeviceResourceName: profile.DeviceResourceName,
 			RuntimeClassName:   profile.RuntimeClassName,
@@ -423,32 +440,23 @@ func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordin
 		ecRuntime.ServiceUID = pool.Spec.ModelServiceRef.UID
 	}
 	return inferencev1alpha1.ModelGroupSpec{
-		ModelPoolRef:   inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
-		Revision:       template.Revision,
-		Ordinal:        ordinal,
-		Role:           template.Role,
-		Artifacts:      template.Artifacts,
-		Runtime:        template.Runtime,
-		PDRuntime:      pdRuntime,
-		RDMA:           template.RDMA,
-		ECRuntime:      ecRuntime,
-		KVRuntime:      template.KVRuntime,
-		Resources:      template.Resources,
-		Timeouts:       template.Timeouts,
-		NodeCount:      template.NodeCount,
-		MemberCount:    template.MemberCount,
-		Parallelism:    template.Parallelism,
-		MaxInputTokens: copyInt32(template.MaxInputTokens),
-		Features:       *template.Features.DeepCopy(),
-		Accelerator:    template.Accelerator,
-		Network:        template.Network,
+		ModelPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
+		Revision:     template.Revision,
+		Ordinal:      ordinal,
+		Role:         template.Role,
+		Artifacts:    template.Artifacts,
+		Runtime:      template.Runtime,
+		PDRuntime:    pdRuntime,
+		RDMA:         template.RDMA,
+		ECRuntime:    ecRuntime,
+		KVRuntime:    template.KVRuntime,
+		Resources:    template.Resources,
+		Timeouts:     template.Timeouts,
+		NodeCount:    template.NodeCount,
+		MemberCount:  template.MemberCount,
+		Parallelism:  template.Parallelism,
+		Features:     *template.Features.DeepCopy(),
+		Accelerator:  template.Accelerator,
+		Network:      template.Network,
 	}
-}
-
-func copyInt32(value *int32) *int32 {
-	if value == nil {
-		return nil
-	}
-	copied := *value
-	return &copied
 }

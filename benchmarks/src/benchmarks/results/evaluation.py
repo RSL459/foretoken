@@ -27,6 +27,71 @@ from benchmarks.results.output import (
 logger = logging.getLogger(__name__)
 
 
+def read_quality_conditions(evaluator: str, directory: Path) -> dict[str, Any] | None:
+    """Read recorded task choices for saved-result grouping without loading an evaluator or changing its reports."""
+    generation_fields = (
+        "max_tokens", "max_new_tokens", "max_gen_toks", "temperature", "top_p", "top_k",
+        "do_sample", "n", "seed", "stop", "stop_seqs", "until", "repetition_penalty",
+        "frequency_penalty", "presence_penalty", "reasoning_effort", "reasoning_tokens",
+    )
+    if evaluator == "lm-eval":
+        reports = []
+        for path in sorted(directory.glob("**/results_*.json")):
+            report = json.loads(path.read_text(encoding="utf-8"))
+            config = report.get("config", {})
+            reports.append({
+                **{key: config[key] for key in (
+                    "limit", "random_seed", "numpy_seed", "torch_seed", "fewshot_seed",
+                ) if key in config},
+                **{key: report[key] for key in (
+                    "system_instruction", "fewshot_as_multiturn", "chat_template",
+                ) if key in report},
+                "model_options": {key: config.get("model_args", {})[key] for key in (
+                    "tokenizer", "tokenizer_backend", "revision", "max_length", "max_gen_toks",
+                    "seed", "truncate", "eos_string",
+                ) if key in config.get("model_args", {})},
+                "tasks": {name: {
+                    **{key: task[key] for key in (
+                        "dataset_path", "dataset_name", "test_split", "validation_split",
+                        "fewshot_split", "output_type", "repeats",
+                    ) if key in task},
+                    "num_fewshot": report.get("n-shot", {}).get(name),
+                    "generation": {key: task["generation_kwargs"][key] for key in generation_fields
+                                   if key in (task.get("generation_kwargs") or {})},
+                    "prompt_format": (task.get("metadata") or {}).get("foretoken", {}).get("prompt_format"),
+                    "version": report.get("versions", {}).get(name),
+                } for name, task in report.get("configs", {}).items()},
+            })
+        return {"reports": reports} if reports else None
+    path = directory / "configs/task_config.yaml"
+    if not path.is_file():
+        return None
+    import yaml
+
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return {
+        **{key: config[key] for key in (
+            "datasets", "limit", "seed", "repeats", "dataset_hub", "chat_template",
+        ) if key in config},
+        "generation": {key: config["generation_config"][key] for key in generation_fields
+                       if key in (config.get("generation_config") or {})},
+        "judge": {
+            **{key: config["judge"][key] for key in (
+                "strategy", "repeats", "aggregation",
+            ) if key in (config.get("judge") or {})},
+            "models": [model["model_id"] for model in (config.get("judge") or {}).get("models", [])],
+        },
+        "tasks": {name: {
+            **{key: task[key] for key in (
+                "dataset_id", "dataset_revision", "subset_list", "few_shot_num", "few_shot_random",
+                "train_split", "eval_split", "shuffle", "shuffle_choices", "prompt_template",
+                "system_prompt", "few_shot_prompt_template", "query_template",
+            ) if key in task},
+            "evaluation_version": config.get("evaluation_identity", {}).get("benchmarks", {}).get(name, {}).get("evaluation_version"),
+        } for name, task in config.get("resolved_benchmarks", config.get("dataset_args", {})).items()},
+    }
+
+
 def read_quality_metrics(evaluator: str, directory: Path) -> dict[str, Any]:
     """Read every native task report; retain subset, filter, sample count, and uncertainty."""
     rows: list[dict[str, Any]] = []
