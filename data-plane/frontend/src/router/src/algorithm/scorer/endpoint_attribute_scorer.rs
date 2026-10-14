@@ -11,34 +11,49 @@ use serde::Deserialize;
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EndpointAttributeScorer {
-    attribute_key: String,
+    attribute_key: EndpointAttribute,
     algorithm: Algorithm,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EndpointAttribute {
+    #[default]
+    SchedulerWaitingRequests,
+    SchedulerRunningRequests,
+    KvCacheUsage,
+    PromptTokensPerSecond,
+    GenerationTokensPerSecond,
+    TtftAverageMs,
+    TtftP95Ms,
+    TpotAverageMs,
+    TpotP95Ms,
+    E2eLatencyAverageMs,
+    E2eLatencyP95Ms,
 }
 
 impl EndpointAttributeScorer {
     /// Reads rank-local gauges or group-level window statistics without substituting missing data.
     fn read_attribute(&self, candidate: &RouteCandidate) -> Option<f64> {
         let stats = candidate.route_target_stats.as_ref()?;
-        match self.attribute_key.as_str() {
-            "scheduler_waiting_requests" => candidate
+        match self.attribute_key {
+            EndpointAttribute::SchedulerWaitingRequests => candidate
                 .data_parallel_stats()?
                 .scheduler_waiting_requests
                 .map(|value| value as f64),
-            "scheduler_running_requests" => candidate
+            EndpointAttribute::SchedulerRunningRequests => candidate
                 .data_parallel_stats()?
                 .scheduler_running_requests
                 .map(|value| value as f64),
-            "kv_cache_usage" => candidate.data_parallel_stats()?.kv_cache_usage,
-            "prompt_tokens_per_second" => stats.prompt_tokens_per_second,
-            "generation_tokens_per_second" => stats.generation_tokens_per_second,
-            "ttft_average_ms" => Some(stats.ttft.as_ref()?.average_ms),
-            "ttft_p95_ms" => stats.ttft.as_ref()?.p95_ms,
-            "tpot_average_ms" => Some(stats.tpot.as_ref()?.average_ms),
-            "tpot_p95_ms" => stats.tpot.as_ref()?.p95_ms,
-            "e2e_latency_average_ms" => Some(stats.e2e_latency.as_ref()?.average_ms),
-            "e2e_latency_p95_ms" => stats.e2e_latency.as_ref()?.p95_ms,
-            // llm-d treats an unpublished attribute as missing, not as invalid configuration.
-            _ => None,
+            EndpointAttribute::KvCacheUsage => candidate.data_parallel_stats()?.kv_cache_usage,
+            EndpointAttribute::PromptTokensPerSecond => stats.prompt_tokens_per_second,
+            EndpointAttribute::GenerationTokensPerSecond => stats.generation_tokens_per_second,
+            EndpointAttribute::TtftAverageMs => Some(stats.ttft.as_ref()?.average_ms),
+            EndpointAttribute::TtftP95Ms => stats.ttft.as_ref()?.p95_ms,
+            EndpointAttribute::TpotAverageMs => Some(stats.tpot.as_ref()?.average_ms),
+            EndpointAttribute::TpotP95Ms => stats.tpot.as_ref()?.p95_ms,
+            EndpointAttribute::E2eLatencyAverageMs => Some(stats.e2e_latency.as_ref()?.average_ms),
+            EndpointAttribute::E2eLatencyP95Ms => stats.e2e_latency.as_ref()?.p95_ms,
         }
     }
 }
@@ -82,9 +97,6 @@ impl RouteScorer for EndpointAttributeScorer {
     /// Validates the attribute and normalization parameters once at pipeline startup.
     fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
         let config: Self = serde_json::from_value(parameters).map_err(|error| error.to_string())?;
-        if config.attribute_key.is_empty() {
-            return Err("endpoint attribute scorer requires a non-empty attributeKey".into());
-        }
         let normalization = &config.algorithm.normalization;
         if normalization.fixed_range.is_some() && normalization.adaptive_range.is_some() {
             return Err("normalization accepts only one of fixedRange and adaptiveRange".into());
