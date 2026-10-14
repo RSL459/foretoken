@@ -825,6 +825,48 @@ rm -rf "$incoming"
         self._save_layout(name, layout, digest)
         return {"path": layout, "digest": digest, "nodeDigest": images[name]}
 
+    def _context_digest(self, layout: dict[str, str]) -> str:
+        """Resolve a single-image index for BuildKit without changing export identities."""
+        digest = layout["digest"]
+        descriptor = self.read_json(
+            layout["path"] + "/blobs/" + digest.replace(":", "/", 1)
+        )
+        if descriptor.get("mediaType") not in {
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json",
+        }:
+            return digest
+        manifests = descriptor["manifests"]
+        if len(manifests) != 1:
+            return digest
+        child = manifests[0]
+        if (
+            child["mediaType"]
+            not in {
+                "application/vnd.oci.image.manifest.v1+json",
+                "application/vnd.docker.distribution.manifest.v2+json",
+            }
+            or child.get("annotations", {}).get("vnd.docker.reference.type")
+            == "attestation-manifest"
+        ):
+            return digest
+        manifest = self.read_json(
+            layout["path"] + "/blobs/" + child["digest"].replace(":", "/", 1)
+        )
+        if (
+            manifest.get("artifactType")
+            or manifest.get("subject")
+            or manifest.get("config", {}).get("mediaType")
+            not in {
+                "application/vnd.oci.image.config.v1+json",
+                "application/vnd.docker.container.image.v1+json",
+            }
+        ):
+            return digest
+        # Node export may wrap the same image produced directly by BuildKit.
+        # Its manifest, rather than that wrapper, identifies the build input.
+        return child["digest"]
+
     def build(
         self,
         dockerfile: str,
@@ -889,12 +931,13 @@ rm -rf "$incoming"
                 with self._image_lock:
                     local = self._local_image(value)
             if local:
+                digest = self._context_digest(local)
                 alias = "foretoken-local-" + key.lower().replace("_", "-")
                 args += [
                     "--oci-layout",
                     alias + "=" + local["path"],
                     "--opt",
-                    f"context:{alias}=oci-layout://{alias}@{local['digest']}",
+                    f"context:{alias}=oci-layout://{alias}@{digest}",
                 ]
                 value = alias
             args += ["--opt", f"build-arg:{key}={value}"]
