@@ -410,8 +410,7 @@ def evaluation_sinks(
 ) -> list[ResultSink]:
     """Use the existing publication lifecycle with evaluation-specific presentation."""
     sinks: list[ResultSink] = [EvaluationArtifactSink(config, directory)]
-    if not config.outputs.includes("quiet"):
-        sinks.append(console_sink if console_sink is not None else EvaluationConsoleSink())
+    sinks.append(console_sink if console_sink is not None else EvaluationConsoleSink())
     if config.outputs.saves_local:
         sinks.append(LocalDirectorySink(directory))
     if config.outputs.includes("wandb"):

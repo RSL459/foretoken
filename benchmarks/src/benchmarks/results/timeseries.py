@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import heapq
 import math
 from collections import defaultdict
 from collections.abc import Iterator
@@ -13,7 +14,6 @@ from typing import Any
 from benchmarks.results.metrics import (
     RequestMeasurement,
     percentile_summary,
-    request_activity_events,
 )
 
 ELAPSED_TIME = "Elapsed time (s)"
@@ -134,93 +134,110 @@ def cumulative_series(
         yield metrics.row(item.started_at + item.latency)
 
 
+class CompletionWindows:
+    """Accumulate completed requests and emit immutable one-second measurement windows.
+
+    Live callers advance only past starts of still-running requests. This keeps
+    delayed usage chunks from moving a completion into an already published window.
+    """
+
+    def __init__(self, *, stream: bool, slo: bool = False) -> None:
+        self.stream = stream
+        self.slo = slo
+        self.completed: dict[int, list[tuple[RequestMeasurement, bool | None]]] = defaultdict(list)
+        self.arrivals: dict[int, int] = defaultdict(int)
+        self.events: list[tuple[float, int]] = []
+        self.index = self.active = 0
+        self.position = 0.0
+
+    def observe(self, item: RequestMeasurement, met: bool | None = None) -> None:
+        """Add one completed request and its actual start/end events before window emission."""
+        self.completed[int(item.started_at + item.latency)].append((item, met))
+        self.arrivals[int(item.started_at)] += 1
+        if item.latency > 0:
+            heapq.heappush(self.events, (item.started_at, 1))
+            heapq.heappush(self.events, (item.started_at + item.latency, -1))
+
+    def rows(self, end: float, *, final: bool = False) -> Iterator[dict[str, Any]]:
+        """Drain completed windows up to a safe clock boundary, including the final partial window."""
+        count = math.ceil(end) if final else math.floor(end)
+        if final and end > 0 and end == int(end):
+            self.completed[count - 1].extend(self.completed.pop(count, []))
+            self.arrivals[count - 1] += self.arrivals.pop(count, 0)
+        while self.index < count:
+            right = min(float(self.index + 1), end)
+            width = right - self.index
+            area = 0.0
+            while self.events and self.events[0][0] <= right:
+                timestamp, change = heapq.heappop(self.events)
+                area += self.active * (timestamp - self.position)
+                self.position = timestamp
+                self.active += change
+            area += self.active * (right - self.position)
+            self.position = right
+            finished = self.completed.pop(self.index, [])
+            arrivals = self.arrivals.pop(self.index, 0)
+            self.index += 1
+            yield completion_window(
+                finished, elapsed=right, width=width, arrivals=arrivals,
+                mean_active=area / width, stream=self.stream, slo=self.slo,
+            )
+
+
+def completion_window(
+    finished: list[tuple[RequestMeasurement, bool | None]], *, elapsed: float,
+    width: float, arrivals: int, mean_active: float, stream: bool, slo: bool,
+) -> dict[str, Any]:
+    """Project one completed-request window onto shared live and saved chart fields."""
+    rows = [item for item, _ in finished]
+    successful = [item for item in rows if item.succeeded]
+    row: dict[str, Any] = {
+        ELAPSED_TIME: elapsed,
+        "Time/Window duration (s)": width,
+        "Time/Started requests per second": arrivals / width,
+        "Time/Completed requests in window": len(rows),
+        "Time/Successful requests in window": len(successful),
+        "Time/Failed requests in window": len(rows) - len(successful),
+        "Time/Request throughput (req/s)": len(successful) / width,
+        "Time/Mean in-flight requests": mean_active,
+    }
+    for field, label in (("input_tokens", "input"), ("output_tokens", "output")):
+        if all(getattr(item, field) is not None for item in successful):
+            row[f"Time/Completed {label} tokens per second"] = sum(
+                getattr(item, field) for item in successful
+            ) / width
+    if rows:
+        row["Time/Failure rate (%)"] = 100 * (len(rows) - len(successful)) / len(rows)
+    if slo:
+        passing = [item for item, met in finished if met]
+        if rows:
+            row["Time/SLO attainment (%)"] = 100 * len(passing) / len(rows)
+        row["Time/SLO request goodput (req/s)"] = len(passing) / width
+        if all(item.output_tokens is not None for item in passing):
+            row["Time/SLO token goodput (tokens/s)"] = sum(item.output_tokens for item in passing) / width
+    for field, label, scale, unit in (
+        ("latency", "E2EL", 1.0, "s"), ("ttft", "TTFT", 1.0, "s"),
+        ("tpot", "TPOT", 1000.0, "ms"),
+    ):
+        if field != "latency" and not stream:
+            continue
+        values = [getattr(item, field) * scale for item in successful if getattr(item, field) is not None]
+        if values:
+            stats = percentile_summary(values)
+            for percentile in ("p50", "p95", "p99"):
+                row[f"Time/{label} {percentile} ({unit})"] = stats[percentile]
+    return row
+
+
 def time_series(
     measurements: list[RequestMeasurement], *, duration: float, stream: bool,
     slo_met: list[bool] | None = None,
 ) -> Iterator[dict[str, Any]]:
-    """Yield one-second completion windows and time-weighted in-flight request counts.
-
-    Token throughput attributes a request's tokens to its completion window,
-    not to individual streamed token arrivals. SLO values use the caller's
-    per-request decisions on the original measurement indexes. Empty completion
-    windows report zero counts and throughput but no fraction or latency sample.
-    """
+    """Yield completion-window throughput, latency percentiles, and time-weighted concurrency."""
     if not measurements:
         return
     end = max(duration, max(item.started_at + item.latency for item in measurements))
-    if end <= 0:
-        return
-    count = math.ceil(end)
-    completed: dict[int, list[tuple[int, RequestMeasurement]]] = defaultdict(list)
-    arrivals: dict[int, int] = defaultdict(int)
-    events = request_activity_events(measurements)
-    for measurement_index, item in enumerate(measurements):
-        stop = item.started_at + item.latency
-        completed[min(int(stop), count - 1)].append((measurement_index, item))
-        arrivals[min(int(item.started_at), count - 1)] += 1
-    # Integrate concurrency between request starts and finishes, carrying active
-    # requests across window boundaries rather than sampling only at each edge.
-    event_index = active = 0
-    position = 0.0
-    for index in range(count):
-        left, right = float(index), min(float(index + 1), end)
-        width = right - left
-        area = 0.0
-        while event_index < len(events) and events[event_index][0] <= right:
-            timestamp, change = events[event_index]
-            area += active * (timestamp - position)
-            position = timestamp
-            active += change
-            event_index += 1
-        area += active * (right - position)
-        position = right
-        finished = completed[index]
-        rows = [item for _, item in finished]
-        successful = [item for item in rows if item.succeeded]
-        row: dict[str, Any] = {
-            ELAPSED_TIME: right,
-            "Time/Window duration (s)": width,
-            "Time/Started requests per second": arrivals[index] / width,
-            "Time/Completed requests in window": len(rows),
-            "Time/Successful requests in window": len(successful),
-            "Time/Failed requests in window": len(rows) - len(successful),
-            "Time/Request throughput (req/s)": len(successful) / width,
-            "Time/Mean in-flight requests": area / width,
-        }
-        if all(item.input_tokens is not None for item in successful):
-            row["Time/Completed input tokens per second"] = (
-                sum(int(item.input_tokens) for item in successful) / width
-            )
-        if all(item.output_tokens is not None for item in successful):
-            row["Time/Completed output tokens per second"] = (
-                sum(int(item.output_tokens) for item in successful) / width
-            )
-        if rows:
-            row["Time/Failure rate (%)"] = 100 * (len(rows) - len(successful)) / len(rows)
-        if slo_met is not None:
-            passing = [item for measurement_index, item in finished if slo_met[measurement_index]]
-            if rows:
-                row["Time/SLO attainment (%)"] = 100 * len(passing) / len(rows)
-            row["Time/SLO request goodput (req/s)"] = len(passing) / width
-            if all(item.output_tokens is not None for item in passing):
-                row["Time/SLO token goodput (tokens/s)"] = sum(
-                    int(item.output_tokens) for item in passing
-                ) / width
-        if successful:
-            row["Time/E2EL p95 (s)"] = percentile_summary(
-                [item.latency for item in successful]
-            )["p95"]
-            if stream:
-                timing_fields = (
-                    ("ttft", "TTFT", 1.0, "s"),
-                    ("tpot", "TPOT", 1000.0, "ms"),
-                )
-                for field, label, scale, unit in timing_fields:
-                    values = [
-                        getattr(item, field) * scale
-                        for item in successful
-                        if getattr(item, field) is not None
-                    ]
-                    if values:
-                        row[f"Time/{label} p95 ({unit})"] = percentile_summary(values)["p95"]
-        yield row
+    windows = CompletionWindows(stream=stream, slo=slo_met is not None)
+    for index, item in enumerate(measurements):
+        windows.observe(item, slo_met[index] if slo_met is not None else None)
+    yield from windows.rows(end, final=True)

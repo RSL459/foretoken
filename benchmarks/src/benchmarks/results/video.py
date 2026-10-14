@@ -237,8 +237,7 @@ def video_result_sinks(
     """Build video adapters for destinations managed by ResultOutputs."""
     run_dir = Path(execution_dir)
     sinks: list[ResultSink] = [VideoArtifactSink(config, run_dir)]
-    if not config.outputs.includes("quiet"):
-        sinks.append(VideoConsoleSink(config))
+    sinks.append(VideoConsoleSink(config))
     if config.outputs.saves_local:
         sinks.append(VideoLocalSink(run_dir))
     if config.outputs.includes("wandb"):
