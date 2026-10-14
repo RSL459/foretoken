@@ -11,10 +11,10 @@ use serde::Deserialize;
 /// Disjoint worker-local cache tiers and an independent shared-cache prefix, in engine blocks.
 #[derive(Default)]
 struct CacheCostInput {
-    device_blocks: usize,
-    host_blocks: usize,
-    disk_blocks: usize,
-    shared_blocks: usize,
+    device_blocks: f64,
+    host_blocks: f64,
+    disk_blocks: f64,
+    shared_blocks: f64,
 }
 
 impl CacheCostInput {
@@ -28,14 +28,16 @@ impl CacheCostInput {
         let Some(cache) = crate::cache::cache_match(request, candidate, kv) else {
             return Self::default();
         };
-        let device = cache.device_blocks * cache.block_size / block_size;
-        let host = cache.host_blocks * cache.block_size / block_size;
-        let disk = cache.disk_blocks * cache.block_size / block_size;
+        // Native observations already account for cache layout and final-token recomputation.
+        // Keep their token precision when expressing reuse in engine-block cost units.
+        let device = cache.device_tokens;
+        let host = cache.host_tokens;
+        let disk = cache.disk_tokens;
         Self {
-            device_blocks: device,
-            host_blocks: host.saturating_sub(device),
-            disk_blocks: disk.saturating_sub(device.max(host)),
-            shared_blocks: cache.shared_blocks * cache.block_size / block_size,
+            device_blocks: device as f64 / block_size as f64,
+            host_blocks: host.saturating_sub(device) as f64 / block_size as f64,
+            disk_blocks: disk.saturating_sub(device.max(host)) as f64 / block_size as f64,
+            shared_blocks: cache.shared_tokens as f64 / block_size as f64,
         }
     }
 }
@@ -72,9 +74,9 @@ impl Default for KvCostScorer {
 impl KvCostScorer {
     /// Estimates avoided prefill work for reservation and scoring, excluding shared-cache credit.
     fn cached_tokens(&self, cache: &CacheCostInput, block_size: usize) -> usize {
-        let effective_blocks = cache.device_blocks as f64
-            + cache.host_blocks as f64 * self.host_cache_hit_weight
-            + cache.disk_blocks as f64 * self.disk_cache_hit_weight;
+        let effective_blocks = cache.device_blocks
+            + cache.host_blocks * self.host_cache_hit_weight
+            + cache.disk_blocks * self.disk_cache_hit_weight;
         (effective_blocks * block_size as f64).round().max(0.0) as usize
     }
 
@@ -124,10 +126,10 @@ impl KvCostScorer {
         // Shared hits cover a contiguous prefix and receive credit only beyond device hits.
         // Host and disk counts already exclude all faster worker-local tiers.
         let shared_overlap = self.shared_cache_multiplier
-            * cache.shared_blocks.saturating_sub(cache.device_blocks) as f64;
-        let overlap_credit = effective_credit * cache.device_blocks as f64
-            + self.host_cache_hit_weight * cache.host_blocks as f64
-            + self.disk_cache_hit_weight * cache.disk_blocks as f64
+            * (cache.shared_blocks - cache.device_blocks).max(0.0);
+        let overlap_credit = effective_credit * cache.device_blocks
+            + self.host_cache_hit_weight * cache.host_blocks
+            + self.disk_cache_hit_weight * cache.disk_blocks
             + shared_overlap;
         let raw_prefill_tokens = if track_prefill {
             let cached_tokens = self.cached_tokens(cache, block_size);

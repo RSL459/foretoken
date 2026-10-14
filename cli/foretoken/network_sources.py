@@ -11,7 +11,7 @@ import re
 import ssl
 import time
 import urllib.parse
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cache, partial
@@ -228,8 +228,13 @@ def _select_mirror(
     official: float | None,
     mirrors: tuple[_SourceMirror, ...],
     measurements: tuple[float | None, ...],
+    *,
+    preferred: str | None = None,
 ) -> tuple[_SourceMirror, float] | None:
-    """Return the fastest usable mirror when it materially beats the official source."""
+    """Retain an available prior source, otherwise select a materially faster mirror."""
+    # An empty prior selection denotes the official source; None is a first selection.
+    if preferred == "" and official is not None:
+        return None
     available = tuple(
         (mirror, elapsed)
         for mirror, elapsed in zip(mirrors, measurements, strict=True)
@@ -237,6 +242,9 @@ def _select_mirror(
     )
     if not available:
         return None
+    for mirror, elapsed in available:
+        if mirror.value == preferred:
+            return mirror, elapsed
     mirror, elapsed = min(available, key=lambda item: item[1])
     if official is not None and not (
         elapsed <= official * _MIRROR_FASTER_RATIO
@@ -246,26 +254,45 @@ def _select_mirror(
     return mirror, elapsed
 
 
-def _oci_mirrors(host: str, repository: str, revision: str) -> tuple[_SourceMirror, ...]:
-    """Build shared registry candidates for platform pulls and source-image builds."""
+def _oci_mirror_prefixes(host: str) -> tuple[str, ...]:
+    """Define the public registry routes used by probes and installed-source matching."""
+    if host not in {
+        "docker.io",
+        "ghcr.io",
+        "gcr.io",
+        "registry.k8s.io",
+        "quay.io",
+        "nvcr.io",
+        "cr.infini-ai.com",
+    }:
+        return ()
     prefixes = (f"m.daocloud.io/{host}",)
-    if host == "docker.io":
-        prefixes += ("docker.1ms.run",)
+    return prefixes + ("docker.1ms.run",) if host == "docker.io" else prefixes
+
+
+def _oci_mirrors(
+    host: str, repository: str, revision: str
+) -> tuple[_SourceMirror, ...]:
+    """Build shared registry candidates for platform pulls and source-image builds."""
     candidates = []
-    for prefix in prefixes:
+    for prefix in _oci_mirror_prefixes(host):
         mirror_host, _, namespace = prefix.partition("/")
         mirror_repository = f"{namespace}/{repository}" if namespace else repository
         candidates.append(
             _SourceMirror(
-                partial(_measure_oci_manifest, mirror_host, mirror_repository, revision),
+                partial(
+                    _measure_oci_manifest, mirror_host, mirror_repository, revision
+                ),
                 prefix,
             )
         )
     return tuple(candidates)
 
 
-def platform_image_reference(reference: str, registry: str | None = None) -> str:
-    """Resolve a platform-owned image default, preserving its tag or digest.
+def platform_image_reference(
+    reference: str, registry: str | None = None, *, previous: str | None = None
+) -> str:
+    """Resolve a platform image default, retaining an available prior source for the same image.
 
     An explicit registry replaces the original host. Automatic public proxies
     use their upstream-specific repository paths. Callers omit user-selected images.
@@ -275,24 +302,60 @@ def platform_image_reference(reference: str, registry: str | None = None) -> str
         qualified = separator and ("." in first or ":" in first or first == "localhost")
         repository = path if qualified else reference
         return f"{registry}/{repository}"
-    return select_platform_oci_reference(reference)
+    return select_platform_oci_reference(reference, previous)
+
+
+def select_platform_image_sources(
+    references: Mapping[str, str],
+    registry: str | None = None,
+    *,
+    previous: Mapping[str, str] | None = None,
+    installed_images: Collection[str] = (),
+) -> dict[str, str]:
+    """Resolve image defaults concurrently, retaining matching installed sources while reachable."""
+    previous = previous or {}
+    with ThreadPoolExecutor() as executor:
+        # Coalesce shared images before submission; the per-image cache does not
+        # prevent duplicate probes when concurrent callers both miss it.
+        pending = {}
+        futures = {}
+        for key, reference in references.items():
+            prior = previous.get(key)
+            if prior is None and installed_images:
+                host, _, path = reference.partition("/")
+                candidates = (
+                    reference,
+                    *(f"{prefix}/{path}" for prefix in _oci_mirror_prefixes(host)),
+                )
+                prior = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if candidate in installed_images
+                    ),
+                    None,
+                )
+            selection = (reference, prior)
+            if selection not in pending:
+                pending[selection] = executor.submit(
+                    platform_image_reference, reference, registry, previous=prior
+                )
+            futures[key] = pending[selection]
+        return {key: future.result() for key, future in futures.items()}
 
 
 @cache
-def select_platform_oci_reference(reference: str) -> str:
+def select_platform_oci_reference(reference: str, previous: str | None = None) -> str:
     """Select an anonymous source for a CLI-owned public image or OCI chart default.
 
     Callers retain explicit user overrides. Preserve the original registry path,
     tag or digest when selecting the public proxy, and reuse the decision within
-    this CLI invocation.
+    this CLI invocation. A matching prior reference remains selected while reachable.
     """
     scheme = "oci://" if reference.startswith("oci://") else ""
     value = reference.removeprefix(scheme) if scheme else reference
     host, separator, path = value.partition("/")
-    if not separator or host not in {
-        "docker.io", "ghcr.io", "gcr.io", "registry.k8s.io", "quay.io", "nvcr.io",
-        "cr.infini-ai.com",
-    }:
+    if not separator or not _oci_mirror_prefixes(host):
         return reference
     if "@" in path:
         repository, revision = path.rsplit("@", 1)
@@ -302,13 +365,28 @@ def select_platform_oci_reference(reference: str) -> str:
         repository, revision = path, "latest"
     official_host = "registry-1.docker.io" if host == "docker.io" else host
     mirrors = _oci_mirrors(host, repository, revision)
+    preferred = (
+        ""
+        if previous == reference
+        else next(
+            (
+                mirror.value
+                for mirror in mirrors
+                if previous == f"{scheme}{mirror.value}/{path}"
+            ),
+            None,
+        )
+    )
     with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
         official = executor.submit(
             _measure_oci_manifest, official_host, repository, revision
         )
         futures = tuple(executor.submit(mirror.measure) for mirror in mirrors)
         selected = _select_mirror(
-            official.result(), mirrors, tuple(future.result() for future in futures)
+            official.result(),
+            mirrors,
+            tuple(future.result() for future in futures),
+            preferred=preferred,
         )
     return f"{scheme}{selected[0].value}/{path}" if selected else reference
 
@@ -335,8 +413,13 @@ def select_github_download(url: str, mirror: str | None = None) -> str:
     return selected[0].value if selected else url
 
 
-def select_build_sources(environment: Mapping[str, str]) -> BuildSourceSelection:
-    """Select unconfigured build sources without turning OCI mirrors into fixed origins."""
+def select_build_sources(
+    environment: Mapping[str, str],
+    *,
+    previous_environment: Mapping[str, str] | None = None,
+    previous_registry_mirrors: Mapping[str, list[str]] | None = None,
+) -> BuildSourceSelection:
+    """Select unconfigured build sources, retaining reachable choices from the previous build."""
     probes: list[_SourceProbe] = []
     if not environment.get("FORETOKEN_OCI_REGISTRY"):
         probes.extend(
@@ -462,8 +545,14 @@ def select_build_sources(environment: Mapping[str, str]) -> BuildSourceSelection
     registry_mirrors: dict[str, list[str]] = {}
     messages: list[str] = []
     for probe, official, mirror_measurements in results:
+        preferred = None
+        if probe.registry is not None and previous_registry_mirrors is not None:
+            prior = previous_registry_mirrors.get(probe.registry, [])
+            preferred = prior[0] if prior else ""
+        elif probe.registry is None and previous_environment is not None:
+            preferred = previous_environment.get(probe.environment_name, "")
         selected_mirror = _select_mirror(
-            official, probe.mirrors, mirror_measurements
+            official, probe.mirrors, mirror_measurements, preferred=preferred
         )
         if selected_mirror is None:
             continue

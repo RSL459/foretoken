@@ -25,6 +25,8 @@
 
 请求延迟分布只统计成功请求。`--no-stream` 保留延迟和吞吐量，不报告 TTFT、TPOT 和 ITL。仅含用量统计的分片不计入流式计时。
 
+ITL 分位数的相对数值误差为 1%。逐请求 ITL SLO 使用最大间隔判定。
+
 ## 曲线
 
 W&B 分别展示每次运行所测模型的输入和输出吞吐量。`Time` 曲线按一秒窗口统计：成功请求结束时，将它的全部 token 计入该窗口，再除以窗口时长。`Cumulative` 曲线将已经完成的成功请求 token 总数除以经过时间。两者只统计本轮评测流量；Grafana 的模型总计则覆盖到达模型的全部流量。
@@ -34,6 +36,14 @@ W&B 分别展示每次运行所测模型的输入和输出吞吐量。`Time` 曲
 ## GPU 分配量
 
 Kustomize 性能评测会在与负载、Ready 副本和 SLO 窗口相同的经过时间轴上采样已分配 GPU 数量。`gpu_allocation.json` 保留边界样本、未知时间段和读取失败时刻。`metrics.json` 按设备资源名分别记录 `gpu_seconds` 与 `gpu_hours`，并记录观测覆盖率。覆盖不完整时，完整窗口总量保持不可用；`observed_gpu_seconds` 只是部分观测面积，不是总量。不同 NVIDIA、MetaX 或其他设备类型不会平均或合并。明确观测到的零分配是有效数据。
+
+集群提供加速器指标时，`prometheus_observations.json` 还记录采样到的物理设备身份，包括厂商、设备 ID、节点和 Pod。`environment.json` 保留运行期间 Pod、容器、镜像与运行配置的变化。
+
+## CPU 与内存观测
+
+Kubernetes 服务具备 Prometheus 时，`metrics.json.resources` 和 W&B 展示测量窗口内的平均 CPU 使用核数、发生限流的 CPU 调度周期比例及累计限流秒数。这些值由容器计数器增量估算，包含运行中被替换的 Pod；抓取数据缺失或不足时保持不可用。
+
+资源曲线展示过去一分钟的 CPU 使用率和限流周期比例，以及内核 CPU 配额和容器工作集内存。CPU 配额以核数展示；原始每周期配额的单位是微秒；内存单位为字节。查询和采样结果保存在 `prometheus_observations.json`。
 
 ## 猜测解码观测
 

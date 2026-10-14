@@ -11,12 +11,16 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
+	"sync"
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -36,67 +40,117 @@ type frontendAutoscalingTelemetry struct {
 	Targets           []frontendAutoscalingTarget `json:"targets"`
 }
 
-// AutoscalingTelemetryOptions defines the controller-wide collection budget.
+// AutoscalingTelemetryOptions defines the platform-owned budget copied for each observation.
 type AutoscalingTelemetryOptions struct {
-	CollectionTimeout time.Duration
-	RequestTimeout    time.Duration
-	Concurrency       int
+	CollectionTimeout metav1.Duration `json:"collectionTimeout"`
+	RequestTimeout    metav1.Duration `json:"requestTimeout"`
+	Concurrency       int             `json:"concurrency"`
 }
 
 // HTTPScalingMetricsProvider reads every ready frontend replica and every currently
 // routable model-server represented by one immutable scaling target.
 type HTTPScalingMetricsProvider struct {
-	client            client.Client
-	httpClient        *http.Client
-	collectionTimeout time.Duration
-	concurrency       int
-	now               func() time.Time
+	client             client.Client
+	httpClient         *http.Client
+	configurationPath  string
+	optionsMu          sync.Mutex
+	options            AutoscalingTelemetryOptions
+	configurationError string
+	now                func() time.Time
 }
 
-// NewHTTPScalingMetricsProvider constructs the frontend and model-server telemetry collector used by autoscaling.
-func NewHTTPScalingMetricsProvider(kubeClient client.Client, options AutoscalingTelemetryOptions) *HTTPScalingMetricsProvider {
+// NewHTTPScalingMetricsProvider loads the platform file before starting the autoscaling collector.
+func NewHTTPScalingMetricsProvider(kubeClient client.Client, configurationPath string) (*HTTPScalingMetricsProvider, error) {
+	options, err := readAutoscalingTelemetryOptions(configurationPath)
+	if err != nil {
+		return nil, err
+	}
 	return &HTTPScalingMetricsProvider{
 		client:            kubeClient,
-		httpClient:        &http.Client{Timeout: options.RequestTimeout},
-		collectionTimeout: options.CollectionTimeout,
-		concurrency:       options.Concurrency,
+		httpClient:        &http.Client{},
+		configurationPath: configurationPath,
+		options:           options,
 		now:               time.Now,
+	}, nil
+}
+
+// readAutoscalingTelemetryOptions decodes the complete platform file for startup and later observations.
+func readAutoscalingTelemetryOptions(path string) (AutoscalingTelemetryOptions, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return AutoscalingTelemetryOptions{}, fmt.Errorf("read autoscaling telemetry configuration %q: %w", path, err)
 	}
+	var options AutoscalingTelemetryOptions
+	if err := json.Unmarshal(data, &options); err != nil {
+		return AutoscalingTelemetryOptions{}, fmt.Errorf("decode autoscaling telemetry configuration %q: %w", path, err)
+	}
+	if options.CollectionTimeout.Duration <= 0 {
+		return AutoscalingTelemetryOptions{}, fmt.Errorf("autoscaling telemetry collectionTimeout must be positive")
+	}
+	if options.RequestTimeout.Duration <= 0 {
+		return AutoscalingTelemetryOptions{}, fmt.Errorf("autoscaling telemetry requestTimeout must be positive")
+	}
+	if options.Concurrency < 1 {
+		return AutoscalingTelemetryOptions{}, fmt.Errorf("autoscaling telemetry concurrency must be positive")
+	}
+	return options, nil
+}
+
+// copyOptions observes projected file updates without changing settings of in-flight collections.
+func (provider *HTTPScalingMetricsProvider) copyOptions(ctx context.Context) AutoscalingTelemetryOptions {
+	provider.optionsMu.Lock()
+	defer provider.optionsMu.Unlock()
+	options, err := readAutoscalingTelemetryOptions(provider.configurationPath)
+	if err != nil {
+		if provider.configurationError != err.Error() {
+			ctrl.LoggerFrom(ctx).Error(err, "retaining the last valid autoscaling telemetry configuration")
+			provider.configurationError = err.Error()
+		}
+		return provider.options
+	}
+	if options != provider.options || provider.configurationError != "" {
+		ctrl.LoggerFrom(ctx).Info("loaded autoscaling telemetry configuration", "collectionTimeout", options.CollectionTimeout.Duration.String(), "requestTimeout", options.RequestTimeout.Duration.String(), "concurrency", options.Concurrency)
+	}
+	provider.options = options
+	provider.configurationError = ""
+	return options
 }
 
 // Snapshot collects one complete backend-neutral metrics snapshot for a scaling target.
-func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target core.TargetID) (core.MetricsSnapshot, error) {
+func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target core.TargetID, needsEngineLoad bool) (core.MetricsSnapshot, error) {
 	if provider == nil || provider.client == nil || provider.httpClient == nil {
 		return core.MetricsSnapshot{}, fmt.Errorf("scaling metrics provider is not configured")
 	}
+	options := provider.copyOptions(ctx)
 	startedAt := provider.now()
-	collectionCtx, cancel := context.WithTimeout(ctx, provider.collectionTimeout)
+	collectionCtx, cancel := context.WithTimeout(ctx, options.CollectionTimeout.Duration)
 	defer cancel()
-	var runtimeQueuedRequests, dispatchQueuedRequests, schedulerWaitingRequests, schedulerRunningRequests, activeRequests uint64
-	var queueSamples, modelSamples int64
-	var queueObservedAt, modelObservedAt time.Time
+	var runtimeQueuedRequests, dispatchQueuedRequests uint64
+	var demand modelDemandObservation
+	var queueSamples int64
+	var queueObservedAt time.Time
 	group, collectionCtx := errgroup.WithContext(collectionCtx)
 	group.Go(func() error {
 		var err error
-		runtimeQueuedRequests, dispatchQueuedRequests, queueSamples, queueObservedAt, err = provider.frontendQueue(collectionCtx, target)
+		runtimeQueuedRequests, dispatchQueuedRequests, queueSamples, queueObservedAt, err = provider.frontendQueue(collectionCtx, target, options)
 		return err
 	})
 	group.Go(func() error {
 		var err error
-		schedulerWaitingRequests, schedulerRunningRequests, activeRequests, modelSamples, modelObservedAt, err = provider.modelDemand(collectionCtx, target)
+		demand, err = provider.modelDemand(collectionCtx, target, options, needsEngineLoad)
 		return err
 	})
 	if err := group.Wait(); err != nil {
 		return core.MetricsSnapshot{}, err
 	}
 	collectedAt := provider.now()
-	samples := queueSamples + modelSamples
+	samples := queueSamples + demand.samples
 	if samples > math.MaxInt32 {
 		samples = math.MaxInt32
 	}
 	observedAt := queueObservedAt
-	if !modelObservedAt.IsZero() && modelObservedAt.Before(observedAt) {
-		observedAt = modelObservedAt
+	if !demand.observedAt.IsZero() && demand.observedAt.Before(observedAt) {
+		observedAt = demand.observedAt
 	}
 	return core.MetricsSnapshot{
 		State: core.MetricsFresh,
@@ -111,15 +165,16 @@ func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target
 		// observe the same request at adjacent stages, so count only their larger aggregate.
 		WaitingRequests: saturatingInt64(saturatingAdd(
 			runtimeQueuedRequests,
-			max(dispatchQueuedRequests, schedulerWaitingRequests),
+			max(dispatchQueuedRequests, demand.waitingRequests),
 		)),
-		RunningRequests: saturatingInt64(schedulerRunningRequests),
-		ActiveRequests:  saturatingInt64(activeRequests),
+		RunningRequests: saturatingInt64(demand.runningRequests),
+		ActiveRequests:  saturatingInt64(demand.activeRequests),
+		EngineLoads:     demand.engineLoads,
 	}, nil
 }
 
 // frontendQueue sums target-attributed queue samples from ready frontend Pods.
-func (provider *HTTPScalingMetricsProvider) frontendQueue(ctx context.Context, target core.TargetID) (uint64, uint64, int64, time.Time, error) {
+func (provider *HTTPScalingMetricsProvider) frontendQueue(ctx context.Context, target core.TargetID, options AutoscalingTelemetryOptions) (uint64, uint64, int64, time.Time, error) {
 	var pods corev1.PodList
 	if err := provider.client.List(ctx, &pods, client.InNamespace(target.ServiceNamespace)); err != nil {
 		return 0, 0, 0, time.Time{}, fmt.Errorf("list frontend Pods: %w", err)
@@ -131,7 +186,7 @@ func (provider *HTTPScalingMetricsProvider) frontendQueue(ctx context.Context, t
 	}
 	results := make(chan queueSample, len(pods.Items))
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(provider.concurrency)
+	group.SetLimit(options.Concurrency)
 	for index := range pods.Items {
 		pod := &pods.Items[index]
 		if pod.Labels[frontendServiceLabel] == "" || !pod.DeletionTimestamp.IsZero() || !podReady(pod) {
@@ -143,7 +198,7 @@ func (provider *HTTPScalingMetricsProvider) frontendQueue(ctx context.Context, t
 		}
 		name := pod.Name
 		group.Go(func() error {
-			telemetry, err := provider.getFrontendTelemetry(groupCtx, endpoint)
+			telemetry, err := provider.getFrontendTelemetry(groupCtx, endpoint, options.RequestTimeout.Duration)
 			if err != nil {
 				return fmt.Errorf("frontend Pod %q autoscaling telemetry: %w", name, err)
 			}
@@ -177,20 +232,28 @@ func (provider *HTTPScalingMetricsProvider) frontendQueue(ctx context.Context, t
 	return runtimeQueuedRequests, dispatchQueuedRequests, samples, oldest, nil
 }
 
+// modelDemandObservation retains one complete serving cohort for snapshot composition.
+type modelDemandObservation struct {
+	waitingRequests, runningRequests, activeRequests uint64
+	engineLoads                                      []core.EngineLoad
+	samples                                          int64
+	observedAt                                       time.Time
+}
+
 // modelDemand sums scheduler backlog and admitted requests from routable model servers for one target.
-func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, target core.TargetID) (uint64, uint64, uint64, int64, time.Time, error) {
+func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, target core.TargetID, options AutoscalingTelemetryOptions, needsEngineLoad bool) (modelDemandObservation, error) {
 	service := new(inferencev1alpha1.ModelService)
 	if err := provider.client.Get(ctx, client.ObjectKey{Namespace: target.ServiceNamespace, Name: target.ServiceName}, service); err != nil {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("get ModelService for telemetry: %w", err)
+		return modelDemandObservation{}, fmt.Errorf("get ModelService for telemetry: %w", err)
 	}
 	if string(service.UID) != target.ServiceUID {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("ModelService UID changed for target %q", target.Name)
+		return modelDemandObservation{}, fmt.Errorf("ModelService UID changed for target %q", target.Name)
 	}
 	// Demand follows only the service-selected serving revision; preparing and draining
 	// cohorts must not influence the Pool's scaling decision.
 	var pools inferencev1alpha1.ModelPoolList
 	if err := provider.client.List(ctx, &pools, client.InNamespace(target.ServiceNamespace)); err != nil {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("list ModelPools for telemetry: %w", err)
+		return modelDemandObservation{}, fmt.Errorf("list ModelPools for telemetry: %w", err)
 	}
 	selectedPools := make(map[string]*inferencev1alpha1.ModelPool)
 	for index := range pools.Items {
@@ -204,22 +267,23 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 		selectedPools[string(pool.UID)] = pool
 	}
 	if len(selectedPools) == 0 {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("no ModelPools found for target %q", target.Name)
+		return modelDemandObservation{}, fmt.Errorf("no ModelPools found for target %q", target.Name)
 	}
 
 	var groups inferencev1alpha1.ModelGroupList
 	if err := provider.client.List(ctx, &groups, client.InNamespace(target.ServiceNamespace)); err != nil {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("list ModelGroups for telemetry: %w", err)
+		return modelDemandObservation{}, fmt.Errorf("list ModelGroups for telemetry: %w", err)
 	}
 	type modelDemandSample struct {
 		waitingRequests uint64
 		runningRequests uint64
 		activeRequests  uint64
+		engineLoads     []core.EngineLoad
 		observedAt      time.Time
 	}
 	results := make(chan modelDemandSample, len(groups.Items))
 	requestGroup, groupCtx := errgroup.WithContext(ctx)
-	requestGroup.SetLimit(provider.concurrency)
+	requestGroup.SetLimit(options.Concurrency)
 	for index := range groups.Items {
 		modelGroup := &groups.Items[index]
 		pool := selectedPools[modelGroup.Spec.ModelPoolRef.UID]
@@ -229,7 +293,7 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 		name := modelGroup.Name
 		endpoint := modelGroupEndpoint(modelGroup, modelGroup.Spec.Runtime.Port)
 		requestGroup.Go(func() error {
-			telemetry, err := provider.getModelTelemetry(groupCtx, endpoint)
+			telemetry, err := provider.getModelTelemetry(groupCtx, endpoint, options.RequestTimeout.Duration)
 			if err != nil {
 				return fmt.Errorf("ModelGroup %q telemetry: %w", name, err)
 			}
@@ -242,39 +306,53 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 			if telemetry.SchedulerWaitingRequests == nil || telemetry.SchedulerRunningRequests == nil {
 				return fmt.Errorf("ModelGroup %q telemetry has no scheduler request metrics", name)
 			}
+			var loads []core.EngineLoad
+			observedAt := time.UnixMilli(int64(telemetry.CollectedAtUnixMS))
+			if needsEngineLoad {
+				load, err := provider.getSchedulerLoad(groupCtx, endpoint, options.RequestTimeout.Duration, modelGroup)
+				if err != nil {
+					return fmt.Errorf("ModelGroup %q scheduler load: %w", name, err)
+				}
+				loads = load.engineLoads
+				if load.observedAt.Before(observedAt) {
+					observedAt = load.observedAt
+				}
+			}
 			results <- modelDemandSample{
 				waitingRequests: *telemetry.SchedulerWaitingRequests,
 				runningRequests: *telemetry.SchedulerRunningRequests,
 				activeRequests:  telemetry.RunningRequests,
-				observedAt:      time.UnixMilli(int64(telemetry.CollectedAtUnixMS)),
+				engineLoads:     loads,
+				observedAt:      observedAt,
 			}
 			return nil
 		})
 	}
 	if err := requestGroup.Wait(); err != nil {
-		return 0, 0, 0, 0, time.Time{}, err
+		return modelDemandObservation{}, err
 	}
 	close(results)
-	var waitingRequests, runningRequests, activeRequests uint64
-	var samples int64
-	var oldest time.Time
+	var observation modelDemandObservation
 	for sample := range results {
-		waitingRequests = saturatingAdd(waitingRequests, sample.waitingRequests)
-		runningRequests = saturatingAdd(runningRequests, sample.runningRequests)
-		activeRequests = saturatingAdd(activeRequests, sample.activeRequests)
-		samples++
-		if oldest.IsZero() || sample.observedAt.Before(oldest) {
-			oldest = sample.observedAt
+		observation.waitingRequests = saturatingAdd(observation.waitingRequests, sample.waitingRequests)
+		observation.runningRequests = saturatingAdd(observation.runningRequests, sample.runningRequests)
+		observation.activeRequests = saturatingAdd(observation.activeRequests, sample.activeRequests)
+		observation.engineLoads = append(observation.engineLoads, sample.engineLoads...)
+		observation.samples++
+		if observation.observedAt.IsZero() || sample.observedAt.Before(observation.observedAt) {
+			observation.observedAt = sample.observedAt
 		}
 	}
-	if samples == 0 {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("no routable ModelGroups for target %q", target.Name)
+	if observation.samples == 0 {
+		return modelDemandObservation{}, fmt.Errorf("no routable ModelGroups for target %q", target.Name)
 	}
-	return waitingRequests, runningRequests, activeRequests, samples, oldest, nil
+	return observation, nil
 }
 
 // getFrontendTelemetry reads and validates one frontend autoscaling telemetry response.
-func (provider *HTTPScalingMetricsProvider) getFrontendTelemetry(ctx context.Context, endpoint string) (frontendAutoscalingTelemetry, error) {
+func (provider *HTTPScalingMetricsProvider) getFrontendTelemetry(ctx context.Context, endpoint string, timeout time.Duration) (frontendAutoscalingTelemetry, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/internal/autoscaling/telemetry", nil)
 	if err != nil {
 		return frontendAutoscalingTelemetry{}, err
@@ -301,7 +379,9 @@ func (provider *HTTPScalingMetricsProvider) getFrontendTelemetry(ctx context.Con
 }
 
 // getModelTelemetry reads and validates one model-server telemetry response.
-func (provider *HTTPScalingMetricsProvider) getModelTelemetry(ctx context.Context, endpoint string) (modelServerTelemetry, error) {
+func (provider *HTTPScalingMetricsProvider) getModelTelemetry(ctx context.Context, endpoint string, timeout time.Duration) (modelServerTelemetry, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/internal/telemetry", nil)
 	if err != nil {
 		return modelServerTelemetry{}, err

@@ -96,15 +96,13 @@ Add `--gateway-section-name LISTENER` only when more than one listener matches.
 
 ### Current source
 
-Build and install from the repository root. The cluster needs a default StorageClass for compiler caches; see the [source deployment guide](../docs/custom-deployment.md) for storage overrides.
+The cluster needs a default StorageClass. Run from the Foretoken repository root:
 
 ```bash
 foretoken install -e .
 ```
 
-This binds the checkout to the target cluster for subsequent source updates.
-
-After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
+`foretoken deploy` then uses the code in your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/custom-deployment.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/custom-deployment.md#edit-an-inference-engine).
 
 A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 
@@ -172,13 +170,15 @@ The command applies the configuration and deploys these services with the runtim
 
 While waiting, it shows service status and streams Pod and container logs with source prefixes. It exits when every service reports Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
 
+Rejected model configuration ends the deployment command with the reported error, even if the previous version is still serving. Each model's `spec.timeouts.startup` also bounds how long a created serving workload may remain unready during startup or recovery; model preparation has its own budget. Exceeding this limit ends the command while Kubernetes continues recovery. Container restarts within the limit remain in progress.
+
 Inspect the same deployment without applying it:
 
 ```bash
 foretoken status examples/multi-model-quickstart
 ```
 
-Inspect every Foretoken service in a namespace. With `--watch`, follow service state changes and Pod/container logs until Ctrl+C:
+Status includes Kubernetes waiting and termination messages, including the previous container attempt after a restart. Inspect all services in a namespace, or add `--watch` to follow state changes and full Pod/container logs until Ctrl+C:
 
 ```bash
 foretoken status -n foretoken-multi-model-demo
@@ -209,7 +209,7 @@ Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalSc
 
 ## Export figures
 
-Use `--output local,wandb,plot` with a benchmark, or `foretoken plot RESULT_DIR` to redraw a saved run or sweep without running inference. Export options and comparisons are in [parameter sweeps](../benchmarks/docs/perf/sweep.md).
+Use `--output plot` to export figures during a benchmark, or `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](../benchmarks/docs/recipes.md#plot-saved-results) for metrics, layout and output locations.
 
 ## Find execution bottlenecks
 
@@ -224,4 +224,4 @@ foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
 
-CRDs and reused cluster components are retained. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.
+CRDs, log storage, and reused cluster components are retained. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.

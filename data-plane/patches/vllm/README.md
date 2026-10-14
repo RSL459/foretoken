@@ -21,4 +21,17 @@ Edit the corresponding upstream source and regenerate unified diffs. Keep shared
 
 The model-server image runs `apply.py` to select a series, apply missing patches, and compile the changed Python files. Rust source preparation reads `source.series` without selecting a Python package version. Run source preparation or image construction again to check that an already-patched tree is accepted.
 
+Image and source builds share dependency adaptation in `vllm_patches.py`. Preserve the engine image's NCCL override and packages required by other consumers when updating dependencies.
+
 Patches for another library belong in a separate directory alongside `vllm/`.
+
+`common/scheduler-load.patch` owns token-demand accounting. Version-specific scheduler hooks supply all waiting queues and capture decode contexts before scheduling advances token counts. Preempted requests retain their context demand even though their computed-token counter has been reset.
+
+## Engine completion contract
+
+`rust/engine-request-completion.patch` provides a `RequestCompletion` handle subscribed before transport submission. It confirms termination only from an engine-origin terminal output or finished-request notification. The handle outlives the output consumer: stream drop, an abort acknowledgement, and locally generated abort output cannot complete it. Transport closure ends the observation with an error, not successful termination.
+
+`common/engine-abort-completion.patch` makes Python EngineCore publish scheduler-confirmed aborted request IDs on every transport, including eager aborts. Keep both patches aligned when upstream request registration, scheduler termination, or output delivery changes.
+Completion marks the end of request scheduling, not GPU synchronization or connector KV release. Model-server capacity and stage handoff are described in [Admission lifecycle](../../../docs/development/admission-rules.md).
+
+When changing this contract, exercise normal completion, cancellation, and output-consumer drop on the affected transports, checking the independent completion signal as well as the returned output.

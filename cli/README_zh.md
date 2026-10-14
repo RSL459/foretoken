@@ -96,15 +96,13 @@ foretoken install \
 
 ### 当前源码
 
-从仓库根目录构建并安装。集群需有保存编译缓存的默认存储类（StorageClass）；自定义存储设置见[源码部署指南](../docs/custom-deployment_zh.md)。
+集群需有默认存储类（StorageClass）。在 Foretoken 仓库根目录运行：
 
 ```bash
 foretoken install -e .
 ```
 
-命令将源码目录与目标集群关联，后续从该目录更新服务。
-
-修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
+部署时，`foretoken deploy` 会使用当前 Foretoken 目录中的代码。并行运行不同代码版本，见[多版本部署示例](../docs/custom-deployment_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/custom-deployment_zh.md#修改推理引擎)。
 
 当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 
@@ -172,13 +170,15 @@ foretoken deploy examples/multi-model-quickstart --timeout 20m
 
 等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。所有服务 Ready 且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
 
+目标模型配置被拒绝时，部署命令会显示原因并失败退出，即使旧版本仍在提供服务。模型的 `spec.timeouts.startup` 还限定运行工作负载创建后等待启动或恢复就绪的时间，模型准备阶段单独计时。超过时限会结束本次命令，Kubernetes 继续恢复；时限内的容器重启仍按进行中处理。
+
 不应用配置，直接查看同一部署的状态：
 
 ```bash
 foretoken status examples/multi-model-quickstart
 ```
 
-查看命名空间中的全部 Foretoken 服务。添加 `--watch` 可持续查看状态变化及 Pod/容器日志，按 Ctrl+C 结束：
+状态输出包含 Kubernetes 的等待与退出消息，重启后也保留上一次容器退出的诊断。查看命名空间中的全部服务，或添加 `--watch` 持续查看状态变化与完整 Pod/容器日志，按 Ctrl+C 结束：
 
 ```bash
 foretoken status -n foretoken-multi-model-demo
@@ -209,7 +209,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## 导出图表
 
-评测时使用 `--output local,wandb,plot`，或用 `foretoken plot RESULT_DIR` 从已保存的运行或 sweep 重新绘图，无需再次推理。导出选项与对比用法见[参数扫描](../benchmarks/docs/perf/sweep_zh.md)。
+评测时用 `--output plot` 导出图表，已有结果用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照。指标、图宽和输出位置见[绘图示例](../benchmarks/docs/recipes_zh.md#绘制与对照结果)。
 
 ## 性能剖析：执行瓶颈
 
@@ -224,4 +224,4 @@ foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
 
-卸载保留 CRD 和复用的集群组件。仍有工作负载依赖托管的 LeaderWorkerSet 或 MetalLB 时，也会保留对应控制器。
+卸载保留 CRD、日志存储和复用的集群组件。仍有工作负载依赖托管的 LeaderWorkerSet 或 MetalLB 时，也会保留对应控制器。

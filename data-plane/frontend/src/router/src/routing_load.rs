@@ -171,7 +171,7 @@ fn cache_identity(request: &RouterRequest) -> String {
     .expect("cache identity contains only strings")
 }
 
-/// Returns uncached indexed tokens and the partial prompt tail for routing load accounting.
+/// Estimates prompt-token computation from the observation owner's reusable token count.
 pub(crate) fn uncached_tokens(
     request: &RouterRequest,
     candidate: &RouteCandidate,
@@ -180,7 +180,5 @@ pub(crate) fn uncached_tokens(
     let Some(info) = crate::cache::cache_match(request, candidate, kv) else {
         return request.token_count();
     };
-    let indexed = info.total_blocks * info.block_size;
-    indexed.saturating_sub(info.matched_blocks * info.block_size)
-        + request.token_count().saturating_sub(indexed)
+    info.total_tokens - info.matched_tokens
 }

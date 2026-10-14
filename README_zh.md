@@ -77,6 +77,8 @@ foretoken deploy examples/quickstart --timeout 20m
 
 该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
 
+同时尝试不同代码改动，见[并行运行候选方案](docs/custom-deployment_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/custom-deployment_zh.md#修改推理引擎)。
+
 ### 4. 发送测试请求
 
 ```bash
@@ -87,10 +89,6 @@ curl --fail-with-body --no-buffer \
   -H "Content-Type: application/json" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
-
-### 快速迭代源码
-
-源码安装后，修改代码并重新执行部署命令即可更新服务。引擎源码和运行环境设置见[从源码部署 Foretoken](docs/custom-deployment_zh.md)。
 
 ### 5. 评测与性能剖析
 

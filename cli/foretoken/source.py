@@ -12,7 +12,8 @@ import shutil
 import subprocess
 import tempfile
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -20,7 +21,13 @@ from typing import Any
 
 import yaml
 
-from foretoken.application_files import ApplicationFiles, remove_application_jobs
+from foretoken.application_files import (
+    ApplicationFiles,
+    SERVICE_COMPONENTS,
+    SOURCE_REVISION,
+    application_consumers,
+    remove_application_jobs,
+)
 from foretoken.arguments import InstallCommand
 from foretoken.cluster_build import (
     ClusterBuilder,
@@ -28,12 +35,19 @@ from foretoken.cluster_build import (
     registry_credentials,
     remove_build_pods,
 )
+from foretoken.engine_environment import resolve_vllm_base_image
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
 from foretoken.network_sources import select_build_sources
 
 _BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 _INSTALL_SOURCE = "foretoken.io/install-source"
+_SOURCE_METADATA = ".foretoken-sources.json"
+_SNAPSHOT_METADATA = frozenset({"engine/manifest.json", "engine/deleted.json", _SOURCE_METADATA})
+# Workstation build entrypoints and explicitly applied values are not cluster build inputs.
+_NON_BUILD_INPUTS = frozenset(
+    {"Makefile", "deploy/dev-build", "deploy/platform-values.yaml"}
+)
 
 
 def _source_home() -> Path:
@@ -80,12 +94,12 @@ def _has_server_binding(kubectl: Kubectl) -> bool:
 
 @contextmanager
 def source_operation(
-    kubectl: Kubectl, timeout: str, *, installing: bool = False
+    kubectl: Kubectl, timeout: str, *, installing: bool = False, shared: bool = False
 ) -> Iterator[None]:
-    """Serialize CLI source operations by cluster, including artifact readers and cleanup.
+    """Exclude platform changes while independent source deployments share the cluster.
 
-    The CLI entry point holds this lock through install, deploy, or uninstall. Internal
-    image rebuilds call the platform lifecycle directly within the same operation.
+    Install, delete and uninstall own cleanup under the exclusive lock. Deployments
+    additionally lock their checkout state, so unrelated candidates can build together.
     """
     if not installing and not _has_server_binding(kubectl):
         yield
@@ -97,8 +111,11 @@ def source_operation(
     locks = _source_home() / "locks"
     locks.mkdir(parents=True, exist_ok=True)
     with (locks / directory.name).open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        fcntl.flock(lock, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
         try:
+            if shared:
+                yield
+                return
             bindings = set()
             for name in ("install.json", "build.json"):
                 path = directory / name
@@ -113,9 +130,59 @@ def source_operation(
                 remove_build_pods(
                     kubectl, timeout, binding=binding, preserve_ready=True
                 )
+            # Protect persisted source outputs before any compiler or workload can need them.
+            reconcile_source_images(kubectl, timeout)
             yield
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def source_checkout(explicit: str | None = None) -> Path:
+    """Resolve the deployment's checkout without borrowing another worktree's source."""
+    if explicit is not None:
+        root = Path(explicit).expanduser().resolve()
+    else:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode:
+            raise DeploymentError(
+                "source deployment requires a Foretoken checkout; run from that checkout or pass --editable PATH"
+            )
+        root = Path(result.stdout.strip()).resolve()
+    if not (root / "deploy/charts/foretoken/Chart.yaml").is_file():
+        raise DeploymentError(f"not a Foretoken source checkout: {root}")
+    return root
+
+
+def checkout_state_directory(cluster: Path, root: Path) -> Path:
+    """Allocate one stable publisher identity per checkout under a short registry lock."""
+    import fcntl
+
+    checkouts = cluster / "checkouts"
+    checkouts.mkdir(parents=True, exist_ok=True)
+    with (checkouts / ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for identity in checkouts.glob("*/checkout.json"):
+            if json.loads(identity.read_text())["root"] == str(root):
+                return identity.parent
+        directory = checkouts / uuid.uuid4().hex
+        directory.mkdir()
+        _write_json(directory / "checkout.json", {"root": str(root)})
+        return directory
+
+
+@contextmanager
+def checkout_operation(directory: Path, kubectl: Kubectl, timeout: str) -> Iterator[None]:
+    """Own a checkout's build outputs until their service selections have been submitted."""
+    import fcntl
+
+    with (directory / ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        remove_application_jobs(kubectl, directory.name, timeout)
+        remove_build_pods(kubectl, timeout, binding=directory.name, preserve_ready=True)
+        yield
 
 
 def engine_source_roots(sources: tuple[str, ...]) -> dict[str, str]:
@@ -165,6 +232,8 @@ def _inputs(root: Path, engines: dict[str, str] | None = None) -> dict[str, Path
         if not name.startswith(
             ("data-plane/", "control-plane/", "deploy/")
         ) and name not in {"Makefile", "LICENSE", ".dockerignore", ".gitmodules"}:
+            continue
+        if name in _NON_BUILD_INPUTS:
             continue
         if path.is_file() and path.suffix not in {".md", ".png", ".svg"}:
             files[name] = path
@@ -240,8 +309,10 @@ def _snapshot(
     engines: dict[str, str] | None = None,
     previous: Path | None = None,
     unchanged: set[str] | None = None,
+    *,
+    root: Path,
 ) -> None:
-    """Save exact input bytes, reusing already-compared snapshot files without copying them."""
+    """Save build inputs and their checkout provenance before compilation begins."""
     destination.mkdir(parents=True)
     for name, source in files.items():
         target = destination / name
@@ -274,6 +345,30 @@ def _snapshot(
         (destination / "engine").mkdir(exist_ok=True)
         _write_json(destination / "engine/manifest.json", manifest)
         _write_json(destination / "engine/deleted.json", deleted)
+    _write_json(destination / _SOURCE_METADATA, {
+        "foretoken": _checkout_source(root),
+        "engines": {name: _checkout_source(Path(checkout)) for name, checkout in (engines or {}).items()},
+    })
+
+
+def _checkout_source(root: Path) -> dict[str, Any] | None:
+    """Record a build checkout's Git state without retaining local paths or remote credentials."""
+    result = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"], capture_output=True, text=True, check=False)
+    if result.returncode:
+        return None
+    changed = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], text=True)
+    return {"commit": result.stdout.strip(), "dirty": bool(changed)}
+
+
+def build_sources(snapshot: Path, component: str) -> dict[str, Any] | None:
+    """Read captured provenance for the component being published, including bound model engines."""
+    metadata = snapshot / _SOURCE_METADATA
+    if not metadata.is_file():
+        return None
+    sources = json.loads(metadata.read_text())
+    if component != "model-server":
+        sources.pop("engines", None)
+    return sources
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -296,7 +391,7 @@ def capture_build_inputs(
     """Own candidate image inputs until record_install moves them into committed state."""
     destination = _source_home() / "builds" / ("inputs-" + uuid.uuid4().hex)
     try:
-        _snapshot(_inputs(root, engines), destination, engines)
+        _snapshot(_inputs(root, engines), destination, engines, root=root)
         yield destination
     finally:
         if destination.exists():
@@ -323,11 +418,14 @@ def _local_candidates(directory: Path) -> Iterator[None]:
 
 
 def has_source_state(kubectl: Kubectl) -> bool:
-    """Identify installed or interrupted source builds belonging to this actual cluster."""
-    if not _has_server_binding(kubectl):
-        return False
-    directory = _state_directory(kubectl)
-    return any((directory / name).is_file() for name in ("install.json", "build.json"))
+    """Identify source builds for uninstall from local records or owned cluster caches."""
+    if _has_server_binding(kubectl):
+        directory = _state_directory(kubectl)
+        if any((directory / name).is_file() for name in ("install.json", "build.json")):
+            return True
+    return bool(kubectl.list_all_resources(
+        ("persistentvolumeclaims",), label_selector=_BUILD_CACHE_LABEL + "=true"
+    ))
 
 
 def forget_install(kubectl: Kubectl) -> None:
@@ -347,8 +445,7 @@ def validate_build_inputs(
         str(path.relative_to(snapshot))
         for path in snapshot.rglob("*")
         if path.is_file()
-        and str(path.relative_to(snapshot))
-        not in {"engine/manifest.json", "engine/deleted.json"}
+        and str(path.relative_to(snapshot)) not in _SNAPSHOT_METADATA | _NON_BUILD_INPUTS
     }
     if previous != current.keys() or any(
         not filecmp.cmp(snapshot / name, path, shallow=False)
@@ -375,8 +472,8 @@ def snapshot_versions(
         name = str(path.relative_to(snapshot))
         old = previous / name if previous else None
         unchanged = (
-            name not in changed
-            if changed is not None
+            name in versions and name not in changed
+            if changed is not None and name not in _SNAPSHOT_METADATA
             else (
                 name in versions
                 and old is not None
@@ -412,6 +509,27 @@ def _runtime_settings(platform: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def resolve_source_base_image(
+    kubectl: Kubectl,
+    root: Path,
+    requested_image: str | None,
+    saved_image: str | None = None,
+) -> str | None:
+    """Select explicit base intent from requests or this checkout's installed and pending state."""
+    if requested_image is not None:
+        return None if requested_image == "auto" else requested_image or None
+    if saved_image is not None:
+        return saved_image
+    directory = _state_directory(kubectl)
+    for name in ("install.json", "build.json"):
+        path = directory / name
+        if path.is_file():
+            state = json.loads(path.read_text())
+            if state.get("root") == str(root):
+                return state.get("base_image")
+    return None
+
+
 def record_install(
     kubectl: Kubectl,
     command: InstallCommand,
@@ -444,11 +562,22 @@ def record_install(
     ]
     if len(managed) != 1:
         raise DeploymentError("expected one source-installed Foretoken platform")
+    path = directory / "install.json"
+    previous = json.loads(path.read_text()) if path.is_file() else {}
+    applications = (build_state or {}).get("applications", {})
+    # Keep service-level source selections when installation adopts the same publication.
+    # Removing them would change immutable Group specs on the next unchanged deploy.
+    bundles = {
+        component: bundle
+        for component, bundle in previous.get("bundles", {}).items()
+        if previous.get("root") == str(root)
+        and bundle["revision"] == applications.get(component, {}).get("revision")
+    }
     with _local_candidates(directory):
         destination = directory / snapshot.name
         snapshot.rename(destination)
         _write_json(
-            directory / "install.json",
+            path,
             {
                 "root": str(root),
                 "engines": engines,
@@ -459,7 +588,7 @@ def record_install(
                 "base_image": base_image,
                 "runtime": _runtime_settings(managed[0]),
                 "command": settings,
-                "bundles": {},
+                "bundles": bundles,
             },
         )
         (directory / "build.json").unlink(missing_ok=True)
@@ -467,7 +596,7 @@ def record_install(
 
 @dataclass(frozen=True)
 class SourceImages:
-    """Environment images, application references and source inputs committed after installation."""
+    """Built environments, application references and inputs for installation or service deployment."""
 
     source_root: Path
     image_mode: str
@@ -567,7 +696,7 @@ def build_arguments(environment: dict[str, str]) -> dict[str, str]:
             BUILDKIT_SYNTAX_IMAGE=f"{docker}/docker/dockerfile:1",
         )
     if ghcr:
-        result.update(UV_IMAGE_REGISTRY=ghcr, INFERENCE_ENGINE_IMAGE_REGISTRY=ghcr)
+        result["UV_IMAGE_REGISTRY"] = ghcr
     if gcr:
         result["DISTROLESS_IMAGE_REGISTRY"] = gcr
     return result
@@ -629,6 +758,202 @@ def ensure_build_cache(
     )
 
 
+def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
+    """Read environment images selected by platform defaults, services and workload consumers."""
+    images: set[str] = set()
+    for document in documents:
+        spec = document.get("spec", {})
+        status = document.get("status", {})
+        template = spec.get("template", {})
+        pod_spec = template.get("spec", spec)
+        selections = [
+            status.get("application", {}),
+            template.get("application", {}),
+            spec.get("runtime", {}),
+            status.get("plan", {}),
+            *status.get("poolApplications", {}).values(),
+        ]
+        for selection in selections:
+            if selection:
+                for key in ("image", "workerImage"):
+                    if selection.get(key):
+                        images.add(selection[key])
+        for key in ("containers", "initContainers", "ephemeralContainers"):
+            for container in pod_spec.get(key, []):
+                images.add(container["image"])
+                if container["name"] != "manager":
+                    continue
+                for argument in container.get("args", []):
+                    for prefix in (
+                        "--frontend-image=",
+                        "--inference-engine-image=",
+                        "--omni-inference-engine-image=",
+                        "--video-worker-image=",
+                        "--nsight-image=",
+                    ):
+                        if argument.startswith(prefix) and argument.removeprefix(
+                            prefix
+                        ):
+                            images.add(argument.removeprefix(prefix))
+    return images
+
+
+def reconcile_source_images(
+    kubectl: Kubectl, timeout: str, *, uninstall: bool = False,
+    checkout: Path | None = None,
+) -> None:
+    """Protect recorded selections and release unreferenced pins under source_operation.
+
+    Uninstall releases all Foretoken pins, including bindings absent from this workstation.
+    """
+    from foretoken.node_images import SOURCE_BUILD_POD_LABEL, node_image_store
+    from foretoken.platform.config import default_platform_config
+    from foretoken.platform.helm import Helm
+
+    if not uninstall and not _has_server_binding(kubectl):
+        return
+    directory = _state_directory(kubectl)
+    directories = (
+        [checkout] if checkout is not None
+        else [directory, *(directory / "checkouts").glob("*")]
+    )
+    states = {
+        str(path): json.loads(path.read_text())
+        for parent in directories if parent.is_dir()
+        for name in ("build.json", "install.json")
+        if (path := parent / name).is_file()
+    }
+    bindings = {state.get("build", {}).get("binding") for state in states.values()} - {
+        None,
+        "",
+    }
+    if not uninstall and not bindings:
+        return
+    config = default_platform_config()
+    installed_path = directory / "install.json"
+    installed = json.loads(installed_path.read_text()) if installed_path.is_file() else {}
+    build = installed.get("build", {}) or next(
+        (state["build"] for state in states.values() if state.get("build")), {}
+    )
+    tools = image_tools_image(
+        build.get("arguments", {}), build.get("registry_mirrors", {})
+    )
+    secrets = tuple(
+        installed.get("runtime", {}).get("pull_secrets", build.get("pull_secrets", []))
+    )
+    # Builders already describe node runtime access. Use those cluster-owned
+    # mounts during uninstall even when invoked from a different workstation.
+    access: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
+    for pod in kubectl.list_resources(
+        ("pods",),
+        config.namespace,
+        label_selector=SOURCE_BUILD_POD_LABEL + "=true",
+    ):
+        node = pod["spec"].get("nodeName")
+        socket = next(
+            (
+                volume["hostPath"]["path"]
+                for volume in pod["spec"].get("volumes", [])
+                if volume["name"] == "runtime-socket"
+            ),
+            None,
+        )
+        images = next(
+            (
+                container
+                for container in pod["spec"]["containers"]
+                if container["name"] == "images"
+            ),
+            None,
+        )
+        if node and socket and images:
+            access[node, socket] = (
+                images["image"],
+                tuple(item["name"] for item in pod["spec"].get("imagePullSecrets", [])),
+            )
+    sockets = {
+        state.get("build", {}).get("containerd_socket", "") for state in states.values()
+    } - {""}
+    # Registry-only builds have no node image store to reconcile. Existing
+    # builders and pending state still retain access after a delivery-mode change.
+    if not uninstall and not access and not sockets:
+        return
+    nodes = kubectl.list_resources(("nodes",), "")
+    if uninstall and not sockets:
+        context = kubectl.run(["config", "current-context"]).stdout.strip()
+        for node in nodes:
+            socket = _node_containerd_socket(context, node)
+            if socket:
+                access.setdefault((node["metadata"]["name"], socket), (tools, secrets))
+    for socket in sockets:
+        for node in nodes:
+            access.setdefault((node["metadata"]["name"], socket), (tools, secrets))
+    retained: set[str] = set()
+    if not uninstall:
+        history = Helm(config).image_history()
+        if history is None:
+            return
+        retained.update(history)
+        consumers = application_consumers(kubectl)
+        retained.update(application_images(consumers))
+        # A service can select a publication before its controller has written the
+        # image into status. Preserve that manifest's environment across later builds.
+        if any(
+            obj.get("kind") in SERVICE_COMPONENTS
+            and obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
+            for obj in consumers
+        ):
+            try:
+                retained.update(ApplicationFiles(kubectl, config.namespace).source_images(consumers))
+            except DeploymentError as exc:
+                # An unavailable publication cannot prove its image unreferenced.
+                # Keep pins so platform repair and source deployment can still proceed.
+                print(f"Source image cleanup deferred: {exc}", flush=True)
+                return
+        retained.update(
+            image
+            for state in states.values()
+            for image in state.get("build", {}).get("images", {}).values()
+        )
+    for (node, socket), (tools, secrets) in access.items():
+        for binding in [""] if uninstall else sorted(bindings):
+            with node_image_store(
+                kubectl,
+                config.namespace,
+                node,
+                socket,
+                tools,
+                timeout,
+                binding=binding,
+                pull_secrets=secrets,
+            ) as store:
+                if not uninstall:
+                    # Persisted producer records authorize migrating an unlabeled source output.
+                    records = []
+                    for state in states.values():
+                        recorded = state.get("build", {})
+                        if recorded.get("binding") != binding:
+                            continue
+                        digests = recorded.get("digests", {}).get(node, {})
+                        for component, image in recorded.get("images", {}).items():
+                            if image in retained and component in digests:
+                                records.append((image, digests[component]))
+                    store.pin_records(records)
+                store.release_except(retained)
+
+
+def _node_containerd_socket(context: str, node: dict[str, Any]) -> str:
+    """Resolve the node-local runtime path supported by source import and cleanup."""
+    runtime = (
+        node.get("status", {}).get("nodeInfo", {}).get("containerRuntimeVersion", "")
+    )
+    if context.startswith("k3d-") or "k3s" in runtime:
+        return "/run/k3s/containerd/containerd.sock"
+    if context.startswith("kind-"):
+        return "/run/containerd/containerd.sock"
+    return ""
+
+
 def remove_build_caches(kubectl: Kubectl, timeout: str) -> None:
     """Release managed build Pods before their compiler volumes, leaving model caches intact."""
     remove_build_pods(kubectl, timeout)
@@ -660,22 +985,12 @@ def local_build_nodes(
         raise DeploymentError("source builds need a schedulable Kubernetes node")
     if not socket:
         context = kubectl.run(["config", "current-context"]).stdout.strip()
-        if context.startswith("k3d-"):
-            socket = "/run/k3s/containerd/containerd.sock"
-        elif context.startswith("kind-"):
-            socket = "/run/containerd/containerd.sock"
-        elif all(
-            "k3s"
-            in node.get("status", {})
-            .get("nodeInfo", {})
-            .get("containerRuntimeVersion", "")
-            for node in nodes
-        ):
-            socket = "/run/k3s/containerd/containerd.sock"
-        else:
+        sockets = {_node_containerd_socket(context, node) for node in nodes}
+        if "" in sockets or len(sockets) != 1:
             raise DeploymentError(
                 "source installation on a remote cluster requires --registry"
             )
+        socket = sockets.pop()
     return [
         (
             node["metadata"]["name"],
@@ -693,12 +1008,20 @@ def prepare_source_images(
     values: Sequence[dict[str, Any]],
     inference_engine_image: str | None = None,
     *,
+    origin: ApplicationFiles,
     installed_images: tuple[str, str, str] | None = None,
     build_metax_runtime: bool = False,
     runtime_backend: str = "nvidia",
     saved_arguments: dict[str, str] | None = None,
+    before_delivery: Callable[[], None] | None = None,
+    checkout: Path | None = None,
+    components: tuple[str, ...] = ("control-plane", "frontend", "model-server"),
 ) -> Iterator[SourceImages]:
-    """Build directly in the target cluster and retain inputs until installation commits."""
+    """Prepare installation artifacts, awaiting dependencies before node image delivery.
+
+    The platform supplies before_delivery when preparing dependencies concurrently.
+    Inputs remain owned by this context until record_install commits them.
+    """
     root = Path(command.editable or "").expanduser().resolve()
     if (
         not (root / "Makefile").is_file()
@@ -709,7 +1032,7 @@ def prepare_source_images(
         )
     kubectl = Kubectl()
     engines = engine_source_roots(command.engine_sources)
-    state_directory = _state_directory(kubectl)
+    state_directory = checkout if checkout is not None else _state_directory(kubectl)
     state_path = state_directory / "install.json"
     previous = json.loads(state_path.read_text()) if state_path.is_file() else {}
     build = previous.get("build", {}) if previous.get("root") == str(root) else {}
@@ -717,13 +1040,20 @@ def prepare_source_images(
     pending = json.loads(pending_path.read_text()) if pending_path.is_file() else {}
     if not build and pending.get("root") == str(root):
         build = pending["build"]
-    binding = build.get("binding") or uuid.uuid4().hex
+    binding = (
+        checkout.name if checkout is not None
+        else build.get("binding") or previous.get("build", {}).get("binding") or uuid.uuid4().hex
+    )
     environment = os.environ.copy()
     if command.oci_registry:
         environment["FORETOKEN_OCI_REGISTRY"] = command.oci_registry
     registry_mirrors = build.get("registry_mirrors", {})
     if saved_arguments is None:
-        selected = select_build_sources(environment)
+        selected = select_build_sources(
+            environment,
+            previous_environment=build.get("arguments"),
+            previous_registry_mirrors=build.get("registry_mirrors"),
+        )
         registry_mirrors = selected.registry_mirrors
         environment.update(selected.environment)
         for selection in selected.messages:
@@ -747,7 +1077,9 @@ def prepare_source_images(
     configuration = build_configuration(
         root,
         values,
-        arguments.get("BASE_IMAGE_REGISTRY", registry_mirrors.get("docker.io", [""])[0]),
+        arguments.get(
+            "BASE_IMAGE_REGISTRY", registry_mirrors.get("docker.io", [""])[0]
+        ),
     )
     registry = (command.registry or "").rstrip("/")
     prefix = registry if registry else "docker.io/library/foretoken-dev"
@@ -756,41 +1088,27 @@ def prepare_source_images(
         component: f"{prefix}/{component}:{suffix}"
         if registry
         else f"{prefix}-{component}:{suffix}"
-        for component in ("control-plane", "frontend", "model-server")
+        for component in components
     }
     secret_names = tuple(
         secret["name"]
         for value in values
         for secret in value.get("imagePullSecrets", [])
     )
-    credentials = registry_credentials(
-        [
-            configuration["image"],
-            prefix,
-            inference_engine_image or "",
-            arguments.get("UV_IMAGE", ""),
-            "docker.io",
-            "gcr.io",
-            "ghcr.io",
-            *(endpoint for endpoints in registry_mirrors.values() for endpoint in endpoints),
-            *(value for key, value in arguments.items() if key.endswith("REGISTRY")),
-        ]
-    )
-    remove_application_jobs(kubectl, binding, command.timeout)
-    origin = ApplicationFiles(kubectl, namespace)
-    origin.prepare(command.timeout)
     nodes = local_build_nodes(
         kubectl, command.registry, build.get("containerd_socket", "")
     )
+    if checkout is not None:
+        nodes = [(node, socket, f"{claim}-{binding[:12]}") for node, socket, claim in nodes]
     if registry:
         claim = find_build_cache(
             kubectl, namespace, binding, origin.node, "/var/cache/foretoken"
         )
         node_uid = kubectl.get("node", origin.node)["metadata"]["uid"][:8]
-        nodes = [(origin.node, "", claim or "foretoken-application-build-" + node_uid)]
-    applications = {
-        component: origin.reference(component, suffix) for component in references
-    }
+        default_claim = "foretoken-application-build-" + node_uid
+        if checkout is not None:
+            default_claim += "-" + binding[:12]
+        nodes = [(origin.node, "", claim or default_claim)]
     # Keep a failed first installation's compiler cache addressable for retry and
     # uninstall, without replacing an existing successful installation binding.
     state_directory.mkdir(parents=True, exist_ok=True)
@@ -799,12 +1117,52 @@ def prepare_source_images(
         {
             "root": str(root),
             "context": _context_identity(kubectl),
-            "build": {"binding": binding, "containerd_socket": nodes[0][1]},
+            "base_image": inference_engine_image,
+            "build": {
+                "binding": binding,
+                "images": references,
+                "containerd_socket": nodes[0][1],
+                "arguments": arguments,
+                "registry_mirrors": registry_mirrors,
+                "pull_secrets": list(secret_names),
+            },
         },
     )
     for _, _, claim in nodes:
         ensure_build_cache(kubectl, namespace, claim, configuration)
     with capture_build_inputs(root, engines) as snapshot, ExitStack() as build_contexts:
+        # Resolve automatic defaults from the same inputs used by the build, without
+        # recording them as an explicit base selection in the installation binding.
+        base_image = (
+            None
+            if build_metax_runtime
+            else resolve_vllm_base_image(
+                snapshot,
+                inference_engine_image,
+                arguments.get("BASE_IMAGE_REGISTRY", ""),
+            )
+        )
+        credentials = registry_credentials(
+            [
+                configuration["image"],
+                prefix,
+                base_image or "",
+                arguments.get("UV_IMAGE", ""),
+                "docker.io",
+                "gcr.io",
+                "ghcr.io",
+                *(
+                    endpoint
+                    for endpoints in registry_mirrors.values()
+                    for endpoint in endpoints
+                ),
+                *(
+                    value
+                    for key, value in arguments.items()
+                    if key.endswith("REGISTRY")
+                ),
+            ]
+        )
         old = state_directory / previous["inputs"] if previous.get("inputs") else None
         versions = snapshot_versions(snapshot, old, build.get("versions", {}))
         files = {
@@ -817,7 +1175,9 @@ def prepare_source_images(
         engine_native = bool(engines) and (
             runtime_backend != "metax" or "vllm-metax" in engines
         )
-        installed = dict(zip(references, installed_images or (), strict=False))
+        installed = dict(zip(
+            ("control-plane", "frontend", "model-server"), installed_images or (), strict=False
+        ))
         reusable = {
             component: build.get("registry") == registry
             and installed.get(component) == build.get("images", {}).get(component)
@@ -845,25 +1205,25 @@ def prepare_source_images(
             )
             builders.append(builder)
             builder.sync(files, versions)
-            engine_image = inference_engine_image
-            if build_metax_runtime:
-                engine_image = (
-                    f"{prefix}/vllm-metax:{suffix}"
-                    if registry
-                    else f"{prefix}-vllm-metax:{suffix}"
-                )
-                builder.build(
-                    "deploy/inference-engines/vllm-metax/Dockerfile",
-                    image=engine_image,
-                    push=bool(registry),
-                    arguments=arguments,
-                )
-            node_digests = {}
-            for component, dockerfile in (
-                ("control-plane", "control-plane/Dockerfile"),
-                ("frontend", "data-plane/frontend/Dockerfile"),
-                ("model-server", "data-plane/model-server/Dockerfile"),
-            ):
+
+            def build_component(
+                builder: ClusterBuilder, component: str, dockerfile: str
+            ) -> tuple[str, bool, str]:
+                """Build one component's environment and files in dependency order."""
+                engine_image = base_image
+                engine_cache = ""
+                if component == "model-server" and build_metax_runtime:
+                    engine_image = (
+                        f"{prefix}/vllm-metax:{suffix}"
+                        if registry
+                        else f"{prefix}-vllm-metax:{suffix}"
+                    )
+                    builder.build(
+                        "deploy/inference-engines/vllm-metax/Dockerfile",
+                        image=engine_image,
+                        push=bool(registry),
+                        arguments=arguments,
+                    )
                 component_arguments = dict(arguments)
                 if component == "model-server" and engine_image:
                     component_arguments["INFERENCE_ENGINE_IMAGE"] = engine_image
@@ -876,85 +1236,90 @@ def prepare_source_images(
                     if component == "model-server" and engines
                     else references[component]
                 )
-                metadata = builder.build(
-                    dockerfile,
-                    target="environment",
-                    image=image,
-                    push=bool(registry),
-                    arguments=component_arguments,
-                    reuse_image=installed.get(component, "")
-                    if image == references[component]
-                    else "",
-                )
-                final_dockerfile, final_target, final_arguments = (
-                    dockerfile,
-                    "environment",
-                    component_arguments,
-                )
-                if component == "model-server" and engines:
-                    cache_prefix = "-".join(
-                        (
-                            binding,
-                            versions[
-                                "deploy/inference-engines/source-build.Dockerfile"
-                            ],
-                            *sorted(engines),
+                # Foretoken application exports do not depend on the environment image.
+                # Scope their worker to the component so failure joins it before cleanup.
+                with ThreadPoolExecutor(max_workers=1) as application_build:
+                    payload = builder.root + "/applications/" + component
+                    application = (
+                        application_build.submit(
+                            builder.build,
+                            dockerfile,
+                            target="source-export",
+                            destination=payload,
+                            arguments=component_arguments,
                         )
+                        if builder.node == origin.node
+                        else None
                     )
-                    engine_arguments = {
-                        **arguments,
-                        "RUNTIME_IMAGE": image,
-                        "CACHE_ID": cache_prefix
-                        + "-"
-                        + metadata["containerimage.digest"],
-                    }
-                    user_output = builder.root + "/runtime-user"
-                    builder.build(
-                        "deploy/inference-engines/source-build.Dockerfile",
-                        target="runtime-user-export",
-                        destination=user_output,
-                        arguments=engine_arguments,
-                    )
-                    engine_arguments["RUNTIME_USER"] = builder.run(
-                        ["cat", user_output + "/user"], capture=True
-                    ).strip()
                     metadata = builder.build(
-                        "deploy/inference-engines/source-build.Dockerfile",
+                        dockerfile,
                         target="environment",
-                        image=references[component],
+                        image=image,
                         push=bool(registry),
-                        arguments=engine_arguments,
-                        reuse_image=installed.get(component, ""),
+                        arguments=component_arguments,
                     )
                     final_dockerfile, final_target, final_arguments = (
-                        "deploy/inference-engines/source-build.Dockerfile",
+                        dockerfile,
                         "environment",
-                        engine_arguments,
+                        component_arguments,
                     )
-                    # Native exports use the selected dependency environment, and their
-                    # cache identity survives Python-only updates and origin relocation.
-                    engine_cache = (
-                        cache_prefix + "-" + metadata["containerimage.digest"]
-                    )
-                    engine_caches["" if registry else node] = engine_cache
-                    engine_export_arguments = {
-                        **engine_arguments,
-                        "RUNTIME_IMAGE": references[component],
-                        "CACHE_ID": engine_cache,
-                        "BUILD_NATIVE": str(engine_native).lower(),
-                    }
-                node_digests[component] = metadata["containerimage.digest"]
-                reusable[component] = reusable[component] and node_digests[
-                    component
-                ] == build.get("digests", {}).get(node, {}).get(component)
-                if reusable[component]:
-                    # Restore an unchanged reference even if its registry tag or local
-                    # image record was collected; never overwrite it with new content.
-                    if socket:
-                        builder.reuse_image_reference(
-                            references[component], installed[component]
+                    if component == "model-server" and engines:
+                        cache_prefix = "-".join(
+                            (
+                                binding,
+                                versions[
+                                    "deploy/inference-engines/source-build.Dockerfile"
+                                ],
+                                *sorted(engines),
+                            )
                         )
-                    else:
+                        engine_arguments = {
+                            **arguments,
+                            "RUNTIME_IMAGE": image,
+                            "CACHE_ID": cache_prefix
+                            + "-"
+                            + metadata["containerimage.digest"],
+                        }
+                        user_output = builder.root + "/runtime-user"
+                        builder.build(
+                            "deploy/inference-engines/source-build.Dockerfile",
+                            target="runtime-user-export",
+                            destination=user_output,
+                            arguments=engine_arguments,
+                        )
+                        engine_arguments["RUNTIME_USER"] = builder.run(
+                            ["cat", user_output + "/user"], capture=True
+                        ).strip()
+                        metadata = builder.build(
+                            "deploy/inference-engines/source-build.Dockerfile",
+                            target="environment",
+                            image=references[component],
+                            push=bool(registry),
+                            arguments=engine_arguments,
+                        )
+                        final_dockerfile, final_target, final_arguments = (
+                            "deploy/inference-engines/source-build.Dockerfile",
+                            "environment",
+                            engine_arguments,
+                        )
+                        # Native exports use the selected dependency environment, and their
+                        # cache identity survives Python-only updates and origin relocation.
+                        engine_cache = (
+                            cache_prefix + "-" + metadata["containerimage.digest"]
+                        )
+                        engine_export_arguments = {
+                            **engine_arguments,
+                            "RUNTIME_IMAGE": references[component],
+                            "CACHE_ID": engine_cache,
+                            "BUILD_NATIVE": str(engine_native).lower(),
+                        }
+                    digest = metadata["containerimage.digest"]
+                    reuse = reusable[component] and digest == build.get(
+                        "digests", {}
+                    ).get(builder.node, {}).get(component)
+                    if reuse and not builder.containerd_socket:
+                        # Restore an unchanged registry tag if it was collected, without
+                        # assigning different content to an installed reference.
                         builder.build(
                             final_dockerfile,
                             target=final_target,
@@ -962,47 +1327,119 @@ def prepare_source_images(
                             push=True,
                             arguments=final_arguments,
                         )
-                if node == origin.node:
-                    payload = builder.root + "/applications/" + component
-                    builder.build(
-                        dockerfile,
-                        target="source-export",
-                        destination=payload,
-                        arguments=component_arguments,
+                    if application is not None:
+                        application.result()
+                        if component == "model-server" and engines:
+                            engine_output = builder.root + "/applications/engine"
+                            builder.build(
+                                "deploy/inference-engines/source-build.Dockerfile",
+                                target="source-export",
+                                destination=engine_output,
+                                arguments=engine_export_arguments,
+                            )
+                            builder.run(
+                                [
+                                    "sh",
+                                    "-ec",
+                                    'cp -R "$1/." "$2/"',
+                                    "assemble",
+                                    engine_output,
+                                    payload,
+                                ]
+                            )
+                    return digest, reuse, engine_cache
+
+            # Components share a daemon, but their dependency chains and exports are
+            # independent. Join all builds before publishing or releasing the builder.
+            with ThreadPoolExecutor(max_workers=len(references)) as builds:
+                pending_builds = {
+                    component: builds.submit(
+                        build_component, builder, component, dockerfile
                     )
-                    if component == "model-server" and engines:
-                        engine_output = builder.root + "/applications/engine"
-                        builder.build(
-                            "deploy/inference-engines/source-build.Dockerfile",
-                            target="source-export",
-                            destination=engine_output,
-                            arguments=engine_export_arguments,
-                        )
-                        builder.run(
-                            [
-                                "sh",
-                                "-ec",
-                                'cp -R "$1/." "$2/"',
-                                "assemble",
-                                engine_output,
-                                payload,
-                            ]
-                        )
-                    origin.publish(
-                        builder,
-                        payload,
-                        component,
-                        suffix,
-                        "",
-                        None,
-                        timeout=command.timeout,
-                    )
-            if node == origin.node:
-                builder.run(["rm", "-rf", "--", builder.root + "/applications"])
-            digests[node] = node_digests
+                    for component, dockerfile in (
+                        ("control-plane", "control-plane/Dockerfile"),
+                        ("frontend", "data-plane/frontend/Dockerfile"),
+                        ("model-server", "data-plane/model-server/Dockerfile"),
+                    ) if component in components
+                }
+                results = {
+                    component: future.result()
+                    for component, future in pending_builds.items()
+                }
+            digests[node] = {}
+            for component, (digest, reuse, engine_cache) in results.items():
+                digests[node][component] = digest
+                reusable[component] = reuse
+                if engine_cache:
+                    engine_caches["" if registry else node] = engine_cache
+        built_references = dict(references)
         for component in references:
             if reusable[component]:
                 references[component] = installed[component]
+        # The publisher compares actual exports, independently of download-source choices.
+        # Prefer the latest deployment bundle over the initial installation's application.
+        publisher = next(builder for builder in builders if builder.node == origin.node)
+        retained_applications = None
+        if checkout is not None:
+            from foretoken.platform.config import default_platform_config
+            from foretoken.platform.helm import Helm
+
+            retained_applications = origin.references(
+                Helm(default_platform_config(command.oci_registry)).application_history()
+            )
+            if retained_applications is not None:
+                retained_applications.add(suffix)
+                retained_applications.update(
+                    bundle["revision"]
+                    for bundle in [
+                        *previous.get("bundles", {}).values(),
+                        *build.get("applications", {}).values(),
+                    ]
+                )
+        # Candidate GC is binding-scoped; retain every in-flight component until
+        # service intent is committed. Platform publication defers GC to install.
+        with ThreadPoolExecutor(max_workers=len(references)) as publications:
+            pending = {}
+            for component in references:
+                prior = (
+                    previous.get("bundles", {})
+                    .get(component, build.get("applications", {}).get(component, {}))
+                    .get("revision", "")
+                )
+                pending[component] = publications.submit(
+                    origin.publish,
+                    publisher,
+                    publisher.root + "/applications/" + component,
+                    component,
+                    suffix,
+                    prior,
+                    retained_applications,
+                    timeout=command.timeout,
+                    reuse_previous=True,
+                    sources=build_sources(snapshot, component),
+                    image=references[component],
+                )
+            application_revisions = {
+                component: future.result() for component, future in pending.items()
+            }
+        publisher.run(["rm", "-rf", "--", publisher.root + "/applications"])
+        applications = {
+            component: origin.reference(component, revision)
+            for component, revision in application_revisions.items()
+        }
+        # Keep builders alive until platform dependencies finish. A failed
+        # prerequisite exits through cleanup without delivering candidate images.
+        if before_delivery is not None:
+            before_delivery()
+        # Deliver the control plane last, immediately before platform installation.
+        for component in ("model-server", "frontend", "control-plane"):
+            if component not in references:
+                continue
+            for builder in builders:
+                if builder.containerd_socket:
+                    builder.import_image(
+                        built_references[component], references[component]
+                    )
         for builder in builders:
             builder.discard_unselected_images(
                 set(references.values()) | set(installed.values())
@@ -1012,7 +1449,7 @@ def prepare_source_images(
         yield SourceImages(
             root,
             "registry" if registry else "import",
-            references["control-plane"],
+            references.get("control-plane", ""),
             references["frontend"],
             references["model-server"],
             snapshot,
@@ -1028,8 +1465,11 @@ def prepare_source_images(
                 "containerd_socket": nodes[0][1],
                 "engine_caches": engine_caches,
                 "engine_native": engine_native,
+                "runtime_backend": runtime_backend,
+                "build_metax_runtime": build_metax_runtime,
                 "applications": {
-                    component: {"revision": suffix} for component in references
+                    component: {"revision": revision}
+                    for component, revision in application_revisions.items()
                 },
             },
             applications,

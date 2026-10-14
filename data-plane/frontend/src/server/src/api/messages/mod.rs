@@ -13,13 +13,12 @@ mod output;
 mod types;
 
 use crate::AdmissionOrigin;
-use axum::extract::State;
+use crate::runtime::RequestSnapshot;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Extension, Json, Router};
-use foretoken_admission::AdmissionApi;
 use serde_json::json;
 
 use self::convert::{prepare_count_tokens_request, prepare_messages_request};
@@ -36,7 +35,7 @@ pub(super) fn router() -> Router<ApiState> {
 
 /// Lowers an Anthropic request and dispatches through the shared generation service.
 async fn messages(
-    State(state): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     request: Result<Json<AnthropicMessagesRequest>, JsonRejection>,
 ) -> Response {
@@ -52,13 +51,7 @@ async fn messages(
         };
     let stream = chat.intermediate;
     match state
-        .generate_chat(
-            model,
-            chat,
-            include_reasoning,
-            timing,
-            AdmissionApi::Messages,
-        )
+        .generate_chat(model, chat, include_reasoning, timing)
         .await
     {
         Ok(generated) if stream => output::streaming(generated, state.stream_idle),
@@ -69,13 +62,12 @@ async fn messages(
 
 /// Counts the actual rendered prompt without submitting an inference request.
 async fn count_tokens(
-    State(state): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     request: Result<Json<AnthropicCountTokensRequest>, JsonRejection>,
 ) -> Response {
     let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let origin = AdmissionOrigin {
-        api: Some(AdmissionApi::Messages),
         received_at: timing.started_at,
     };
     let Json(request) = match request {

@@ -29,11 +29,22 @@ from benchmarks.config.benchmark import (
     WandbRunConfig,
 )
 from benchmarks.model_service import ModelService
-from benchmarks.results.console import capture_run_logs, log_benchmark_summary
-from benchmarks.results.environment import client_environment, serving_environment
+from benchmarks.results.console import (
+    capture_run_logs,
+    log_benchmark_summary,
+    print_result_location,
+)
+from benchmarks.results.environment import (
+    ApplicationSources,
+    client_environment,
+    serving_environment,
+)
 from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
+from benchmarks.results.progress import HttpProgress
 from benchmarks.results.prometheus import PrometheusObserver
 from benchmarks.results.replicas import KubernetesReplicaObserver
+from benchmarks.results.responses import ResponseWriter
+from benchmarks.results.timeseries import ELAPSED_TIME
 from benchmarks.results.wandb import publish_http_wandb
 
 logger = logging.getLogger(__name__)
@@ -55,6 +66,7 @@ class BenchmarkRun:
     time_origin: float | None = None
     # Quality evaluations have an execution status independent of the model's score.
     exit_code: int | None = None
+    cumulative_published: bool = False
 
 
 class ResultSink(Protocol):
@@ -117,7 +129,18 @@ def request_measurement_record(item: RequestMeasurement, *, stream: bool) -> dic
         "input_tokens": item.input_tokens,
         "output_tokens": item.output_tokens,
         "cached_input_tokens": item.cached_input_tokens,
-        "inter_token_latencies": list(item.itl_samples) if stream else [],
+        "itl_summary": item.itl_summary,
+        "request_id": item.request_id,
+        "scheduled_at": item.scheduled_at,
+        "send_delay": item.send_delay,
+        "phase": item.phase,
+        "source_id": item.source_id,
+        "finish_reason": item.finish_reason,
+        "response_id": item.response_id,
+        "response_model": item.response_model,
+        "content_characters": item.content_characters,
+        "reasoning_characters": item.reasoning_characters,
+        "transport_completed": item.transport_completed,
         "conversation_id": item.conversation_id,
         "turn": item.turn,
         "dataset": item.dataset,
@@ -155,7 +178,7 @@ class BenchmarkArtifactSink:
         if run.measurements is not None and "raw_output" not in run.artifacts:
             slo = run.metrics.get("slo") or {}
             slo_met = slo.get("request_slo_met")
-            write_json(
+            run.artifacts["raw_output"] = write_json(
                 self.output_dir,
                 "raw_output.json",
                 [
@@ -168,6 +191,7 @@ class BenchmarkArtifactSink:
                     }
                     for index, item in enumerate(run.measurements)
                 ],
+                compact=True,
             )
 
     def close(self, *, exit_code: int = 0) -> None:
@@ -258,12 +282,14 @@ class WandbSink:
             raise
         if self._run is None:
             raise RuntimeError("W&B initialization returned no run")
-        logger.info(
-            "W&B logging enabled: project=%s name=%s group=%s",
-            wandb_config.project,
-            self.run_name,
-            self.group or "-",
-        )
+        if self._run.url:
+            print_result_location(f"W&B results: {self._run.url}")
+        self._run.define_metric(ELAPSED_TIME, hidden=True)
+        self._run.define_metric("Cumulative/*", step_metric=ELAPSED_TIME, step_sync=False)
+
+    def log_progress(self, row: dict[str, Any]) -> None:
+        """Queue a live measurement snapshot through the owned SDK run."""
+        self._run.log(row)
 
     def publish(self, run: BenchmarkRun) -> None:
         """Publish benchmark content through the adapter selected by ResultOutputs."""
@@ -272,34 +298,21 @@ class WandbSink:
         try:
             self.publisher(self._run, run)
             if "warmup_metrics" in run.artifacts:
-                warmup = json.loads(run.artifacts["warmup_metrics"].read_text(encoding="utf-8"))
-                comparison = []
-                if "latency" in run.metrics:
-                    for key, unit in (("latency", "s"), ("ttft", "s"), ("tpot", "s")):
-                        for statistic in ("mean", "p50", "p95", "p99"):
-                            comparison.append([f"{key} {statistic} ({unit})", warmup[key][statistic], run.metrics[key][statistic]])
-                    comparison.append(["Request throughput (req/s)", warmup["throughput"]["requests_per_second"], run.metrics["throughput"]["requests_per_second"]])
-                else:
-                    for key in ("e2e_s", "queue_wait_s", "server_generation_s"):
-                        comparison.append([f"{key} (s)", warmup.get(key), run.metrics.get(key)])
-                comparison.extend((
-                    ["Requests", warmup["request_num"], run.metrics["request_num"]],
-                    ["Success rate (%)", warmup["success_rate"] * 100, run.metrics["success_rate"] * 100],
-                ))
-                self._run.log({"Phases/Warmup vs measurement": wandb.Table(
-                    columns=["Metric", "Warmup", "Measurement"], data=comparison,
-                )})
                 artifact = wandb.Artifact(f"warmup-{self._run.id}", type="benchmark-warmup")
                 for name in ("warmup_metrics", "warmup_raw_output"):
                     artifact.add_file(str(run.artifacts[name]), name=run.artifacts[name].name)
+                self._run.log_artifact(artifact)
+            response_files = [run.artifacts[name] for name in ("responses", "warmup_responses") if name in run.artifacts]
+            if response_files:
+                artifact = wandb.Artifact(f"responses-{self._run.id}", type="benchmark-responses")
+                for path in response_files:
+                    artifact.add_file(str(path), name=path.name)
                 self._run.log_artifact(artifact)
             if "plots" in run.artifacts:
                 directory = run.artifacts["plots"]
                 artifact = wandb.Artifact(f"plots-{self._run.id}", type="benchmark-plots")
                 artifact.add_dir(str(directory))
                 self._run.log_artifact(artifact)
-                for image in sorted(directory.glob("*.png")):
-                    self._run.log({f"Plots/{image.stem}": wandb.Image(str(image))})
         except wandb.errors.Error:
             logger.exception("W&B publication failed")
             raise
@@ -311,7 +324,14 @@ class WandbSink:
         if run is None:
             return
         try:
-            run.finish(exit_code=exit_code)
+            try:
+                log_path = Path(self.execution_dir) / "run.log"
+                if log_path.is_file():
+                    artifact = wandb.Artifact(f"logs-{run.id}", type="benchmark-logs")
+                    artifact.add_file(str(log_path), name="run.log")
+                    run.log_artifact(artifact)
+            finally:
+                run.finish(exit_code=exit_code)
         except wandb.errors.Error:
             logger.exception("W&B finalization failed")
             raise
@@ -338,11 +358,14 @@ def result_directory_path(
     )
 
 
-def write_json(directory: str, filename: str, data: Any) -> Path:
+def write_json(directory: str, filename: str, data: Any, *, compact: bool = False) -> Path:
     """Write one JSON artifact into a result directory and return its path."""
     path = Path(directory) / filename
     with path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, indent=4, ensure_ascii=False)
+        if compact:
+            json.dump(data, file, ensure_ascii=False, separators=(",", ":"))
+        else:
+            json.dump(data, file, indent=4, ensure_ascii=False)
     return path
 
 
@@ -458,6 +481,7 @@ class ResultOutputs:
         self._replica_observer: KubernetesReplicaObserver | None = None
         self._prometheus_observer: PrometheusObserver | None = None
         self._environment: dict[str, Any] | None = None
+        self._applications = ApplicationSources()
         self._exit_code = 0
 
     @property
@@ -466,6 +490,14 @@ class ResultOutputs:
         if self._execution_dir is None:
             raise RuntimeError("result outputs are not active")
         return self._execution_dir
+
+    def create_response_writer(self) -> ResponseWriter | None:
+        """Open optional content evidence under this run and close it with the result lifecycle."""
+        if not self.benchmark.outputs.includes("raw"):
+            return None
+        writer = ResponseWriter(self.execution_dir)
+        self._resources.callback(writer.close)
+        return writer
 
     def create_profile(self) -> Any | None:
         """Create the optional HTTP capture observer owned by this point's output directory."""
@@ -504,17 +536,7 @@ class ResultOutputs:
             )
         else:
             self._temporary_execution_dir = True
-            if outputs.includes("wandb"):
-                os.makedirs(outputs.output_dir, exist_ok=True)
-                timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-                self._execution_dir = mkdtemp(
-                    prefix=f"{self.directory_prefix}{timestamp}-",
-                    dir=outputs.output_dir,
-                )
-            else:
-                self._execution_dir = mkdtemp(
-                    prefix="foretoken-benchmark-"
-                )
+            self._execution_dir = mkdtemp(prefix="foretoken-benchmark-")
 
         try:
             os.makedirs(self.execution_dir, exist_ok=True)
@@ -600,11 +622,19 @@ class ResultOutputs:
         if start_observers:
             self.start_observers()
 
+    def http_progress(self, *, stream: bool) -> HttpProgress | None:
+        """Connect the HTTP runner to the selected live W&B destination."""
+        for sink in self._sinks:
+            if isinstance(sink, WandbSink):
+                return HttpProgress(sink.log_progress, stream=stream)
+        return None
+
     def start_observers(self) -> None:
         """Capture serving state and start resource sampling immediately before measurement."""
         outputs = self.benchmark.outputs
         if self._environment is not None and self.service is not None:
             self._environment["before"] = serving_environment(self.service)
+            self._applications.capture(self._environment["before"])
             write_json(self.execution_dir, "environment.json", self._environment)
         if (
             self.service is not None
@@ -618,6 +648,7 @@ class ResultOutputs:
                 observer = KubernetesReplicaObserver(
                     self.service.model_service_refs,
                     self.service.model,
+                    self._applications,
                 )
                 observer.start()
             except (DeploymentError, RuntimeError) as exc:
@@ -628,8 +659,10 @@ class ResultOutputs:
             else:
                 self._replica_observer = observer
                 self._resources.callback(self._close_replica_observer)
+            if self._replica_observer is None:
+                return
             try:
-                prometheus_observer = PrometheusObserver(self.service)
+                prometheus_observer = PrometheusObserver(self.service, self._replica_observer)
                 prometheus_observer.start()
             except (DeploymentError, RuntimeError) as exc:
                 logger.warning(
@@ -673,6 +706,8 @@ class ResultOutputs:
         """Close every sink once without replacing an active benchmark failure."""
         failed = exc_type is not None or self._exit_code != 0
         self._exit_code = 1 if failed else 0
+        if exc_value is not None:
+            logger.error("Benchmark failed: %s", exc_value)
         try:
             try:
                 return self._resources.__exit__(
@@ -696,7 +731,7 @@ class ResultOutputs:
 
     def record_warmup(self, rows: list[dict[str, Any]], metrics: dict[str, Any]) -> None:
         """Persist the completed warmup before measurement or a warmup failure."""
-        write_json(self.execution_dir, "warmup_raw_output.json", rows)
+        write_json(self.execution_dir, "warmup_raw_output.json", rows, compact=True)
         write_json(self.execution_dir, "warmup_metrics.json", metrics)
 
     def record_http_warmup(
@@ -707,6 +742,7 @@ class ResultOutputs:
         stream: bool,
         arrival_rate: float,
         concurrency: int,
+        itl_summary: dict[str, Any] | None = None,
     ) -> None:
         """Summarize and serialize HTTP warmup on its own clock, apart from measured results."""
         metrics = summarize_measurements(
@@ -714,6 +750,7 @@ class ResultOutputs:
             arrival_rate=arrival_rate, request_count=len(measurements),
             reported_concurrency=concurrency, gpu_count=None,
             include_normalized_throughput=False,
+            itl_summary=itl_summary,
         )
         self.record_warmup(
             [request_measurement_record(item, stream=stream) for item in measurements], metrics,
@@ -725,17 +762,20 @@ class ResultOutputs:
             path = Path(self.execution_dir) / f"{name}.json"
             if path.is_file():
                 run.artifacts[name] = path
+        for name in ("responses", "warmup_responses"):
+            path = Path(self.execution_dir) / f"{name}.jsonl"
+            if path.is_file():
+                run.artifacts[name] = path
         if run.exit_code is not None:
             self._exit_code = run.exit_code
         elif int(run.metrics["success_num"]) == 0:
             self._exit_code = 1
-        if self.benchmark.outputs.includes("quiet"):
-            run.artifacts["console_log"] = Path(self.execution_dir) / "run.log"
-            if run.measurements is not None and run.metrics["failed_num"]:
-                logger.error(
-                    "%s/%s requests failed; see %s",
-                    run.metrics["failed_num"], run.metrics["request_num"], self.execution_dir,
-                )
+        if self.benchmark.outputs.includes("quiet") and run.measurements is not None and run.metrics["failed_num"]:
+            logger.error(
+                "%s/%s requests failed; see %s",
+                run.metrics["failed_num"], run.metrics["request_num"],
+                self.execution_dir if self.benchmark.outputs.saves_local else "W&B result artifacts",
+            )
         observer = self._replica_observer
         self._replica_observer = None
         if observer is not None:
@@ -745,6 +785,10 @@ class ResultOutputs:
                 observations = observer.finish(
                     run.time_origin, float(run.metrics["benchmark_time"])
                 )
+                if self._environment is not None:
+                    self._environment["workloads"] = observer.workload_history(
+                        run.time_origin, float(run.metrics["benchmark_time"]),
+                    )
                 allocation = observer.gpu_allocation
                 if allocation is not None:
                     run.metrics["gpu_allocation"] = {
@@ -767,6 +811,11 @@ class ResultOutputs:
         self._prometheus_observer = None
         if prometheus_observer is not None:
             observations = prometheus_observer.finish(run.time_origin, run.metrics.get("benchmark_time"))
+            if observations["resources"] is not None:
+                run.metrics["resources"] = {
+                    key: value for key, value in observations["resources"].items()
+                    if key not in {"queries", "window_end_unix_seconds"}
+                }
             if observations["speculative_decoding"] is not None:
                 run.metrics["speculative_decoding"] = {
                     key: value for key, value in observations["speculative_decoding"].items()
@@ -782,6 +831,10 @@ class ResultOutputs:
                 self._environment["after"] = serving_environment(
                     self.service
                 )
+            if "after" in self._environment:
+                self._applications.capture(self._environment["after"])
+            if self._applications.records:
+                self._environment["applications"] = self._applications.records
             run.artifacts["environment"] = write_json(
                 self.execution_dir, "environment.json", self._environment,
             )
