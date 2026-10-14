@@ -62,7 +62,7 @@ foretoken delete examples/quickstart
 
 ### Run candidates in parallel
 
-A Git worktree is a separate code directory for a branch. Give each candidate its own worktree and Kubernetes namespace to build and deploy different changes in parallel. The shared platform only needs to be installed once.
+A Git worktree is a separate code directory for a branch. Give each candidate its own worktree and Kubernetes namespace to build and deploy different changes in parallel. All candidates can share the same CLI installation and platform.
 
 From the repository root, create a candidate and a Kustomize configuration based on the Quick Start:
 

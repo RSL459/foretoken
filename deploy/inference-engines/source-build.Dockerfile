@@ -100,6 +100,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     bash -euc ' \
       if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi; \
       python="${FORETOKEN_VLLM_PYTHON:-python3}"; \
+      python=$("$python" -c "import sys; print(sys.executable)"); \
       PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python" -c \
         "from vllm_patches import repair_installed_dependencies; repair_installed_dependencies()"; \
       if "$python" -c "import torch; raise SystemExit(not bool(getattr(torch.version, \"maca\", None)))"; then \
