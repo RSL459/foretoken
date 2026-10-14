@@ -41,16 +41,18 @@ def _poll_progress(
     previous = None
     reader = EvalScopeProgress() if evaluator == "evalscope" else None
     while True:
+        # A stop received during publication still requires a final snapshot read.
+        stopping = stop.is_set()
         path = native / PROGRESS_FILENAME
         if path.is_file():
             snapshot = json.loads(path.read_text(encoding="utf-8"))
             counts = reader.read(
-                Path(snapshot["cache_directory"]), snapshot["model"], snapshot["datasets"],
+                Path(snapshot["cache_directory"]), snapshot["model"], snapshot["cache_files"],
             ) if reader else snapshot
             if counts is not None and counts != previous:
                 publish({"Evaluation/Elapsed (s)": time.monotonic() - started, **counts})
                 previous = counts
-        if stop.is_set():
+        if stopping:
             return
         stop.wait(1)
 

@@ -19,9 +19,9 @@ class EvalScopeProgress:
     """Read only complete native cache records; prediction and review counts stay separate."""
 
     def __init__(self) -> None:
-        self.files: dict[Path, tuple[int, set[int]]] = {}
+        self.files: dict[Path, tuple[tuple[int, int], int, set[int]]] = {}
 
-    def read(self, directory: Path, model: str, datasets: list[str]) -> dict[str, int] | None:
+    def read(self, directory: Path, model: str, cache_files: list[str]) -> dict[str, int] | None:
         """Incrementally count unique saved sample IDs, including transactional review reruns."""
         counts = {}
         for kind, metric in (
@@ -30,17 +30,22 @@ class EvalScopeProgress:
         ):
             total = 0
             cache = directory / kind / model
-            paths = [path for path in cache.glob("*.jsonl")
-                     if any(path.name.startswith(f"{task}_") for task in datasets)]
+            selected = {cache / filename for filename in cache_files}
+            paths = {path for path in selected if path.is_file()}
             # A review rerun replaces its previous scores only after aggregation succeeds.
             reruns = {Path(str(path).split(".rerun-", 1)[0]): path
                       for path in cache.glob("*.jsonl.rerun-*")
-                      if any(path.name.startswith(f"{task}_") for task in datasets)}
+                      if Path(str(path).split(".rerun-", 1)[0]) in selected}
             for path in sorted(set(paths) | set(reruns)):
                 source = reruns.get(path, path)
-                offset, samples = self.files.get(source, (0, set()))
                 try:
                     with source.open("rb") as stream:
+                        stat = os.fstat(stream.fileno())
+                        identity = (stat.st_dev, stat.st_ino)
+                        previous, offset, samples = self.files.get(source, (identity, 0, set()))
+                        # Native review commits atomically replace the file at the same path.
+                        if previous != identity:
+                            offset, samples = 0, set()
                         stream.seek(offset)
                         while line := stream.readline():
                             if not line.endswith(b"\n"):
@@ -50,7 +55,7 @@ class EvalScopeProgress:
                 except FileNotFoundError:
                     # Native aggregation can rename a review rerun during this snapshot.
                     return None
-                self.files[source] = offset, samples
+                self.files[source] = identity, offset, samples
                 total += len(samples)
             counts[metric] = total
         return counts
@@ -70,6 +75,7 @@ def run_evalscope(
     arguments: list[str], service: dict[str, Any], directory: str, *, resume: bool = False
 ) -> None:
     """Use EvalScope's native configuration and runner for the selected HTTP service."""
+    from evalscope.api.registry import get_benchmark
     from evalscope.config import parse_task_config
     from evalscope.run import run_task
 
@@ -110,7 +116,11 @@ def run_evalscope(
     write_progress(Path(directory), {
         "cache_directory": str(Path(config.use_cache or directory).expanduser().resolve()),
         "model": config.model_id,
-        "datasets": config.datasets,
+        "cache_files": [
+            f"{task}_{subset}.jsonl"
+            for task in config.datasets
+            for subset in get_benchmark(task, config).benchmark_meta.subset_list
+        ],
     })
     reports = run_task(config)
     # A resumed run writes into its cache. Export only this invocation's returned reports.
