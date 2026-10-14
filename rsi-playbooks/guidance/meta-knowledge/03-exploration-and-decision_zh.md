@@ -22,7 +22,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 把发现变成研究任务
 
-主 Agent 与 Worker 主动从资料、源码和测量中提出具体问题。主 Agent 统筹方向和资源，Worker 完整负责所分配问题的分析、设计、实现、部署、测量与结果解释。任务可以是“减少 Gated DeltaNet（GDN）的输入整理与中间写回”“改善小批量 MoE 的工作划分”，也可以是研究一种新的调度或分离架构。
+主 Agent、智囊团成员和 Worker 主动从资料、源码和测量中提出具体问题。主 Agent 统筹方向和资源、作出跨方向综合决策，智囊团提供独立研究、替代方案和反例。Worker 完整负责所分配问题的研究、分析、设计、实现、部署、测量与结果解释，无需等待智囊团交方案。任务可以是“减少 Gated DeltaNet（GDN）的输入整理与中间写回”“改善小批量 MoE 的工作划分”，也可以是研究一种新的调度或分离架构。
 
 每项研究说明目前知道什么、想改变什么、下一步怎样获得有用结果。没有现成开关、脚本或 tuner 时，根据问题复用上游能力或构造局部实验，继续进入具体实现。
 
@@ -49,7 +49,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 并行探索与交流
 
-按完整研究问题安排 Worker，让独立方向同时推进。给出目标、已有发现、资源范围和交付位置，并保留独立思考空间。Worker 在分配范围内连续完成修改、部署、测量、分析和下一轮设计，与 Researcher 直接讨论机制，与 Recorder 核对证据。至少有一个 Worker 跟进整体执行路径，把局部发现与系统表现联系起来。
+按完整研究问题安排 Worker，让独立方向同时推进。给出目标、已有发现、资源范围和交付位置，并保留独立思考空间。Worker 在分配范围内连续完成修改、部署、测量、分析和下一轮设计，与智囊团成员直接讨论机制，与 Recorder 核对证据。至少有一个 Worker 跟进整体执行路径，把局部发现与系统表现联系起来。
 
 安装一次共享平台，再按[并行候选示例](../../../docs/custom-deployment_zh.md#并行运行候选方案)为各候选准备独立 worktree 和 Kubernetes namespace。各自保留可写运行缓存与结果目录，条件允许时共享只读模型数据。Worker 从自己的 worktree 执行 `foretoken deploy`，修改引擎时用 `--engine-source` 关联该候选的引擎源码。后续修改复用同一候选的源码增量更新和编译缓存；不同 worktree 可以并行构建与部署。控制器、CRD 或共享平台配置的改动由主 Agent 协调，显式更新平台。
 

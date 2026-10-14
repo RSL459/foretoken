@@ -48,17 +48,18 @@ Multiple Workers advance optimization directions in parallel, supported by the o
 | Role | Responsibility and staffing |
 | --- | --- |
 | Lead | Develops, reflects on, and chooses optimization directions; owns task breakdown, evidence synthesis, resource coordination, useful parallel work, and delivery, participating in execution when useful. |
-| Direction and progress | One advisor independently examines assumptions, methods, and progress, connects findings across directions, proactively recommends questions to investigate and changes of approach, and writes the experiment overview. |
+| Think tank | At least two members with different focuses deliver independent research, alternatives, counterexamples, and cross-direction judgments, using original sources and upstream practice. The lead chooses their number within the budget and harness limits, and designates one member to maintain the overview. |
 | Worker | Owns an optimization direction from code and bottleneck analysis through design, implementation, integration, deployment, measurement, and result analysis. At least one Worker follows the system's end-to-end execution path. Prefer one or more dedicated Workers per active direction; the lead determines total staffing. |
 | Recorder | Independently reviews directions and candidates for benchmark shortcuts, comparison conditions, and the source of gains; owns iteration notes and captures reusable conclusions, applicability, and negative results in `guidance/`. Does not review its own implemented candidate. |
-| Knowledge research and exploration | Researchers by direction examine original sources and upstream practice, proposing applicable methods and recording findings. |
 | Team efficiency | One supervisor covers the whole team's work efficiency and resource utilization. Periodically checks tasks, member progress, and useful parallelism, maintains continuous GPU collection, and follows up on delayed handoffs, duplicate work, blockers, or idle resources. |
 
-Working-agent counts include Workers, researchers, and Recorders while they are doing assigned work. Direction and efficiency advisors are additional. The lead arranges useful work within task and harness limits and addresses staffing shortfalls.
+Teammate names identify their role and scope, such as `worker-routing`, `recorder-throughput`, `thinktank-system`, and `thinktank-alternatives`. The [shared skill](../.agents/skills/rsi/SKILL.md#set-up-the-team-and-assignments) defines naming and assignment details.
 
-Assign each Worker a research question, scope, resources, budget, and expected outcome. Within that assignment, it chooses methods and advances candidates without approval for each command or intermediate result. Researchers and Recorders collaborate directly with the Worker; review and recording overlap independent preparation. The lead handles changes of direction or shared resources, selects retained changes, and owns integrated validation and delivery.
+Working-agent counts include Workers, think-tank members, and Recorders actually doing assigned work, counted once per member. Exclude the lead and efficiency supervisor; waiting, blocked, or completed members do not count as working. The lead arranges useful work within task and harness limits and addresses staffing shortfalls.
 
-Members report findings that affect others and request follow-up when their assignment is complete or cannot advance. The direction advisor owns the overview and Recorders own iteration notes, linking original evidence rather than duplicating it. On resumption, preserve the original budget, reconcile records with actual results and processes, and recreate missing members.
+Assign each Worker a research question, scope, resources, budget, and expected outcome. Within that assignment, it owns research and design as well as execution, without waiting for a think-tank proposal or approval for each command or intermediate result. Think-tank members and Recorders collaborate directly with the Worker; review and recording overlap independent preparation. The lead handles changes of direction or shared resources, selects retained changes, and owns integrated validation and delivery.
+
+Members report findings that affect others and request follow-up when their assignment is complete or cannot advance. One designated think-tank member owns the overview and Recorders own iteration notes, linking original evidence rather than duplicating it. On resumption, preserve the original budget, reconcile records with actual results and processes, and recreate missing members.
 
 ### Parallel workspaces
 

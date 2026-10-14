@@ -22,7 +22,7 @@ Choose directions by their importance and potential benefit. Do not limit work t
 
 ## Turn findings into research tasks
 
-The lead and Workers actively formulate concrete questions from references, source code, and measurements. The lead coordinates directions and resources; each Worker owns analysis, design, implementation, deployment, measurement, and interpretation for its assigned question. A task might be to reduce Gated DeltaNet (GDN) input preparation and intermediate writeback, improve work partitioning for small-batch MoE, or investigate a new scheduling or disaggregated architecture.
+The lead, think-tank members, and Workers actively formulate concrete questions from references, source code, and measurements. The lead coordinates directions and resources and makes cross-direction decisions; think-tank members contribute independent research, alternatives, and counterexamples. Each Worker owns research, analysis, design, implementation, deployment, measurement, and interpretation for its assigned question, without waiting for a think-tank proposal. A task might be to reduce Gated DeltaNet (GDN) input preparation and intermediate writeback, improve work partitioning for small-batch MoE, or investigate a new scheduling or disaggregated architecture.
 
 For each investigation, state what is known, what should change, and how the next step will produce useful results. If no ready-made switch, script, or tuner exists, reuse upstream capabilities or construct a focused experiment for the question, then proceed into implementation.
 
@@ -49,7 +49,7 @@ After a group of experiments, repeated similar results, or before summarizing, r
 
 ## Explore and exchange findings in parallel
 
-Assign complete research questions to Workers so independent directions advance together. Provide objectives, existing findings, resource scope, and delivery locations while leaving room for independent thinking. Within its assignment, each Worker continues through edits, deployment, measurement, analysis, and the next design iteration, discussing mechanisms directly with Researchers and checking evidence with Recorders. At least one Worker follows the end-to-end execution path to connect local findings with system behavior.
+Assign complete research questions to Workers so independent directions advance together. Provide objectives, existing findings, resource scope, and delivery locations while leaving room for independent thinking. Within its assignment, each Worker continues through edits, deployment, measurement, analysis, and the next design iteration, discussing mechanisms directly with think-tank members and checking evidence with Recorders. At least one Worker follows the end-to-end execution path to connect local findings with system behavior.
 
 Install the shared platform once, then follow the [parallel candidate example](../../../docs/custom-deployment.md#run-candidates-in-parallel) to give concurrent candidates separate worktrees and Kubernetes namespaces. Keep writable runtime caches and result directories separate; share read-only model data where suitable. Each Worker runs `foretoken deploy` from its own worktree and uses `--engine-source` to bind its candidate's engine checkout when changing engine code. Subsequent edits reuse that candidate's incremental source updates and compiler cache; different worktrees can build and deploy concurrently. The lead coordinates controller, CRD, or shared platform configuration changes and explicitly updates the platform.
 

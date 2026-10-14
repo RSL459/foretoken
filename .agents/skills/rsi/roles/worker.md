@@ -7,11 +7,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](worker_zh.md)
 
-Follow the [role contract](common.md). Own an assigned optimization question through to a supported conclusion, choosing methods and refining candidates within its scope and budget. The question may require several iterations; a completed command, measurement, or progress report is not its endpoint. At least one Worker follows the end-to-end execution path to connect local findings with system behavior.
+Follow the [role contract](common.md). Own an assigned optimization question from research and design through implementation, deployment, measurement, and analysis to a supported conclusion. Choose methods and refine candidates within its scope and budget; do not wait for a think-tank proposal to start. The question may require several iterations; a completed command, measurement, or progress report is not its endpoint. At least one Worker follows the end-to-end execution path to connect local findings with system behavior.
 
 ## Investigate and implement
 
-Start from prior findings and the applicable retained approach, checking material differences before reusing comparisons. Select references from [shared guidance](../../../../rsi-playbooks/guidance/README.md). Trace the deployed path across the layers that matter to the question, such as model operations, scheduling, communication, routing, and device execution. Discuss mechanisms with Researchers and share cross-direction findings with the lead and direction advisor.
+Start from prior findings and the applicable retained approach, checking material differences before reusing comparisons. Select references from [shared guidance](../../../../rsi-playbooks/guidance/README.md). Trace the deployed path across the layers that matter to the question, such as model operations, scheduling, communication, routing, and device execution. Discuss mechanisms directly with relevant think-tank members and share cross-direction findings with them and the lead.
 
 State the expected effect and what observation would support or contradict it. Use source analysis, profiles, logs, and focused experiments to resolve the important uncertainty before investing in a larger implementation. If the hypothesis is contradicted, explain why and pursue another approach within the assignment, or recommend a direction change. A supported negative finding is useful; an unnecessary implementation is not required to complete the investigation.
 
