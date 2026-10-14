@@ -42,9 +42,9 @@ from benchmarks.results.environment import (
 from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
 from benchmarks.results.progress import HttpProgress
 from benchmarks.results.prometheus import PrometheusObserver
+from benchmarks.results.records import RequestRecordWriter
 from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.responses import ResponseWriter
-from benchmarks.results.timeseries import ELAPSED_TIME
 from benchmarks.results.wandb import publish_http_wandb
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ class BenchmarkRun:
     time_origin: float | None = None
     # Quality evaluations have an execution status independent of the model's score.
     exit_code: int | None = None
-    cumulative_published: bool = False
+    http_series_published: bool = False
 
 
 class ResultSink(Protocol):
@@ -255,6 +255,7 @@ class WandbSink:
         self.publisher = publisher
         self.run_config = run_config
         self._run: Any | None = None
+        self._progress_fields: set[tuple[str, str]] = set()
 
     def open(self, record: dict[str, Any]) -> None:
         """Create the SDK run before requests so system metrics cover execution."""
@@ -284,11 +285,16 @@ class WandbSink:
             raise RuntimeError("W&B initialization returned no run")
         if self._run.url:
             print_result_location(f"W&B results: {self._run.url}")
-        self._run.define_metric(ELAPSED_TIME, hidden=True)
-        self._run.define_metric("Cumulative/*", step_metric=ELAPSED_TIME, step_sync=False)
 
-    def log_progress(self, row: dict[str, Any]) -> None:
-        """Queue a live measurement snapshot through the owned SDK run."""
+    def log_progress(self, row: dict[str, Any], *, axis: str) -> None:
+        """Bind live fields to their domain axis and queue them through the owned run."""
+        if (axis, axis) not in self._progress_fields:
+            self._run.define_metric(axis, hidden=True)
+            self._progress_fields.add((axis, axis))
+        for key in row.keys() - {axis}:
+            if (key, axis) not in self._progress_fields:
+                self._run.define_metric(key, step_metric=axis, step_sync=False)
+                self._progress_fields.add((key, axis))
         self._run.log(row)
 
     def publish(self, run: BenchmarkRun) -> None:
@@ -301,12 +307,6 @@ class WandbSink:
                 artifact = wandb.Artifact(f"warmup-{self._run.id}", type="benchmark-warmup")
                 for name in ("warmup_metrics", "warmup_raw_output"):
                     artifact.add_file(str(run.artifacts[name]), name=run.artifacts[name].name)
-                self._run.log_artifact(artifact)
-            response_files = [run.artifacts[name] for name in ("responses", "warmup_responses") if name in run.artifacts]
-            if response_files:
-                artifact = wandb.Artifact(f"responses-{self._run.id}", type="benchmark-responses")
-                for path in response_files:
-                    artifact.add_file(str(path), name=path.name)
                 self._run.log_artifact(artifact)
             if "plots" in run.artifacts:
                 directory = run.artifacts["plots"]
@@ -325,6 +325,15 @@ class WandbSink:
             return
         try:
             try:
+                journals: dict[str, list[Path]] = {}
+                for path in sorted(Path(self.execution_dir).glob("*.jsonl")):
+                    kind = "responses" if path.name in {"responses.jsonl", "warmup_responses.jsonl"} else "records"
+                    journals.setdefault(kind, []).append(path)
+                for kind, paths in journals.items():
+                    artifact = wandb.Artifact(f"{kind}-{run.id}", type=f"benchmark-{kind}")
+                    for path in paths:
+                        artifact.add_file(str(path), name=path.name)
+                    run.log_artifact(artifact)
                 log_path = Path(self.execution_dir) / "run.log"
                 if log_path.is_file():
                     artifact = wandb.Artifact(f"logs-{run.id}", type="benchmark-logs")
@@ -573,8 +582,7 @@ class ResultOutputs:
                         directory,
                     )
                 )
-            if not outputs.includes("quiet"):
-                sinks.append(ConsoleSink())
+            sinks.append(ConsoleSink())
             if outputs.saves_local:
                 sinks.append(
                     LocalDirectorySink(directory)
@@ -622,11 +630,22 @@ class ResultOutputs:
         if start_observers:
             self.start_observers()
 
-    def http_progress(self, *, stream: bool) -> HttpProgress | None:
-        """Connect the HTTP runner to the selected live W&B destination."""
+    def publish_progress(self, row: dict[str, Any], *, axis: str) -> None:
+        """Send a measured progress snapshot to each selected live destination."""
         for sink in self._sinks:
             if isinstance(sink, WandbSink):
-                return HttpProgress(sink.log_progress, stream=stream)
+                sink.log_progress(row, axis=axis)
+
+    def create_request_writer(self, name: str) -> RequestRecordWriter:
+        """Open a completed-request journal and close it with this run's result resources."""
+        writer = RequestRecordWriter(Path(self.execution_dir) / f"{name}.jsonl")
+        self._resources.callback(writer.close)
+        return writer
+
+    def http_progress(self, *, stream: bool, criteria: dict[str, str] | None = None) -> HttpProgress | None:
+        """Connect the HTTP runner to the selected live W&B destination."""
+        if self.benchmark.outputs.includes("wandb"):
+            return HttpProgress(self.publish_progress, stream=stream, criteria=criteria)
         return None
 
     def start_observers(self) -> None:
@@ -760,10 +779,6 @@ class ResultOutputs:
         """Stop observations, record the run status, and publish every open sink."""
         for name in ("warmup_raw_output", "warmup_metrics"):
             path = Path(self.execution_dir) / f"{name}.json"
-            if path.is_file():
-                run.artifacts[name] = path
-        for name in ("responses", "warmup_responses"):
-            path = Path(self.execution_dir) / f"{name}.jsonl"
             if path.is_file():
                 run.artifacts[name] = path
         if run.exit_code is not None:

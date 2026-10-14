@@ -246,16 +246,16 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
         sdk_run.define_metric(REQUEST_INDEX)
         request_slo_met = (run.metrics.get("slo") or {}).get("request_slo_met")
         elapsed_rows = [
-            *time_series(
+            *(time_series(
                 run.measurements,
                 duration=float(run.metrics["benchmark_time"]),
                 stream=bool(run.metrics["stream"]),
                 slo_met=request_slo_met,
-            ),
+            ) if not run.http_series_published else ()),
             *(cumulative_series(
                 run.measurements,
                 stream=bool(run.metrics["stream"]),
-            ) if not run.cumulative_published else ()),
+            ) if not run.http_series_published else ()),
         ]
         for field, group_name in (("dataset", "datasets"), ("model", "models"), ("request_class", "request_classes")):
             groups = run.metrics.get(group_name) or {}
@@ -307,7 +307,7 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                     run.measurements,
                     stream=bool(run.metrics["stream"]),
                     slo_met=request_slo_met,
-                ),
+                ) if not run.http_series_published else (),
             ),
         )
         if any(run.metrics.get(name) for name in ("datasets", "models", "request_classes")) or any(

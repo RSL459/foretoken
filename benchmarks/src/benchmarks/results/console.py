@@ -33,25 +33,35 @@ def configure_logging(console_enabled: bool) -> None:
 
 
 class _RunLogStream(TextIOBase):
-    """Fan out quiet output to active command and child logs through one handler filter."""
+    """Retain command and child logs while preserving each original terminal stream."""
 
-    def __init__(self, console: TextIO) -> None:
+    def __init__(self, console: TextIO, *, owner: _RunLogStream | None = None) -> None:
         self.console = console
-        self.logs: list[TextIO] = []
-        self.handlers: dict[
-            logging.StreamHandler, tuple[int, Callable[[logging.LogRecord], bool]]
-        ] = {}
+        self.owner = owner or self
+        if owner is None:
+            self.logs: list[TextIO] = []
+            self.quiet_scopes: list[bool] = []
+            self.handlers: dict[
+                logging.StreamHandler, tuple[int, Callable[[logging.LogRecord], bool]]
+            ] = {}
+
+    def retain(self, text: str) -> None:
+        """Write output once to every enclosing run without forwarding to a terminal."""
+        for log in self.owner.logs:
+            log.write(text)
 
     def write(self, text: str) -> int:
-        """Retain raw progress in every enclosing run without printing it."""
-        for log in self.logs:
-            log.write(text)
+        """Retain raw output and tee it to its original stream unless quiet is active."""
+        self.retain(text)
+        if not any(self.owner.quiet_scopes):
+            self.console.write(text)
         return len(text)
 
     def flush(self) -> None:
-        """Flush every active log before publication or SDK shutdown."""
-        for log in self.logs:
+        """Flush logs and the original terminal before publication or SDK shutdown."""
+        for log in self.owner.logs:
             log.flush()
+        self.console.flush()
 
     def isatty(self) -> bool:
         """Disable terminal-only progress formatting in retained logs."""
@@ -74,19 +84,23 @@ class _RunLogStream(TextIOBase):
                     continue
                 stream = handler.stream
                 if isinstance(stream, _RunLogStream):
-                    stream = self.console
+                    stream = stream.console
+                level = handler.level
 
                 def capture(
-                    record: logging.LogRecord, *, handler=handler, stream=stream
+                    record: logging.LogRecord, *, handler=handler, stream=stream, level=level
                 ) -> bool:
                     text = handler.format(record) + handler.terminator
-                    self.write(text)
-                    if record.levelno >= logging.ERROR:
+                    self.retain(text)
+                    if (
+                        record.levelno >= logging.ERROR
+                        or (not any(self.quiet_scopes) and record.levelno >= level)
+                    ):
                         stream.write(text)
                         stream.flush()
                     return False
 
-                self.handlers[handler] = (handler.level, capture)
+                self.handlers[handler] = (level, capture)
                 handler.addFilter(capture)
                 handler.setLevel(logging.DEBUG)
 
@@ -95,42 +109,47 @@ class _RunLogStream(TextIOBase):
         for handler, (level, capture) in self.handlers.items():
             handler.removeFilter(capture)
             handler.setLevel(level)
-            if handler.stream is self:
-                handler.setStream(self.console)
+            stream = handler.stream
+            if isinstance(stream, _RunLogStream) and stream.owner is self:
+                handler.setStream(stream.console)
 
 
 def print_result_location(message: str) -> None:
     """Show a result path or link even in quiet mode and retain it in active run logs."""
     stream = sys.stderr
     if isinstance(stream, _RunLogStream):
-        print(message, file=stream)
+        stream.retain(message + "\n")
         stream = stream.console
     print(message, file=stream, flush=True)
 
 
 @contextmanager
 def capture_run_logs(directory: str, *, quiet: bool) -> Iterator[None]:
-    """Capture command and nested run output while forwarding logging errors to the console.
+    """Retain output in command and child logs; quiet only suppresses terminal output.
 
-    Each nested run receives its own logging records and raw progress; enclosing
-    logs retain the complete execution. Only the outer scope changes handlers.
+    Each nested run receives its own logging records and raw output; enclosing
+    logs retain the complete execution. Only the outer scope redirects streams.
     """
-    if not quiet:
-        yield
-        return
     root = logging.getLogger()
     root_level = root.level
     enclosing = sys.stdout if isinstance(sys.stdout, _RunLogStream) else None
-    stream = enclosing or _RunLogStream(sys.stderr)
+    stream = enclosing.owner if enclosing is not None else _RunLogStream(sys.stdout)
     with (Path(directory) / "run.log").open("a", encoding="utf-8", buffering=1) as log:
         stream.logs.append(log)
+        stream.quiet_scopes.append(quiet)
         try:
-            root.setLevel(logging.INFO)
+            root.setLevel(min(root_level, logging.INFO))
             stream.capture_handlers()
-            with redirect_stdout(stream), redirect_stderr(stream):
+            if enclosing is not None:
                 yield
+            else:
+                stderr = _RunLogStream(sys.stderr, owner=stream)
+                with redirect_stdout(stream), redirect_stderr(stderr):
+                    yield
         finally:
+            stream.flush()
             stream.logs.remove(log)
+            stream.quiet_scopes.pop()
             if enclosing is None:
                 stream.restore_handlers()
             root.setLevel(root_level)
