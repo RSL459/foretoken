@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Find mechanisms, implementation evidence, and research questions for improving an inference system. Start with the observed cost or design decision, then follow the relevant category. Each entry explains how an approach works, where it applies, what upstream already implements, and which experiments can distinguish the remaining choices.
+Inference mechanisms, implementations, and research questions, organized by the computation or resource being optimized.
 
 ## Model computation
 
@@ -39,7 +39,7 @@ Find mechanisms, implementation evidence, and research questions for improving a
 - [Host and streaming paths](host-streaming/README.md): host/device scheduling, incremental text, backpressure, cancellation, and NUMA effects.
 - [Measurement and simulation](measurement-simulation/README.md): arrivals and queueing, SLO goodput, trace critical paths, simulator calibration, and numerical divergence.
 
-A decode slowdown can involve several categories. For example, use attention or MoE entries to understand computation, communication entries to inspect rank dependencies, and host/runtime entries to explain launch gaps. The categories identify the mechanism's owner; cross-links connect the execution path.
+A decode slowdown can involve several categories. For example, use attention or MoE entries to understand computation, communication entries to inspect rank dependencies, and host/runtime entries to explain launch gaps.
 
 ## Reading the evidence
 

@@ -15,5 +15,3 @@ Choose the entry matching the work that delays the first usable output or limits
 - [When does fewer-step generation mean a different model?](few-step-distillation.md) Trace consistency and causal distillation, checkpoint availability, and long-horizon quality separately from execution speedups.
 - [Why do early media tokens not produce early playback?](streaming-audio-video.md) Follow codec chunks, lookahead, waveform/video decoding, transport, and client buffering.
 - [Why do mixed resolutions or adapters break efficient batching?](heterogeneous-batching.md) Separate shape packing from compatibility-aware scheduling and pipeline-specific step contracts.
-
-The entries combine current public implementations with remaining research questions. Older papers establish mechanisms; their ordinary implemented capabilities are not listed as new candidates. Source dates and implementation revisions are recorded per entry, with a research cutoff of 2026-10-14. Audio/video generation is external research, not a Foretoken support claim. Numerical examples explain shapes or execution, not measured Foretoken gains.

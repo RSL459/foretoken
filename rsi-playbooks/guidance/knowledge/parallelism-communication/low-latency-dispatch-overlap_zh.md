@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 每 rank token 很少时，dispatch 与 combine 可能主导 decode。异步接口本身不会消除 dispatch 到专家 GEMM、combine 到下一层的依赖。有效重叠需要独立工作，或更细粒度的生产完成信息。
 
-DeepEP 主线已是统一 `EPBuffer` 的 V2.5，移除了 V1 API 与 NVSHMEM 依赖。当前 README 明确指出 EP dispatch/combine 使用 SM，不支持零 SM 的 RDMA EP。vLLM 已实现双批重叠 DBO；DeepEP 独立 `antgroup-opt` 分支也有单批重叠 SBO。不能把这些描述为尚未发现的新优化。
+DeepEP 主线已是统一 `EPBuffer` 的 V2.5，移除了 V1 API 与 NVSHMEM 依赖。当前 README 明确指出 EP dispatch/combine 使用 SM，不支持零 SM 的 RDMA EP。vLLM 已实现双批重叠 DBO；DeepEP 独立 `antgroup-opt` 分支也有单批重叠 SBO。
 
 ## 执行机制
 
@@ -39,4 +39,4 @@ SBO 改变工作粒度，而不是要求另一个 microbatch。PR #483 引入专
 
 ## 依据与状态
 
-核对日期：2026-10-14。阅读 DeepEP [主线 93eb6eb2](https://github.com/deepseek-ai/DeepEP/tree/93eb6eb238127e96c6d7a4a625a6dad158348509)、vLLM [6849ca69 的 DBO 设计](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/design/dbo.md)，以及 [PR #483](https://github.com/deepseek-ai/DeepEP/pull/483) 实际 diff 和 API 状态。#483 于 2025-11-21 合入 `antgroup-opt`，merge `9f2fc4b3`，不能据此认为 V2 主线支持。核对时 [#453](https://github.com/deepseek-ai/DeepEP/pull/453) 仍 open、未合并。剩余研究是目标版本集成、合理资源划分和负载适用性测量。
+核对日期：2026-10-14。DeepEP [主线 93eb6eb2](https://github.com/deepseek-ai/DeepEP/tree/93eb6eb238127e96c6d7a4a625a6dad158348509)、vLLM [6849ca69 的 DBO 设计](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/design/dbo.md)，以及 [PR #483](https://github.com/deepseek-ai/DeepEP/pull/483)。#483 于 2025-11-21 合入 `antgroup-opt`，merge `9f2fc4b3`，不能据此认为 V2 主线支持。核对时 [#453](https://github.com/deepseek-ai/DeepEP/pull/453) 仍 open、未合并。剩余研究是目标版本集成、合理资源划分和负载适用性测量。

@@ -21,7 +21,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 应明确 GPU/NIC 亲和性、NUMA、PCIe 和 rail 数。Device-to-device RDMA 与 pinned host memory 中转 TCP 不同；后者增加 GPU↔host 复制、主存带宽竞争和 buffer。节点内 NVLink 又是另一类路径。并发增加能提高利用率，也可能在某个点之后放大排队并干扰计算。
 
-Producer 必须保留源 page，直到 consumer 不再需要，或传输失败被处理。DMA 仍活跃时取消请求，不能立即释放注册 buffer。不同 TP 布局可能要求重排或重复发送；拓扑兼容的放置可能比替换更快后端更有效。不能默认 connector 支持任意 TP、KV dtype 或模型状态组合。
+Producer 保留源 page，直到传输完成确认不再读取它；consumer 保留目标 page 供解码使用。失败或取消后，应等待传输停止再重用两端 buffer。不同 TP 布局可能要求重排或重复发送；拓扑兼容的放置可能比替换更快后端更有效。不能默认 connector 支持任意 TP、KV dtype 或模型状态组合。
 
 ## 公开证据与集成
 
@@ -29,7 +29,7 @@ Producer 必须保留源 page，直到 consumer 不再需要，或传输失败�
 
 2026 年 [AFD 设计空间论文](https://arxiv.org/html/2605.28302v1)用 AstraSim 显式建模拥塞和计算／通信重叠。450 与 25 GB/s 的放置比较属于 NVLink／InfiniBand 模型条件，不是可以直接移用的实测 KV 加速。[MegaScale-Infer](https://arxiv.org/html/2504.02263)测量 BF16 MoE M2N 通信，解释完成通知、CPU proxy、小消息和流量效应；逐层 activation 流量与一次 P/D KV 传输并非同一 payload。
 
-Foretoken 的[E/P/D 部署文档](../../../../examples/encoder-prefill-decode/README_zh.md)明确默认 Mooncake RDMA、可选 host-staged TCP，而该示例 encoder 状态走共享存储。[执行工作流](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)保留跨阶段清理。这些事实不证明具体带宽、所有后端零拷贝或传输感知路由。
+Foretoken 的[E/P/D 部署文档](../../../../examples/encoder-prefill-decode/README_zh.md)明确默认 Mooncake RDMA、可选 host-staged TCP，而该示例 encoder 状态走共享存储。[执行工作流](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)保留跨阶段清理。
 
 ## 实验与剩余问题
 

@@ -19,7 +19,7 @@ Let host preparation take H milliseconds and device execution take D. A fully se
 
 For illustration, H = 2 ms and D = 3 ms gives a 5 ms serialized interval and a 3 ms ideal overlapped interval. If metadata needs the current output, a device-side relay, deferred reconciliation, or a different scheduling decision is necessary before that bound is reachable. A thread pool alone cannot produce it.
 
-At the inspected vLLM revision, `AsyncScheduler` accounts for output placeholders while steps are in flight and reconciles them with returned outputs, including stale delivery after preemption. This is already an upstream mechanism, not a new optimization to rediscover. SGLang's overlap utilities publish request-indexed device state, record events, and resolve future inputs after the appropriate fence. Host copies are conditional on consumers needing CPU metadata. Event ordering and tensor lifetime belong to this implementation boundary; removing a wait without preserving them can feed the next batch stale state.
+At the inspected vLLM revision, `AsyncScheduler` accounts for output placeholders while steps are in flight and reconciles them with returned outputs, including stale delivery after preemption. SGLang's overlap utilities publish request-indexed device state, record events, and resolve future inputs after the appropriate fence. Host copies are conditional on consumers needing CPU metadata. Event ordering and tensor lifetime belong to this implementation boundary; removing a wait without preserving them can feed the next batch stale state.
 
 ## Moving CPU work without creating another queue
 
@@ -27,7 +27,7 @@ Offloading a blocking operation can restore HTTP responsiveness while leaving to
 
 Free-threaded CPython is not a drop-in inference optimization. The Python 3.14 documentation distinguishes build support from the runtime GIL state: incompatible extensions can re-enable the GIL. Removing the GIL also does not make an event loop preempt synchronous callbacks or remove native library locks. Compatibility and single-thread overhead must be assessed for the actual engine environment.
 
-The vLLM renderer illustrates why the complete caller path matters. PR #49396 offloaded non-streaming derender work in July 2026. September issue #57350 described streaming calls bypassing that executor. By the inspected October revision, plain streaming detokenization and parsed streaming both have executor wrappers. Reapplying the historical fix would add no new capability. Remaining questions include executor saturation, parser replay cost, and competition between tokenization and stream rendering.
+The inspected vLLM renderer has executor wrappers for non-streaming derender work, plain streaming detokenization, and parsed streaming. Remaining questions include executor saturation, parser replay cost, and competition between tokenization and stream rendering.
 
 ## Experiments that distinguish the causes
 

@@ -11,7 +11,7 @@ English | [简体中文](visual-token-cache_zh.md) | [Multimodal generation](REA
 
 Repeated questions about one image offer two different reuse opportunities. A vision encoder produces image embeddings independently of the question, so identical processing with identical encoder weights can reuse them exactly. Decoder KV states may depend on preceding text, positions, and other images. Reusing those states across a changed prompt is not generally exact prefix caching. VLCache, published in December 2025, investigates that second opportunity; it should not be confused with the encoder cache already present in current engines.
 
-Visual token count is an important input to this decision. Qwen2.5-VL uses 14-pixel spatial patches and merges four neighboring features before the language model. A resized image of height H and width W therefore produces approximately HW/784 language-side visual tokens, excluding model-specific framing. A 448×448 image gives 256 tokens; doubling both dimensions gives 1,024, not 512. Video additionally groups temporal frames. These are properties of the trained processor and model, not an invitation to discard tokens arbitrarily.
+Visual token count is an important input to this decision. Qwen2.5-VL uses 14-pixel spatial patches and merges four neighboring features before the language model. A resized image of height H and width W therefore produces approximately HW/784 language-side visual tokens, excluding model-specific framing. A 448×448 image gives 256 tokens; doubling both dimensions gives 1,024, not 512. Video additionally groups temporal frames. The trained processor and model determine these counts.
 
 ## One execution
 
@@ -33,7 +33,7 @@ Compare four paths with the same checkpoint, processor, dtype, and generation se
 
 Record processor time, encoder GPU time, decoder prefill time, transferred bytes, cache memory, item-level hit rates, service P50/P95/P99 TTFT, output length, and successful requests per second meeting a latency target. Score each question family and inspect changed answers, rather than reporting only a mean. If encoder time vanishes but prefill remains unchanged, the exact cache is functioning; a larger gain requires another cause. If cross-context reuse fails while exact-prefix reuse succeeds, investigate contextual dependence rather than cache lookup speed.
 
-The remaining research question is how to choose recomputation under changing prompts and workloads without invalidating quality. Basic encoder caching is existing infrastructure, not a new optimization candidate.
+The remaining research question is how to choose recomputation under changing prompts and workloads without invalidating quality.
 
 ## Sources and checked state
 

@@ -11,11 +11,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 Tensor Core 的提升不会等比例加速注意力中的所有工作。长上下文 prefill 的矩阵乘法足够快之后，指数运算、行归约、概率转换和输出重缩放可能成为主要成本。单纯扩大 GEMM tile 还可能增加寄存器压力，把瓶颈推向共享内存。
 
-2026 年 3 月的 FlashAttention-4 研究的是这种硬件能力不均衡，而不是一种新的注意力近似。上游 CuTe-DSL 已有 Blackwell 异步流水线实现。真正值得继续研究的是：目标模型的形状和服务批次能否有效走到这些路径，以及外围工作是否吞掉了收益。重新实现分块在线 softmax 本身不是新机会。
+2026 年 3 月的 FlashAttention-4 用 Blackwell 异步流水线应对这种硬件能力不均衡，上游 CuTe-DSL 已提供实现。值得继续研究的是目标模型的形状和服务批次能否有效走到这些路径，以及外围工作是否吞掉了收益。
 
 ## 流水线怎样执行
 
-对一个 query tile，内核依次读取 key/value tile，不生成完整的分数矩阵。设已有的行最大值、分母和未归一化输出分别为 `m`、`l`、`O`，新 tile 的分数为 `S`：
+对一个 query tile，内核依次读取 key/value tile，不生成完整的分数矩阵。行最大值、分母和未归一化输出分别初始化为 `m=-infinity`、`l=0`、`O=0`。新 tile 的分数 `S` 已包含 attention scale 与 mask：
 
 ```text
 m' = max(m, rowmax(S))

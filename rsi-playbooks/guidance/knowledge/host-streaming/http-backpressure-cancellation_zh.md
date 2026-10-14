@@ -27,7 +27,7 @@ HTTP 连接关闭、应用停止迭代、发出 engine abort，以及释放 KV b
 
 若取消后仍以每秒 r 个 token 继续运行 Δ 秒，浪费工作约为 rΔ 个 token，KV 内存在清理前也持续占用。频繁断开会降低健康请求的 goodput，即使成功请求的平均延迟看起来没变。只测客户端 timeout，无法看到这一时间段。
 
-Foretoken 已有可取消输出流的 ownership、显式 model-server abort，以及 idle timeout 清理。SSE heartbeat 维持传输连接，但不重置 backend idle 或请求 deadline。这些是已有服务机制，不是本页提出的新优化。仍需研究的是具体部署能否让背压与取消及时穿过全部队列和引擎 rank。
+Foretoken 已有可取消输出流的 ownership、显式 model-server abort，以及 idle timeout 清理。SSE heartbeat 维持传输连接，但不重置 backend idle 或请求 deadline。仍需研究的是具体部署能否让背压与取消及时穿过全部队列和引擎 rank。
 
 ## 有区分力的实验
 

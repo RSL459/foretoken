@@ -11,11 +11,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 DeepSeek Sparse Attention（DSA）找到相关历史并不是零成本：轻量 indexer 先扫描历史 key，昂贵的 MLA 再读取选中的 token。把消费方限制为固定 top-k 后，indexer 在 decode 中的线性成本、完整 prefill 中的平方级工作可能暴露出来。
 
-DSA 已有上游实现。本次核对的 vLLM revision 已包含 query RoPE/量化融合、压缩 logits、多设备后端、分布式精确 top-k 合并，以及两级选择的 candidate-block mask。因此，“增加层次化稀疏注意力”不足以说明缺少什么。2026 年 5 月的 MISA 提供了更具体的问题：按 query 选择部分 indexer head，能否降低打分工作而不丢失重要 token？
+DSA 已有上游实现。引用的 vLLM revision 已包含 query RoPE/量化融合、压缩 logits、多设备后端、分布式精确 top-k 合并，以及两级选择的 candidate-block mask。2026 年 5 月的 MISA 研究另一条选择轴：按 query 选择部分 indexer head，能否降低打分工作而不丢失重要 token？
 
 ## 机制：先选 head，再选 token
 
-DSA 对 query 位置 `t` 和历史位置 `s` 的索引分数为：
+设 query 位置为 `t`、历史位置为 `s`、indexer head 为 `j`；`q(t,j)` 是 query，`k(s)` 是各 head 共享的索引 key，`w(t,j)` 是学习得到的 head 权重。DSA 索引分数为：
 
 ```text
 I(t,s) = sum_j w(t,j) * ReLU(q(t,j) · k(s))
@@ -36,7 +36,7 @@ MISA† 先通过路由 head 得到更大的候选集，再用所有 head 重排
 
 ## 实现入口与剩余设计空间
 
-作者仓库现在已提供一阶段与两阶段 vLLM patch，不能沿用论文中“之后发布代码”的旧状态。已核对的 README 指定 vLLM 0.17.0、Transformers 5.2.0 和 TileLang 0.1.7.post3，两种 patch 只安装一种。两阶段内核先池化 key、路由 head，再对候选使用全部 head 打分；另有按 query norm 路由的选项，选择规则不同。这是作者维护的自定义模型/算子集成，不代表所有上游 vLLM 发行版支持。
+作者仓库提供一阶段与两阶段 vLLM patch。已核对的 README 指定 vLLM 0.17.0、Transformers 5.2.0 和 TileLang 0.1.7.post3，两种 patch 只安装一种。两阶段内核先池化 key、路由 head，再对候选使用全部 head 打分；另有按 query norm 路由的选项，选择规则不同。这是作者维护的自定义模型/算子集成，不代表所有上游 vLLM 发行版支持。
 
 可以研究现有 candidate-block 路径是否能表达 head 路由，而不建立第二套缓存协议。head 路由与 token-block 路由的目标不同：前者降低全历史上的算术，后者尝试避免读取部分历史。组合可能进一步降低流量，也可能叠加召回误差。分布式精确 top-k 合并则保留给定评分的排序语义，不能与近似候选裁剪混为一谈。
 
@@ -53,4 +53,4 @@ MISA† 先通过路由 head 得到更大的候选集，再用所有 head 重排
 - [DeepSeek-V3.2 报告 v1](https://arxiv.org/html/2512.02556v1)：索引公式、训练方式、top-k 与 MLA 的关系。
 - [MISA，2026-05-08，v1](https://arxiv.org/html/2605.07363v1)：池化 key 的 head 路由、重排、复杂度和经验保真度。
 - [作者实现 README，固定 `dc9f3a3b7938bd26e165b0c99e3b6ea627d1ecfc`](https://github.com/MuLabPKU/TransArch/blob/dc9f3a3b7938bd26e165b0c99e3b6ea627d1ecfc/MISA_preprint/README.md)、[两阶段内核](https://github.com/MuLabPKU/TransArch/blob/dc9f3a3b7938bd26e165b0c99e3b6ea627d1ecfc/MISA_preprint/misa_vllm_patch_2stage/misa_vllm_patch/misa_ops.py)与[indexer wrapper](https://github.com/MuLabPKU/TransArch/blob/dc9f3a3b7938bd26e165b0c99e3b6ea627d1ecfc/MISA_preprint/misa_vllm_patch_2stage/misa_vllm_patch/indexers.py)：核对于 10 月 13 日 revision，确认发布范围及实际路由/重排。
-- [vLLM indexer，固定 `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/layers/sparse_attn_indexer.py)：已实现的评分、量化、top-k 和 candidate-block 路径；不代表所有发行版。
+- [vLLM indexer，固定 `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/layers/sparse_attn_indexer.py)：该版本的评分、量化、top-k 和 candidate-block 路径。

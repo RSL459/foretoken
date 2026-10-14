@@ -13,7 +13,7 @@ Selecting the least-bad worker is different from deciding that a request can sti
 
 llm-d currently implements request admission and flow-control queues. Its inspected `admission.go` has a legacy saturation check that rejects sheddable negative-priority requests at saturation, and a flow-control path that waits for dispatch, rejection, TTL expiry, cancellation, or shutdown. That file does not perform a predictive deadline-feasibility test.
 
-llm-d separately implements predicted TTFT/TPOT headroom in latency scoring. When every prediction is unfavorable, its scorer can still select an idle or least-deficit candidate. A low score is not a rejection decision. Production Stack already routes by priority and forwards the resolved priority to the engine, but its priority-routing implementation does not constitute a predicted-deadline admission controller. Foretoken already has role-based waiting, concurrency accounting, queue timeout, and request-deadline outcomes. The research increment is feasibility-aware coordination, not adding a generic queue or timeout.
+llm-d separately implements predicted TTFT/TPOT headroom in latency scoring. When every prediction is unfavorable, its scorer can still select an idle or least-deficit candidate. A low score is not a rejection decision. Production Stack already routes by priority and forwards the resolved priority to the engine, but its priority-routing implementation does not constitute a predicted-deadline admission controller. Foretoken already has role-based waiting, concurrency accounting, queue timeout, and request-deadline outcomes. Feasibility-aware coordination builds on these queue and timeout controls.
 
 ## Follow a deadline from ingress
 
@@ -25,9 +25,9 @@ An illustrative feasibility check is:
 
 A negative value suggests the request cannot meet the current objective, subject to estimation error and permitted alternatives. If the objective is TTFT, use first-token work; if it is end-to-end completion, include generation. A request deadline, queue TTL, TTFT objective, and TPOT objective are separate contracts. Averaging them into one “latency” value makes the decision ambiguous.
 
-SCORPIO's 2026 revision combines TTFT prediction with rejection, deadline ordering of waiting requests, and a TPOT admission test. The latter uses a virtual batch size derived from heterogeneous token-rate requirements, checking predicted TPOT against the strictest target in the resulting running set. Its decode credit mechanism then attempts to supply those differentiated rates. Admission and actual batch execution therefore share assumptions; copying only the rejection equation into a router would omit half the mechanism.
+SCORPIO's 2026 revision combines TTFT prediction with rejection, deadline ordering of waiting requests, and a TPOT admission test. The latter uses a virtual batch size derived from heterogeneous token-rate requirements, checking predicted TPOT against the strictest target in the resulting running set. Its decode credit mechanism then attempts to supply those differentiated rates. Admission and batch execution share the same latency model and decode-rate assumptions. Calibrate them for the model, weight/cache dtype, backend, topology, and parallelism configuration.
 
-## What goodput does and does not reward
+## Count qualified completions and all arrivals
 
 For a fixed observation window, a useful service metric is `goodput = completed requests meeting all declared SLOs / elapsed time`. Also report attainment over all offered arrivals, counting rejection and timeout as unmet unless the benchmark explicitly defines another contract. SCORPIO counts rejected requests as SLO-unmet in adherence calculations.
 
@@ -46,6 +46,7 @@ Use an open-loop arrival trace whose rate crosses capacity and then recovers. Mi
 Measure arrival-based SLO attainment, qualified completions per second, false-rejection estimates, per-class outcomes, queue residence, deadline expiry location, p99 token gaps, and recovery after the burst. Include underprediction and overprediction experiments. Retain raw request outcomes so a policy cannot improve a summary by dropping late results.
 
 The unresolved question is whether a calibrated downstream-feasibility model adds useful completions beyond current queue/concurrency controls.
+
 ## Sources
 
 Checked 2026-10-14.

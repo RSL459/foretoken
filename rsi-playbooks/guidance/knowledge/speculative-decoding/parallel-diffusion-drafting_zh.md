@@ -29,7 +29,7 @@ DFlash 训练冻结目标，使用目标生成的响应，选择干净 anchor �
 
 用未实测算例说明：六次 draft 前向变成一次，只有块前向、特征处理与验证增量之和低于原六次成本时才有效。一个 16 位置块若很早不一致，可能只提交一枚校正。此时截短验证只能省目标工作，无法退回已经完成的 draft 前向；详见[自适应验证](adaptive-verification-budget_zh.md)。
 
-vLLM 当前文档已有 `amd/PARD-Qwen3-0.6B` 配合 `parallel_drafting: true` 的示例。DFlash 官方项目列出公开、目标专属的权重。DFlash2 的局部卷积与候选选择器也已通过 vLLM #52816、SGLang #35371 合并。这些是可用实现起点，不是尚待加入 Foretoken 的全新提案。
+vLLM 当前文档已有 `amd/PARD-Qwen3-0.6B` 配合 `parallel_drafting: true` 的示例。DFlash 官方项目列出公开、目标专属的权重。DFlash2 的局部卷积与候选选择器也已通过 vLLM #52816、SGLang #35371 合并。使用这些集成时，需要匹配的检查点。
 
 SGLang 提交 `e9400c5a8f3a0d0312a37aecef694f5edfd69341` 中，DFlash 验证线性块，可从配置推断块大小；draft window 至少覆盖块。文档路径不支持流水线并行或 DP attention，并关闭 overlap scheduler 与 mixed chunked prefill。比较时应以这些实际执行模式为准，不能假定所有通用推测配置都能组合。不同引擎的块大小可能包含 anchor；vLLM LiLiCorr 文档明确以训练块大小减一计算推测位置。
 
@@ -40,6 +40,7 @@ SGLang 提交 `e9400c5a8f3a0d0312a37aecef694f5edfd69341` 中，DFlash 验证线�
 为了区分减少串行成本与提高预测质量，尽可能比较相同期望提交长度，并报告生成、验证和提交位置。覆盖 prefill/启动占主要成本的短输出，以及验证争夺容量的饱和混合流量。不同方法改变 scheduler overlap 的影响应该进入结果，而不是隐藏的实验差异。
 
 未解决问题包括如何保持块内连贯性，缩短上下文窗口时怎样保留领域续写能力，以及变长验证如何保留引擎已有功能。[联合候选选择](joint-block-candidate-selection_zh.md)专门研究连贯性，机制与减少串行前向不同。
+
 ## 来源与状态
 
 核对日期为 2026-10-14。

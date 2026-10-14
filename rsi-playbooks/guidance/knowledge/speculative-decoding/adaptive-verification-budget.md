@@ -13,7 +13,7 @@ A fixed draft length buys fewer target decode iterations by spending more work p
 
 There are two distinct decisions: how much to generate and how much to verify. With an autoregressive auxiliary drafter, stopping early can save subsequent draft forwards. With a one-pass parallel drafter, truncating its output usually saves verification work but not the already completed draft forward. Adaptive verification therefore uses one target and its existing model-based drafter; it does not require a second auxiliary model. Proposals remain chains or linear blocks, and changing their admitted lengths does not itself change the rejection-sampling rule.
 
-For request r, let a[r,j] estimate acceptance at position j conditional on its predecessors surviving. Its position-j survival estimate is s[r,j] = product(a[r,1..j]). A useful batch objective is approximately:
+For request r, let a[r,j] estimate acceptance at position j conditional on its predecessors surviving. Its position-j survival estimate is s[r,j] = product(a[r,1..j]); K[r] is the admitted draft-prefix length. A useful batch objective is approximately:
 
 ```text
 expected committed tokens / step time
@@ -29,7 +29,7 @@ For an illustrative, unmeasured example, suppose requests A and B have survival 
 
 Generate a block using the existing draft model. Estimate position survival, select a batch budget from measured step costs, and admit each request's prefix. The target evaluates only admitted proposals with their correct causal histories. Verification accepts a prefix and samples a correction, or appends a target bonus when the whole admitted prefix succeeds. Commit those outputs; discard every uncommitted proposal, including drafted positions that were never verified. The next draft must start from the committed history, not the longest generated block.
 
-At vLLM commit `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`, adaptive verification is already documented for EAGLE, MTP, DFlash, DSpark, and standalone draft models. DSpark can provide a trained confidence head; other drafters use an online logistic estimator calibrated from verification outcomes. Startup profiling supplies a step-cost curve. This is implemented functionality, not an unintegrated research proposal.
+At vLLM commit `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`, adaptive verification is already documented for EAGLE, MTP, DFlash, DSpark, and standalone draft models. DSpark can provide a trained confidence head; other drafters use an online logistic estimator calibrated from verification outcomes. Startup profiling supplies a step-cost curve.
 
 The same snapshot requires full CUDA graphs and attention backends that tolerate device-decided query lengths. LoRA and pipeline parallelism are excluded. The default synthetic profile context is 8192 tokens; a much longer deployed workload can invalidate that cost estimate. The separate batch-size schedule, `num_speculative_tokens_per_batch_size`, already supports reducing K or setting it to zero, but its documentation excludes data parallelism because independent ranks can select divergent collective schedules. Do not conflate this schedule with per-request device-side allocation.
 
@@ -47,4 +47,4 @@ Checked 2026-10-14.
 
 - [Pinned vLLM adaptive verification guide](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/features/speculative_decoding/adaptive_verification.md) and [dynamic schedule guide](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/features/speculative_decoding/dynamic_speculative_decoding.md) define this snapshot's support boundary.
 - [PR #47808](https://github.com/vllm-project/vllm/pull/47808), confidence-scheduled verification, merged 2026-08-12 as `7f7a32cfec0f1bc5b73c37200b86631523a1ea8f`.
-- [RFC #48202](https://github.com/vllm-project/vllm/issues/48202) comments document low-load null results and saturation-sensitive motivation. These are contributor reports, not Foretoken evidence. Its linked [PR #48692](https://github.com/vllm-project/vllm/pull/48692) is closed without merge; that status does not imply the mechanism is absent from current main.
+- [RFC #48202](https://github.com/vllm-project/vllm/issues/48202): contributor-reported low-load null results and saturation-sensitive motivation. Its linked [PR #48692](https://github.com/vllm-project/vllm/pull/48692) is closed without merge; current support is described in the pinned guide above.

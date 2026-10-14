@@ -15,7 +15,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 例如两个等容量 rank 的 KV 压力为 0.95 和 0.15，平均 0.55 看似宽裕，热 rank 却可能停止接收请求。新增副本只有在路由重新分配时才可能有效。可复用前缀占据缓存，也不代表等量 prefill 计算。需要考虑未命中后缀和共享 block，不能把每个请求原始长度不加区分地求和。
 
-多模型之间，原始 token/s 不代表可比服务。2026 年 TRE 论文提出 `TSS_raw = (w_p*r_prefill + r_decode)/(active + w_q*waiting)`，再把平滑值除以模型／SLO 对应的健康边界 θ。较低值表示相对该模型校准的服务缺口。它不是通用工作换算，权重与阈值依赖负载和 runtime。
+多模型之间，原始 token/s 不代表可比服务。2026 年 TRE 论文提出 `TSS_raw = (w_p*r_prefill + r_decode)/(active + w_q*waiting)`，再把平滑值除以模型／SLO 对应的健康边界 θ。其中 r_prefill、r_decode 是同一窗口内实际处理的 token/s，active、waiting 是请求数，w_p、w_q 分别为无量纲的 prefill 服务权重与等待需求权重。TSS_raw 与 θ 的单位均为每个加权未完成请求获得的加权 token/s。归一化值无量纲，小于 1 表示低于该校准的健康服务水平。权重与阈值依赖负载和 runtime。
 
 ## 硬件、dtype 与成本
 
@@ -25,11 +25,11 @@ KV 压力应遵循全注意力、MLA、滑动窗口或混合状态的实际分�
 
 ## 公开实现与当前范围
 
-核对日期为 2026-10-14。Foretoken 的[token-load 算法](../../../../control-plane/internal/autoscaling/algorithm/decision/token_load.go)逐 engine 评估。Prefill preset 按 context length 归一化队列 token，自定义 `load` 使用绝对 token；decode 以已调度加排队上下文除以 KV 容量，aggregate 再加 queued prefill。一个热 engine 可请求增加 Group；缩容检查所有 engine，并估计重新分配后的压力。[指南](../../../../docs/autoscaling_zh.md)限定单一 full-attention cache group、PCP/DCP=1，encoder 和不可用观测不使用虚构 token 策略。
+核对日期为 2026-10-14。Foretoken 的[token-load 算法](../../../../control-plane/internal/autoscaling/algorithm/decision/token_load.go)逐 engine 评估。Prefill preset 按 context length 归一化队列 token，自定义 `load` 使用绝对 token；decode 以已调度加排队上下文除以 KV 容量，aggregate 再加 queued prefill。一个热 engine 可请求增加 Group；缩容检查所有 engine，并估计重新分配后的压力。[指南](../../../../docs/autoscaling_zh.md)限定单一 full-attention cache group、PCP/DCP=1，encoder pool 及观测不可用、不完整或过期的目标，在配置的副本上下界内保持现有容量。
 
-llm-d 的[在途 producer](https://github.com/llm-d/llm-d-inference-scheduler/blob/5253f55516f496129248766d1e4b745daba68887/pkg/epp/framework/plugins/requestcontrol/dataproducer/inflightload/producer.go)扣除前缀命中，在 stream start 释放 prefill 贡献，stream end／TTL 淘汰移除请求，endpoint 删除时清理指标序列。[P/D prefill trigger](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/keda-epp-token-aware/pd-disaggregation/base/prefill-scaledobject.yaml)把总 backlog token 除以实测吞吐；[decode trigger](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/keda-epp-token-aware/pd-disaggregation/base/decode-scaledobject.yaml)求和 decode Pod 的 KV fraction。这些已存在，关键是单位和生命周期，不是名称新颖。
+llm-d 的[在途 producer](https://github.com/llm-d/llm-d-inference-scheduler/blob/5253f55516f496129248766d1e4b745daba68887/pkg/epp/framework/plugins/requestcontrol/dataproducer/inflightload/producer.go)扣除前缀命中，在 stream start 释放 prefill 贡献，stream end／TTL 淘汰移除请求，endpoint 删除时清理指标序列。[P/D prefill trigger](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/keda-epp-token-aware/pd-disaggregation/base/prefill-scaledobject.yaml)把总 backlog token 除以实测吞吐；[decode trigger](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/keda-epp-token-aware/pd-disaggregation/base/decode-scaledobject.yaml)求和 decode Pod 的 KV fraction。
 
-[TRE](https://arxiv.org/html/2609.29160v1)是独立 Kubernetes hot-switch 原型，在 A100 40GB 上研究 7B/8B/14B 模型组，未指定 dtype，假定 colocated P/D 和校准服务阈值。[Artifact](https://github.com/zxzx9898/Token-service-share_Rebalancing_Engine)是研究入口，不证明已进入 Foretoken 或四个 upstream 项目。
+[TRE](https://arxiv.org/html/2609.29160v1)提供面向 colocated P/D 和校准服务阈值的 Kubernetes hot-switch 研究原型及[公开实现](https://github.com/zxzx9898/Token-service-share_Rebalancing_Engine)。
 
 ## 实验与剩余问题
 

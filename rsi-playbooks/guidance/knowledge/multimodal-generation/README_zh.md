@@ -15,5 +15,3 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 - [少步生成什么时候意味着换了模型？](few-step-distillation_zh.md) 追踪一致性与因果蒸馏、权重可用性、长时质量，和执行加速分开归因。
 - [媒体 token 提前，为什么仍不能提前播放？](streaming-audio-video_zh.md) 顺着 codec 分块、lookahead、波形/视频解码、传输与客户端缓冲定位问题。
 - [混合分辨率或 adapter 为什么难以高效组批？](heterogeneous-batching_zh.md) 区分形状 packing 与兼容性感知调度，保留各 pipeline 的 step contract。
-
-条目结合当前公开实现与剩余研究问题。旧论文用于解释基础机制，已经实现的普通能力不列为新候选。逐篇记录来源日期与版本，研究截止到 2026-10-14。音视频生成属于外部研究，不表示 Foretoken 支持；数值例子用于说明形状或执行，不是 Foretoken 收益实测。

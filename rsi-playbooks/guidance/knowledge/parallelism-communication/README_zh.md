@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-先追踪阻止下一步有效计算的依赖，不只看最长通信核函数。以下条目区分当前实现、实验分支和负载相关研究。来源状态核对于 2026-10-14。
+先追踪阻止下一步有效计算的依赖，不只看最长通信核函数。
 
 - MoE dispatch/combine 主导小批 decode？[低延迟通信与重叠](low-latency-dispatch-overlap_zh.md)解释 DeepEP V2.5、vLLM DBO、分支特定 SBO，以及独立工作不足时的 SM 争用。
 - 增加 TP 后同步成本增长超过计算缩短？[TP 通信粒度](tensor-parallel-collective-granularity_zh.md)追踪 all-reduce/AG/RS 的张量归属、eager 与图注册缓冲区，以及 MNNVL 特定选择。

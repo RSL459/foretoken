@@ -19,7 +19,7 @@ FastAFD coordinator 生成对齐的 attention-group 与 expert-group 计划。�
 
 ## 硬件、模型与公开证据
 
-[FastAFD 技术报告](https://haoailab.com/blogs/fastafd/)在 GB200 NVL72 的统一 NVLink/NVSwitch 域上测量 Qwen3-235B-A22B-FP8、MiniMax-M2.5-FP8，使用 8K／16K 上下文、两个微批和约 0.85 的 KV 利用率。报告相对调优后的 colocated vLLM，包含专家 GPU 后的每 GPU 解码吞吐提高约 1.35–1.45 倍。主要收益之一是移除专家权重后增加 KV 驻留容量。这不是 Foretoken 的到达驱动端到端结果，也不是跨节点 RDMA 结果。
+[FastAFD 技术报告](https://haoailab.com/blogs/fastafd/)在 GB200 NVL72 的统一 NVLink/NVSwitch 域上测量 Qwen3-235B-A22B-FP8、MiniMax-M2.5-FP8，使用 8K／16K 上下文、两个微批和约 0.85 的 KV 利用率。报告相对调优后的 colocated vLLM，包含专家 GPU 后的每 GPU 解码吞吐提高约 1.35–1.45 倍。主要收益之一是移除专家权重后增加 KV 驻留容量。这些是同一 NVLink 域中完成 prefill 后的稳态解码测量。
 
 [MegaScale-Infer 论文](https://arxiv.org/html/2504.02263)推导 ping-pong 调度，并在 Ampere 和 H20/L40S 上评估 BF16 MoE。其模型要求 attention／专家计算时间近似平衡，且微批足够覆盖通信；因此不能把其三／四微批条件与 FastAFD 实测的两个微批混为一谈。
 
@@ -27,9 +27,9 @@ FastAFD coordinator 生成对齐的 attention-group 与 expert-group 计划。�
 
 ## 实现与集成范围
 
-核对日期为 2026-10-14。FastAFD 在 `3c71619` 上是独立 `minisgl` runtime；已读[coordinator](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_coordinator.py)、[scheduler](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_scheduler.py)、[expert worker](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_expert_worker.py)。Scheduler 明确要求 naive KV cache，不能从吞吐脚本推断前缀缓存或生产扩缩容能力。
+核对日期为 2026-10-14。FastAFD 在 `3c71619` 上是独立 `minisgl` runtime；[coordinator](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_coordinator.py)、[scheduler](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_scheduler.py)、[expert worker](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_expert_worker.py)。Scheduler 要求 naive KV cache。
 
-设计空间论文引用的 [vLLM PR #29772](https://github.com/vllm-project/vllm/pull/29772)，本次 GitHub 核对为 CLOSED，merge 时间与 commit 均为空。这只说明该 PR 的状态，不代表当前 vLLM 所有 AFD 工作都未合并。Foretoken 现有的[E/P/D 工作流](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)属于请求阶段编排，不是逐层 AFD。
+设计空间论文引用的 [vLLM PR #29772](https://github.com/vllm-project/vllm/pull/29772)，状态为 closed，没有合并 commit。Foretoken 现有的[E/P/D 工作流](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)属于请求阶段编排，不是逐层 AFD。
 
 ## 实验与剩余问题
 

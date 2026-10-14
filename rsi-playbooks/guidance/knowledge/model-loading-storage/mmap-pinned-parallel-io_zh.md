@@ -21,11 +21,11 @@ eager 先读完整 shard，再逐个提供张量，访问更顺序，但会实�
 
 ## vLLM 当前行为
 
-[2026-10-14 已读 weight utilities](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/weight_utils.py)已有 lazy、eager、prefetch safetensors 策略。prefetch 填充的是页缓存，不是 GPU 的固定页暂存；自动预取识别特定网络文件系统，并考虑可用 RAM。多线程使用单独迭代器，[DefaultModelLoader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/default_loader.py)拒绝将其与非默认 safetensors 策略组合。
+[vLLM weight utilities](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/weight_utils.py)已有 lazy、eager、prefetch safetensors 策略。prefetch 填充的是页缓存，不是 GPU 的固定页暂存；自动预取识别特定网络文件系统，并考虑可用 RAM。多线程使用单独迭代器，[DefaultModelLoader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/default_loader.py)拒绝将其与非默认 safetensors 策略组合。
 
-同一 utilities 已接入 fastsafetensors 和 instanttensor。instanttensor 使用具有独立所有权的副本，避免 loader 复用内部存储后已返回张量失效；fastsafetensors 可使用 GDS，也有不使用 GDS 的路径。都是已集成选择，不是待移植能力。
+同一 utilities 已接入 fastsafetensors 和 instanttensor。instanttensor 使用具有独立所有权的副本，避免 loader 复用内部存储后已返回张量失效；fastsafetensors 可使用 GDS，也有不使用 GDS 的路径。
 
-[RunAI loader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/runai_streamer_loader.py)把并发与内存上限交给外部 streamer，不能把这层薄 adapter 描述为自己实现 I/O 线程池。[ServerlessLLM 原方法](https://arxiv.org/html/2401.14351v1)解释了对齐分块、固定页池与多层流水的动机。Dynamo KVBM、LMCache 固定页缓存层是相关内存竞争者，并非权重 loader 替代品；Mooncake 注册同样对主机内存寿命提出约束。
+[RunAI loader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/runai_streamer_loader.py)把并发与内存上限交给外部 streamer。[ServerlessLLM 原方法](https://arxiv.org/html/2401.14351v1)解释了对齐分块、固定页池与多层流水的动机。Dynamo KVBM、LMCache 固定页缓存层是相关内存竞争者，并非权重 loader 替代品；Mooncake 注册同样对主机内存寿命提出约束。
 
 ## 定位瓶颈的实验
 
@@ -33,6 +33,6 @@ eager 先读完整 shard，再逐个提供张量，访问更顺序，但会实�
 
 另在实际暴露选项的 loader 中扫描缓冲区大小和在途数量，不编造参数。缓冲区必须按完成顺序复用，并核对模型输出。并发增加只提高 RSS、不提高吞吐，说明缓冲过量。
 
-服务侧同时启动多个 worker，测就绪、首请求及对已有服务的影响。剩余空间是共享压力下的有界缓冲和存储/主机/设备重叠，不是无条件预取或开启最多 reader。以上为待运行测量，不是 Foretoken 结果。
+服务侧同时启动多个 worker，测就绪、首请求及对已有服务的影响。剩余空间是共享压力下的有界缓冲和存储/主机/设备重叠。
 
 [模型加载与存储](README_zh.md)

@@ -11,11 +11,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 表示不同，成本也不同
 
-[KIVI，2024 年 2 月](https://arxiv.org/html/2402.02750v1)采用不对称量化：key 沿 token 方向逐通道分组，value 沿通道方向逐 token 分组。前者针对持续出现的 key 通道离群值，后者针对随 token 变化的 value 范围。每组以 `x_hat = s q + z` 重建，其中 `z = min(x)`，`s = (max(x) - min(x))/(2^B - 1)`。整数、scale 和 offset 都占空间。
+[KIVI，2024 年 2 月](https://arxiv.org/html/2402.02750v1)采用不对称量化：key 沿 token 方向逐通道分组，value 沿通道方向逐 token 分组。前者针对持续出现的 key 通道离群值，后者针对随 token 变化的 value 范围。每组以 `x_hat = s q + z` 重建，其中 `B` 是量化位宽，`z = min(x)`，`s = (max(x) - min(x))/(2^B - 1)`。整数、scale 和 offset 都占空间。
 
 key 需要积累一定 token 才能组成组。KIVI 保留最近一段全精度残差窗口，把更老状态量化，再在 attention 中结合两部分；典型设置为组大小 32、残差长度 128。2-bit 有效载荷名义上只有 BF16 的八分之一，但元数据、残差、对齐和工作区会降低实际节省，短历史可能几乎不受益。key/value 分组差异和残差窗口都是方法的一部分，不等于“把 dtype 改成两比特”。
 
-[CacheGen，2023 年 10 月](https://arxiv.org/html/2310.07240v1)则为缓存上下文生成 bitstream。每十个 token 为一块，以锚点和量化差值表示，采用随层变化的精度，再做算术编码。预存多个压缩等级，让控制器依据加载成本选择某种表示，或直接读文本重算。运行时先将 bitstream 解码回 KV 张量。熵编码相对量化符号无损，并不代表相对原始浮点缓存无损。
+[CacheGen，2023 年 10 月](https://arxiv.org/html/2310.07240v1)则为缓存上下文生成 bitstream。每十个 token 为一块，将首 token 的 K/V 以 8-bit 量化为锚点，其余 token 保存相对重建锚点的量化差值；差值精度随层变化，再做算术编码。预存多个压缩等级，让控制器依据加载成本选择某种表示，或直接读文本重算。运行时先将 bitstream 解码回 KV 张量。熵编码相对量化符号无损，并不代表相对原始浮点缓存无损。
 
 存储编码应比较 `T_load = T_fetch(D_compressed) + T_decode + T_install`，只有实测重叠才能从中扣除；常驻 attention 内存仍可能接近未压缩大小。运行时量化则比较 `T_attention = T_read + T_dequant + T_compute`，包含打包与 scale 读取。kernel 低效或 attention 不是服务瓶颈时，表示更小也可能更慢。
 

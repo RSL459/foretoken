@@ -11,11 +11,11 @@ English | [简体中文](sparse-indexer-routing_zh.md)
 
 DeepSeek Sparse Attention (DSA) does not discover relevant history for free. A lightweight indexer first scans historical keys; only then does expensive MLA attend to selected tokens. Reducing the consumer to a fixed top-k can expose the indexer's linear decode cost and quadratic full-prefill work.
 
-DSA is already implemented upstream. At the examined vLLM revision, the indexer includes fused query RoPE/quantization, compressed logits, multiple device backends, distributed exact top-k merging, and candidate-block masking for two-level selection. “Add hierarchical sparse attention” is therefore too vague to establish a missing capability. MISA, published in May 2026, provides a more specific research question: can query-dependent selection of indexer heads reduce scoring work without losing important tokens?
+DSA is already implemented upstream. At the examined vLLM revision, the indexer includes fused query RoPE/quantization, compressed logits, multiple device backends, distributed exact top-k merging, and candidate-block masking for two-level selection. MISA, published in May 2026, explores a different selection axis: can query-dependent selection of indexer heads reduce scoring work without losing important tokens?
 
 ## Mechanism: selecting heads before selecting tokens
 
-DSA's index score for query position `t` and historical position `s` is:
+For query position `t`, historical position `s`, and indexer head `j`, let `q(t,j)` be the query, `k(s)` the shared index key, and `w(t,j)` the learned head weight. DSA's index score is:
 
 ```text
 I(t,s) = sum_j w(t,j) * ReLU(q(t,j) · k(s))
@@ -36,7 +36,7 @@ Long contexts offer more scoring work to remove, but pooled statistics must be m
 
 ## Implementation and remaining design space
 
-The author's repository now provides one-stage and two-stage vLLM patch packages, despite the paper's earlier future-release statement. Its checked README specifies vLLM 0.17.0, Transformers 5.2.0, and TileLang 0.1.7.post3, with only one patch installed at a time. The two-stage kernels pool keys and route heads, then score selected candidates using all heads. A separate query-norm routing option changes the selection rule. This is an author-maintained custom-model/operator integration, not evidence of support in every upstream vLLM release.
+The author's repository provides one-stage and two-stage vLLM patch packages. Its checked README specifies vLLM 0.17.0, Transformers 5.2.0, and TileLang 0.1.7.post3, with only one patch installed at a time. The two-stage kernels pool keys and route heads, then score selected candidates using all heads. A separate query-norm routing option changes the selection rule. This is an author-maintained custom-model/operator integration, not evidence of support in every upstream vLLM release.
 
 Investigate whether its existing candidate-block path can express head routing without an independent cache protocol. Compare head-axis routing with token-block routing: the former reduces arithmetic across all history, while the latter tries to avoid reading parts of history. A combined selector might save more traffic but compound recall errors. Exact distributed top-k merging is a different mechanism: it preserves the chosen score ordering and should not be conflated with approximate candidate pruning.
 
@@ -53,4 +53,4 @@ Checked 2026-10-14.
 - [DeepSeek-V3.2 report, v1](https://arxiv.org/html/2512.02556v1): indexer formula, training, top-k, and MLA relationship.
 - [MISA, 2026-05-08, v1](https://arxiv.org/html/2605.07363v1): pooled-key head routing, reranking, complexity, and empirical fidelity.
 - [Author implementation README at `dc9f3a3b7938bd26e165b0c99e3b6ea627d1ecfc`](https://github.com/MuLabPKU/TransArch/blob/dc9f3a3b7938bd26e165b0c99e3b6ea627d1ecfc/MISA_preprint/README.md), [two-stage kernels](https://github.com/MuLabPKU/TransArch/blob/dc9f3a3b7938bd26e165b0c99e3b6ea627d1ecfc/MISA_preprint/misa_vllm_patch_2stage/misa_vllm_patch/misa_ops.py), and [indexer wrapper](https://github.com/MuLabPKU/TransArch/blob/dc9f3a3b7938bd26e165b0c99e3b6ea627d1ecfc/MISA_preprint/misa_vllm_patch_2stage/misa_vllm_patch/indexers.py): released patch scope and actual routing/reranking, checked at an October 13 revision.
-- [vLLM indexer at `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/layers/sparse_attn_indexer.py): current scoring/quantization/top-k and candidate-block execution boundary; not a claim about every released vLLM version.
+- [vLLM indexer at `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/layers/sparse_attn_indexer.py): scoring/quantization/top-k and candidate-block execution at this revision.

@@ -15,7 +15,7 @@ For two intervals A and B, occupied wall time is |A ∪ B| = |A| + |B| − |A �
 
 ## Reconstruct the path to the observed event
 
-Represent operations as vertices with measured durations and dependencies as edges. The completion time of operation v is its duration plus the maximum predecessor completion time, subject to resource availability. The longest causally required path determines the selected completion event. Shared-device contention adds scheduling constraints that a simple dependency graph may not capture, so the model must retain which streams and resources actually compete.
+Represent operations as vertices with measured durations and dependencies as edges. With sufficient resources, operation v finishes at `c_v = d_v + max_{u→v} c_u`, where d_v is its duration and c_u a predecessor's completion time; a source node finishes at its release time plus d_v. The longest causally required path then determines the selected completion event. Shared-device contention adds scheduling constraints that a simple dependency graph may not capture, so the model must retain which streams and resources actually compete.
 
 Consider 4 ms of compute overlapped with 3 ms of communication, followed by a 1 ms synchronization-dependent stage. The ideal elapsed time is 5 ms, not 8 ms. Shortening communication to 2 ms leaves elapsed time unchanged if compute still dominates. Shortening compute to 2 ms gives 4 ms. This is an illustrative dependency graph; overlapping operations can slow one another through HBM or SM competition, changing both durations.
 

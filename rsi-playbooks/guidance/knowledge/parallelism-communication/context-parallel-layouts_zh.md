@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 长上下文 prefill 分摊大量 query；decode 则让极少的新 query 访问大量历史。二者需要不同通信模式。都叫序列并行或上下文并行 CP，可能掩盖实现到底切分 query、head、KV 历史，还是只切分中间激活。
 
-USP 已把 Ulysses all-to-all 和 ring attention 组合起来，论文主要研究训练与长序列 attention，不是持续 decode 服务。vLLM 已有 decode CP（DCP），当前源码也有 prefill-CP 缓存收集路径。部署指南仍称 prefill 方案在开发，不能用这句话证明全部 PCP 执行不存在；必须分别检查模型、后端和 worker 支持。
+USP 已把 Ulysses all-to-all 和 ring attention 组合起来，论文主要研究训练与长序列 attention，不是持续 decode 服务。vLLM 已有 decode CP（DCP），当前源码也有 prefill-CP 缓存收集路径。部署指南将 prefill 方案标为开发中；具体可用性取决于模型、后端和 worker 实现。
 
 ## 执行机制
 
@@ -28,7 +28,7 @@ L = logsumexp_r(lse_r)
 o = sum_r exp(lse_r - L) * o_r
 ```
 
-空分片不贡献概率质量，直接平均局部输出是错误的。decode query 很少，prefill ring 用于隐藏通信的大量 query 计算不再存在。
+空分片的 `lse_r = -inf`，不贡献概率质量；合并时跳过其未定义的归一化输出。直接平均局部输出是错误的。decode query 很少，prefill ring 用于隐藏通信的大量 query 计算不再存在。
 
 一个 KV head、TP 八的模型，普通 TP 可能把历史复制八份。vLLM 指南描述在已有 TP 组内使用 DCP 减少复制，不增加 GPU。这改变的是缓存归属，不只是换一种更快通信。
 

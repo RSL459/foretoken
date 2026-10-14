@@ -23,7 +23,7 @@ For example, take `M=1, K=N=4096`. Each weight is used once, so weight reads dom
 
 The checked vLLM ModelOpt documentation already describes NVFP4 automatic backend selection and a Marlin W4A16 path when native FP4 GEMM is unavailable. Its current MXFP4 source already performs backend-specific weight/scale conversion, padding, and modular MoE dispatch. GPT-OSS MXFP4 configuration leaves ordinary linear layers unquantized; the presence of an MXFP4 expert checkpoint does not establish full-model W4A4 execution.
 
-SGLang also documents automatic FP8/FP4 kernel selection and explicit backend overrides. Kernel dispatch, block quantization, and checkpoint loading are existing facilities, not proposals. Useful remaining work concerns the target model's small-M versus large-M crossover, expert shape distribution, conversion placement, and padded dimensions. Native Blackwell NVFP4 and AMD CDNA4 FP4 paths must be assessed separately from older-device weight-only or converted-format execution. Support for one dtype name does not imply equal instruction support across these devices.
+SGLang also documents automatic FP8/FP4 kernel selection and explicit backend overrides. Workload-specific choices concern the target model's small-M versus large-M crossover, expert shape distribution, conversion placement, and padded dimensions. Native Blackwell NVFP4 and AMD CDNA4 FP4 paths must be assessed separately from older-device weight-only or converted-format execution. Support for one dtype name does not imply equal instruction support across these devices.
 
 ## A discriminating experiment
 

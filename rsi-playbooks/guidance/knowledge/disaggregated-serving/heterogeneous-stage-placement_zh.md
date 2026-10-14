@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 首先建立模型阶段×加速器×dtype×并行方式的可行矩阵。无法装载权重、保存必要状态、执行算子或通过支持的 connector 交换状态的组合，应排除。再测可行组合在阶段延迟预算内的容量，最后优化成本；不支持的组合不是“慢一点”的候选。
 
-可用 `min Σ_s,h n_s,h*c_h` 表示简单目标，同时满足阶段容量、显存、传输和端到端 SLO。c_h 为租用或摊销后的实际运营成本，应包括相关主机和网络份额。AFD 中 attention 容量常受 HBM 带宽和 KV 驻留限制，充分批处理后的专家则更能利用算力。P/D 中一个算力强的 P 可服务多个带宽强的 D，但前提是交接成本可接受。
+可用 `min Σ_s,h n_s,h*c_h` 表示简单目标，同时满足阶段容量、显存、传输和端到端 SLO。n_s,h 为阶段 s 使用硬件 h 的整数 worker 数，c_h 为每 worker 的租用或摊销运营成本，应包括相关主机和网络份额。AFD 中 attention 容量常受 HBM 带宽和 KV 驻留限制，充分批处理后的专家则更能利用算力。P/D 中一个算力强的 P 可服务多个带宽强的 D，但前提是交接成本可接受。
 
 例如一个 P 的容量为 8 请求/s，两个 D 各为 4。把 P 换成便宜但只有 5 请求/s 的设备，即使 D 不变，系统上限也降到 5。把 D 换成显存更小的设备，可能减少驻留并发而违反 TPOT。目标是优化完整路径，不是各算子单独选最低价格。
 
@@ -27,11 +27,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 公开实现与当前范围
 
-核对日期为 2026-10-14。AIBrix 的[optimizer](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/python/aibrix/aibrix/gpu_optimizer/optimizer/optimizer.py)把 workload signature 映射到吞吐 bin；[Melange solver](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/python/aibrix/aibrix/gpu_optimizer/optimizer/solver/melange/solver.py)通过整数副本数和 workload slice 分配约束最小化 GPU 成本。这是基于 profile 的硬件分配，不证明任意跨厂商阶段传输。
+核对日期为 2026-10-14。AIBrix 的[optimizer](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/python/aibrix/aibrix/gpu_optimizer/optimizer/optimizer.py)把 workload signature 映射到吞吐 bin；[Melange solver](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/python/aibrix/aibrix/gpu_optimizer/optimizer/solver/melange/solver.py)通过整数副本数和 workload slice 分配约束最小化 GPU 成本。
 
 Dynamo 的[planner](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/components/src/dynamo/planner/core/throughput_scaling.py)已分别决策 P/D 容量。llm-d 的[Kueue 重平衡指南](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/kueue-rebalancing/README.md)提供 quota 准入和借用，不是阶段执行模型或 KV 迁移。
 
-Foretoken 的[E/P/D 示例](../../../../examples/encoder-prefill-decode/README_zh.md)允许按阶段配置资源和 engineArgs，但这不证明已有成本优化器、自动跨厂商选择或性能可移植性。设备执行细节见[异构硬件](../heterogeneous-hardware/README_zh.md)。
+Foretoken 的[E/P/D 示例](../../../../examples/encoder-prefill-decode/README_zh.md)允许按阶段配置资源和 engineArgs。设备执行细节见[异构硬件](../heterogeneous-hardware/README_zh.md)。
 
 ## 实验与剩余问题
 

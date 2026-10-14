@@ -25,9 +25,9 @@ Diffusion is different. Each step updates a request-specific latent and solver s
 
 No new training is needed to improve batch formation while retaining the same inputs and model. Use released model weights, processor, VAE, and text encoder, and preserve the per-request sampler. Lowering image resolution or shortening video is a workload/quality change rather than a scheduling improvement. BF16/FP16 kernels may require shape alignment; quantized paths and graph capture can impose different restrictions. CUDA support in a source implementation is not automatic availability on another accelerator.
 
-At the checked Omni state, diffusion cache backends are unsupported in step execution. Different LoRAs or scales separate compatible batches. Helios is limited to a single request; MiniMax H3's packed batching requires FlashAttention, and its documented batching does not improve measured throughput. These are useful constraints for selecting an experiment, not defects to presume removable.
+At the checked Omni state, diffusion cache backends are unsupported in step execution. Different LoRAs or scales separate compatible batches. Helios is limited to a single request; MiniMax H3's packed batching requires FlashAttention, and its documented batching does not improve measured throughput.
 
-The documentation's `max_num_seqs` is therefore a capacity setting, not proof of generic continuous batching. An unsupported step contract must not be described as working merely because an HTTP request was accepted.
+`max_num_seqs` bounds concurrent requests; continuous step batching additionally requires a pipeline implementing the step contract.
 
 ## Experiments that reveal the right owner
 
@@ -35,12 +35,12 @@ Construct a matrix varying resolution, image count, video duration, guidance, an
 
 Record tokens or latent elements per batch, padding ratio, queue ages by shape, actual batch size, graph replay versus eager time, recompilation, peak memory, TTFT or first-frame tails, complete-generation latency, failures, and SLO-compliant goodput. Include a rare large shape so a throughput-oriented scheduler cannot hide starvation. Check output ownership and fixed-seed reproducibility within the numerical tolerance of the selected backend.
 
-If packing helps the kernel but not the service, examine queueing and incompatible downstream stages. If grouping improves throughput but large-shape tails explode, the batching policy traded fairness for utilization. The remaining design space is a shape-aware policy at the existing scheduler boundary, with supported kernel/pipeline contracts, rather than one more parallel batching framework.
+If packing helps the kernel but not the service, examine queueing and incompatible downstream stages. If grouping improves throughput but large-shape tails explode, the batching policy traded fairness for utilization. The remaining design space is a shape-aware policy at the existing scheduler boundary, with supported kernel/pipeline contracts.
 
 ## Sources and checked state
 
 Checked 2026-10-14.
 
 - [Qwen2.5-VL, arXiv:2502.13923v1](https://arxiv.org/html/2502.13923v1): dynamic shapes and training sample packing as model background.
-- [Omni diffusion execution modes](https://docs.vllm.ai/projects/vllm-omni/en/latest/user_guide/diffusion/execution_modes/) and [pinned source](https://github.com/vllm-project/vllm-omni/blob/37f094a388ba1c79f83c129fda39797c1ebfc2a4/docs/user_guide/diffusion/execution_modes.md): current compatibility and pipeline restrictions; main `37f094a` dated 2026-10-13, released `v0.30.0` dated 2026-09-25. Existing batching is present; no blanket missing-feature claim is made.
+- [Omni diffusion execution modes](https://docs.vllm.ai/projects/vllm-omni/en/latest/user_guide/diffusion/execution_modes/) and [pinned source](https://github.com/vllm-project/vllm-omni/blob/37f094a388ba1c79f83c129fda39797c1ebfc2a4/docs/user_guide/diffusion/execution_modes.md): current compatibility and pipeline restrictions; main `37f094a` dated 2026-10-13, released `v0.30.0` dated 2026-09-25.
 - [EAServe, arXiv:2609.31551v1](https://arxiv.org/html/2609.31551v1): recent encoder batch timing research; the paper does not establish a specialized heterogeneous-shape packing implementation.

@@ -15,8 +15,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 - 判断是否值得增加离线优化：[学习舍入与 scale 恢复](learned-rounding-and-scale-recovery_zh.md)。
 - 选择需要保留更高精度的层：[考虑实际 kernel 成本的混合精度](mixed-precision-kernel-cost_zh.md)。
 
-仍值得研究的是工作负载匹配、质量恢复、表示与布局协同，以及以实测成本选择格式；不是重新实现上游已有量化器。硬件约束见[异构执行](../heterogeneous-hardware/README_zh.md)，其他主题见[知识索引](../README_zh.md)。
+研究选择包括工作负载匹配、质量恢复、表示与布局协同，以及以实测成本选择格式。硬件约束见[异构执行](../heterogeneous-hardware/README_zh.md)，其他主题见[知识索引](../README_zh.md)。
 
 ## 资料范围
 
-原始文档与源码核对日期为 2026-10-14。使用的源码快照为 vLLM `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`、llm-compressor `990fdd2fb41af48f105dbdebd088a96b627701b1`、NVIDIA Model Optimizer `b5f10f8bf96201241c35b86498557bd6fdde10ca`，均提交于 2026-10-13。开发分支中存在某能力，不代表旧发行包已包含它。
+核对日期为 2026-10-14，依据以下 2026-10-13 开发快照：[vLLM `6849ca69`](https://github.com/vllm-project/vllm/tree/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9)、[llm-compressor `990fdd2f`](https://github.com/vllm-project/llm-compressor/tree/990fdd2fb41af48f105dbdebd088a96b627701b1)、[NVIDIA Model Optimizer `b5f10f8b`](https://github.com/NVIDIA/Model-Optimizer/tree/b5f10f8bf96201241c35b86498557bd6fdde10ca)。

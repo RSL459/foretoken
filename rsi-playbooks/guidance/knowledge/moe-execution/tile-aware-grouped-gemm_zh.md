@@ -15,13 +15,13 @@ SonicMoE 已实现融合输入收集的 grouped GEMM 和激活融合。论文主
 
 ## 执行机制
 
-输入为 `X[T,H]`，每个 token 选择 `K` 个逻辑专家。专家 `e` 接收 `m_e` 行；所有路由有效时，`sum(m_e)=T*K`。带门控的前馈计算依次为：
+输入 `X[T,H]` 包含 `T` 个 token，每个 token 的 hidden width 为 `H`，选择 `K` 个逻辑专家。专家 `e` 接收 `m_e` 行；所有路由有效时，`sum(m_e)=T*K`。用 `row_e(t)` 表示原 token `t` 在专家 `e` 中的局部行号。带门控的前馈计算依次为：
 
 ```text
 H_e = gather(X, token_indices_e) @ W1_e
 A_e = SwiGLU(H_e)
 Y_e = A_e @ W2_e
-y_t = sum_e routing_weight[t,e] * Y_e[t]
+y_t = sum_{e selected by t} routing_weight[t,e] * Y_e[row_e(t)]
 ```
 
 第一个分组矩阵乘法的行数 `M=m_e` 随专家变化，特征维度固定。SonicMoE 根据路由索引直接把输入行加载到共享内存，不先把完整收集结果写入 HBM；SwiGLU 融合在第一个 GEMM 的收尾阶段。第二个 GEMM 连续写出各专家结果，再由 gather-and-sum 核函数恢复 token 顺序并应用路由权重。
@@ -43,6 +43,7 @@ y_t = sum_e routing_weight[t,e] * Y_e[t]
 记录有效行数、tile 容量、收集流量、两次 GEMM、归约、启动间隙和工作区峰值。如果优化只在 EP dispatch 之前有效，原因是本地物化减少，而不是 GEMM 普遍变快。连续输出即使多一个核函数仍更快时，应检查异步写出重叠及归约流量。
 
 逐层与原始实现和路由对照，再在真实服务运行完整模型。分别测并发一和持续并发下未加 profiler 的 TPOT、TTFT、输出长度与回答质量。
+
 ## 依据与剩余问题
 
 核对日期：2026-10-14。[SonicMoE 论文](https://arxiv.org/abs/2512.14080)的算法 1–4、第 3–5 节与附录 B/F，以及 [commit 7396f3e](https://github.com/Dao-AILab/sonic-moe/tree/7396f3e604827d8186c2e16e64b28ee33d3defd0) 的 `sonicmoe/functional/forward.py`、`benchmarks/moe-cute.py`。剩余工作是针对目标引擎实际 dispatch 布局与小批形状做集成和测量；通信决定输入布局时，参见[并行与通信](../parallelism-communication/README_zh.md)。

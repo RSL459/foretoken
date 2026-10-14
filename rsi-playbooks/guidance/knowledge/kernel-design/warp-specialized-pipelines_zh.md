@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 普通并行分解让不同 warp 处理同一计算的不同元素。Warp specialization 则让一组加载输入、一组发出矩阵指令，另一组转换并写回结果，通过共享内存和 barrier 交接。
 
-Triton Gluon 与 CUTLASS 已有这些能力。它们可作为新负载流水设计的基础，不是应对所有模型统一开启的新优化。当前 Gluon 的逐元素示例针对 Hopper 及更新设备，使用 `tcgen05` 的矩阵示例针对 Blackwell；跨设备移植需重新选择指令与同步方式。
+Triton Gluon 与 CUTLASS 提供 warp 分工实现。Gluon 的逐元素示例针对 Hopper 及更新设备，使用 `tcgen05` 的矩阵示例针对 Blackwell；跨设备移植需重新选择指令与同步方式。
 
 ## 一轮流水怎样推进
 
@@ -33,11 +33,11 @@ Barrier 的 phase 区分同一槽位的多次使用，上一轮的就绪不能�
 
 保持算术和分块尺寸不变，分别改变缓冲深度、warp 分配或输出子块大小。输入覆盖小解码、中等批量和大预填充形状，观察寄存器、spill、共享内存、驻留度和完整内核时长。数值比较应包含尾块和未填满的缓冲区，错误 phase 或 mask 往往在这些条件下暴露。
 
-再使用真实上游和下游张量接回模型，检查额外转换或重排是否抵消收益。最后用无剖析的服务运行比较延迟与吞吐，trace 用于解释流水，不代替速度测量。
+再使用真实上游和下游张量接回模型，检查额外转换或重排是否抵消收益。
 
 ## 来源与实现状态
 
-核对日期：2026-10-14。相关机制已经存在于上游。
+核对日期：2026-10-14。
 
 - [Gluon warp specialization 教程](https://triton-lang.org/main/getting-started/tutorials/gluon/warp-specialization.html)：barrier phase、代理 fence 和 epilogue 分片。
 - [固定版本实现](https://github.com/triton-lang/triton/blob/4ee1a827440d453ca276ded4219190d5e7346b8b/python/tutorials/gluon/08-warp-specialization.py)。

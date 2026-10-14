@@ -17,17 +17,17 @@ One target and any existing proposer suffice. No additional trained verifier is 
 
 ## A concrete iteration
 
-For an unmeasured two-token example, p=(0.6,0.4) and q=(0.8,0.2). Candidate A is accepted with probability 0.75; B is always accepted. If A is rejected, the positive residual is entirely B. Overall P(output=A)=0.8*0.75=0.6, matching p. Replacing that residual draw with an unconditional target draw would overproduce A.
+For a two-symbol vocabulary {A,B}, let p=(0.6,0.4) and q=(0.8,0.2). Candidate A is accepted with probability 0.75; B is always accepted. If A is rejected, the positive residual is entirely B. Overall P(output=A)=0.8*0.75=0.6, matching p. Replacing that residual draw with an unconditional target draw would overproduce A.
 
 Generate a chain and its actual proposal probabilities, then run causal target verification for all positions. Process target logits using each position's hypothetical prefix. Apply acceptance/correction, stop at the first rejected token in the token-wise algorithm, and pack the accepted prefix plus its correction or bonus. Commit only those outputs. Future-position logits computed after an earlier rejected proposal are not logits for the corrected history and cannot simply be emitted. Rejected speculative state must be rolled back before another cycle; see [recurrent speculation replay](../attention-state/recurrent-speculation-replay.md).
 
-Block verification is a different exact coupling, not just parallel execution of independent token-wise tests. Current SGLang documentation says it evaluates all draft prefixes and can retain a longer prefix even when an earlier prefix check fails, using the corresponding correction distribution. Copying this behavior by skipping a rejected token would be wrong: its correctness comes from the block algorithm. The original paper is older work; current engine integration provides an alternative to measure, not a new algorithm to announce.
+Block verification is a different exact coupling, not just parallel execution of independent token-wise tests. Current SGLang documentation says it evaluates all draft prefixes and can retain a longer prefix even when an earlier prefix check fails, using the corresponding correction distribution. Copying this behavior by skipping a rejected token would be wrong: its correctness comes from the block algorithm.
 
 ## Implemented boundaries and cost
 
 The vLLM sampler at `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9` separates greedy argmax from random sampling. It applies speculative-history penalties and sampling constraints, computes recovered candidates for positions, and then chooses the valid emitted prefix. Its top-k/top-p helper warns about vocabulary sorting cost. Some correction work is deliberately done before knowing the first rejection to avoid synchronization; “unused computation” can still be faster than a host decision.
 
-FlashInfer's fused chain API accepts draft probabilities [B,K,V], draft IDs [B,K], and target probabilities [B,K+1,V]. A hypothetical B=32, K=8, V=128000 float32 pair of dense probability tensors occupies about 278.5 MB in decimal units, before logits and buffers. This is a shape calculation, not measured memory. Reducing materialization or fusing passes can matter even with unchanged acceptance.
+For batch size B, draft length K, and vocabulary size V, FlashInfer's fused chain API accepts draft probabilities [B,K,V], draft IDs [B,K], and target probabilities [B,K+1,V]. A hypothetical B=32, K=8, V=128000 float32 pair of dense probability tensors occupies about 278.5 MB in decimal units, before logits and buffers. This is a shape calculation, not measured memory. Reducing materialization or fusing passes can matter even with unchanged acceptance.
 
 SGLang commit `e9400c5a8f3a0d0312a37aecef694f5edfd69341` documents exact block verification for stochastic EAGLE/EAGLE3/NEXTN with topk=1 and full target-vocabulary proposals, plus supported sampled DFlash/DSpark paths, on CUDA or ROCm. Greedy point-mass DFlash proposals gain no longer prefix from that algorithm. Block verification adds vocabulary reductions. Lowering the separate acceptance thresholds is not the same optimization and must not inherit the exact algorithm's distribution claim.
 
@@ -40,6 +40,7 @@ Measure projection, filtering/sorting, probability conversion, RNG, residual sel
 For correctness, compare empirical next-token/prefix distributions and quality under the actual serving sampler. For performance, use unprofiled runs and report TTFT, inter-token latency, completion time, throughput, peak memory, and capacity at the SLO. An optimization that saves sampling time but changes output length or filtering is a different comparison.
 
 Open questions include whether eager residual computation beats deferred computation without synchronization, how to avoid repeated full-vocabulary passes when logprobs are requested, and which stochastic workloads amortize block verification's extra reductions. They require measured kernel and service evidence.
+
 ## Sources and implementation boundaries
 
 Checked 2026-10-14.

@@ -38,6 +38,7 @@ First separate layout correctness from quantization quality. Compare a plain deq
 Exercise uneven and empty experts, hot experts, gate/up conversion, padded dimensions, and cancellation-heavy outputs. Time initialization separately from per-forward quantization, dispatch, compute, combine, and output copies. Compare pre- and post-dispatch quantization with the same effective operands and transport settings wherever possible.
 
 Run a real full-model service and report unprofiled TPOT, TTFT, output lengths, and task scores. Include long-context and mixed-load conditions because extra workspace can reduce KV capacity.
+
 ## Sources and remaining work
 
 Checked 2026-10-14: FlashInfer commit [a8e747c3](https://github.com/flashinfer-ai/flashinfer/tree/a8e747c3c1f7dfe5d51fab3883824b15da6829b7), [MoE-EP architecture](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/docs/design_docs/moe_ep_architecture.md), its SM100 tuning notes, and the [TRT-LLM FP4 API](https://docs.flashinfer.ai/generated/flashinfer.fused_moe.trtllm_fp4_block_scale_moe.html). Research remains in target-workload format choice, conversion placement, and numerical attribution. See [small-batch scheduling](small-batch-megakernel-scheduling.md) before selecting a wire format from a large-batch result.

@@ -27,7 +27,7 @@ A useful design distinguishes dimensions that change frequently from stable para
 
 ## Decide whether specialization pays
 
-For a particular shape, let `C` be the extra compile/capture cost and `Δt` the measured per-use saving over the generic path. Ignoring memory and contention, at least `C/Δt` uses are needed to amortize the specialization. The relevant frequency comes from real engine steps over the worker's lifetime, not a benchmark loop that repeats one shape forever.
+For a particular shape, let `C` be the extra compile/capture cost and `Δt` the measured per-use saving over the generic path. For `Δt > 0`, ignoring memory and contention, `ceil(C/Δt)` uses cover the specialization cost. The relevant frequency comes from real engine steps over the worker's lifetime, not a benchmark loop that repeats one shape forever.
 
 Separate an intentional shape-dependent algorithm from an accidental guard. Removing a meaningful branch may degrade the fast path. Conversely, preserving a Python branch that selects equivalent layouts can create avoidable graph proliferation. Inspect guard and generated-code evidence before deciding which case applies.
 

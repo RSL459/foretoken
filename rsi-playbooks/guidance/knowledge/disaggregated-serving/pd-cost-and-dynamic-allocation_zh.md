@@ -31,11 +31,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 公开实现与集成范围
 
-核对日期为 2026-10-14。Dynamo 的[条件分离文档](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/docs/fern/pages/developer-guide/advanced-customizations/conditional-disaggregation.md)已有基于有效输入长度／负载的决策和 decode-busy 覆盖条件，支持 vLLM 与 TensorRT-LLM，不支持 SGLang。[吞吐规划代码](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/components/src/dynamo/planner/core/throughput_scaling.py)已分别估计 P/D 容量，处理模型未就绪与 pending 启动，并可给反馈扩缩容提供容量下界。这些是当前代码，不是新的移植发现。
+核对日期为 2026-10-14。Dynamo 的[条件分离文档](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/docs/fern/pages/developer-guide/advanced-customizations/conditional-disaggregation.md)已有基于有效输入长度／负载的决策和 decode-busy 覆盖条件，支持 vLLM 与 TensorRT-LLM，不支持 SGLang。[吞吐规划代码](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/components/src/dynamo/planner/core/throughput_scaling.py)已分别估计 P/D 容量，处理模型未就绪与 pending 启动，并可给反馈扩缩容提供容量下界。
 
-llm-d 的[前缀决策器](https://github.com/llm-d/llm-d-inference-scheduler/blob/5253f55516f496129248766d1e4b745daba68887/pkg/epp/framework/plugins/scheduling/profilehandler/disagg/prefix_based_pd_decider.go)处理 `if-available` 偏好，未命中后缀足够长时可返回 HTTP 412，触发远端预填充。Production Stack 的[路由实现](https://github.com/vllm-project/production-stack/blob/4e076e8de3698a3729b575e3a5ade65ffbb929cf/src/vllm_router/routers/routing_logic.py)包含编排式 P/D endpoint 选择，但不能据此宣称支持在线角色转换。
+llm-d 的[前缀决策器](https://github.com/llm-d/llm-d-inference-scheduler/blob/5253f55516f496129248766d1e4b745daba68887/pkg/epp/framework/plugins/scheduling/profilehandler/disagg/prefix_based_pd_decider.go)处理 `if-available` 偏好，未命中后缀足够长时可返回 HTTP 412，触发远端预填充。Production Stack 的[路由实现](https://github.com/vllm-project/production-stack/blob/4e076e8de3698a3729b575e3a5ade65ffbb929cf/src/vllm_router/routers/routing_logic.py)包含编排式 P/D endpoint 选择。
 
-Foretoken 的[阶段执行](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)已经在 P 完成后刷新选择 D，并保留跨阶段清理职责；[扩缩容 owner](../../../../control-plane/internal/autoscaling/README_zh.md)分别评估角色 Pool。这两项事实不等于上述条件分离策略已集成。
+Foretoken 的[阶段执行](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)已经在 P 完成后刷新选择 D，并保留跨阶段清理职责；[扩缩容 owner](../../../../control-plane/internal/autoscaling/README_zh.md)分别评估角色 Pool。
 
 ## 有区分力的实验与剩余问题
 

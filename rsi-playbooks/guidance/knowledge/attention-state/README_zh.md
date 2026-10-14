@@ -16,6 +16,4 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 - [混合模型前缀检查点](hybrid-prefix-checkpoints_zh.md)：让 attention KV、循环与卷积状态在同一可复用边界恢复，权衡快照复制、重放和容量。
 - [循环 decode 与 speculative replay](recurrent-speculation-replay_zh.md)：摊薄循环状态写回，不保存中间矩阵快照也能提交 accepted token，同时保持 flush 和导出语义。
 
-每篇区分上游已有机制与仍值得研究的问题。来源和集成状态核对于 2026-10-14。
-
 返回[推理知识库](../README_zh.md)。

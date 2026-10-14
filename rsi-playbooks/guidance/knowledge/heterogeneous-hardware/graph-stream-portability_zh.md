@@ -15,7 +15,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 例如九个 token 的 decode batch 重用十六 token 图，多算七行是否值得，取决于减少了多少 launch，以及额外 GEMM/专家工作有多贵。speculative decode 每请求有多个 query token，只用请求数作为图 key 不够。
 
-当前 vLLM 已将编译与 capture 分开，提供 full/piecewise 模式，按 batch 描述和 backend 能力 dispatch。`FULL_DECODE_ONLY` 不捕获 prefill，`FULL_AND_PIECEWISE` 对 uniform decode 用 full、其他走 piecewise；没有相容 key 时执行 eager。它们是已有设施。设计文档保留部分历史背景，其中旧的未来默认值说明不能替代目标版本配置。
+当前 vLLM 已将编译与 capture 分开，提供 full/piecewise 模式，按 batch 描述和 backend 能力 dispatch。`FULL_DECODE_ONLY` 不捕获 prefill，`FULL_AND_PIECEWISE` 对 uniform decode 用 full、其他走 piecewise；没有相容 key 时执行 eager。默认模式由目标版本的配置决定。
 
 ## Stream 与 collective 共同构成依赖图
 
@@ -23,7 +23,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 NCCL 当前文档要求各 rank capture 参与一致，描述了捕获和普通操作混合，并说明同一线程启动多个 communicator 图可能 deadlock。这不能证明 RCCL 或 MCCL 语义完全相同；一个库支持的设置不能只按名称移到另一库。
 
-算子绑定当前 stream 是必要条件，但不足以证明并发安全，库内静态 workspace 仍可能被同时复用。反过来，wrapper 缺少某个 allocator 注记也不等于已经证明提前释放；应读真实输入输出事件和 ownership 后再判断。
+算子必须保留调用方的 stream 依赖，可以使用当前流，也可以显式安排内部流之间的顺序。并发调用还需要独立 workspace 或串行化，否则库内静态 workspace 可能在前一次调用仍使用时被覆盖。缓冲区复用必须等待所有访问它的流完成。
 
 ## 当前集成与剩余空间
 
@@ -36,6 +36,7 @@ AMD vLLM 指南已有各 attention backend 的图模式选择。MetaX 用 hardwa
 使用既有 graph dispatcher 和相同算子/backend，比较 eager、decode-only capture 与支持的 mixed mode。局部检查 warmup/replay 差异、launch 间隙、padding、内存、当前 stream 和完成事件。应包含 rank 间 token 数不等和混合 prefill/decode，不只重复同一 batch。
 
 服务性能使用无 profiling 开销的运行，观察 TTFT、TPOT、成功输出、长期进展与内存余量。overlap 失败时，先保留 communicator 身份和设备完成边界，再改同步。每轮全局 synchronize 的微基准，可能掩盖它本来要复现的顺序问题。
+
 ## 来源
 
 核对日期：2026-10-14。

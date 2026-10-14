@@ -11,7 +11,7 @@ English | [简体中文](diffusion-feature-cache_zh.md) | [Multimodal generation
 
 A diffusion transformer repeatedly evaluates closely related latents. Skipping some evaluations can accelerate generation without training another model, but it changes the numerical trajectory. TeaCache and TaylorSeer establish two useful foundations: decide when a residual is reusable, or forecast a feature rather than holding it constant. The October 2026 AutoTarget paper asks a newer question: in a few-step model, which solver-facing quantity should be cached? These are approximation methods, not lossless kernel fusion.
 
-Current vLLM-Omni has documented cache-dit integration. Existing cache support is infrastructure to reuse, not evidence that every paper's method or every pipeline mode is supported. In particular, the execution-mode documentation excludes diffusion cache backends from step execution at the checked state.
+vLLM-Omni integrates cache-dit for request-level diffusion execution; at the cited revision, diffusion cache backends are unsupported in step execution.
 
 ## One denoising interval
 
@@ -42,4 +42,4 @@ Checked 2026-10-14.
 - [TeaCache, arXiv:2411.19108v1](https://arxiv.org/html/2411.19108v1) and [author code](https://github.com/ali-vilab/TeaCache): residual and cumulative-proxy mechanism as background.
 - [TaylorSeer, arXiv:2503.06923v1](https://arxiv.org/html/2503.06923v1) and [author code](https://github.com/Shenyi-Z/TaylorSeer): forecasting recurrence and model entry points.
 - [AutoTarget, arXiv:2610.03577v1](https://arxiv.org/html/2610.03577v1): submitted 2026-10-02; method. [Public implementation](https://github.com/wali1024-offical/AutoTarget/tree/e91a428b8bbc37a6661576a182e39e94e3cc55dd) checked at `e91a428`, dated 2026-10-01.
-- [Omni execution modes](https://docs.vllm.ai/projects/vllm-omni/en/latest/user_guide/diffusion/execution_modes/) and [cache-dit documentation](https://github.com/vllm-project/vllm-omni/blob/37f094a388ba1c79f83c129fda39797c1ebfc2a4/docs/user_guide/diffusion/cache_acceleration/cache_dit.md): source at `37f094a`, dated 2026-10-13; release `v0.30.0` was published 2026-09-25. Main and release are not interchangeable.
+- [Omni execution modes](https://docs.vllm.ai/projects/vllm-omni/en/latest/user_guide/diffusion/execution_modes/) and [cache-dit documentation](https://github.com/vllm-project/vllm-omni/blob/37f094a388ba1c79f83c129fda39797c1ebfc2a4/docs/user_guide/diffusion/cache_acceleration/cache_dit.md): source at `37f094a`, dated 2026-10-13; release `v0.30.0` was published 2026-09-25.

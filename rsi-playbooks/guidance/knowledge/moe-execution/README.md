@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Choose an entry by the work that delays an expert layer. Each note separates existing upstream mechanisms from remaining research and gives experiments that distinguish their causes. Source state was checked on 2026-10-14.
+Choose an entry by the work that delays an expert layer.
 
 - Are gathering and activation traffic more expensive than the matrix multiply? [Grouped GEMM without unnecessary token materialization](tile-aware-grouped-gemm.md) explains gather fusion, asynchronous output stores, and why token-rounding training is not an unchanged-router inference optimization.
 - Does a throughput-oriented kernel regress at low load? [Small-batch work partition](small-batch-megakernel-scheduling.md) separates live tokens from workspace capacity and compares split execution with persistent megakernel roles.

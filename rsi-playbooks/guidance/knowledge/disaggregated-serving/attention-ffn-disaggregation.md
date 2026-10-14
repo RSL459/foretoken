@@ -19,7 +19,7 @@ FastAFD's coordinator builds aligned attention-group and expert-group plans. Ina
 
 ## Hardware, models, and reported evidence
 
-[FastAFD's technical report](https://haoailab.com/blogs/fastafd/) evaluates Qwen3-235B-A22B-FP8 and MiniMax-M2.5-FP8 on GB200 NVL72 with a shared NVLink/NVSwitch domain, 8K/16K contexts, two microbatches, and KV utilization near 0.85. It reports approximately 1.35–1.45× per-GPU decode throughput over tuned colocated vLLM, counting expert GPUs. Much of the gain is additional KV residency after removing expert weights. This is not an end-to-end arrival-driven Foretoken result or an inter-node RDMA result.
+[FastAFD's technical report](https://haoailab.com/blogs/fastafd/) evaluates Qwen3-235B-A22B-FP8 and MiniMax-M2.5-FP8 on GB200 NVL72 with a shared NVLink/NVSwitch domain, 8K/16K contexts, two microbatches, and KV utilization near 0.85. It reports approximately 1.35–1.45× per-GPU decode throughput over tuned colocated vLLM, counting expert GPUs. Much of the gain is additional KV residency after removing expert weights. These are steady-state decode measurements after prefill within one NVLink domain.
 
 The [MegaScale-Infer paper](https://arxiv.org/html/2504.02263) derives ping-pong scheduling and evaluates BF16 MoE on Ampere and H20/L40S hardware. Its model requires approximately matched attention/expert times and enough microbatches to cover communication; those conditions explain why its three/four-microbatch choices differ from FastAFD's measured two.
 
@@ -27,9 +27,9 @@ The 2026 [design-space paper](https://arxiv.org/html/2605.28302v1) combines meas
 
 ## Implementation and integration scope
 
-Checked 2026-10-14. FastAFD is an independent `minisgl` runtime at `3c71619`, with inspected [coordinator](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_coordinator.py), [scheduler](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_scheduler.py), and [expert worker](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_expert_worker.py). Its scheduler asserts naive KV caching; prefix-cache and production autoscaling behavior cannot be inferred from its throughput presets.
+Checked 2026-10-14. FastAFD is an independent `minisgl` runtime at `3c71619`, with [coordinator](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_coordinator.py), [scheduler](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_scheduler.py), and [expert worker](https://github.com/hao-ai-lab/FastAFD/blob/3c7161949310b6d59d6b4cf9bf997a4935c8113b/python/minisgl/afd_expert_worker.py). Its scheduler requires naive KV caching.
 
-The design-space paper references [vLLM PR #29772](https://github.com/vllm-project/vllm/pull/29772). GitHub reports CLOSED, with no merge time or merge commit, at this check. That describes this PR only, not all AFD work in current vLLM. Foretoken's existing [E/P/D workflow](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs) is request-stage orchestration, not per-layer AFD.
+The design-space paper references [vLLM PR #29772](https://github.com/vllm-project/vllm/pull/29772). It is closed without a merge commit. Foretoken's existing [E/P/D workflow](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs) is request-stage orchestration, not per-layer AFD.
 
 ## Experiments and remaining questions
 

@@ -15,11 +15,11 @@ KV 搬运可能先受描述符构造、布局转换或完成通知限制，而�
 
 Mooncake [Transfer Engine 接口](https://github.com/kvcache-ai/Mooncake/blob/342c8aeece6b4eefb76c6b8b31ccfac8dde07aa3/mooncake-transfer-engine/include/transfer_engine.h)包含单次/批量本地注册、segment 打开、batch 分配和提交，以及 task/batch 状态查询。复用注册区域可以省去重复准备，但需要明确寿命 owner；batch ID 是操作句柄，不代表提交后即可复用缓冲区。
 
-可先建模为 `T = T_register + n T_descriptor + T_submit + D/B + T_completion + T_relayout`。64 层分别寻址的许多小范围，即使总载荷 D 不大，也可能需要很多描述符。合并连续范围或采用跨层物理布局可以减少 n；先 gather 到暂存张量则增加拷贝和内存。最优点取决于消息大小、局部性及 attention backend 是否接受该布局。
+串行延迟可估计为 `T = T_register + n T_descriptor + T_submit + D/B + T_completion + T_relayout`，其中 n 是描述符数量，D 是载荷字节，B 是有效字节/秒。其他项分别为注册、单个描述符构造、提交、完成处理和布局转换时间；发生重叠时，应计各项暴露在关键路径上的成本。64 层分别寻址的许多小范围，即使总载荷 D 不大，也可能需要很多描述符。合并连续范围或采用跨层物理布局可以减少 n；先 gather 到暂存张量则增加拷贝和内存。最优点取决于消息大小、局部性及 attention backend 是否接受该布局。
 
 ## 兼容性不止 TP 相同
 
-[2026-10-14 快照](README_zh.md#来源快照)中的 vLLM [NIXL 兼容矩阵](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/features/nixl_connector_compatibility.md)要求架构、缓存 dtype、attention 几何/backend 和传输模式匹配，已支持部分不同 TP 与块大小组合。Mamba 要求相同 TP；异构块大小只适用于非混合模型，且生产者块更小。MLA 复制 KV，不能按普通分头方式理解。
+[2026-10-14 快照](README_zh.md#来源快照)中的 vLLM [NIXL 兼容矩阵](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/features/nixl_connector_compatibility.md)要求架构、缓存 dtype、主模型 attention 几何/backend 和传输模式匹配，已支持部分不同 TP 与块大小组合。Mamba 要求相同 TP；异构块大小要求非混合模型、不使用 HMA 缓存布局，且生产者块更小。MLA 复制 KV，不能按普通分头方式理解。
 
 文档中的 `LBHNC`、`LBNHC` 对头切分有不同约束，跨层块要求 `BLHNC`；布局置换还存在独立限制。量化传输要求 scale 表示兼容，支持静态或 packed scale 不等于支持运行时动态 scale。应结合[worker 源码](https://github.com/vllm-project/vllm/tree/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/distributed/kv_transfer/kv_connector/v1/nixl)阅读矩阵，不能沿用“所有端点 TP 必须相同”的旧结论。
 

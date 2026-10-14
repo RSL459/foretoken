@@ -11,7 +11,7 @@ English | [简体中文](tensor-parallel-collective-granularity_zh.md)
 
 Tensor parallelism (TP) splits weights to fit or accelerate a model, but introduces repeated synchronization inside each layer. Small decode messages may be latency-bound; large prefill messages may be bandwidth-bound. Increasing TP can shrink local matrix multiplies while increasing the fraction spent on collectives.
 
-vLLM already provides custom all-reduce, all-gather, and reduce-scatter selection alongside other communicator paths. The checked source includes MNNVL-specific all-gather/reduce-scatter and low-SM multimem reduce-scatter. It is no longer accurate to describe every custom collective as strictly single-node, but this does not make legacy IPC all-reduce a general RDMA implementation. The research question is matching message shape and topology to the existing selection path.
+vLLM already provides custom all-reduce, all-gather, and reduce-scatter selection alongside other communicator paths. The checked source includes Multi-Node NVLink (MNNVL) all-gather/reduce-scatter and low-SM multimem reduce-scatter. These paths require an NVLink multicast domain; legacy IPC all-reduce remains a separate peer-access path. The research question is matching message shape and topology to the existing selection path.
 
 ## Execution mechanism
 

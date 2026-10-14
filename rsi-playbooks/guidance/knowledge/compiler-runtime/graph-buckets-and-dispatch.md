@@ -13,7 +13,7 @@ CUDA Graph replay submits a recorded device execution with fewer host launches. 
 
 In vLLM v0.31.0, the dispatcher maintains registered FULL and PIECEWISE keys. It pads token counts to a capture size, includes request geometry and LoRA state where required, checks FULL first, then PIECEWISE, and otherwise returns NONE. Speculative uniform decode can have more than one query token per request. Token count alone is not a complete compatibility key.
 
-These capabilities already exist. The opportunity is to improve coverage and cost for the workload's batch distribution while respecting its attention backend, hybrid layers, and active adapters.
+Coverage and cost depend on the workload's batch distribution, attention backend, hybrid layers, and active adapters.
 
 ## Padding versus capture cost
 

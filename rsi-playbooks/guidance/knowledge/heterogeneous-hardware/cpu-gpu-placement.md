@@ -25,7 +25,7 @@ Weight offload has a different cost. If S bytes must cross the CPU/GPU link on e
 
 ## Current implementations supply placement primitives
 
-The checked llama.cpp multi-GPU guide already supports layer placement, GPU-layer limits, and split proportions. Layer mode assigns contiguous layers and minimizes cross-device transfers. Its experimental tensor mode splits weights/state and performs repeated cross-GPU reductions; the guide emphasizes NVIDIA CUDA performance and does not guarantee equivalent results on other backends. Tensor mode requires supported architectures and flash attention, currently excludes quantized cache types, and lacks automatic fitting. Deprecated row mode is not a new candidate.
+The checked llama.cpp multi-GPU guide already supports layer placement, GPU-layer limits, and split proportions. Layer mode assigns contiguous layers and minimizes cross-device transfers. Its experimental tensor mode splits weights/state and performs repeated cross-GPU reductions; its performance guidance focuses on NVIDIA CUDA. Tensor mode requires supported architectures and flash attention, currently excludes quantized cache types, and lacks automatic fitting.
 
 The same guide records a useful real backend difference: NCCL support is enabled by default at build time when available, while HIP RCCL support is disabled by default because it was not universally beneficial in upstream testing. These defaults are evidence of different execution trade-offs, not a rule to turn RCCL off in unrelated engines.
 
@@ -38,11 +38,12 @@ The useful remaining space is placement that matches measured compute, memory ba
 Compare an existing single-device path, layer partition, and supported tensor split using one model and dtype. Measure actual device assignment, per-partition time, transfer volume, reduction time, CPU bandwidth, and NUMA placement. Distinguish model loading from steady-state inference. If offloading weights, include every repeated transfer rather than only a cached warmup.
 
 At service level, measure single-request TPOT, prefill TTFT, throughput under batching, and successful outputs at the target context length. Track host-memory pressure and tail latency when multiple requests share CPU bandwidth. A slower configuration can still be useful because it enables a larger model, but report that as a capacity trade-off rather than a speedup.
+
 ## Sources
 
 Checked 2026-10-14.
 
-- [llama.cpp multi-GPU execution at commit 77c4540ce4667f4577753fe034a3a8042f510b8f](https://github.com/ggml-org/llama.cpp/blob/77c4540ce4667f4577753fe034a3a8042f510b8f/docs/multi-gpu.md).
+- [llama.cpp multi-GPU execution at commit 77c4540](https://github.com/ggml-org/llama.cpp/blob/77c4540ce4667f4577753fe034a3a8042f510b8f/docs/multi-gpu.md).
 - [Current vLLM CPU ISA, dtype, NUMA, and threading guidance](https://docs.vllm.ai/en/latest/getting_started/installation/cpu/).
 - [llama.cpp token-generation performance entry point](https://github.com/ggml-org/llama.cpp/blob/77c4540ce4667f4577753fe034a3a8042f510b8f/docs/development/token_generation_performance_tips.md); its example measurements are historical, not current hardware comparisons.
 

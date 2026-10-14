@@ -31,7 +31,7 @@ The third is already used by vLLM's Q/K normalization/RoPE fusion. Its value dep
 
 ## Capture safety is separate from tracing
 
-An opaque custom operation may still perform a CPU copy, read a device scalar on the host, or use unsupported allocation behavior. Successful Dynamo tracing is not proof of CUDA Graph safety. PyTorch's CUDA Graph documentation describes an unsafe-operation tag and partitioning that can isolate unsupported operations. Those mechanisms already exist; the design choice is where to put the boundary and what performance it costs.
+An opaque custom operation may still perform a CPU copy, read a device scalar on the host, or use unsupported allocation behavior. Dynamo traces the call without checking those internal effects. PyTorch treats custom operations as capture-safe by default; `torch._C.Tag.cudagraph_unsafe` marks an incompatible operation. With CUDA Graph partitioning enabled, unsupported work executes outside captured regions; otherwise it can cause capture to be skipped.
 
 For stateful inference kernels, describe cache writes and input/output aliases explicitly. The owner of cache lifetime must remain the engine. A local operator should not silently retain per-request buffers or create a competing state lifecycle.
 
@@ -40,8 +40,6 @@ For stateful inference kernels, describe cache writes and input/output aliases e
 Compare three complete paths when relevant: the existing visible expression, the opaque replacement, and a pattern-selected replacement. Inspect graph partitions, inserted copies, generated kernels, and actual dispatch. Preserve real strides and mutations in the numerical comparison, including repeated steps and another consumer retaining the input.
 
 PyTorch's `opcheck` can check registration integration; it does not establish the mathematical correctness of a custom algorithm. Use the existing model/reference comparison for that responsibility. For an inference-only kernel, training-gradient support is only relevant if the intended consumer needs it.
-
-Measure full-layer and serving performance after warmup, plus any new compilation/startup cost. A microkernel gain accompanied by another materialization or graph break may be a net loss.
 
 ## Sources and implementation state
 

@@ -35,7 +35,7 @@ Model Optimizer 的 scale learning 则训练 NVFP4 每块权重 scale，用 `ama
 
 相同模型和校准／留出集下，对比直接校准、已有 AutoRound、scale-only 恢复。记录离线时长、峰值内存、重建误差、任务得分和专家覆盖；联合训练另报不同的训练状态预算。导出后在目标引擎重新加载，确认实际 kernel 和 scale 粒度符合设计。
 
-局部计时包含激活量化与一个代表性 MLP/MoE 的两次投影。完整服务观察质量、TTFT、TPOT、成功 token 吞吐和输出长度。理想情况是改善质量而不新增 runtime 算子；如果导出后悄然选择了另一 backend，就应另行归因。
+局部计时包含激活量化与一个代表性 MLP/MoE 的全部投影，门控 MLP 包含 gate/up 和 down projections。完整服务观察质量、TTFT、TPOT、成功 token 吞吐和输出长度。理想情况是改善质量而不新增 runtime 算子；如果导出后悄然选择了另一 backend，就应另行归因。
 ## 来源
 
 核对日期：2026-10-14；源码快照见[分类入口](README_zh.md)。

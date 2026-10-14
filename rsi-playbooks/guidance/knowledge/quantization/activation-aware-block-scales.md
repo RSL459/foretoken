@@ -11,13 +11,13 @@ Two blocks with the same weight reconstruction error can have very different eff
 
 ## Optimize the error that reaches the output
 
-Use column-vector inputs and `Y = W X`. For a scale `s`, let `Q(W,s)` be the reconstructed quantized weights and `Δ = Q(W,s) − W`. Plain weight MSE minimizes `||Δ||²`. Calibration output error instead minimizes
+Use column-vector inputs and `Y = W X`, with `W[N,K]` and calibration inputs `X[K,T]` for T tokens. For a scale `s`, let `Q(W,s)` be the reconstructed quantized weights and `Δ = Q(W,s) − W`. Weight MSE is `||Δ||²_F/(NK)`. Calibration output squared error instead minimizes
 
 ```text
 E = ||Δ X||²_F = tr(Δ H Δᵀ),   H = X Xᵀ.
 ```
 
-`H` is an input second-moment matrix, often called a local Hessian in this setting. It is not necessary to estimate a full model loss Hessian. If two channels have input variances 100 and 1, equal weight errors in those channels contribute very unequal output error. Correlations also matter: errors can reinforce or cancel on frequently observed input directions.
+`H` accumulates uncentered input second moments and is often called a local Hessian in this setting. Dividing E by NT gives output MSE; fixed normalization leaves the minimizing scale unchanged. The relevant curvature is for this local reconstruction objective. For uncorrelated, zero-mean channels with second moments 100 and 1, equal weight errors contribute output errors in a 100:1 ratio. Correlations also matter: errors can reinforce or cancel on frequently observed input directions.
 
 Model Optimizer's Local-Hessian method partitions the input axis into 16-element NVFP4 blocks. It accumulates a `16×16` second-moment matrix for each block, evaluates candidate representable FP8 scales, and selects the scale minimizing `Δ_b H_b Δ_bᵀ`. Its announcement describes a sweep of 126 positive nonzero FP8 scale candidates. Block independence makes the search manageable but drops error interactions between different blocks.
 
@@ -27,7 +27,7 @@ Calibration proceeds by collecting activations, accumulating block statistics, c
 
 Four Over Six supplies a related intuition. E2M1 has uneven spacing; its largest positive values include 4 and 6. The conventional scale puts the maximum near 6. An alternative places it near 4, redistributing reconstruction precision across the block. The method chooses between scale rules using reconstruction error. “Four” does not mean changing the payload bit width or replacing the native E2M1 codebook.
 
-For a block `[10,20,30,40]`, scaling its maximum to 4 gives scale 10 and exact E2M1 values `[1,2,3,4]`; scaling it to 6 introduces error around the third value. Another block can favor 6, so both candidates must be reconstructed and compared. The paper explicitly excludes applying the same 4/6 choice to MXFP4: the required 1.5× scale change is not generally representable with power-of-two E8M0 scales. The current Four Over Six repository offers an MSE-based default, Blackwell CUDA/Triton implementations, and a slow PyTorch reference. Its README also discusses newer adaptive block-scaled types; those are separate from the 4/6 principle. The checked ModelOpt Local-Hessian implementation and announcement already expose this kind of scale optimization. Rebuilding it in an engine is not an opportunity.
+Ignoring scale-encoding error, for a block `[10,20,30,40]`, scaling its maximum to 4 gives scale 10 and exact E2M1 values `[1,2,3,4]`; scaling it to 6 gives scale 40/6, maps 30/scale = 4.5 to 4, and reconstructs that value as about 26.67. Another block can favor 6, so both candidates must be reconstructed and compared. The paper explicitly excludes applying the same 4/6 choice to MXFP4: the required 1.5× scale change is not generally representable with power-of-two E8M0 scales. The current Four Over Six repository offers an MSE-based default, Blackwell CUDA/Triton implementations, and a slow PyTorch reference. Its README also discusses newer adaptive block-scaled types; those are separate from the 4/6 principle. ModelOpt exposes Local-Hessian as an offline calibration method.
 
 ## Where the calibration still matters
 

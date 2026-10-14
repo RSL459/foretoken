@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 从 tile 追踪执行
 
-`X[M,K] W[K,N]` 的计算量为 `2MKN`，粗略操作数流量为 `bytes(X)+bytes(W)+bytes(Y)`。小 M 时读取许多权重只服务少量 token；大 M 时一份权重 tile 可被更多行复用。`min(计算上限, 带宽 × 算术强度)` 可以解释瓶颈转移，但没有包含 launch、寄存器溢出和 tile 利用率。
+`X[M,K] W[K,N]` 的计算量为 `2MKN`，每个输入只读一次、输出只写一次时，最小逻辑流量为 `bytes(X)+bytes(W)+bytes(Y)`；分块重读、scale 读取和寄存器溢出会增加流量。小 M 时读取许多权重只服务少量 token；大 M 时一份权重 tile 可被更多行复用。`min(计算上限, 带宽 × 算术强度)` 可以解释瓶颈转移，但没有包含 launch、寄存器溢出和 tile 利用率。
 
 CDNA 分块 kernel 从 HBM 读取操作数，在 LDS 或寄存器中暂存，再送入矩阵融合乘加（MFMA）指令、累加并完成输出处理。lane 到元素的映射必须匹配指令和 dtype。64 线程 wavefront 不能原样执行面向 32 线程 CUDA warp 的布局。更大 tile 增加复用，也增加寄存器和 LDS 占用；M 很小时可能只有少量 block 可调度。
 
@@ -21,7 +21,7 @@ CDNA 分块 kernel 从 HBM 读取操作数，在 LDS 或寄存器中暂存，再
 
 ## 当前上游已有实现
 
-AMD 的 vLLM 指南已经说明 AITER linear、skinny GEMM、hipBLASLt、FP8 padding 和 CDNA4 FP4 assembly GEMM。后者明确要求 MI350X/MI355X 与 MXFP4 权重，不能直接推广为 CDNA3 FP4 配方。AITER 已有算子、模型／架构 tuning 配置和 GEMM/MoE 测量入口，不值得重复实现 dispatch。
+AMD 的 vLLM 指南已经说明 AITER linear、skinny GEMM、hipBLASLt、FP8 padding 和 CDNA4 FP4 assembly GEMM。FP4 assembly 路径要求 MI350X/MI355X 与 MXFP4 权重。AITER 提供算子、模型／架构 tuning 配置和 GEMM/MoE 测量入口。
 
 已核对的 vLLM MXFP4 源码包含 backend 格式转换，以及显式 gfx942 groupwise-int4 转换路径。它与 CDNA4 原生 MXFP4 算术是不同执行表示，仅按“四位权重”比较会掩盖转换和 kernel 差异。
 
@@ -31,10 +31,11 @@ AMD 的 vLLM 指南已经说明 AITER linear、skinny GEMM、hipBLASLt、FP8 pad
 
 复用 AITER 的 `op_tests/test_gemm_a8w8.py` 和 `test_moe.py`，按实际模型形状构造输入，沿用库本身的测量方法。比较当前 kernel 与另一受支持 schedule，检查指令利用、LDS／寄存器压力、spills、launch 数、padding 和输出误差。专家输入应包含不均匀 token 分布，不只测均匀合成 batch。
 
-随后测低负载 decode 和 prefill/decode 混合服务，观察 TTFT、TPOT、成功吞吐和内存余量。GEMM 变快但服务不变时，先检查 attention、launch 间隙与 collective，而不是继续扩展 tuning 维度。
+比较低负载 decode 和 prefill/decode 混合服务，两者会暴露不同的 M 分布，以及与 attention、collective 的资源争用。
+
 ## 来源
 
-核对日期：2026-10-14；源码身份见[分类入口](README_zh.md)。
+核对日期：2026-10-14；源码快照见下方链接。
 
 - [AMD 架构规格](https://rocm.docs.amd.com/en/latest/reference/gpu-arch-specs.html)。
 - [当前 vLLM/AITER 优化指南](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/optimization/vllm-v1-optimization.html)。

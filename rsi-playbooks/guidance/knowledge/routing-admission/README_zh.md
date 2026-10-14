@@ -14,6 +14,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 - [按 deadline 准入与 goodput](deadline-aware-admission_zh.md)：何时拒绝不可达工作比继续转发更有效，怎样完整计量所有到达请求？
 - [租户队列与过载 dispatch](tenant-queues-and-overload_zh.md)：突发期间 priority、公平性、共享容量和 session 进度如何相互影响？
 
-这些决策属于请求层。[引擎调度](../engine-scheduling/README_zh.md)负责真实批次成员与 token 服务；集群编排负责容量和布局变化。上游已有路由、预测与流控机制应作为比较起点，不应当作新增优化。
+这些决策属于请求层。[引擎调度](../engine-scheduling/README_zh.md)负责真实批次成员与 token 服务；集群编排负责容量和布局变化。
 
 返回[推理知识库](../README_zh.md)。

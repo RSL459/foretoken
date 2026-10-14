@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 CUDA Graph 重用捕获时的地址，地址中的数据可以变化，但移动或替换分配不会更新已捕获的地址，重放仍会访问原来的位置。服务每步的输入 token 都在变，而图缓冲区、权重和许多缓存分配需要维持地址稳定。
 
-PyTorch 当前的 CUDA Graph Trees 已能在多个记录间共享感知图执行的内存池，通过跟踪存活输出和分配模式实现兼容路径的复用。这是已有运行时能力。新推理优化应先使用引擎的 allocator 与 graph wrapper，而不是另建一套池管理器。
+PyTorch 当前的 CUDA Graph Trees 已能在多个记录间共享感知图执行的内存池，通过跟踪存活输出和分配模式实现兼容路径的复用。推理集成使用引擎的 allocator 与 graph wrapper，将这些生命周期保持在同一管理边界内。
 
 ## 为什么分支会影响内存复用
 
@@ -23,7 +23,7 @@ PyTorch 当前的 CUDA Graph Trees 已能在多个记录间共享感知图执行
 
 ## 状态修改与跨步归属
 
-PyTorch 区分地址稳定的参数／buffer、前一个图的输出，以及普通 eager 输入。Eager 输入可能先复制到固定 staging 地址；修改 staging 张量并不自动更新原始输入。图管理输出和稳定 buffer 的地址受控，支持条件不同。
+PyTorch 区分地址稳定的参数／buffer、前一个图的输出，以及普通 eager 输入。Eager 输入可能先复制到固定 staging 地址；修改只会作用于 staging 副本，因此 CUDA Graph Trees 会跳过修改 eager 输入的函数。参数／buffer 与前一个图的输出则可在稳定地址检查后支持修改。
 
 跨迭代保留模型输出也有类似问题：运行时若判断上轮已结束，后一次 replay 可能覆盖原输出。PyTorch 提供 step marker 和 clone 方式，v2.14 还记录了可选的用户可见输出复制能力；这些能力不意味着内部循环状态或 KV 可以随意丢弃。
 

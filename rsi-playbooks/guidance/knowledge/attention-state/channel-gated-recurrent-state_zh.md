@@ -49,7 +49,7 @@ KDA 是训练得到的模型结构，不是把普通 transformer 切成线性注
 
 对同一 token 流固定 initial state、gate、归一化和输出 scale，比较 chunk 与 recurrent 的结果。必须将 prefill 生成的 final state 接入 decode；两边都从零开始时，布局错误可能被隐藏。输入覆盖重复 key、差异很大的通道 decay、长序列、无效 padding slot 与不等长打包。
 
-短 decode 与长 prefill 分开剖析，记录状态字节流量、寄存器占用、chunk 临时存储和无效 slot 的工作，不能只看 token 吞吐。然后在真实 hybrid 模型上扫描上下文与并发，拆分 KDA、MLA 和 MoE 时间，检查长上下文检索、续写质量，以及复用请求 slot 时是否残留上一请求状态。数值与服务结果要独立于 Kimi 论文的收益陈述。
+短 decode 与长 prefill 分开剖析，记录状态字节流量、寄存器占用、chunk 临时存储和无效 slot 的工作，不能只看 token 吞吐。然后在真实 hybrid 模型上扫描上下文与并发，拆分 KDA、MLA 和 MoE 时间，检查长上下文检索、续写质量，以及复用请求 slot 时是否残留上一请求状态。结合 KDA 的实测耗时占比解释数值与服务结果。
 
 ## 依据与核对状态
 

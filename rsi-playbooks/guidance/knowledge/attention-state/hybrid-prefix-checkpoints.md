@@ -11,7 +11,7 @@ English | [简体中文](hybrid-prefix-checkpoints_zh.md)
 
 A transformer can reuse KV pages for a cached prefix. A hybrid model also needs the recurrent state produced after exactly that prefix, together with any convolution state. Keeping only the state at the end of the previous request is insufficient when two requests diverge earlier.
 
-vLLM already supports aligned Mamba checkpoints and, in its v0.30.0 documentation, a fine-grained prefix-cache option with specific speculative-decoding requirements. Its current cache manager also handles partial-tail checkpoints and copy-on-write. The research opportunity is checkpoint placement and cost under real reuse, not adding a second prefix cache or claiming hybrid caching is unavailable.
+vLLM already supports aligned Mamba checkpoints and, in its v0.30.0 documentation, a fine-grained prefix-cache option with specific speculative-decoding requirements. Its current cache manager also handles partial-tail checkpoints and copy-on-write. Checkpoint placement and cost under real reuse remain workload-dependent.
 
 ## Why the resume boundary matters
 
@@ -51,4 +51,4 @@ Checked 2026-10-14.
 
 - [vLLM v0.30.0 automatic prefix caching](https://docs.vllm.ai/en/v0.30.0/features/automatic_prefix_caching/): fine-grained checkpoint option and exact documented prerequisites.
 - [vLLM hybrid cache design](https://docs.vllm.ai/en/latest/design/hybrid_kv_cache_manager.html): shared pages, group allocation, prefix intersection, and documented experimental limits.
-- [`MambaManager` at `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/core/single_type_kv_cache_manager.py): implemented aligned/fine-grained lookup, checkpoint retention, and copy-on-write lifecycle. Current code observations are not generalized to all releases.
+- [`MambaManager` at `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/core/single_type_kv_cache_manager.py): implemented aligned/fine-grained lookup, checkpoint retention, and copy-on-write lifecycle.

@@ -15,13 +15,13 @@ SonicMoE already implements gather-aware grouped GEMM and activation fusion. Its
 
 ## Execution mechanism
 
-For hidden states `X[T,H]`, each token selects `K` logical experts. Expert `e` receives `m_e` rows, with `sum(m_e)=T*K` when every route is valid. Its gated feed-forward computation is:
+For `T` tokens with hidden width `H`, hidden states have shape `X[T,H]`, and each token selects `K` logical experts. Expert `e` receives `m_e` rows, with `sum(m_e)=T*K` when every route is valid. Let `row_e(t)` map original token `t` to its local row in expert `e`. Its gated feed-forward computation is:
 
 ```text
 H_e = gather(X, token_indices_e) @ W1_e
 A_e = SwiGLU(H_e)
 Y_e = A_e @ W2_e
-y_t = sum_e routing_weight[t,e] * Y_e[t]
+y_t = sum_{e selected by t} routing_weight[t,e] * Y_e[row_e(t)]
 ```
 
 The first grouped GEMM has variable row count `M=m_e`, while its feature dimensions are fixed. SonicMoE loads routed rows directly into shared memory instead of writing a separate gathered activation tensor to HBM. It fuses SwiGLU into the first GEMM epilogue. The second GEMM writes contiguous expert outputs; a gather-and-sum kernel restores token order and applies routing weights.
@@ -43,6 +43,7 @@ Replay one layer's real routing and activations, then construct uniform, highly 
 Record valid rows, tile capacity, gather traffic, GEMM duration, aggregation duration, launch gaps, and peak workspace. If gather fusion helps only before EP dispatch, the explanation is local materialization rather than a universally faster GEMM. If contiguous output wins despite one extra kernel, inspect asynchronous store overlap and reduction traffic.
 
 Validate every candidate against the original layer and router, then run the full model through a real service. Compare unprofiled TPOT, TTFT, output lengths, and answer quality at concurrency one and sustained concurrency.
+
 ## Evidence and remaining work
 
 Checked 2026-10-14: [SonicMoE paper](https://arxiv.org/abs/2512.14080), algorithms 1–4, sections 3–5 and appendices B/F; [repository](https://github.com/Dao-AILab/sonic-moe/tree/7396f3e604827d8186c2e16e64b28ee33d3defd0), including `sonicmoe/functional/forward.py` and `benchmarks/moe-cute.py`. Remaining work is target-engine integration and measurement with its actual dispatched layouts and small-batch shapes. Consult [parallel communication](../parallelism-communication/README.md) when dispatch determines the input layout.

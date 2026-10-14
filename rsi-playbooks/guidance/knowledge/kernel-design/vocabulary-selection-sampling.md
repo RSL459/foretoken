@@ -15,7 +15,7 @@ For a probability row of vocabulary size V, top-k needs only the selected suppor
 
 FlashInfer's current CAKE path already implements a fused alternative. A thread-block cluster performs radix selection, cooperating through distributed shared memory, and writes a compact slab of up to 1,024 `(probability, index)` entries. A subsequent stage orders that slab, applies top-p relative to the top-k mass, renormalizes, and samples. For supported small-k cases, the final work can fuse into the first stage. Larger cases can use a dependent launch to overlap the second stage's prologue with the first stage's tail.
 
-This is an implemented upstream mechanism. Its useful research directions are matching dispatch to real batch/vocabulary shapes, reducing integration copies, and understanding when another selection algorithm is better—not recreating a full sort and calling it an optimization.
+Dispatch by batch/vocabulary shape, integration copies, and the cost of competing selection algorithms determine when this pipeline is useful.
 
 ## Preserve the requested distribution
 
@@ -34,8 +34,6 @@ The total cost also includes logits-to-probabilities conversion, penalties, cons
 ## A useful experiment
 
 Preserve actual batch size, vocabulary, filter values, and probability shape. Include peaked and flat distributions, tied boundaries, greedy requests, and heterogeneous per-row settings. Measure the complete filtering/sampling path in eager and graph replay, inspect actual dispatch, and compare distribution semantics separately from same-seed token identity.
-
-Finally measure model-forward and post-forward durations together. As one stage shrinks, launch overhead or host processing may become dominant. Keep speed comparisons unprofiled and use traces to explain the changed critical path.
 
 ## Sources and implementation state
 

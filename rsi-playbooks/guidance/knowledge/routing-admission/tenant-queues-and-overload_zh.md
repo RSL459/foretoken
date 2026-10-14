@@ -13,9 +13,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 Priority 表达哪个类别先执行；公平性表达可执行 flow 如何共享服务；容量上限约束活跃工作；队列过期表示继续等待是否仍有意义。四者互不蕴含：priority 整数不预留容量，跨所有队列选最早队首也不保证租户公平。
 
-llm-d 当前已有 per-flow queue 接口、ordering、fairness 和 priority holdback。`globalstrict` 文档明确说明，它在 priority band 内跨 flow 选择最优队首，不提供租户公平。Program-aware 提供 least-attained-service（LAS）或 turn-priority；priority-holdback 在 saturation 上升时更早限制低优先级 dispatch，并支持不同 ceiling。这些是现有实现，不只是 proposal。
+llm-d 当前已有 per-flow queue 接口、ordering、fairness 和 priority holdback。`globalstrict` 文档明确说明，它在 priority band 内跨 flow 选择最优队首，不提供租户公平。Program-aware 提供 least-attained-service（LAS）或 turn-priority；priority-holdback 在 saturation 上升时更早限制低优先级 dispatch，并支持不同 ceiling。
 
-AIBrix 已有按预计 token 使用量的逐用户 VTC 路由，但已读 basic router 负责选 pod 和计入预计使用量，不执行容量拒绝，也未在该文件中按实际生成量纠正。Production Stack 解析 priority、选 endpoint 并向引擎传递，路由选择与引擎执行仍不同。Foretoken 已把基于角色的等待、公平 dispatch 与路由分开，候选改动应完善现有 owner，而非在 scorer 再建队列。
+AIBrix 已有按预计 token 使用量的逐用户 VTC 路由，但 basic router 负责选 pod 和计入预计使用量，不执行容量拒绝，也未在该文件中按实际生成量纠正。Production Stack 解析 priority、选 endpoint 并向引擎传递，路由选择与引擎执行仍不同。Foretoken 已把基于角色的等待、公平 dispatch 与路由分开，候选改动应完善现有 owner，而非在 scorer 再建队列。
 
 ## 一次突发如何经过队列
 
@@ -23,7 +23,7 @@ A 排入 1,000 个请求，B 只有一个。全局 FIFO 可能让 B 等完整段
 
 llm-d program-aware LAS 对服务量施加衰减，文档机制中输出 token 权重为输入的两倍，因而近期消费比久远历史更重要。Turn-priority 则偏好更深的 session，并计入等待时间，可缩短交互程序下一轮依赖，但目标并非租户等份服务。其文档要求每个 fairness ID 对应一个 session，才能赋予 turn depth 合理含义。
 
-VTC 原始 counter 防止闲置客户端回来时带着无限 credit；DLPM 的 locality-aware deficit 用 quantum 允许缓存友好的连续执行，同时限制独占。这些论文可解释设计取舍，但引擎服务上界不能自动套用到 gateway 本地 dispatch counter。[引擎公平性](../engine-scheduling/service-fairness_zh.md)说明了两者区别。
+VTC 原始 counter 防止闲置客户端回来时带着无限 credit；DLPM 的 locality-aware deficit 用 quantum 允许缓存友好的连续执行，同时限制独占。论文约束引擎层服务量；gateway 本地 dispatch counter 衡量的是另一个范围。[引擎公平性](../engine-scheduling/service-fairness_zh.md)说明了两者区别。
 
 ## 身份与容量范围
 

@@ -23,9 +23,9 @@ For example, a fast disk feeding pageable CPU tensors may stall H2D preparation;
 
 The [2026-10-14 inspected weight utilities](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/weight_utils.py) implement lazy, eager and prefetch safetensors strategies. Prefetch populates the page cache; it is not pinned GPU staging. Automatic prefetch recognizes specific network filesystems and considers available RAM. Multithreaded loading uses a separate iterator, and [DefaultModelLoader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/default_loader.py) rejects combining that path with non-default safetensors strategies.
 
-The same utilities expose fastsafetensors and instanttensor iterators. The instanttensor path uses owned copies because a yielded tensor must remain valid after reusable loader storage changes. The fastsafetensors path can use GDS and has a no-GDS alternative. These are already integrated options, not future ports.
+The same utilities expose fastsafetensors and instanttensor iterators. The instanttensor path uses owned copies because a yielded tensor must remain valid after reusable loader storage changes. The fastsafetensors path can use GDS and has a no-GDS alternative.
 
-The [RunAI loader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/runai_streamer_loader.py) forwards concurrency and memory-limit settings to its external streamer. Do not describe this thin adapter as implementing its own I/O thread pool. [ServerlessLLM's method](https://arxiv.org/html/2401.14351v1) provides the original aligned-chunk, pinned-pool and multi-tier pipeline rationale. Dynamo KVBM and LMCache's pinned cache tiers are relevant memory competitors, not weight-loading substitutes; Mooncake registration also adds host-memory lifetime constraints.
+The [RunAI loader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/runai_streamer_loader.py) forwards concurrency and memory-limit settings to its external streamer. [ServerlessLLM's method](https://arxiv.org/html/2401.14351v1) provides the original aligned-chunk, pinned-pool and multi-tier pipeline rationale. Dynamo KVBM and LMCache's pinned cache tiers are relevant memory competitors, not weight-loading substitutes; Mooncake registration also adds host-memory lifetime constraints.
 
 ## Experiments that locate the bottleneck
 
@@ -33,6 +33,6 @@ Use the same checkpoint on local and network storage. Compare cold and warm cach
 
 Separately sweep buffer size and in-flight count in an existing loader that exposes those choices; do not invent unsupported flags. Require completion-ordered buffer reuse and verify model outputs. Increased concurrency that raises RSS without throughput indicates excess buffering rather than progress.
 
-At service level, start multiple workers together and measure readiness, first-request latency and impact on an already-serving worker. Remaining work concerns bounded buffering and storage/host/device overlap under shared pressure. It is not adding unconditional prefetch or maximum reader threads. These are proposed measurements, not Foretoken results.
+At service level, start multiple workers together and measure readiness, first-request latency and impact on an already-serving worker. Remaining work concerns bounded buffering and storage/host/device overlap under shared pressure.
 
 [Model loading and storage](README.md)

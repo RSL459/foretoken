@@ -11,7 +11,7 @@ English | [简体中文](tenant-aware-scheduling_zh.md) | [Multiple models and a
 
 A tenant using rank 128 may consume more adapter compute and residency than one using rank 8. A latency-sensitive tenant and a relaxed tenant should not be evaluated through one average TTFT. Grouping all requests that share the base model is already possible; the question is which requests should share a batch and device when ranks, popularity, and deadlines differ.
 
-LoRAServe, submitted in November 2025, studies rank-aware distributed placement and routing. HALO, submitted 2026-10-04, studies multi-SLO scheduling and base/LoRA execution overlap. They address different boundaries: where adapter requests go versus when their prefill/decode work executes. Neither paper alone supplies a complete tenant-service implementation.
+LoRAServe, submitted in November 2025, studies rank-aware distributed placement and routing. HALO, submitted 2026-10-04, studies multi-SLO scheduling and base/LoRA execution overlap. They address different boundaries: where adapter requests go versus when their prefill/decode work executes.
 
 ## One scheduling decision
 
@@ -19,7 +19,7 @@ LoRAServe estimates each adapter's token demand from recent traffic and uses pre
 
 On a serving worker, HALO computes request slack relative to the next deadline. Prefill is constrained by TTFT; decode has per-token TBT deadlines. A request with buffered generated tokens may have enough slack to skip a decode iteration, leaving capacity for an urgent request. The system separates generation from client release through an output queue, so token-generation timestamps and client-visible delivery timestamps are distinct measurements.
 
-HALO also overlaps base and LoRA computation during decode with tuned SM allocations. The independent paths consume the same input, then combine at the adapted layer's result. A feedback search profiles allocations rather than assuming equal shares. Its reported contribution does not improve prefill through the same base/LoRA parallelism. This mechanism must be compared with the current engine's existing execution overlap, not treated as a capability that all engines lack.
+HALO also overlaps base and LoRA computation during decode with tuned SM allocations. The independent paths consume the same input, then combine at the adapted layer's result. A feedback search profiles allocations rather than assuming equal shares. Its reported contribution does not improve prefill through the same base/LoRA parallelism. Compare this mechanism with the target engine's existing execution overlap.
 
 ## Conditions, weights, and costs
 
@@ -35,12 +35,12 @@ Replay a trace with independent rank, popularity, input length, output length, a
 
 Report each tenant's P95/P99 TTFT and TBT, completed tokens, failures, queue age, deadline misses, generated-versus-released token timestamps, and SLO-qualified goodput. Measure adapter migrations, bytes transferred, switch cost, CPU/GPU queue time, and SM partition efficiency. Retain total offered demand so dropping inconvenient requests cannot masquerade as improvement.
 
-If rank-aware placement helps only static popularity, investigate forecast lag and migration cost. If client TBT improves without faster generation, buffering accounts for that result. If urgent goodput rises by starving rare tenants, the policy needs a stated fairness objective. The remaining research is joint cost/deadline reasoning with measurable tenant outcomes, not repackaging basic multi-LoRA serving.
+If rank-aware placement helps only static popularity, investigate forecast lag and migration cost. If client TBT improves without faster generation, buffering accounts for that result. If urgent goodput rises by starving rare tenants, the policy needs a stated fairness objective. The remaining question is how joint cost/deadline reasoning changes measurable tenant outcomes.
 
 ## Sources and checked state
 
 Checked 2026-10-14.
 
-- [LoRAServe, arXiv:2511.22880v1](https://arxiv.org/html/2511.22880v1): method, remote-transfer path, and evaluated workloads. This version promises code/traces after acceptance but supplies no author repository; later availability is not inferred.
+- [LoRAServe, arXiv:2511.22880v1](https://arxiv.org/html/2511.22880v1): method, remote-transfer path, and evaluated workloads. This version promises code/traces after acceptance but supplies no author repository.
 - [HALO, arXiv:2610.04956v1](https://arxiv.org/html/2610.04956v1): submitted 2026-10-04; slack scheduling, SM search, and output queue. No author code link identified in this version.
-- [SGLang LoRA documentation](https://docs.sglang.io/advanced_features/lora.html): existing multi-adapter batching and runtime restrictions; source main checked at `e9400c5`, dated 2026-10-13. Paper proposals are not assigned an upstream PR state without evidence.
+- [SGLang LoRA documentation](https://docs.sglang.io/advanced_features/lora.html): existing multi-adapter batching and runtime restrictions; source main checked at `e9400c5`, dated 2026-10-13.

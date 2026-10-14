@@ -29,9 +29,10 @@ Per-step cost is lookup + candidate extraction + host/device transfer + target v
 
 This method is attractive when there are no suitable draft weights, the workload has actual repeated output, and lookup remains small relative to a target step. It can lose on novel prose, high-entropy sampling, histories with many ambiguous continuations, or saturated services where CPU indexing and synchronization become bottlenecks. Increasing history can improve coverage while increasing resident memory, update time, and lookup tail latency.
 
-At vLLM commit `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`, suffix speculation is already integrated through Arctic Inference. The documented extra dependency is `arctic-inference`; `num_speculative_tokens` is a maximum, not a promise that every request drafts that many positions. Prompt n-gram matching is also established support. The new work is choosing and measuring useful history scope and depth, not claiming either method is newly available.
+At vLLM commit `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`, suffix speculation is already integrated through Arctic Inference. The documented extra dependency is `arctic-inference`; `num_speculative_tokens` is a maximum, not a promise that every request drafts that many positions. Prompt n-gram matching is also established support. Useful history scope and depth remain workload-dependent.
 
 Global history is also a data boundary. Exact target verification protects output sampling, but does not automatically authorize retaining another tenant's generation or exposing it through diagnostics. Use an explicit permitted history scope and existing retention controls.
+
 ## Distinguishing experiments
 
 Compare no speculation, prompt-only n-gram, request-local suffix reuse, and permitted cross-request suffix reuse with identical target and sampling. Construct repeated code edits with a single changed identifier, repeated outputs with divergent endings, and nonrepetitive controls. Run cold and warm history conditions separately; replaying all evaluation outputs into the index before the cold run would change the question.
@@ -39,6 +40,7 @@ Compare no speculation, prompt-only n-gram, request-local suffix reuse, and perm
 Record suffix match length, lookup p50/p99, candidate depth, history memory, update/eviction time, host/device transfer, verified rows, and first rejected position. Check that cancellation and rejected drafts do not enlarge the committed-output index. Greedy matching and stochastic distribution comparison are complementary; a high reuse hit rate alone does not demonstrate correctness or speed.
 
 Then sweep concurrency and history size while measuring TTFT, output intervals, completion time, throughput, CPU utilization, and SLO capacity. A useful follow-up is deciding whether longer history or longer matches actually improve committed tokens per total step time, and whether a cheap request-local proposer beats a much larger shared index.
+
 ## Sources and status
 
 Checked 2026-10-14.

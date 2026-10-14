@@ -11,11 +11,11 @@ English | [简体中文](mla-cache-layouts_zh.md)
 
 Multi-head Latent Attention (MLA) compresses token history into latent vectors shared by query heads. This reduces cache storage, but decode still reads that history, computes per-head scores, and reduces partial outputs. A small cache representation is not automatically a fast execution path: scale loads, irregular gathers, dequantization, and output projection can become dominant.
 
-FlashMLA already implements dense and sparse MLA kernels. Its September 30, 2026 release is a significant compatibility boundary: the current README removes Hopper and DeepSeek V3/V3.2/V4.0 support and changes the cache formats for V4.1. Older models are directed to a fixed earlier commit. Therefore “use latest FlashMLA” is not a model-independent optimization, and porting its already released sparse kernel is not itself a fresh design contribution.
+FlashMLA already implements dense and sparse MLA kernels. Its September 30, 2026 release is a significant compatibility boundary: the current README removes Hopper and DeepSeek V3/V3.2/V4.0 support and changes the cache formats for V4.1. Older models are directed to a fixed earlier commit, so select the implementation by model and cache format.
 
 ## What is actually stored and computed
 
-A simplified MLA token has compressed latent state `c_t` and a positional key `r_t`. After absorbing projection matrices into the query, one query head scores a historical token as:
+A simplified MLA token has compressed latent state `c_t` and a positional key `r_t`. After absorbing projection matrices and the attention scale into the query, one query head scores a historical token as:
 
 ```text
 score(t) = q_latent · c_t + q_position · r_t
@@ -27,7 +27,7 @@ The shared latent is not a separate expanded K/V pair for every head. Absorption
 
 At FlashMLA's pinned pre-breaking-change revision, the V3.2 sparse FP8 format stores one token in 656 bytes: 512 E4M3 latent bytes, four FP32 scales occupying 16 bytes, and 64 BF16 RoPE values occupying 128 bytes. Each scale covers 128 latent values. This is not a generic 656-byte MLA contract: it is one model's physical representation.
 
-The current V4.1 format is different: 512 FP8 values plus sixteen E8M0 scales total 528 bytes. Its FP4 extra-cache representation packs 512 E2M1 values into 256 bytes plus 32 E4M3 scales. Feeding one layout to a kernel expecting another changes interpreted values, not merely speed. The earlier V4.0 format also differs in both dimensionality and where page scale rows live.
+The current V4.1 format is different: its 512 FP8 values include the 64 RoPE dimensions, and sixteen E8M0 scales bring the total to 528 bytes. Its FP4 extra-cache representation packs 512 E2M1 values into 256 bytes plus 32 E4M3 scales, totaling 288 bytes; it is supported only as `extra_k_cache` alongside the V4.1 FP8 main cache. Feeding one layout to a kernel expecting another changes interpreted values, not merely speed. The earlier V4.0 format also differs in both dimensionality and where page scale rows live.
 
 Paged sparse decode receives selected physical token locations. For example, selecting positions from several distant pages can require many scattered loads even though the selected-token count is small. Parallel split attention computes independently normalized partial results; combining them requires log-sum-exp statistics, not an unweighted average of outputs. Scheduling metadata describes how that work is partitioned and must match the current decode configuration.
 

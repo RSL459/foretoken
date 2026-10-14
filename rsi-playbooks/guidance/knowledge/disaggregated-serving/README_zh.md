@@ -17,17 +17,4 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 容量控制、缓存感知放置和实例退役见[扩缩容与放置](../autoscaling-placement/README_zh.md)。Encoder 执行和多模态输入细节见[多模态知识](../multimodal-generation/README_zh.md)。
 
-## 证据范围
-
-实现核对日期为 2026-10-14。
-
-核对快照：
-
-- Dynamo：`b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd`，2026-10-13。
-- llm-d：`277b34d062ff954435cf8b1b05efbd75090cf788`；inference scheduler：`5253f55516f496129248766d1e4b745daba68887`，2026-10-13。
-- AIBrix：`d0500b0399cf35ad0bf95d073faa83c23308f463`，2026-10-13。
-- Production Stack：`4e076e8de3698a3729b575e3a5ade65ffbb929cf`，2026-10-07。
-- FastAFD：`3c7161949310b6d59d6b4cf9bf997a4935c8113b`，2026-07-08。
-- Foretoken：`e6ae3df6d02a72f4bbec3050c4291c1489c1bc07`。
-
 [返回推理知识](../README_zh.md)

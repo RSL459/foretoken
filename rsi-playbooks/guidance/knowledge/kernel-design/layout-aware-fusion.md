@@ -9,15 +9,15 @@ English | [简体中文](layout-aware-fusion_zh.md)
 
 ## Begin with the actual producer and consumer
 
-A normalization or activation can be fast in isolation yet expensive as a sequence of allocations, launches, and full tensor passes. If an intermediate has `N` elements of `s` bytes, removing its standalone write and subsequent read can avoid roughly `2Ns` bytes of logical memory traffic. Actual HBM savings depend on cache residency; this estimate is a hypothesis, not a measured bandwidth result.
+A normalization or activation can be fast in isolation yet expensive as a sequence of allocations, launches, and full tensor passes. If an intermediate has `N` elements of `s` bytes, removing its standalone write and subsequent read can avoid roughly `2Ns` bytes of logical memory traffic. Actual HBM savings depend on cache residency.
 
 Fusion only realizes that saving when the producer's output layout and the consumer's access pattern fit. A matrix accumulator is distributed across lanes for matrix instructions, not necessarily for coalesced output. CUTLASS epilogues explicitly exchange data and perform conversion before storing it. Adding a reduction or a second consumer can extend live ranges and require extra shared-memory traffic.
 
 ## An existing fusion exposes the useful boundary
 
-vLLM v0.31.0 already contains a Q/K normalization plus rotary-position fusion pass. It recognizes packed QKV, splits Q and K, normalizes each head, applies RoPE, and replaces the sequence with a fused operation that mutates the packed buffer before splitting the result. It is not simply concatenating two arbitrary kernels.
+vLLM v0.31.0 contains a Q/K normalization plus rotary-position fusion pass. Its matched sequence splits packed QKV, applies per-head RMSNorm to Q and K, then applies RoPE while leaving V unchanged. The replacement calls the fused operation through `auto_functionalized` and splits the returned updated packed tensor. The native operation's mutation contract is thus presented as a functional graph result; mutation of the caller's original QKV is not implied.
 
-The inspected pass accepts FP16/BF16, requires discovered attention geometries, and restricts head dimensions to 64, 128, or 256. It registers specific normalization epsilon and rotary-layout cases. It normalizes view/reshape representations so equivalent graphs can match. These details explain why a fusion can exist upstream yet not run for a particular model.
+The inspected pass accepts FP16/BF16, requires discovered attention geometries, and restricts head dimensions to 64, 128, or 256. It registers epsilon values `1e-5` and `1e-6` and both NeoX and interleaved rotary layouts. It normalizes view/reshape representations so equivalent graphs can match. These details explain why a fusion can exist upstream yet not run for a particular model.
 
 A useful investigation starts by checking matched graph sites and the actual dispatched kernel. If the pass is already active, introducing an equivalent replacement is unlikely to help. If it is inactive, distinguish a harmless graph-pattern difference from a real layout, dtype, aliasing, or mathematical incompatibility.
 

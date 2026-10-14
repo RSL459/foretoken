@@ -11,9 +11,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 现有控制不能互相替代
 
-llm-d 已有 request admission 与 flow-control 队列。已读 `admission.go` 的 legacy 路径在 saturation 达到上限时拒绝可丢弃的负 priority 请求；flow-control 路径等待 dispatch、拒绝、TTL 过期、取消或关闭。这个文件没有预测 deadline 可达性检查。
+llm-d 已有 request admission 与 flow-control 队列。`admission.go` 的 legacy 路径在 saturation 达到上限时拒绝可丢弃的负 priority 请求；flow-control 路径等待 dispatch、拒绝、TTL 过期、取消或关闭。这个文件没有预测 deadline 可达性检查。
 
-llm-d 另外在 latency scoring 中实现预测 TTFT/TPOT headroom。所有预测都不利时，scorer 仍可能选择 idle 或 deficit 最小的候选，低分不等于拒绝。Production Stack 已按 priority 路由并把解析出的 priority 传给引擎，但该路径不构成预测 deadline 准入控制。Foretoken 已有基于角色的等待、并发计量、queue timeout 和 request deadline 结果。研究增量是按可达性联动，不是增加普通队列或超时。
+llm-d 另外在 latency scoring 中实现预测 TTFT/TPOT headroom。所有预测都不利时，scorer 仍可能选择 idle 或 deficit 最小的候选，低分不等于拒绝。Production Stack 已按 priority 路由并把解析出的 priority 传给引擎，但该路径不构成预测 deadline 准入控制。Foretoken 已有基于角色的等待、并发计量、queue timeout 和 request deadline 结果。按可达性联动需要复用这些队列与超时控制。
 
 ## 从入口跟踪一次期限
 
@@ -25,9 +25,9 @@ llm-d 另外在 latency scoring 中实现预测 TTFT/TPOT headroom。所有预�
 
 负值意味着按当前估计无法达标，仍需考虑预测误差与允许的替代执行方式。TTFT 目标只计首 token 所需工作；端到端完成期限还需计入生成。Request deadline、queue TTL、TTFT 与 TPOT 是不同契约，不能混成一个平均“延迟”。
 
-SCORPIO 的 2026 年修订结合 TTFT 预测拒绝、等待请求按 deadline 排序，以及 TPOT 准入检查。后者根据异构 token 频率需求构造 virtual batch size，并检查新增运行集合的预测 TPOT 是否满足其中最严格目标；decode credit 机制再提供差异化频率。准入与真实批次执行共享假设，只复制拒绝公式到 router，会缺少后半段机制。
+SCORPIO 的 2026 年修订结合 TTFT 预测拒绝、等待请求按 deadline 排序，以及 TPOT 准入检查。后者根据异构 token 频率需求构造 virtual batch size，并检查新增运行集合的预测 TPOT 是否满足其中最严格目标；decode credit 机制再提供差异化频率。准入与批次执行共享延迟模型和 decode 频率假设，需要按模型、权重／缓存 dtype、backend、拓扑和并行配置校准。
 
-## Goodput 应奖励什么
+## 计量有效完成与全部到达请求
 
 固定观察窗口内，可定义 `goodput = 同时满足全部声明 SLO 的完成请求数 / 时间`。还应报告所有 offered arrivals 的达标率，拒绝与超时默认计为未达标，除非 benchmark 明确另有契约。SCORPIO 在 adherence 中将拒绝计为 SLO 未满足。
 
@@ -46,6 +46,7 @@ SCORPIO 的 2026 年修订结合 TTFT 预测拒绝、等待请求按 deadline �
 记录全到达 SLO 达标率、有效完成/秒、误拒估计、逐类别结果、排队时间、在哪一层过期、p99 token 间隔和突发后恢复。加入低估与高估实验，并保留逐请求原始结果，防止策略通过丢掉迟到结果改善摘要。
 
 真正未解的问题是：相对已有 queue/concurrency 控制，校准过的下游可达性模型能否增加有效完成。
+
 ## 来源
 
 核查日期：2026-10-14。

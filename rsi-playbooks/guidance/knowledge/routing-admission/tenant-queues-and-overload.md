@@ -13,7 +13,7 @@ A shared request queue can let a bursty tenant occupy every waiting position. A 
 
 Priority expresses which class can proceed first. Fairness expresses how eligible flows share service. Capacity limits bound active work. Queue expiry says how long waiting remains useful. None implies the others: a priority integer does not reserve capacity, and selecting the oldest head across all queues does not establish tenant fairness.
 
-Current llm-d has per-flow queue interfaces, ordering plugins, fairness plugins, and priority holdback. Its `globalstrict` documentation says it selects the best queue head across flows within a priority band and offers no tenant fairness. Its program-aware plugin provides least-attained-service (LAS) or turn-priority. Its priority-holdback plugin gates lower-priority dispatch earlier as saturation rises, with configurable priority ceilings. These are current implementations, not merely proposals.
+Current llm-d has per-flow queue interfaces, ordering plugins, fairness plugins, and priority holdback. Its `globalstrict` documentation says it selects the best queue head across flows within a priority band and offers no tenant fairness. Its program-aware plugin provides least-attained-service (LAS) or turn-priority. Its priority-holdback plugin gates lower-priority dispatch earlier as saturation rises, with configurable priority ceilings.
 
 AIBrix has per-user estimated-token VTC routing, but the inspected basic router selects pods and updates estimated usage; it does not perform capacity rejection or reconcile actual generated tokens in that file. Production Stack resolves request priority, selects endpoints, and forwards priority; its documentation/code distinction between router selection and engine scheduling matters. Foretoken already owns role-based waiting and fair dispatch separately from routing, so a candidate should refine that owner rather than add another queue in a scorer.
 
@@ -23,7 +23,7 @@ Suppose tenant A enqueues 1,000 requests and tenant B enqueues one. A FIFO globa
 
 llm-d's program-aware LAS applies decayed service, with output tokens weighted twice input tokens in its documented mechanism. Decay makes recent consumption more important than ancient history. Turn-priority instead favors deeper sessions while incorporating waiting time. This can shorten an interactive program's next dependent turn, but it is a different objective from equal tenant service. Its documentation requires one fairness ID per session for turn depth to be meaningful.
 
-VTC's original service counters prevent idle clients from returning with unlimited credit. DLPM's locality-aware deficit method adds a quantum that permits cache-friendly runs while bounding domination. These papers explain useful design choices, but their engine-level service bounds do not automatically apply to gateway-local dispatch counters. See [engine fairness](../engine-scheduling/service-fairness.md) for that distinction.
+VTC's original service counters prevent idle clients from returning with unlimited credit. DLPM's locality-aware deficit method adds a quantum that permits cache-friendly runs while bounding domination. The papers bound engine-level service; gateway-local dispatch counters measure a different scope. See [engine fairness](../engine-scheduling/service-fairness.md) for that distinction.
 
 ## Identity and capacity scope
 
@@ -40,6 +40,7 @@ Create a fixed-rate tenant, a bursting tenant, a long-output tenant, and depende
 Report per-tenant queue residence, rejection/expiry/cancellation, weighted service, worst-tenant TTFT/TPOT attainment, overall goodput, and burst-recovery time. For multi-turn workloads, also report program completion time: faster individual requests may not shorten the program. Add cancellation and lost-completion scenarios to inspect outstanding accounting, and disclose the scope of all counters.
 
 The remaining choice is not “which queue algorithm wins” in isolation. It is which product objective should hold under overload, and whether dispatch and engine execution jointly implement it without losing useful work or starving a class.
+
 ## Sources
 
 Checked 2026-10-14.

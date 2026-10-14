@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-按正在解决的问题选择条目。这里讨论缓存内容、驻留与搬运；请求路由和预填充/解码部署由服务编排知识负责，attention 的数学与执行由注意力知识负责。
+缓存内容、驻留与搬运决定复用成本和容量；请求路由和预填充/解码部署由服务编排知识负责，attention 的数学与执行由注意力知识负责。
 
 - 读取已有 KV 真的比重算更快吗？[分层卸载与异步预取](tiered-offload-prefetch_zh.md)分析暴露在关键路径上的搬运时间、暂存容量与复用寿命。
 - 文档顺序或前文变化后，还能复用缓存吗？[非前缀复用与 CacheBlend](non-prefix-cache-blending_zh.md)解释位置修正、选择性重算及仍存在的语义误差。

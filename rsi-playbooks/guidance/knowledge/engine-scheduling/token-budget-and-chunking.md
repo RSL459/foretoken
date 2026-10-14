@@ -11,21 +11,23 @@ A token budget limits work in one engine iteration, not the number of requests a
 
 ## What already exists
 
-vLLM V1 already implements chunked prefill and schedules running work before admitting waiting work. Its optimization documentation says chunked prefill is enabled whenever possible. The inspected scheduler also handles speculative tokens, encoder work, hybrid-state alignment, and KV allocation. Reimplementing basic chunking in a request router would duplicate the wrong owner.
+vLLM V1 already implements chunked prefill and schedules running work before admitting waiting work. Its optimization documentation says chunked prefill is enabled whenever possible. The inspected scheduler also handles speculative tokens, encoder work, hybrid-state alignment, and KV allocation.
 
-Sarathi-Serve supplies the underlying execution argument: memory-bound decode can share an iteration with compute-heavy prefill, while bounded chunks prevent a long prompt from monopolizing the device. Its original paper is useful historical evidence, not evidence that chunking remains absent from modern vLLM. SOLA adds a distinct direction: choose the workload and ordering from observed SLO pressure rather than retain one fixed budget.
+Sarathi-Serve supplies the underlying execution argument: memory-bound decode can share an iteration with compute-heavy prefill, while bounded chunks prevent a long prompt from monopolizing the device. SOLA chooses workload and ordering from observed SLO pressure rather than retaining one fixed budget.
 
 ## Follow one iteration
 
-Consider 64 active requests, each needing one ordinary decode token, and a newly arrived 8,192-token prompt. With a simplified 512-token iteration budget, 64 decode tokens leave 448 tokens for prefill. Completing that prompt takes at least 19 such iterations if the decode population remains constant. A 2,048-token budget leaves 1,984 tokens and takes at least five iterations, but each mixed iteration may stall existing streams longer. These are arithmetic examples, not measured iteration times.
+Consider 64 active requests, each needing one ordinary decode token, and a newly arrived 8,192-token prompt. With a simplified 512-token iteration budget, 64 decode tokens leave 448 tokens for prefill. Completing that prompt takes at least 19 such iterations if the decode population remains constant. A 2,048-token budget leaves 1,984 tokens and takes at least five iterations, but each mixed iteration may stall existing streams longer. Iteration counts follow from token accounting; iteration duration comes from profiling.
 
 The practical constraint is a profiled latency surface:
 
 `iteration_time(decode_population, context_lengths, prefill_tokens) <= delivery_budget`.
 
+Here delivery_budget is the remaining time allowed before the next token must reach an active stream, after reserving host scheduling and response-delivery time. All durations use the same unit.
+
 Token count alone does not determine time. Attention work depends on existing context; MoE expert activation changes weight traffic; tensor parallelism adds communication; speculative decoding adds verification tokens. The inspected vLLM scheduler distinguishes scheduled-token capacity from its input budget and reserves draft slots. A change must preserve that accounting rather than assume every request consumes exactly one slot.
 
-Sarathi profiles the budget against a tail time-between-tokens target and considers GPU tile-size multiples. A slightly smaller budget can be slower if it selects inefficient matrix shapes. SOLA instead monitors request latency, system memory, and fitted prefill/decode costs, then adjusts request count, token count, and execution order. Its cost model is corrected using measured iteration latency. This is a feedback loop inside the engine, not a reason to fetch Prometheus on every scheduling step.
+Sarathi profiles the budget against a tail time-between-tokens target and considers GPU tile-size multiples. A slightly smaller budget can be slower if it selects inefficient matrix shapes. SOLA instead monitors request latency, system memory, and fitted prefill/decode costs, then adjusts request count, token count, and execution order. Its cost model is corrected using measured iteration latency inside the engine. Fit the latency surface for the model, weight/cache dtype, backend, topology, and parallelism configuration; repeat calibration when kernels or execution settings change.
 
 ## When tuning helps
 
@@ -40,6 +42,7 @@ The engine owns token selection, chunk progress, KV allocation, and graph-compat
 Run the same timestamped mixed trace with fixed output limits, sampling, model, topology, and offered load. Include isolated long prompts, bursts of long prompts, and cache-hot continuations. Compare several budgets with the current engine configuration. Record p50/p95/p99 TTFT, p99 inter-token gaps, TPOT, SLO-qualified completed requests per second, preemption count, and device memory. Inspect iteration timelines to distinguish longer kernels from CPU scheduling or communication gaps. Report rejects and timeouts alongside completions.
 
 The remaining design space is an adaptive budget that responds to changing request shapes without oscillating or relying on optimistic latency estimates. Compare it against the best fixed budget for each workload, not an arbitrarily poor setting.
+
 ## Sources
 
 Checked 2026-10-14. Code links identify inspected revisions; documentation follows its published latest channel.

@@ -13,7 +13,7 @@ A new replica can increase compute capacity while reducing cache reuse or overlo
 
 For each feasible worker location, estimate `T = queue + restore + uncached_prefill + decode`. Local GPU hits, host-memory restoration and remote shared-cache hits have different cost. Cache compatibility comes first: checkpoint, positional semantics, dtype and connector layout must allow reuse. Then compare saved compute with state movement and contention.
 
-An illustrative request can reuse 3 GiB remotely or recompute a short suffix in 40 ms. A 20 GB/s effective remote path needs at least 161 ms before setup and queueing; maximizing hit length would choose the wrong target. For a larger suffix requiring 500 ms, restoration may win. A weighted hit score is a useful preference but is not a calibrated transfer-time estimate.
+An illustrative request can restore 3 GiB of remote prefix KV or recompute that same prefix in 40 ms. A 20 GB/s effective remote path needs at least 161 ms before setup and queueing; maximizing hit length would choose the wrong target. If recomputing that prefix takes 500 ms instead, restoration may win. Both alternatives still process the uncached suffix. A weighted hit score is a useful preference but is not a calibrated transfer-time estimate.
 
 Placement should also consider the future footprint. Putting all warm prefixes in one domain improves affinity but creates a fan-in hotspot and a failure concentration. Replication reduces contention at the cost of memory and network warmup. Independent cold replicas may spread compute yet repeatedly regenerate the same prefix. Under a fixed GPU budget, a placement decision can improve one model while forcing another below its SLO floor.
 
@@ -25,13 +25,13 @@ Count cache-warmup bytes, duplicate weights, shared-store capacity, and losses w
 
 ## Current implementation and evidence
 
-Checked 2026-10-14. llm-d's [cost-aware-memory implementation](https://github.com/llm-d/llm-d-inference-scheduler/blob/5253f55516f496129248766d1e4b745daba68887/pkg/kvcache/kvblock/cost_aware_memory.go) manages estimated index-memory cost with bounded stores. Its name does not mean network-cost-aware placement: `DeviceTier` contributes to memory accounting, and lookup walks available prefixes. It does not move data or allocate workers.
+Checked 2026-10-14. llm-d's [cost-aware-memory implementation](https://github.com/llm-d/llm-d-inference-scheduler/blob/5253f55516f496129248766d1e4b745daba68887/pkg/kvcache/kvblock/cost_aware_memory.go) manages estimated index-memory cost with bounded stores. `DeviceTier` contributes to index-memory accounting, and lookup walks available prefixes; worker allocation and data movement have separate owners.
 
 Production Stack's [routing implementation](https://github.com/vllm-project/production-stack/blob/4e076e8de3698a3729b575e3a5ade65ffbb929cf/src/vllm_router/routers/routing_logic.py) already contains LMCache-backed prefix lookup and load/cache scoring. It refreshes live endpoint/instance mappings; this is request routing rather than an automatic cache migration service. llm-d's [Kueue guide](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/kueue-rebalancing/README.md) provides per-model quota floors, borrowing and preemption below HPA, not cache-locality optimization.
 
-Foretoken's [routing owner](../../../../data-plane/frontend/src/router/README.md) already distinguishes GPU-local cache credit from restored extensions, defaults `restoreWeight` to 0.5, and balances per-rank request pressure. The document explicitly says these weights are preferences, not transfer estimates; Encoder/Decode use load alone. This is not evidence of automatic topology-aware worker placement.
+Foretoken's [routing owner](../../../../data-plane/frontend/src/router/README.md) already distinguishes GPU-local cache credit from restored extensions, defaults `restoreWeight` to 0.5, and balances per-rank request pressure. The document explicitly says these weights are preferences, not transfer estimates; Encoder/Decode use load alone.
 
-The 2026 [AFD design-space study](https://arxiv.org/html/2605.28302v1) models the impact of placing P/D partners on scale-up versus scale-out links for FP8 MoE on B200. Its network estimates motivate topology-sensitive experiments, not a claim that every production cache has that behavior.
+The 2026 [AFD design-space study](https://arxiv.org/html/2605.28302v1) models the impact of placing P/D partners on scale-up versus scale-out links for FP8 MoE on B200. Its network estimates motivate comparisons of partner placement and shared-link contention.
 
 ## Discriminating experiments and remaining questions
 

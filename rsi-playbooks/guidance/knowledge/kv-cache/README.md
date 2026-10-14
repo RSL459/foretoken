@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Choose an entry by the question being investigated. These notes cover cache contents, residency and movement; request routing and prefill/decode placement belong to serving guidance, while attention execution belongs to attention guidance.
+Cache contents, residency and movement determine reuse cost and capacity. Request routing and prefill/decode placement belong to serving guidance; attention execution belongs to attention guidance.
 
 - Does loading saved KV actually beat recomputing it? [Tiered offload and asynchronous prefetch](tiered-offload-prefetch.md) models the exposed transfer cost, staging capacity and reuse lifetime.
 - Can cached documents be reused after their order or preceding context changes? [Non-prefix reuse and CacheBlend](non-prefix-cache-blending.md) explains positional correction, selective recomputation and remaining semantic error.

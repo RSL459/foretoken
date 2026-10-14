@@ -25,13 +25,13 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 当前实现与证据
 
-核对日期为 2026-10-14。Foretoken 的[Group drain owner](../../../../control-plane/controllers/modelgroup_drain.go)关闭 model-server 准入，检查每个存活 frontend 的 snapshot generation，观察 running request，在完成或记录 timeout 后释放 finalizer。[请求工作流](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)保留 P/D、E/P/D 跨阶段清理。这是已有退役／取消机制，不是在线 KV 迁移。
+核对日期为 2026-10-14。Foretoken 的[Group drain owner](../../../../control-plane/controllers/modelgroup_drain.go)关闭 model-server 准入，检查每个存活 frontend 的 snapshot generation，观察 running request，在完成或记录 timeout 后释放 finalizer。[请求工作流](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)保留 P/D、E/P/D 跨阶段清理。这条路径负责 worker 退役与取消后的清理；活跃请求迁移还需上述引擎状态交接。
 
 Dynamo 的[graceful-shutdown 工具](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/components/src/dynamo/common/utils/graceful_shutdown.py)先注销 endpoint，等待传播，再调用可选 drain／cleanup callback，各自有限 timeout。工具本身不跟踪或迁移 active request，取决于 worker callback。
 
-AIBrix 的[drain helper](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/pkg/controller/drain/drain.go)给调用者指定的 Pod 添加注解，在 timeout 后删除，也支持取消。在此 helper 中完成条件是 timeout，不验证引擎请求归零。Production Stack 的[router 代码](https://github.com/vllm-project/production-stack/blob/4e076e8de3698a3729b575e3a5ade65ffbb929cf/src/vllm_router/routers/routing_logic.py)刷新 endpoint／路由资源，该文件未提供在线迁移。结论应限定到实际核对的实现。
+AIBrix 的[drain helper](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/pkg/controller/drain/drain.go)给调用者指定的 Pod 添加注解，在 timeout 后删除，也支持取消。在此 helper 中完成条件是 timeout，不验证引擎请求归零。Production Stack 的[router 代码](https://github.com/vllm-project/production-stack/blob/4e076e8de3698a3729b575e3a5ade65ffbb929cf/src/vllm_router/routers/routing_logic.py)刷新 endpoint／路由资源，该文件未提供在线迁移。
 
-2026 年 [TRE 论文](https://arxiv.org/html/2609.29160v1)使用 A100 40GB、7B/8B/14B hot-switch 原型，未指定 dtype。报告秒级 sleep/wake，但 drain 失败时重发工作而非迁移 KV；这些时间不证明活跃生成的透明交接。
+2026 年 [TRE 论文](https://arxiv.org/html/2609.29160v1)使用 A100 40GB、7B/8B/14B hot-switch 原型，未指定 dtype。报告秒级 sleep/wake，drain 失败时通过重发工作恢复，而非迁移 KV。
 
 ## 实验与剩余问题
 

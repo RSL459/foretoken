@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) | [Inference knowledge](../README.md)
 
-Choose a mechanism by the cost or failure observed in the draft/verify/correct/commit cycle. Sources and engine boundaries were checked on 2026-10-14.
+Choose a mechanism by the cost or failure observed in the draft/verify/correct/commit cycle.
 
 - Fixed speculation helps isolated requests but hurts capacity under load: [allocate verification budgets](adaptive-verification-budget.md) using existing dynamic schedules and adaptive verification, with runner, graph, and parallelism constraints.
 - Good training accuracy does not produce long accepted rollouts: [align draft training with decoding](draft-training-and-alignment.md), distinguishing public EAGLE3 pairs, native MTP, and targets that need new trained weights.

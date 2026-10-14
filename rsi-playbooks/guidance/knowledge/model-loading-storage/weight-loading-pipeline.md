@@ -21,7 +21,7 @@ Consider TP4 loading a globally stored 40 GiB checkpoint. Reading and slicing al
 
 ## What is already available
 
-At the [2026-10-14 snapshot](README.md#evidence-snapshot), vLLM's [ShardedStateLoader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/sharded_state_loader.py) already reads rank-specific safetensors and copies directly into prepared parameters. Its filenames encode active TP/PP dimensions; alias/view filtering avoids duplicated storage. It does not perform arbitrary runtime quantization or resharding. A topology-specific checkpoint is unsuitable for a different topology unless an explicit conversion supports it.
+At the [2026-10-14 snapshot](README.md#evidence-snapshot), vLLM's [ShardedStateLoader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/sharded_state_loader.py) already reads rank-specific safetensors and copies directly into prepared parameters. Default filenames identify TP rank and, when PP is enabled, PP rank—not the parallel sizes. Alias/view filtering avoids duplicated storage. It does not perform arbitrary runtime quantization or resharding. A topology-specific checkpoint is unsuitable for a different topology unless an explicit conversion supports it.
 
 The default loader also has local-expert filtering and specialized fastsafetensors/instanttensor paths. Filtering has conditions, including expert-load-balancing needs. vLLM additionally integrates [ModelExpress](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/modelexpress_loader.py). These are existing alternatives to a new custom loading subsystem.
 

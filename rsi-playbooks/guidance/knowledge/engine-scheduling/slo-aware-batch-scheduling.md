@@ -9,14 +9,13 @@ English | [简体中文](slo-aware-batch-scheduling_zh.md)
 
 When requests have different latency objectives, scheduling every active stream in every iteration can waste scarce decode capacity on requests that could safely wait. Conversely, always prioritizing decode can make queued prefills miss first-token deadlines. Batch selection needs to account for both phases and the service each request actually requires.
 
-## Existing mechanisms and the research increment
+## Existing execution mechanisms
 
-Current vLLM V1 already supports chunked prefill, priority-dependent preemption, and a `next_decode_eligible_step` check. These are execution mechanisms, not proof of a heterogeneous-SLO optimizer. SOLA studies per-iteration ordering and workload size. SCORPIO's August 2026 revision combines admission, deadline-based queues, and differentiated decode cadence. Their original methods target a more specific objective than merely adding request priority.
+Current vLLM V1 supports chunked prefill and priority-dependent preemption. Its `next_decode_eligible_step` check spaces decodes in the V2 runner's asynchronous pipeline-parallel path to match the sampled-token broadcast cadence; it is not a per-request SLO policy. SOLA studies per-iteration ordering and workload size in a vLLM 0.4.2 integration. SCORPIO's August 2026 revision combines admission, deadline-based queues, and differentiated decode cadence.
 
-SOLA evaluates a historical vLLM 0.4.2 integration. Its findings about that implementation's default ordering must not be presented as the current V1 default.
 ## How service frequency changes a batch
 
-Suppose one class needs a 50-ms time-per-output-token target and another accepts 100 ms. In SCORPIO, the token requirement proportion is the strictest target divided by a request's target: `TRP = min_target / request_target`. The two classes therefore receive proportions 1 and 0.5. Each request accrues this credit per decode iteration; requests with credit at least one are selected and consume one credit. A relaxed request can appear roughly every other iteration rather than every iteration.
+Suppose one class needs a 50-ms time-per-output-token target and another accepts 100 ms. In SCORPIO, the token requirement proportion is the strictest target divided by a request's target: `TRP = min_target / request_target`. The minimum is taken over the current running set, so proportions change when its strictest target changes. The two classes therefore receive proportions 1 and 0.5. Each request accrues this credit per decode iteration; requests with credit at least one are selected and consume one credit. A relaxed request can appear roughly every other iteration rather than every iteration.
 
 This mechanism works only if the resulting batch duration supports the targets. SCORPIO estimates TPOT using a virtual batch size, the sum of these proportions, and sequence-length information. Credit arithmetic alone cannot make a 90-ms iteration satisfy a 50-ms target. Nor does a mean TPOT guarantee bounded individual token gaps: iteration variation still matters.
 
@@ -36,7 +35,7 @@ Replay identical arrivals with two or more TTFT/TPOT classes, then change their 
 
 Count goodput as completed requests meeting both declared objectives per second, with rejection, timeout, and cancellation visible for all arrivals. Also report per-class attainment, worst-class queue delay, p99 inter-token gaps, preemption, memory occupancy, and scheduler overhead. A higher admitted-only success rate is not evidence of higher service capacity. Use execution traces to verify that gains arise from changed batch work rather than shorter outputs or dropped requests.
 
-The useful next step is to check whether engine metadata can express the intended SLO and cadence end to end. Reuse available scheduling hooks, then measure the policy; neither a new priority field nor a paper's aggregate speedup establishes that integration.
+A candidate integration needs request objectives in engine metadata and batch-selection hooks that consume them. Measure its cadence and feasibility decisions end to end.
 
 ## Sources
 

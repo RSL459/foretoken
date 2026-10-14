@@ -19,7 +19,7 @@ Start from the model's logical expert groups, routing selections, and measured r
 
 Replication changes the physical destination graph without changing the logical router. A copy on a nearby GPU can absorb demand without introducing another network-domain crossing, but only if the dispatch assignment actually selects it. A copy on a remote node can balance arithmetic while increasing both dispatch and return traffic.
 
-LPLB's `r2o` mapping explicitly expresses replica relationships. Its cube topology supports balancing within an eight-GPU subgroup; torus relationships can connect a local neighbor and a neighbor node. These are available algorithm structures, not proof that a torus always wins globally. They impose constraints on which hot experts can share work and how many copies exist.
+LPLB's `r2o` mapping explicitly expresses replica relationships. Its cube topology supports balancing within an eight-GPU subgroup; torus relationships can connect a local neighbor and a neighbor node. These graphs constrain which hot experts can share work and how many copies exist.
 
 For an illustrative layer with hidden width `H=4096`, BF16 activations, and 1000 token-expert rows crossing a node boundary, the raw row payload is `1000*4096*2=8,192,000` bytes in one direction. This excludes metadata, scales, headers, alignment, and deduplication; if several chosen experts share a destination, a transport may avoid duplicating the input row. Returning outputs is a separate traffic leg. Count actual backend bytes rather than multiplying top-k blindly.
 

@@ -15,7 +15,7 @@ If a forward pass launches `n` small kernels, host-side launch work contributes 
 
 For example, a nine-token decode batch might reuse a sixteen-token graph. Whether seven padded rows are worthwhile depends on how much launch time disappears and whether the extra GEMM or expert work is cheap. A speculative decode batch has more than one query token per request, so request count alone is not a sufficient graph key.
 
-The current vLLM design already separates compilation and capture, provides full and piecewise modes, and dispatches by batch description and backend capability. `FULL_DECODE_ONLY` avoids prefill graphs; `FULL_AND_PIECEWISE` combines full uniform decode with piecewise execution elsewhere. Missing compatible keys execute eagerly. These are established facilities. The documentation includes historical design context, so its old future-default statements should not substitute for reading the target version's configuration.
+The current vLLM design already separates compilation and capture, provides full and piecewise modes, and dispatches by batch description and backend capability. `FULL_DECODE_ONLY` avoids prefill graphs; `FULL_AND_PIECEWISE` combines full uniform decode with piecewise execution elsewhere. Missing compatible keys execute eagerly. The target version's configuration determines the default mode.
 
 ## Streams and collectives form a dependency graph
 
@@ -23,7 +23,7 @@ Suppose the main stream produces input, an auxiliary stream computes a shared ex
 
 NCCL's current graph documentation requires matching capture participation across ranks and describes mixing captured with ordinary operations. It also documents a deadlock caveat when graphs involving multiple communicators are launched from one thread. This is not proof of identical RCCL or MCCL behavior. A setting supported by one library cannot be transferred by spelling alone to another.
 
-Likewise, an operator that launches on the current stream is necessary but not sufficient for concurrent safety. A library-internal static workspace can still be shared between calls. Conversely, missing an explicit allocator annotation in a wrapper does not itself prove early reuse: inspect the actual input/output events and owner before claiming a race.
+An operator must preserve the caller's stream dependencies, either by using the current stream or by explicitly ordering work on internal streams. Concurrent calls also need separate workspace or serialization: a library-internal static workspace can be overwritten while a previous call still uses it. Buffer reuse must wait for all streams accessing the allocation to complete.
 
 ## Current integration and useful remaining work
 
@@ -36,6 +36,7 @@ The remaining optimization problem is choosing capture sizes and supported overl
 Use the engine's existing graph dispatcher and the same operator/backend combination. Compare eager, decode-only capture, and the supported mixed mode. Locally inspect warmup versus replay, launch gaps, padding work, allocated memory, current streams, and completion events. Exercise unequal per-rank token counts and mixed prefill/decode rather than only repeated identical batches.
 
 Measure the complete service without profiling overhead, observing TTFT, TPOT, successful outputs, long-run progress, and memory headroom. If overlap fails, preserve communicator identities and device completion boundaries before altering synchronization. A globally synchronized microbenchmark can conceal the ordering problem it was meant to reproduce.
+
 ## Sources
 
 Checked 2026-10-14.

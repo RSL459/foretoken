@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-从实际开销或设计问题出发，查找理解和改进推理系统所需的机制、实现依据与研究线索。每篇说明方法如何工作、适合什么条件、上游已经实现什么，以及怎样通过实验判断剩余的设计选择。
+按优化涉及的计算与资源，整理推理机制、实现和研究问题。
 
 ## 模型计算
 
@@ -39,7 +39,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 - [主机与流式链路](host-streaming/README_zh.md)：主机／设备调度、增量文本、背压、取消与 NUMA 影响。
 - [测量与模拟](measurement-simulation/README_zh.md)：到达与排队、SLO 有效吞吐、trace 关键路径、模拟校准和数值差异。
 
-一次解码变慢可能跨越多类。例如，先通过 attention 或 MoE 条目理解计算，再通过通信条目检查 rank 依赖，用主机和运行时条目解释启动间隙。目录划分机制职责，交叉链接串起完整执行路径。
+一次解码变慢可能跨越多类。例如，先通过 attention 或 MoE 条目理解计算，再通过通信条目检查 rank 依赖，用主机和运行时条目解释启动间隙。
 
 ## 怎样理解依据
 

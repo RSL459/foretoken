@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 普通 transformer 可以复用前缀 KV page。hybrid 模型还需要处理完同一个前缀后得到的循环状态，以及可能存在的卷积状态。若两个请求更早就分叉，只保留上一请求最终状态是不够的。
 
-vLLM 已支持对齐的 Mamba 检查点；v0.30.0 官方文档还提供有明确 speculative decoding 前提的细粒度前缀缓存选项。当前 cache manager 已处理 partial-tail checkpoint 和 copy-on-write。值得继续研究的是实际复用条件下的检查点位置与成本，不是再写一套前缀缓存，更不能声称 hybrid 缓存不存在。
+vLLM 已支持对齐的 Mamba 检查点；v0.30.0 官方文档还提供有明确 speculative decoding 前提的细粒度前缀缓存选项。当前 cache manager 已处理 partial-tail checkpoint 和 copy-on-write。检查点位置及实际复用成本仍取决于负载。
 
 ## 恢复边界为什么重要
 
@@ -51,4 +51,4 @@ v0.30.0 的细粒度选项要求 `mamba-cache-mode=align`、Mamba group 上启�
 
 - [vLLM v0.30.0 automatic prefix caching](https://docs.vllm.ai/en/v0.30.0/features/automatic_prefix_caching/)：细粒度选项及明确前提。
 - [vLLM hybrid cache 设计](https://docs.vllm.ai/en/latest/design/hybrid_kv_cache_manager.html)：共享 page、分组、前缀交集与文档中的实验性限制。
-- [`MambaManager`，固定 `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/core/single_type_kv_cache_manager.py)：已实现的对齐/细粒度查询、检查点保留和 copy-on-write；不推广为所有发行版现状。
+- [`MambaManager`，固定 `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/core/single_type_kv_cache_manager.py)：该版本的对齐/细粒度查询、检查点保留和 copy-on-write。

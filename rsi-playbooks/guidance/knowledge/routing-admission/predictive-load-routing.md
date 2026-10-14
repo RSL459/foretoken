@@ -13,7 +13,7 @@ Queue depth describes how many requests are waiting, not how much work precedes 
 
 Dynamo's current selector combines active prefill tokens, cache overlap, decode cost, and active-request pressure. It is a work-based score, not simply least-request routing. Production Stack's load-aware implementation uses current router monitor statistics even after tokenization and cache lookup, but represents load as in-prefill plus in-decoding request counts. AIBrix already exposes a Preble strategy in addition to prefix/load blending.
 
-llm-d's current predicted-latency producer and latency scorer go further: an XGBoost sidecar predicts endpoint TTFT and TPOT; request lifecycle hooks track in-flight work; endpoint attributes carry predicted latency and SLO headroom. Prediction-driven routing is therefore an existing upstream capability, not a hypothetical feature to claim as new.
+llm-d's current predicted-latency producer and latency scorer go further: an XGBoost sidecar predicts endpoint TTFT and TPOT; request lifecycle hooks track in-flight work; endpoint attributes carry predicted latency and SLO headroom.
 
 ## Work prediction versus request counting
 

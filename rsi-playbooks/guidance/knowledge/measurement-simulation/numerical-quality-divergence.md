@@ -31,7 +31,7 @@ Common offsets do not change softmax. Centered-logit RMSE therefore removes a sh
 
 Greedy sequence comparison exposes first-divergence position, EOS behavior, and exact agreement under actual feedback. It is useful for implementation changes expected to preserve token choices. Exact mismatch is not automatically quality loss: two continuations may both answer correctly. Conversely, high sequence agreement on easy samples can miss rare but consequential errors.
 
-Batch invariance is an existing vLLM feature, currently documented as beta with hardware/model and tensor-parallel restrictions. It changes kernel choices and can cost performance. It is a diagnostic control where supported, not a universal guarantee or a new optimization. Open issue #51187 reports repeated concurrent workloads with differing logprobs but identical emitted token IDs in that reproduction. The report cannot establish a general token-quality regression, and its cause is not proven by the issue alone.
+Batch invariance is an existing vLLM feature, currently documented as beta with hardware/model and tensor-parallel restrictions. It changes kernel choices and can cost performance. Use it as a diagnostic control within its supported scope. Open issue #51187 reports repeated concurrent workloads with differing logprobs but identical emitted token IDs in that reproduction; its cause remains unresolved.
 
 ## Experiments that separate error from instability
 

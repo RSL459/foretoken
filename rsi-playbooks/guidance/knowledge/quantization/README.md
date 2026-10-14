@@ -15,8 +15,8 @@ Choose a representation, calibration procedure, and executable kernel together. 
 - Decide whether extra calibration or training is worthwhile: [learned rounding and scale recovery](learned-rounding-and-scale-recovery.md).
 - Choose layers that need higher precision: [mixed precision with executable kernel costs](mixed-precision-kernel-cost.md).
 
-The remaining opportunities are workload-specific calibration, quality recovery, representation/layout alignment, and measured format selection—not reimplementing quantizers already supplied by upstream. See [heterogeneous execution](../heterogeneous-hardware/README.md) for hardware-specific consequences and the [knowledge index](../README.md) for other topics.
+Research choices include workload-specific calibration, quality recovery, representation/layout alignment, and measured format selection. See [heterogeneous execution](../heterogeneous-hardware/README.md) for hardware-specific consequences and the [knowledge index](../README.md) for other topics.
 
 ## Evidence scope
 
-Original documentation and source were checked on 2026-10-14. Source snapshots are vLLM `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9`, llm-compressor `990fdd2fb41af48f105dbdebd088a96b627701b1`, and NVIDIA Model Optimizer `b5f10f8bf96201241c35b86498557bd6fdde10ca`, all dated 2026-10-13. Development-head availability is not a promise that an older packaged release contains the same feature.
+Checked 2026-10-14 against development snapshots dated 2026-10-13: [vLLM `6849ca69`](https://github.com/vllm-project/vllm/tree/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9), [llm-compressor `990fdd2f`](https://github.com/vllm-project/llm-compressor/tree/990fdd2fb41af48f105dbdebd088a96b627701b1), and [NVIDIA Model Optimizer `b5f10f8b`](https://github.com/NVIDIA/Model-Optimizer/tree/b5f10f8bf96201241c35b86498557bd6fdde10ca).

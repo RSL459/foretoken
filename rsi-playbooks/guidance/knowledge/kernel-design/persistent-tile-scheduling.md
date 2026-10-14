@@ -15,7 +15,7 @@ A conventional tiled GEMM launches one thread block for each output tile. For ti
 
 Suppose there are 100 output tiles and 80 resident workers, with equal tile costs. Twenty workers execute a second tile while the other sixty finish early. Persistence does not eliminate this final partial wave. It changes how work is assigned and how setup, loads, computation, and stores overlap. A scheduler that improves locality can still lose through load imbalance.
 
-The current Triton Gluon persistence tutorial implements both a simple tile order and a grouped order intended to improve reuse. CUTLASS already provides persistent cooperative and ping-pong kernels. The research question is which scheduling and resource allocation fit the actual inference shapes, rather than whether to introduce persistence at all.
+The Triton Gluon persistence tutorial implements both a simple tile order and a grouped order intended to improve reuse. CUTLASS provides persistent cooperative and ping-pong kernels. Scheduling order and resource allocation can be chosen for the inference shapes.
 
 ## Follow an output tile
 
@@ -39,7 +39,7 @@ Then run the kernel with the model's concurrent communication and return it to t
 
 ## Sources and implementation state
 
-Checked 2026-10-14. These mechanisms are already implemented upstream.
+Checked 2026-10-14.
 
 - [Triton Gluon persistence tutorial](https://triton-lang.org/main/getting-started/tutorials/gluon/persistence.html), including producer/consumer counters and buffer-lifetime discussion.
 - [Pinned tutorial implementation](https://github.com/triton-lang/triton/blob/4ee1a827440d453ca276ded4219190d5e7346b8b/python/tutorials/gluon/07-persistence.py), with Hopper and Blackwell paths.

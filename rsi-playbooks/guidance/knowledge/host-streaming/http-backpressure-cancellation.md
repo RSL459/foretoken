@@ -27,7 +27,7 @@ Dropping an HTTP connection, stopping application iteration, requesting engine a
 
 If a cancelled request keeps outputting r tokens per second for delay Δ, wasted work is roughly rΔ tokens, with occupied KV memory persisting until cleanup. Under frequent disconnects, this can reduce goodput for healthy requests even when average successful-request latency looks unchanged. Measuring only the client's timeout misses this interval.
 
-Foretoken already has cancellable output-stream ownership, an explicit model-server abort exchange, and idle-timeout cleanup. Its SSE heartbeats preserve transport liveness without resetting backend idle or request deadlines. These are existing service mechanisms, not proposed new optimizations. The remaining research question is whether a particular deployment propagates pressure and cancellation promptly across all queues and engine ranks.
+Foretoken already has cancellable output-stream ownership, an explicit model-server abort exchange, and idle-timeout cleanup. Its SSE heartbeats preserve transport liveness without resetting backend idle or request deadlines. The remaining research question is whether a particular deployment propagates pressure and cancellation promptly across all queues and engine ranks.
 
 ## Discriminating experiments
 

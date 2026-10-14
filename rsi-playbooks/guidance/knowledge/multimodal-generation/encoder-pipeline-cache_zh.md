@@ -17,7 +17,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 四个图像请求不均匀到达。编码器收集已经完成预处理的张量，直到批次满或空闲间隔触发，再执行视觉模型。它为每个输出保留请求与输入图片位置，发布传输元数据。预填充 scheduler 等待所需 embedding，安排加载，确认完成后再执行图文预填充；此时编码器可以处理下一批。只有时间线显示计算与传输实际并行，才算重叠，不能仅凭异步 API 判断。
 
-视觉 token 数为 V、语言侧 embedding 宽度为 d、每元素 b 字节时，传输负载约为 Vdb。取 V=4,096、d=3,584、b=2，约为 28 MiB，尚不含元数据与协议开销。这是示意形状计算，不是吞吐实测。命中 embedding 缓存可以省编码，但消费端不在本地时，传输仍可能存在。
+视觉 token 数为 V、语言侧 embedding 宽度为 d、每元素 b 字节时，传输负载约为 Vdb。取 V=4,096、d=3,584、b=2，约为 28 MiB，尚不含元数据与协议开销。命中 embedding 缓存可以省编码，但消费端不在本地时，传输仍可能存在。
 
 当前 vLLM 编码缓存按请求及输入位置计引用。请求释放引用后，条目变成可回收，不一定立即删除；后续分配需要空间才驱逐。同一轮调度中被重新使用的条目不会再进入物理删除通知。这些区别避免“逻辑释放”变成“过早删掉设备数据”。取消请求也必须清除引用，并在重用缓冲区前完成或终止其拥有的传输。
 
@@ -33,7 +33,7 @@ EAServe 描述了 NIXL、libsmctrl、CUDA 与配置搜索，在 NVIDIA GPU 上�
 
 记录预处理完成时间、编码排队、编码执行、传输完成、decoder 等待、TTFT 尾延迟、设备利用率、传输字节、峰值活跃 embedding 内存和满足 SLO 的成功请求数。加入排队中、编码中、传输中的取消，观察内存能否回到预期稳态；取消请求不能算成功吞吐。
 
-如果大批次降低了每图片计算时间，却恶化 TTFT，瓶颈在等待。如果自适应策略只改善稳定泊松流量、不改善突发，应检查到达率估计的响应速度，而不是宣称找到了通用最优批次。后续候选应是尊重生命周期与交付成本、经过测量的到达感知执行策略，不是再实现一次已有的编码分离。
+如果大批次降低了每图片计算时间，却恶化 TTFT，瓶颈在等待。如果自适应策略只改善稳定泊松流量、不改善突发，应检查到达率估计的响应速度，而不是宣称找到了通用最优批次。剩余问题是到达感知执行如何平衡 embedding 生命周期与交付成本。
 
 ## 来源与核对状态
 
@@ -41,4 +41,4 @@ EAServe 描述了 NIXL、libsmctrl、CUDA 与配置搜索，在 NVIDIA GPU 上�
 
 - [EAServe，arXiv:2609.31551v1](https://arxiv.org/html/2609.31551v1)：2026 年 9 月微批和传输机制，未找到作者公开代码入口。
 - [vLLM 编码分离](https://docs.vllm.ai/en/latest/features/disagg_encoder/)：当前流程、connector、示例和音频限制。
-- [编码缓存实现 `6849ca6`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/core/encoder_cache_manager.py)：生命周期责任单元，commit 日期为 2026-10-13。已有缓存与编码分离是实验起点，不是新的候选能力。
+- [编码缓存实现 `6849ca6`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/core/encoder_cache_manager.py)：embedding 生命周期与驱逐，commit 日期为 2026-10-13。

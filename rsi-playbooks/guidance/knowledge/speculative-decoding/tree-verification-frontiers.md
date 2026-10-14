@@ -11,7 +11,7 @@ English | [简体中文](tree-verification-frontiers_zh.md) | [Speculative decod
 
 A draft tree spends extra candidates on alternatives to a single predicted continuation. It can rescue an early wrong guess, but a target verification pass still computes every retained node while the response commits only one path. Tree size is therefore neither output length nor accepted length. The research question is where to spend a fixed node budget when branching also changes scheduling, attention execution, and graph shapes.
 
-EAGLE-2's context-aware expansion is established work, and SGLang already exposes tree depth, branching factor, and verification capacity. Reimplementing this mechanism is not a new optimization. Its principle remains useful for studying current learned drafters: confidence should rank complete reachable paths, and the deployment's tree-versus-chain choice must include the scheduler behavior it enables or disables.
+EAGLE-2's context-aware expansion is established work, and SGLang already exposes tree depth, branching factor, and verification capacity. For current learned drafters, confidence should rank complete reachable paths, and the deployment's tree-versus-chain choice must include the scheduler behavior it enables or disables.
 
 One target model and one trained EAGLE auxiliary module suffice. Multiple branches are alternative executions of that module, not multiple draft models. The module must match its target; tree construction creates no training weights. EAGLE-3 can supply a newer trained module while retaining a tree-shaped outer proposal process.
 

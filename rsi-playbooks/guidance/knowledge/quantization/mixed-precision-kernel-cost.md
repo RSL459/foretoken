@@ -17,13 +17,13 @@ For each eligible operator `i` and candidate format `f`, Model Optimizer AutoQua
 S_i,f ∝ Σ_k g_i,k² (Y_i,k − Y^Q_i,f,k)².
 ```
 
-It captures inputs, obtains output gradients, and replays candidate quantizers locally. An integer-programming search selects one format per operator or deployment group, minimizing summed sensitivity under an effective-bit budget. In schematic form:
+Here `Y_i` and `Y^Q_i,f` are the reference and fake-quantized operator outputs; `g_i,k = ∂L/∂Y_i,k` is the scoring-loss gradient, and k indexes output elements. Scores aggregate calibration observations. It captures inputs, obtains output gradients, and replays candidate quantizers locally. An integer-programming search selects one format per operator or deployment group, minimizing summed sensitivity under an effective-bit budget. In schematic form:
 
 ```text
 min Σ_i S_i,f(i),  subject to Σ_i N_i b_i,f(i) ≤ N_total b_target.
 ```
 
-Only eligible quantizable weights count toward this budget; excluded embeddings or normalization parameters still occupy memory. Effective bits may include format metadata, but the objective is not measured service latency.
+`N_i` is operator i's eligible weight count, `b_i,f` its modeled bits per weight in format f, `N_total = Σ_i N_i`, and `b_target` the requested average-bit budget. Only eligible quantizable weights count toward this budget; excluded embeddings or normalization parameters still occupy memory. Effective bits may include format metadata, but the objective is not measured service latency.
 
 The current implementation groups deployment decisions such as QKV projections, gate/up projections, and sparse experts. Grouping matters because the runtime may merge those weights or require one shared quantization contract. Independently assigning three QKV formats can produce an assignment that is numerically attractive but cannot use the existing fused projection. Group sensitivity and cost aggregate member contributions; this does not model every interaction between their errors.
 
@@ -31,7 +31,7 @@ Consider two equal-size layer groups. If one loses much more quality at four bit
 
 ## Use the existing search, measure the missing cost
 
-AutoQuantize is already documented in the checked Model Optimizer development snapshot, including gradient and KL scoring. Its limitations include independently estimated layer sensitivity, diagonal curvature, grouped choices, and a proxy cost based on effective bits. Reimplementing the sensitivity search is not justified by those limitations.
+AutoQuantize is already documented in the checked Model Optimizer development snapshot, including gradient and KL scoring. Its limitations include independently estimated layer sensitivity, diagonal curvature, grouped choices, and a proxy cost based on effective bits.
 
 The useful remaining work is a workload-aware choice among deployable assignments. Measure each candidate group's complete stage cost at relevant decode and prefill shapes, including quantization, padding, epilogues, and format transitions. Reject unsupported format combinations at the existing exporter/runtime boundary rather than inventing a parallel checkpoint schema. Treat FP8, NVFP4, MXFP4, and BF16 as hardware-specific choices; native low-bit support, MoE layouts, and model-specific exclusions determine the available menu.
 

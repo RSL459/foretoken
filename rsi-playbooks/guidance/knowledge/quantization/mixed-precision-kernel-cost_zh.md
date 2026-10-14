@@ -17,13 +17,13 @@ Model Optimizer AutoQuantize 对每个可量化算子 `i` 和格式 `f`，用对
 S_i,f ∝ Σ_k g_i,k² (Y_i,k − Y^Q_i,f,k)²。
 ```
 
-它捕获输入、取得输出梯度，局部重放候选量化器，再通过整数规划，在有效 bit 预算下给每个算子或部署组选择一种格式：
+其中 `Y_i` 与 `Y^Q_i,f` 分别为参考和 fake-quantized 算子输出，`g_i,k = ∂L/∂Y_i,k` 是评分损失的输出梯度，k 遍历输出元素；分数汇总校准观察。它捕获输入、取得输出梯度，局部重放候选量化器，再通过整数规划，在有效 bit 预算下给每个算子或部署组选择一种格式：
 
 ```text
 min Σ_i S_i,f(i)，约束 Σ_i N_i b_i,f(i) ≤ N_total b_target。
 ```
 
-只有参与搜索的可量化权重计入该预算；被排除的 embedding 和 norm 仍占内存。有效 bit 可以反映部分格式元数据，但这不是服务延迟目标。
+`N_i` 是算子 i 参与搜索的权重数，`b_i,f` 是格式 f 的每权重 bit 成本，`N_total = Σ_i N_i`，`b_target` 是目标平均 bit 数。只有参与搜索的可量化权重计入该预算；被排除的 embedding 和 norm 仍占内存。有效 bit 可以反映部分格式元数据，但这不是服务延迟目标。
 
 当前实现会将 QKV、gate/up projections、稀疏专家等部署决策分组，因为 runtime 可能合并权重或要求同一量化契约。独立给 Q、K、V 三种格式，可能得到数值上好看、却不能使用现有融合投影的方案。组内敏感度与成本相加，也没有表示所有误差交互。
 
@@ -31,7 +31,7 @@ min Σ_i S_i,f(i)，约束 Σ_i N_i b_i,f(i) ≤ N_total b_target。
 
 ## 复用已有搜索，测量缺失的成本
 
-已核对的 Model Optimizer 开发快照已经公开 AutoQuantize、梯度和 KL scoring。局部敏感度、对角曲率、分组约束及有效 bit 代理成本，是已有方法的边界，而不是重新开发同类搜索的理由。
+已核对的 Model Optimizer 开发快照已经公开 AutoQuantize、梯度和 KL scoring。该方法采用局部敏感度、对角曲率、分组约束及有效 bit 代理成本。
 
 剩余收益空间是按负载选择可部署方案。测每个候选组在真实 decode/prefill 形状下的完整阶段成本，包含量化、补齐、输出处理与格式转换。格式组合是否可导出和执行，应沿用既有 exporter/runtime 边界，不建立另一套检查点协议。FP8、NVFP4、MXFP4、BF16 的选择依赖硬件原生指令、MoE 布局和模型排除项。
 

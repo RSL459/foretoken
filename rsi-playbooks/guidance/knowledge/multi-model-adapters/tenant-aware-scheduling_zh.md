@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 rank 128 的租户可能比 rank 8 消耗更多 adapter 计算和驻留空间；低延迟与宽松延迟租户也不应只用一个平均 TTFT 判断。共享基础模型的请求已经可以组批，真正问题是 rank、热度、期限不同时，哪些请求适合共享批次和设备。
 
-2025 年 11 月的 LoRAServe 研究 rank 感知的分布式放置与 routing；2026-10-04 提交的 HALO 研究多 SLO 调度及 base/LoRA 执行重叠。前者决定请求去哪儿，后者决定何时执行 prefill/decode，单篇论文都不是完整租户服务实现。
+2025 年 11 月的 LoRAServe 研究 rank 感知的分布式放置与 routing；2026-10-04 提交的 HALO 研究多 SLO 调度及 base/LoRA 执行重叠。前者决定请求去哪儿，后者决定何时执行 prefill/decode。
 
 ## 一次调度决策如何产生
 
@@ -19,7 +19,7 @@ LoRAServe 根据近期流量估计各 adapter 的 token 需求，结合在 SLO �
 
 worker 上，HALO 按下一个期限计算请求 slack。prefill 受 TTFT 约束，decode 受逐 token TBT 约束。已经缓冲了一些生成 token 的请求可能暂时跳过 decode iteration，把容量让给更急的请求。其 output queue 将生成和客户端释放分开，因此 GPU 生成时间与客户端收到时间是两种测量。
 
-HALO 还在 decode 用经调优的 SM 分配重叠 base 与 LoRA 计算。两条独立路径消费同一输入，再在适配层输出汇合。它以反馈搜索配置，而不是假设平分 SM 最优；论文也明确，这种并行不改善 prefill。研究时应与引擎现有 overlap 路径比较，不能声称所有引擎都缺这项能力。
+HALO 还在 decode 用经调优的 SM 分配重叠 base 与 LoRA 计算。两条独立路径消费同一输入，再在适配层输出汇合。它以反馈搜索配置，而不是假设平分 SM 最优；论文也明确，这种并行不改善 prefill。比较时采用目标引擎现有 overlap 路径作为对照。
 
 ## 条件、权重和代价
 
@@ -35,12 +35,12 @@ LoRAServe 使用 A100 与 InfiniBand/GPUDirect RDMA 获取远端 adapter，放�
 
 按租户报告 P95/P99 TTFT、TBT、完成 token、失败、队列年龄、期限违约、生成与释放时间，以及 SLO 合格 goodput。记录 adapter 迁移、传输字节、切换成本、CPU/GPU 排队、SM 分区效率。保留总到达需求，不能丢弃难请求后冒充吞吐提升。
 
-rank 放置只适合静态热度，应查预测滞后与迁移成本；客户端 TBT 改善而生成未变快，说明缓冲解释了结果；紧急吞吐靠饿死低频租户增加，说明需要明确公平性目标。剩余研究在联合考虑成本和期限、可测量租户结果，不是重新包装基本多 LoRA 服务。
+rank 放置只适合静态热度，应查预测滞后与迁移成本；客户端 TBT 改善而生成未变快，说明缓冲解释了结果；紧急吞吐靠饿死低频租户增加，说明需要明确公平性目标。剩余问题是联合考虑成本与期限，如何改变可测量的租户结果。
 
 ## 来源与核对状态
 
 核对日期：2026-10-14。
 
-- [LoRAServe，arXiv:2511.22880v1](https://arxiv.org/html/2511.22880v1)：算法、远端传输和负载；该版本承诺接受后发布代码与 trace，但未提供作者仓库，不推断后续可用状态。
+- [LoRAServe，arXiv:2511.22880v1](https://arxiv.org/html/2511.22880v1)：算法、远端传输和负载；该版本承诺接受后发布代码与 trace，但未提供作者仓库。
 - [HALO，arXiv:2610.04956v1](https://arxiv.org/html/2610.04956v1)：2026-10-04 提交，slack 调度、SM 搜索和输出队列；此版本未找到作者代码链接。
-- [SGLang LoRA 文档](https://docs.sglang.io/advanced_features/lora.html)：已有多 adapter 组批与 runtime 限制；main 版本为 2026-10-13 的 `e9400c5`。没有证据时，不为论文设计推断 upstream PR 状态。
+- [SGLang LoRA 文档](https://docs.sglang.io/advanced_features/lora.html)：已有多 adapter 组批与 runtime 限制；main 版本为 2026-10-13 的 `e9400c5`。

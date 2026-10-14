@@ -14,6 +14,6 @@ Decide which arrivals can use shared serving capacity, how long they can wait, a
 - [Deadline-aware admission and goodput](deadline-aware-admission.md): when is rejecting infeasible work more useful than forwarding it, and how should all arrivals be counted?
 - [Tenant queues and overload dispatch](tenant-queues-and-overload.md): how do priority, fairness, shared capacity, and session progress interact during a burst?
 
-These decisions belong to the request layer. [Engine scheduling](../engine-scheduling/README.md) owns actual batch membership and token service; cluster orchestration owns capacity and placement changes. Existing upstream routing, prediction, and flow-control mechanisms are starting points for comparison, not new optimization claims.
+These decisions belong to the request layer. [Engine scheduling](../engine-scheduling/README.md) owns actual batch membership and token service; cluster orchestration owns capacity and placement changes.
 
 Return to [inference knowledge](../README.md).

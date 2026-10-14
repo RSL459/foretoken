@@ -11,11 +11,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 Multi-head Latent Attention（MLA）把历史 token 压缩为多个 query head 共享的 latent 向量，减少缓存容量。不过 decode 仍要读取历史、计算各 head 的分数，并合并分片输出。缓存小不等于执行快：scale 读取、离散 gather、反量化和输出投影可能成为主要成本。
 
-FlashMLA 已实现稠密与稀疏 MLA。2026-09-30 的版本变化是重要边界：当前 README 移除了 Hopper 和 DeepSeek V3/V3.2/V4.0 支持，V4.1 还采用不同缓存格式；旧模型明确指向早期固定 commit。因此，“升级到最新 FlashMLA”不是模型无关的优化，已经发布的稀疏内核也不能再作为新方案本身。
+FlashMLA 已实现稠密与稀疏 MLA。2026-09-30 的版本变化是重要边界：当前 README 移除了 Hopper 和 DeepSeek V3/V3.2/V4.0 支持，V4.1 还采用不同缓存格式；旧模型明确指向早期固定 commit，应按模型及缓存格式选择实现。
 
 ## 实际存储与计算过程
 
-简化的 MLA token 包含压缩 latent `c_t` 和位置 key `r_t`。将投影吸收到 query 之后，一个 query head 的计算可写成：
+简化的 MLA token 包含压缩 latent `c_t` 和位置 key `r_t`。将投影矩阵与 attention scale 吸收到 query 之后，一个 query head 的计算可写成：
 
 ```text
 score(t) = q_latent · c_t + q_position · r_t
@@ -27,7 +27,7 @@ output   = project(z)
 
 在 breaking change 之前的固定版本中，V3.2 稀疏 FP8 格式每 token 占 656 字节：512 字节 E4M3 latent，16 字节中的四个 FP32 scale，以及 64 个 BF16 RoPE 值占用的 128 字节。每个 scale 对应连续 128 个 latent 值。这是特定模型的物理格式，不是所有 MLA 的通用约定。
 
-当前 V4.1 格式则是 512 个 FP8 值加十六个 E8M0 scale，共 528 字节。FP4 extra-cache 把 512 个 E2M1 值打包为 256 字节，再加 32 个 E4M3 scale。把旧布局交给新内核，不只是快慢不同，而是数值会被解释错。早期 V4.0 的维度以及 page 中 scale 的位置也另有规则。
+当前 V4.1 的 512 个 FP8 值已包含 64 个 RoPE 维度，加十六个 E8M0 scale，共 528 字节。FP4 extra-cache 把 512 个 E2M1 值打包为 256 字节，再加 32 个 E4M3 scale，共 288 字节；它只能作为 `extra_k_cache`，与 V4.1 FP8 主缓存配合使用。把旧布局交给新内核，不只是快慢不同，而是数值会被解释错。早期 V4.0 的维度以及 page 中 scale 的位置也另有规则。
 
 分页稀疏 decode 接收选中的物理 token 位置。即使 top-k 很小，位置分散到许多 page 后仍会产生不连续读取。split attention 并行计算不同片段，各片段有自己的归一化统计；合并时必须使用 log-sum-exp，而不能直接平均输出。调度元数据决定这些工作怎样分配，必须与当前 decode 配置对应。
 

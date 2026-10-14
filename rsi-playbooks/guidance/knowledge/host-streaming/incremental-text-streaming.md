@@ -17,7 +17,7 @@ Consider a character whose UTF-8 bytes span several token IDs. Decoding each tok
 
 Repeatedly decoding the entire generated prefix of lengths 1 through n performs work proportional to 1 + 2 + ... + n, or O(n²), if decode cost is linear in prefix size. Repeatedly constructing the entire accumulated string can have the same effect even with a fast native decoder. An incremental implementation aims for work proportional to newly consumed tokens plus the context needed to resolve boundaries. This is not a universal complexity guarantee: tokenizer rules, parser replay, stop matching, and response representation still matter.
 
-The inspected vLLM detokenizer has native `DecodeStream` and helper-based incremental paths. It maintains output positions and distinguishes accumulated output from delta output. SGLang's detokenizer manager tracks surrogate/read offsets, unsent text, and deferred chunks; grouped `batch_decode` calls serve compatible decoding settings. These are existing implementations. The research question is whether the active path still revisits long history, repeats conversions, or spends more time in serialization than decoding.
+The inspected vLLM detokenizer has native `DecodeStream` and helper-based incremental paths. It maintains output positions and distinguishes accumulated output from delta output. SGLang's detokenizer manager tracks surrogate/read offsets, unsent text, and deferred chunks; grouped `batch_decode` calls serve compatible decoding settings. The research question is whether the active path still revisits long history, repeats conversions, or spends more time in serialization than decoding.
 
 Stop-string semantics impose necessary buffering. For a longest stop string of L characters, vLLM withholds up to L − 1 characters while generation continues when stop strings must be excluded. Otherwise an emitted suffix could later become part of a forbidden stop marker. If tokens contribute few characters, this can delay visible text for multiple device steps. On completion the remaining permissible text must be flushed, and matched stop text trimmed according to the configured inclusion rule.
 
@@ -27,7 +27,7 @@ Let each output operation cost a fixed a plus b per token. Emitting k tokens tog
 
 Batching may therefore help many short, fast streams while harming a single interactive stream. A bound based only on token count can trap the final partial group or delay cancellation. State also grows with active requests: tokenizer history, retained strings, parser state, and queued output are separate contributors. More decoder workers do not help a bottleneck in a shared output queue, nor do they balance work if routing concentrates long streams on one worker.
 
-Fastokens is an existing optional vLLM backend for supported BPE tokenizer paths, documented for vLLM 0.23.0 onward with fastokens 0.2.0 or later. It does not cover every tokenizer mode. Comparing it with another path asks about the actual tokenizer and workload; it is not evidence of a new algorithm or a guaranteed gain on a particular accelerator.
+Fastokens is an existing optional vLLM backend for supported BPE tokenizer paths, documented for vLLM 0.23.0 onward with fastokens 0.2.0 or later. It does not cover every tokenizer mode. Compare backend cost using the actual tokenizer, output lengths, and concurrent streams.
 
 ## Separate text correctness from transport performance
 

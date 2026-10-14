@@ -17,7 +17,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 如果每次都解码整个生成前缀，长度依次为 1 到 n，且解码成本与长度线性相关，总工作量就是 1 + 2 + ... + n，即 O(n²)。即使原生 decoder 很快，反复构造完整累计字符串也可能产生同样的增长。增量实现希望成本主要跟随新增 token 和解决边界所需的少量上下文，但 tokenizer 规则、parser replay、stop 匹配和响应表示仍会改变实际复杂度。
 
-核验的 vLLM detokenizer 已有原生 `DecodeStream` 和 helper 增量路径，维护输出位置并区分累计输出与 delta 输出。SGLang detokenizer manager 维护 surrogate/read offset、未发送文本及延迟分片，并按兼容解码设置进行分组 `batch_decode`。这些不是待发明的功能。研究应进一步确认当前启用路径是否重复访问长历史、反复转换格式，或已经由序列化而非解码主导。
+核验的 vLLM detokenizer 已有原生 `DecodeStream` 和 helper 增量路径，维护输出位置并区分累计输出与 delta 输出。SGLang detokenizer manager 维护 surrogate/read offset、未发送文本及延迟分片，并按兼容解码设置进行分组 `batch_decode`。研究应进一步确认当前启用路径是否重复访问长历史、反复转换格式，或已经由序列化而非解码主导。
 
 Stop string 本身要求一定缓冲。当最长 stop string 有 L 个字符且不应出现在输出中时，vLLM 在生成过程中保留至多 L − 1 个字符，否则已发送的后缀可能后来组成 stop marker。若每个 token 只贡献少量字符，可见文本就会延后多个设备步骤。结束时还必须发送剩余合法文本，并按 inclusion 规则裁剪匹配到的 stop 内容。
 
@@ -27,7 +27,7 @@ Stop string 本身要求一定缓冲。当最长 stop string 有 L 个字符且�
 
 因此，分组可能适合大量短而快的流，却损害单用户交互延迟。只按 token 数触发的策略还可能扣住最后不足一组的输出，或延迟取消。活跃请求的内存也不只有 token 历史：保留字符串、parser 状态和排队输出都要分别计算。共享输出队列已经饱和时，多 decoder worker 无法解决问题；长流集中在一个 worker 时，增加 worker 也不等于均衡。
 
-Fastokens 是 vLLM 已有的可选 backend。官方文档注明从 vLLM 0.23.0 起，可用于受支持的 BPE tokenizer 路径，并要求 fastokens 0.2.0 或更新版本；不是所有 tokenizer 模式都适用。比较它与其他路径需要真实 tokenizer 和 workload，不能当成新算法，也不能推断某种加速器上的必然收益。
+Fastokens 是 vLLM 已有的可选 backend。官方文档注明从 vLLM 0.23.0 起，可用于受支持的 BPE tokenizer 路径，并要求 fastokens 0.2.0 或更新版本；不是所有 tokenizer 模式都适用。比较 backend 成本时，应使用实际 tokenizer、输出长度和并发流数。
 
 ## 先区分文本正确性与传输性能
 

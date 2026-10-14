@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 张量并行 TP 通过切分权重容纳或加速模型，却也在层内引入反复同步。小 decode 消息可能受延迟限制，大 prefill 消息可能受带宽限制。增加 TP 会缩小本地矩阵乘法，也可能增加通信占比。
 
-vLLM 已有 custom all-reduce、all-gather、reduce-scatter 及其他通信路径。核对的源码包含 MNNVL all-gather/reduce-scatter 和低 SM multimem reduce-scatter。不能再笼统说所有 custom collective 只支持单节点，但这也不意味着旧 IPC all-reduce 成了通用 RDMA 实现。研究问题是怎样把实际消息形状和拓扑匹配到已有路径。
+vLLM 已有 custom all-reduce、all-gather、reduce-scatter 及其他通信路径。核对的源码包含 Multi-Node NVLink（MNNVL）all-gather/reduce-scatter 和低 SM multimem reduce-scatter。这些路径要求 NVLink multicast 域；旧 IPC all-reduce 则是独立的 peer-access 路径。研究问题是怎样把实际消息形状和拓扑匹配到已有路径。
 
 ## 执行机制
 

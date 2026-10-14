@@ -13,7 +13,7 @@ Graph capture memory, cross-step output validity, and replay-compatible state mu
 
 CUDA Graph replay reuses captured addresses. Data at those addresses can change, but moving or replacing an allocation does not update captured pointers: replay still accesses the original addresses. This distinction is central to serving: input tokens change every step, whereas graph buffers, weights, and many cache allocations are expected to remain stable.
 
-PyTorch's current CUDA Graph Trees share a graph-aware memory pool across recordings. They track live outputs and allocation patterns so compatible paths can reuse memory. This is existing runtime functionality; a new inference optimization should first use the engine's allocator and graph wrappers rather than construct another pool manager.
+PyTorch's current CUDA Graph Trees share a graph-aware memory pool across recordings. They track live outputs and allocation patterns so compatible paths can reuse memory. Inference integration uses the engine's allocator and graph wrappers to keep those lifetimes under one owner.
 
 ## Why branches affect memory reuse
 
@@ -23,7 +23,7 @@ Consequently, the number of recordings depends on execution paths and tensor lif
 
 ## Mutation and cross-step ownership
 
-PyTorch distinguishes stable parameters/buffers, previous graph outputs, and ordinary eager inputs. An eager input may be copied to a static staging address before replay. Mutating that staging tensor does not automatically update the original eager tensor. Graph-managed outputs and stable buffers have different possibilities because their addresses are already controlled.
+PyTorch distinguishes stable parameters/buffers, previous graph outputs, and ordinary eager inputs. An eager input may be copied to a static staging address before replay. Mutation would affect the staging copy rather than the original eager tensor, so CUDA Graph Trees skips functions that mutate eager inputs. Parameters/buffers and previous graph outputs can support mutation after stable-address checks.
 
 Similarly, a model output retained across iterations can be overwritten by a later replay if the runtime regards the previous iteration as finished. PyTorch documents step markers and cloning strategies; v2.14 also documents opt-in cloning of live user-visible output storages. Those facilities do not make arbitrary internal recurrent state or KV storage disposable.
 

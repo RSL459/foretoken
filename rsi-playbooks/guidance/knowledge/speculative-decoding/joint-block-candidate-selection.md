@@ -11,15 +11,15 @@ English | [简体中文](joint-block-candidate-selection_zh.md) | [Speculative d
 
 Parallel block prediction removes serial auxiliary forwards, but per-position plausibility is not joint plausibility. A draft can predict an opening identifier and a later use of a different identifier, even when each token is locally common. Target verification rejects the inconsistent prefix, so a high marginal accuracy can coexist with short committed spans. Joint candidate selection studies how to spend a small amount of extra draft computation on consistency before paying for target verification.
 
-LiLiCorr builds on a DFlash auxiliary model rather than introducing another full language model. There is one target, one DFlash backbone, and a learned correlator head. DFlash2 also already supplies a trained candidate selector and local convolution; the broad idea of adding candidate dependence is not absent from engines. The mechanisms and checkpoint requirements must be distinguished rather than calling every selector LiLiCorr.
+LiLiCorr uses one target, one DFlash backbone, and a learned correlator head. Its compatibility vectors are contextualized by the full candidate lattice. DFlash2 instead scores adjacent token identities with learned predecessor/successor embeddings and adds local convolution in the drafter. These mechanisms require different head weights and checkpoint geometry.
 
-This is presently a training/research candidate, not a ready deployment recipe: the inspected SGLang documentation explicitly states that no LiLiCorr drafter is published yet. Implemented loading support does not supply the learned correlator weights. A user with only a plain DFlash checkpoint should use that existing path, not invent a compatible head by changing its architecture name.
+The inspected SGLang documentation states that no LiLiCorr drafter is published yet. Experiments therefore require training the backbone and correlator; plain DFlash checkpoints use the existing DFlash path.
 
 ## Mechanism and one cycle
 
 Given a committed prefix and verified anchor, DFlash produces top-k token candidates at every unverified block position. LiLiCorr jointly processes the candidate lattice with a small bidirectional transformer. It assigns candidates incoming and outgoing vectors; adjacent-position pair compatibility is computed through their similarity. Batched pair scores require no serial neural forward for every chosen token. A left-to-right walk selects a path through the lattice, conditioned on prior choices.
 
-The original paper trains with oracle-prefix cross-entropy and a target-weighted penalty against distractors, co-training the DFlash backbone and correlator. Candidate coverage matters: a selector cannot recover a target token absent from the candidate set. A pretrained plain DFlash module plus an untrained correlator therefore does not satisfy the method's assumptions.
+The original paper trains with oracle-prefix cross-entropy and a target-weighted penalty against distractors, co-training the DFlash backbone and correlator. Candidate coverage matters: a selector cannot recover a target token absent from the candidate set.
 
 After selecting or sampling the chain, run ordinary causal target verification. If selection is deterministic, proposal q is a point mass at each chosen token. If the walk samples, provide the normalized conditional distribution used at each visited lattice step, not the backbone's unary probabilities. Accept and correct according to the exact verifier, commit the accepted chain and correction/bonus, then discard all unused lattice paths and rejected suffixes. The target is still responsible for correctness; the correlator only tries to make proposals cheaper per committed token.
 
@@ -37,9 +37,10 @@ Pinned vLLM documentation at `6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9` requires
 
 SGLang uses `DFLASH` with checkpoint-selected LiLiCorr architecture rather than a separate algorithm flag. It warns about host sequence-length synchronization and eager fallback head execution, both of which can erase a small selector gain. These are deployment costs distinct from the paper's coherence mechanism.
 
-Without trained weights, begin with a training plan and candidate-coverage analysis, not a claimed service experiment. If compatible weights become available, compare plain DFlash, the trained selector, and probabilistic selection at identical block width, target/draft revisions, and sampler settings. Match training investment when comparing trained variants. Ablate k and compute coverage/ranking splits on identical reached prefixes. Record lattice/head time, graph versus eager steps, feature transfer, memory, first-failure position, and actual committed length.
+Begin with candidate-coverage analysis and training to produce compatible weights. If compatible weights become available, compare plain DFlash, the trained selector, and probabilistic selection at identical block width, target/draft revisions, and sampler settings. Match training investment when comparing trained variants. Ablate k and compute coverage/ranking splits on identical reached prefixes. Record lattice/head time, graph versus eager steps, feature transfer, memory, first-failure position, and actual committed length.
 
 Then measure unprofiled client TTFT, inter-token latency, completion time, throughput, SLO capacity, and output quality. Inspect sampled output distributions independently of acceptance improvements. Remaining questions include whether the head's marginal gain pays for lattice work, how candidate sets should change by domain, and how graph folding interacts with quantized projections.
+
 ## Sources and status
 
 Checked 2026-10-14.

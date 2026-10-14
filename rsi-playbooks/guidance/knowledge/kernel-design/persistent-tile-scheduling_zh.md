@@ -15,7 +15,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 假设共有 100 个等成本输出块，80 个执行单元同时工作。第一轮结束后，只有 20 个继续做第二块，其余 60 个已经空闲。持久化并不会自动消除这部分尾浪；它改变的是任务分配方式，以及准备、加载、计算和写回如何交叠。更利于缓存的遍历顺序，也可能造成更差的负载平衡。
 
-Triton 当前的 Gluon 教程已实现普通顺序和分组顺序，CUTLASS 也已有 cooperative、ping-pong 等持久化内核。值得研究的是实际推理形状需要什么分块顺序和资源配置，而非重新引入持久化这个概念。
+Triton Gluon 教程提供普通顺序和改善复用的分组顺序，CUTLASS 提供 cooperative、ping-pong 等持久化内核。分块顺序和资源配置可按实际推理形状选择。
 
 ## 跟随一个输出块执行
 
@@ -39,7 +39,7 @@ Gluon 示例分别采用 Hopper 的 warp-group MMA 和 Blackwell 的 `tcgen05`�
 
 ## 来源与实现状态
 
-核对日期：2026-10-14。以下机制已经存在于上游。
+核对日期：2026-10-14。
 
 - [Triton Gluon 持久化教程](https://triton-lang.org/main/getting-started/tutorials/gluon/persistence.html)：生产者／消费者计数和缓冲区生命周期。
 - [固定版本教程实现](https://github.com/triton-lang/triton/blob/4ee1a827440d453ca276ded4219190d5e7346b8b/python/tutorials/gluon/07-persistence.py)：包含 Hopper 与 Blackwell 路径。

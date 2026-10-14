@@ -9,14 +9,13 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 不同请求的延迟目标不同时，每轮都让所有活跃流 decode，可能把紧缺容量花在本来可以稍等的请求上。反过来，一味优先 decode 又会让等待中的 prefill 错过首 token 期限。批次选择需要同时考虑两个阶段及每个请求实际需要的服务频率。
 
-## 现有机制与研究增量
+## 现有执行机制
 
-当前 vLLM V1 已有 chunked prefill、依赖优先级的抢占，以及 `next_decode_eligible_step` 检查。这些是执行机制，不能据此认定已有完整的异构 SLO 优化器。SOLA 研究每轮排序与工作量；SCORPIO 的 2026 年 8 月修订把准入、deadline 队列和不同 decode 频率结合起来。它们处理的目标比“增加请求优先级”更具体。
+当前 vLLM V1 已有 chunked prefill 和依赖优先级的抢占。`next_decode_eligible_step` 在 V2 runner 的异步 pipeline-parallel 路径中控制 decode 间隔，使其匹配采样 token 的广播节奏，不是逐请求 SLO 策略。SOLA 在 vLLM 0.4.2 集成中研究每轮排序与工作量；SCORPIO 的 2026 年 8 月修订把准入、deadline 队列和不同 decode 频率结合起来。
 
-SOLA 的实验集成基于历史 vLLM 0.4.2，不能把论文对其默认顺序的描述当作今天 V1 的默认行为。
 ## 服务频率如何改变批次
 
-假设一类请求要求 TPOT 不超过 50 ms，另一类允许 100 ms。SCORPIO 用最严格目标除以请求自身目标得到 token requirement proportion：`TRP = min_target / request_target`。两类比例分别为 1 和 0.5。每轮 decode 增加相应 credit，credit 达到一的请求进入批次，并消耗一个 credit。因此宽松请求大约每两轮执行一次，而非每轮都执行。
+假设一类请求要求 TPOT 不超过 50 ms，另一类允许 100 ms。SCORPIO 用最严格目标除以请求自身目标得到 token requirement proportion：`TRP = min_target / request_target`。最严格目标取自当前运行集合，因此集合中最严格目标变化时，各请求比例也随之变化。两类比例分别为 1 和 0.5。每轮 decode 增加相应 credit，credit 达到一的请求进入批次，并消耗一个 credit。因此宽松请求大约每两轮执行一次，而非每轮都执行。
 
 这种安排还要求批次实际耗时满足目标。SCORPIO 根据各请求比例之和形成 virtual batch size，并结合序列长度估计 TPOT。若一轮本身耗时 90 ms，credit 算术无法满足 50-ms 目标；平均 TPOT 也不能保证每次 token 间隔，因为迭代耗时会波动。
 
@@ -36,7 +35,7 @@ Andes 把目标进一步扩展到用户体验：比较实际交付 token 进度�
 
 Goodput 应按每秒完成且同时满足两项目标的请求数计算；所有到达请求的拒绝、超时和取消都要可见。还需报告逐类别达标率、最差类别排队延迟、p99 token 间隔、抢占、内存占用和调度开销。只提高“已接纳请求的成功比例”不能证明容量增加。用执行轨迹确认收益来自批次工作变化，而非缩短输出或丢弃请求。
 
-下一步应核对引擎元数据是否能端到端表达所需 SLO 与执行频率，复用已有调度入口，再测量策略。增加字段或引用论文总收益，都不能替代这个集成闭环。
+候选集成需要在引擎元数据中表达请求目标，并由批次选择入口消费这些目标，再端到端测量执行频率与可达性决策。
 
 ## 来源
 

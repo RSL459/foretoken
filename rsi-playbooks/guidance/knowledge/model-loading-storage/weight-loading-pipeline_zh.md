@@ -21,7 +21,7 @@ vLLM [DefaultModelLoader](https://github.com/vllm-project/vllm/blob/6849ca696ac9
 
 ## 已有能力
 
-[2026-10-14 快照](README_zh.md#来源快照)中的 vLLM [ShardedStateLoader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/sharded_state_loader.py)已读取 rank 专属 safetensors，直接复制到准备好的参数中。文件名编码当前 TP/PP 维度，并过滤别名和重叠 view，避免重复存储。它不负责任意运行时量化或重新分片；拓扑特定检查点不能未经明确转换就用于其他拓扑。
+[2026-10-14 快照](README_zh.md#来源快照)中的 vLLM [ShardedStateLoader](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/sharded_state_loader.py)已读取 rank 专属 safetensors，直接复制到准备好的参数中。默认文件名记录 TP rank，启用 PP 时还记录 PP rank，而非并行大小。别名和重叠 view 过滤避免重复存储。它不负责任意运行时量化或重新分片；拓扑特定检查点不能未经明确转换就用于其他拓扑。
 
 默认 loader 已有本地 expert 过滤和 fastsafetensors/instanttensor 专用路径，过滤还受 expert 负载均衡等条件约束。vLLM 也已接入 [ModelExpress](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/model_executor/model_loader/modelexpress_loader.py)，都是新建自定义加载系统之前应检查的现有选择。
 

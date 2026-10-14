@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-按专家层的实际瓶颈选择条目。每篇区分上游已有机制与剩余研究，并给出能区分原因的实验。来源状态核对于 2026-10-14。
+按专家层的实际瓶颈选择条目。
 
 - 输入收集、激活搬运比矩阵乘法更贵？[减少物化的分组 GEMM](tile-aware-grouped-gemm_zh.md)解释收集融合、异步输出写入，以及为何训练 token rounding 不是保持原路由的推理优化。
 - 面向吞吐的核函数在低负载反而变慢？[小批工作划分](small-batch-megakernel-scheduling_zh.md)区分有效 token 与容量，比较分离执行和持久 megakernel 角色分工。

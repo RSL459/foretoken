@@ -11,11 +11,11 @@ English | [简体中文](recurrent-speculation-replay_zh.md)
 
 A recurrent layer retains a matrix per request rather than token-wise KV. Conventional decode reads and writes that entire matrix each step. Speculative verification may additionally retain intermediate states so rejection can restore the accepted prefix. At high batch, those bytes can dominate even though history length no longer determines the recurrent-state size.
 
-ReplaySSM's October 9, 2026 paper represents state as a checkpoint plus recent input records. SGLang already merged ordinary-decode integration in PR #28451 on June 26 and speculative integration in #28695 on July 20, following earlier public work. The separate compact-cache PR #27658 was still open when checked. The remaining opportunity is workload-specific representation and lifecycle cost, not presenting replay or cursor rollback as unimplemented upstream ideas.
+ReplaySSM's October 9, 2026 paper represents state as a checkpoint plus recent input records. SGLang already merged ordinary-decode integration in PR #28451 on June 26 and speculative integration in #28695 on July 20, following earlier public work. The separate compact-cache PR #27658 was still open when checked. The remaining opportunity is workload-specific representation and lifecycle cost.
 
 ## Mechanism: avoid materializing every state
 
-Use value-first state `S` with shape `[V,K]`. A scalar-decay GDN update can be expressed as:
+Use value-first state `S` with shape `[V,K]`, where `V` and `K` are the value and key dimensions. Column vectors `v_t` and `d_t` have length `V`; `k_t` and the scaled query `q_t` have length `K`. Scalars `alpha_t` and `beta_t` control decay and update strength. A scalar-decay GDN update can be expressed as:
 
 ```text
 d_t = beta_t * (v_t - alpha_t*S_previous*k_t)
@@ -40,9 +40,9 @@ Flush ordering is part of correctness. Rejected records cannot enter the permane
 
 This is primarily a bandwidth optimization for large recurrent states and sufficient batch. Batch-one decode may be launch- or compute-bound, and replay work can outweigh fewer writes. A hybrid model with dominant MoE or full attention may show little end-to-end gain even if its GDN kernel improves.
 
-Increasing `L` reduces flush frequency but increases buffer reads and reconstruction. Scalar-decay Mamba/GDN formulas do not automatically cover KDA's channel-wise gates. State orientation, activation dtype, checkpoint precision, and dot-product precision all affect the selected kernel.
+Increasing `L` reduces flush frequency but increases buffer reads and reconstruction. The scalar-decay formulas for Mamba-2 and GDN require a different replay derivation for KDA's channel-wise gates. State orientation, activation dtype, checkpoint precision, and dot-product precision all affect the selected kernel.
 
-The paper also separates a high-precision recurrence checkpoint from a lower-precision output-read checkpoint. Flush reconstructs from the high-precision state and casts both copies independently, so low-precision readout rounding does not feed back into future recurrence. This differs from repeatedly updating a quantized state. It still changes output numerics and needs model-quality evaluation.
+The paper also separates a high-precision recurrence checkpoint from a lower-precision output-read checkpoint. For GDN, it retains raw `v_t` inputs so flush can recompute the coupled `d_t` corrections from the high-precision checkpoint, rather than reuse corrections derived from low-precision reads. Flush then casts the reconstructed state independently into both checkpoint copies. Low-precision readout rounding therefore affects outputs without feeding back into the next permanent recurrence checkpoint. Evaluate those output changes on the target model's tasks.
 
 ## Implementation and remaining design space
 
@@ -56,13 +56,13 @@ Compare direct recurrence and replay for the same initial state and token stream
 
 For performance, separate non-flush, flush, and forced-publication steps. Sweep batch, replay length, draft length, and accepted-prefix distribution, recording state bytes read/written and reconstruction time. A mean kernel latency can hide flush spikes.
 
-Then run the actual hybrid model with the same draft mechanism, sampling configuration, and memory budget. Compare TPOT tails, successful throughput, acceptance, and quality; include ordinary decode to identify gains due to replay rather than speculation. Report GDN's fraction of model time. Paper and upstream PR measurements establish plausible operating regimes, not results on a Foretoken service.
+Then run the actual hybrid model with the same draft mechanism, sampling configuration, and memory budget. Compare TPOT tails, successful throughput, acceptance, and quality; include ordinary decode to identify gains due to replay rather than speculation. Report GDN's fraction of model time to relate the recurrent-kernel change to the complete-model result.
 
 ## Sources and checked state
 
 Checked 2026-10-14.
 
-- [ReplaySSM v1](https://arxiv.org/html/2610.13778v1), [submission record](https://arxiv.org/abs/2610.13778): submitted 2026-10-09 at 15:59:40 UTC; recurrence, replay, speculation, and precision separation.
+- [ReplaySSM v1](https://arxiv.org/html/2610.13778v1), [submission record](https://arxiv.org/abs/2610.13778): submitted 2026-10-09; recurrence, replay, speculation, and precision separation.
 - [SGLang RFC #28511](https://github.com/sgl-project/sglang/issues/28511): closed; integration scope and model-dependent reported results.
 - [PR #28451](https://github.com/sgl-project/sglang/pull/28451): merged at `a10a24e9a7fdc0ddcc7dc3e90c0d4983707db028`; [PR #28695](https://github.com/sgl-project/sglang/pull/28695): merged at `c41c573ce9ed2053d38aa711582e19a67a5e9755`; [PR #27658](https://github.com/sgl-project/sglang/pull/27658): open, not used as evidence of shipped compact-cache support.
 - [Actual verify kernel at `e9400c5a8f3a0d0312a37aecef694f5edfd69341`](https://github.com/sgl-project/sglang/blob/e9400c5a8f3a0d0312a37aecef694f5edfd69341/python/sglang/kernels/ops/attention/fla/gdn_replayssm_spec_decode.py): circular replay, folding, commit conventions, and precision paths.

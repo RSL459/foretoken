@@ -38,6 +38,7 @@ FlashInfer 已实现 NVFP4、MXFP8、FP8/FP4 DeepGEMM 等量化 fused-MoE 与 EP
 覆盖不均匀与空专家、热点、gate/up 转换、padding 维度及强抵消输出。初始化单独计时，每步量化、dispatch、计算、combine 和输出复制分别观察。条件允许时，用相同有效操作数与通信配置比较 dispatch 前后量化。
 
 部署真实完整模型服务，报告未加 profiler 的 TPOT、TTFT、输出长度与任务分数。加入长上下文和混合负载，因为额外工作区可能减少 KV 容量。
+
 ## 依据与剩余问题
 
 核对日期：2026-10-14。FlashInfer [commit a8e747c3](https://github.com/flashinfer-ai/flashinfer/tree/a8e747c3c1f7dfe5d51fab3883824b15da6829b7) 的 [MoE-EP 架构](https://github.com/flashinfer-ai/flashinfer/blob/a8e747c3c1f7dfe5d51fab3883824b15da6829b7/docs/design_docs/moe_ep_architecture.md)、SM100 调优笔记与 [TRT-LLM FP4 接口](https://docs.flashinfer.ai/generated/flashinfer.fused_moe.trtllm_fp4_block_scale_moe.html)。研究空间是目标负载的格式选择、转换位置及数值归因。选择通信格式前参见[小批调度](small-batch-megakernel-scheduling_zh.md)，不要沿用大批量排名。

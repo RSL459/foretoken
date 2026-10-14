@@ -29,18 +29,19 @@ NCCL, RCCL, and MCCL provide analogous collective interfaces but use different d
 
 The checked MetaX communicator already installs backend-specific all-to-all managers and routes MACA all-gather through the base process-group path. An optimization must preserve the actual communicator and tensor movement, rather than replace it with a faster-looking direct wrapper whose ordering differs. The same rank set can participate in more than one communicator; their operation counters are not interchangeable.
 
-Quantized collectives are another distinct choice. Reduced transfer bytes can improve bandwidth-limited communication but add quantization work and numerical error. AMD's guide describes supported Quick Reduce low-bit modes. That is existing functionality, not a proposal to invent a new compressed collective. Eligibility and quality must be established for the target model and reduction.
+Quantized collectives are another distinct choice. Reduced transfer bytes can improve bandwidth-limited communication but add quantization work and numerical error. AMD's guide describes supported Quick Reduce low-bit modes. Supported reduction shapes and acceptable quantization error determine their applicability.
 
 ## Remaining design space and measurement
 
-Useful work includes choosing supported algorithms by actual message distribution, reducing unnecessary layout copies, finding uncovered overlap, and balancing compute versus communication resource use. It does not include transplanting vendor environment variables indiscriminately. BF16/FP16 payloads, quantized reductions, TP collectives, and EP dispatch/combine need separate analysis.
+Useful work includes choosing supported algorithms by actual message distribution, reducing unnecessary layout copies, finding uncovered overlap, and balancing compute versus communication resource use. BF16/FP16 payloads, quantized reductions, TP collectives, and EP dispatch/combine need separate analysis.
 
 Start with the library's existing collective benchmark at the real rank count and message sizes. Add the preceding/following model stage using its real stream and communicator. Compare communication alone, computation alone, and their overlap; record device completion, rank imbalance, packing traffic, and output error. An isolated bandwidth gain that slows GEMM is a negative stage result.
 
-At service level, compare TPOT and TTFT at both low concurrency and the intended traffic mix. Inspect successful token throughput, tail latency, output quality, and progress across all ranks. A faster collective can improve capacity but not latency when another rank remains the bottleneck.
+Compare low concurrency with the intended traffic mix to expose changes in message sizes and rank imbalance. A faster collective can improve capacity but leave latency unchanged when another rank remains the bottleneck.
+
 ## Sources
 
-Checked 2026-10-14; source identities are in the [category index](README.md).
+Checked 2026-10-14; source snapshots are linked below.
 
 - [Current ROCm systems source](https://github.com/ROCm/rocm-systems/tree/f1b316f12c75430787032e99405834f59a026ae1/projects/rccl).
 - [AMD communication and Quick Reduce guidance](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/optimization/vllm-v1-optimization.html).

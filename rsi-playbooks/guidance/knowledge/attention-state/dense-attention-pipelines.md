@@ -11,11 +11,11 @@ English | [简体中文](dense-attention-pipelines_zh.md)
 
 Faster Tensor Cores do not accelerate every part of attention equally. For long-context prefill, matrix products can become fast enough that exponentials, row reductions, probability conversion, and output rescaling dominate. Increasing the GEMM tile alone may increase register pressure or move the bottleneck to shared-memory traffic.
 
-FlashAttention-4 addresses this hardware imbalance, rather than introducing a new attention approximation. Its March 2026 paper and the current CuTe-DSL implementation already provide asynchronous Blackwell pipelines. The remaining question is whether a particular model shape and serving batch reaches those paths efficiently. Reimplementing tiled online softmax is not a new optimization opportunity.
+FlashAttention-4 addresses this hardware imbalance with asynchronous Blackwell pipelines, described in its March 2026 paper and implemented in CuTe-DSL. The remaining question is whether a particular model shape and serving batch reaches those paths efficiently.
 
 ## How the pipeline works
 
-For a query tile, attention streams through key/value tiles instead of materializing the full score matrix. Let the previous running maximum, denominator, and unnormalized output be `m`, `l`, and `O`. For scores `S` in the next tile:
+For a query tile, attention streams through key/value tiles instead of materializing the full score matrix. Initialize the running maximum, denominator, and unnormalized output as `m=-infinity`, `l=0`, and `O=0`. For scores `S` in the next tile, including the attention scale and mask:
 
 ```text
 m' = max(m, rowmax(S))

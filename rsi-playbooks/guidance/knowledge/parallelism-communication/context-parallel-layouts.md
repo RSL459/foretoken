@@ -11,7 +11,7 @@ English | [简体中文](context-parallel-layouts_zh.md)
 
 Long-context prefill distributes many query tokens; decode distributes access to a large history for very few new queries. They need different communication patterns. Calling both sequence or context parallelism (CP) can hide whether the implementation shards queries, heads, KV history, or only intermediate activations.
 
-Unified Sequence Parallelism (USP) already combines Ulysses all-to-all with ring attention. Its paper studies primarily training and long-sequence attention, not continuous decode serving. vLLM already implements decode CP (DCP), and current source also contains prefill-CP cache gathering. Its deployment guide still describes prefill strategies as under development; that wording is not proof that all PCP execution is absent. Backend, model, and worker support must be checked separately.
+Unified Sequence Parallelism (USP) already combines Ulysses all-to-all with ring attention. Its paper studies primarily training and long-sequence attention, not continuous decode serving. vLLM already implements decode CP (DCP), and current source also contains prefill-CP cache gathering. Its deployment guide describes prefill strategies as under development. Availability depends on the backend, model, and worker implementation.
 
 ## Execution mechanisms
 
@@ -28,7 +28,7 @@ L = logsumexp_r(lse_r)
 o = sum_r exp(lse_r - L) * o_r
 ```
 
-An empty shard contributes no mass. Averaging local outputs without these weights is wrong. With a small query, ring prefill's abundant query computation no longer exists to hide transfers.
+An empty shard has `lse_r = -inf` and contributes no mass; the merge skips its undefined normalized output. Averaging local outputs without these weights is wrong. With a small query, ring prefill's abundant query computation no longer exists to hide transfers.
 
 For one KV head and TP eight, plain TP can duplicate history eight times. The vLLM guide describes DCP within that existing TP group to reduce duplication, without adding GPUs. This is a cache-ownership change, not simply a faster collective.
 

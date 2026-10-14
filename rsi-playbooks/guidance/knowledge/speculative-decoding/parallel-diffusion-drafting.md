@@ -29,7 +29,7 @@ For comparable expected commit length L, the serial path costs roughly K*draft_f
 
 An unmeasured example illustrates the distinction: reducing six draft forwards to one helps only if that block forward, feature path, and changed verification cost sum to less than those six forwards. An early disagreement can leave a 16-position block committing only one correction. Shortening verification then saves target work, not the draft forward already completed; see [adaptive verification](adaptive-verification-budget.md).
 
-Current vLLM documentation already provides a PARD example using `amd/PARD-Qwen3-0.6B` with `parallel_drafting: true`. The official DFlash project lists public target-specific weights. DFlash2's local convolution and candidate selector are also already merged: vLLM #52816 and SGLang #35371. They are available implementation paths, not new proposals to claim as Foretoken optimizations.
+Current vLLM documentation already provides a PARD example using `amd/PARD-Qwen3-0.6B` with `parallel_drafting: true`. The official DFlash project lists public target-specific weights. DFlash2's local convolution and candidate selector are also already merged: vLLM #52816 and SGLang #35371. Use these integrations with their matching checkpoints.
 
 At SGLang commit `e9400c5a8f3a0d0312a37aecef694f5edfd69341`, DFlash verifies a linear block, infers its size from the draft config when possible, and requires a draft window at least as large as the block. Its documented path excludes pipeline parallelism and DP attention, and disables overlap scheduling and mixed chunked prefill. Compare these actual execution modes rather than assuming every generic speculative configuration composes with DFlash. Native block-size conventions can include the anchor; vLLM's LiLiCorr guide explicitly counts speculative positions as trained block size minus one.
 
@@ -40,6 +40,7 @@ First establish a working published target/draft pair and the intended engine re
 To distinguish serial-cost removal from better predictions, compare equal expected committed lengths where possible, and report actual proposed/verified/committed positions. Include short outputs, where startup/prefill dominates, and saturated mixed traffic, where verification consumes capacity. Changing scheduler overlap between methods belongs in the result, not a hidden experimental difference.
 
 Remaining questions include maintaining block coherence, selecting context windows without damaging domain-specific continuations, and retaining engine features while packing variable-length verification. [Joint candidate selection](joint-block-candidate-selection.md) addresses coherence as a distinct mechanism.
+
 ## Sources and status
 
 Checked 2026-10-14.

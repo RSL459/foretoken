@@ -19,7 +19,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 例如 H = 2 ms、D = 3 ms，串行间隔为 5 ms，理想重叠间隔为 3 ms。但如果元数据需要当前输出，就必须通过设备侧接力、延迟结算或不同调度决策解决依赖，才能接近这个下界。增加线程池本身做不到这一点。
 
-核验的 vLLM 源码中，`AsyncScheduler` 已经用 output placeholder 记录在途步骤，收到输出后再结算，并处理抢占后的过期结果。这是现有 upstream 机制，不应重新包装成新优化。SGLang 的 overlap 工具按请求索引发布设备状态，记录事件，再由后续输入在正确的同步点消费；仅在消费者需要 CPU 元数据时做主机拷贝。事件顺序与 tensor 生命周期属于这一实现边界，不能仅因一次等待昂贵就删除它，否则下一批可能读到旧状态。
+核验的 vLLM 源码中，`AsyncScheduler` 已经用 output placeholder 记录在途步骤，收到输出后再结算，并处理抢占后的过期结果。SGLang 的 overlap 工具按请求索引发布设备状态，记录事件，再由后续输入在正确的同步点消费；仅在消费者需要 CPU 元数据时做主机拷贝。事件顺序与 tensor 生命周期属于这一实现边界，不能仅因一次等待昂贵就删除它，否则下一批可能读到旧状态。
 
 ## 转移 CPU 工作，不等于减少 CPU 工作
 
@@ -27,7 +27,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 自由线程 CPython 也不是可直接替换的推理优化。Python 3.14 文档区分构建是否支持与运行时 GIL 是否启用；不兼容扩展可能重新开启 GIL。即使去掉 GIL，也不会让事件循环抢占同步 callback，更不会去掉原生库自己的锁。需要核对真实引擎依赖及单线程执行成本。
 
-vLLM renderer 的历史说明了为何必须读完整调用路径。2026 年 7 月合并的 #49396 将非流式 derender 工作放进执行器；9 月的 #57350 报告流式调用仍绕过它。核验的 10 月源码中，普通流式 detokenization 和带解析的流式路径都已有执行器包装。再实现一次旧修复没有新能力。仍值得研究的是执行器饱和、parser replay 成本，以及输入分词与输出渲染之间的竞争。
+核验的 vLLM renderer 中，非流式 derender、普通流式 detokenization 和带解析的流式路径都已有执行器包装。仍值得研究的是执行器饱和、parser replay 成本，以及输入分词与输出渲染之间的竞争。
 
 ## 如何区分这些原因
 

@@ -21,7 +21,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 上游已有能力与近期研究
 
-llm-compressor 已列出 SpinQuant 和 QuIP。SpinQuant 作者仓库提供学习旋转和 ExecuTorch 导出，但不能据此认为任意旋转后的 FP4 检查点都可直接由 vLLM 消费。仍需核对导出格式，以及目标 backend 是否执行所需在线变换。
+llm-compressor 已列出 SpinQuant 和 QuIP。SpinQuant 作者仓库提供学习旋转和 ExecuTorch 导出。在 vLLM 部署取决于导出格式及目标 backend 对所需在线变换的支持。
 
 TORQ（arXiv 2605.19561v1）将 MXFP4 激活问题区分为块间能量不均衡和块内码本利用不足。方法构造 `R = R_inter ⊗ R_intra`：用 Givens rotation 均衡块间协方差对角项，块内旋转与 scale 更新交替，降低码本占用不均衡 `Σ_j (p_j−1/J)²`。方法章节和执行图仍保留在线激活旋转，将逆变换折叠到 consumer 权重。论文报告了质量和 RTX 5090 速度结果，但未定位到具体已合并的上游 serving 路径。值得继续测的是两级结构能否以足够的留出集质量改善，抵偿在线变换成本。
 

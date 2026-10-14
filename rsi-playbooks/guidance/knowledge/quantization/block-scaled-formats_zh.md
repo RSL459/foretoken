@@ -23,7 +23,7 @@ MXFP4 每 32 个 E2M1 值共享一个 E8M0 二次幂 scale。NVFP4 每 16 个值
 
 已核对的 vLLM ModelOpt 文档包含 NVFP4 自动 backend 选择，以及原生 FP4 GEMM 不可用时的 Marlin W4A16 路径。当前 MXFP4 源码已实现按 backend 转换权重与 scale、维度补齐和 modular MoE dispatch。GPT-OSS 的 MXFP4 配置将普通线性层保留为非量化实现，专家权重是 MXFP4 不等于全模型 W4A4。
 
-SGLang 也已有 FP8/FP4 自动选 kernel 与显式覆盖。加载器、块量化器和 dispatch 本身不是待开发候选。真正值得测的是目标模型在小 M 与大 M 下的交叉点、专家 token 分布、转换位置和补齐浪费。Blackwell 原生 NVFP4、AMD CDNA4 FP4、旧设备 weight-only 或转换格式路径要分别分析；相同 dtype 名称不能证明指令支持相同。
+SGLang 也已有 FP8/FP4 自动选 kernel 与显式覆盖。针对负载值得测的是目标模型在小 M 与大 M 下的交叉点、专家 token 分布、转换位置和补齐浪费。Blackwell 原生 NVFP4、AMD CDNA4 FP4、旧设备 weight-only 或转换格式路径要分别分析；相同 dtype 名称不能证明指令支持相同。
 
 ## 如何区分收益来源
 

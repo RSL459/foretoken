@@ -25,7 +25,7 @@ weights_j + state_j + workspace_j + graph_memory_j ≤ usable_memory_j。
 
 ## 上游已有放置机制
 
-已核对的 llama.cpp 多 GPU 指南包含按层放置、GPU layer 数和 split 比例。layer 模式分配连续层，减少设备间传输；experimental tensor 模式切分权重和状态，每层反复跨设备归约。指南主要保证 NVIDIA CUDA 性能，不保证其他 backend 同等效果。tensor 模式要求支持的架构与 flash attention，当前不接受量化 cache，也没有自动 fitting。已废弃 row 模式不能包装成新候选。
+已核对的 llama.cpp 多 GPU 指南包含按层放置、GPU layer 数和 split 比例。layer 模式分配连续层，减少设备间传输；experimental tensor 模式切分权重和状态，每层反复跨设备归约。指南的性能建议主要针对 NVIDIA CUDA。tensor 模式要求支持的架构与 flash attention，当前不接受量化 cache，也没有自动 fitting。
 
 该指南还明确区分 backend：找到 NCCL 时默认在构建中启用，而 HIP RCCL 默认关闭，因为上游测量并非普遍获益。这反映不同执行交换条件，不能推广成其他引擎都应关 RCCL。
 
@@ -38,11 +38,12 @@ CPU 方面，当前 vLLM 指南建议每 rank 的线程和内存在 NUMA 本地�
 相同模型和 dtype 下比较已有单设备、layer 分区与受支持 tensor split。记录实际设备归属、分区时间、传输量、归约时间、CPU 带宽和 NUMA。加载与稳态推理分开；搬权重的路径必须包含每次重复传输，不能只测缓存后的 warmup。
 
 服务侧观察单请求 TPOT、prefill TTFT、batch 吞吐及目标上下文下成功输出；多请求共享 CPU 带宽时还看 host 内存压力与尾延迟。慢一些但能跑更大模型仍可能有价值，不过应报告为容量交换，不是速度提升。
+
 ## 来源
 
 核对日期：2026-10-14。
 
-- [llama.cpp 多 GPU 执行，commit 77c4540ce4667f4577753fe034a3a8042f510b8f](https://github.com/ggml-org/llama.cpp/blob/77c4540ce4667f4577753fe034a3a8042f510b8f/docs/multi-gpu.md)。
+- [llama.cpp 多 GPU 执行，commit 77c4540](https://github.com/ggml-org/llama.cpp/blob/77c4540ce4667f4577753fe034a3a8042f510b8f/docs/multi-gpu.md)。
 - [vLLM CPU 指令、dtype、NUMA 和线程指南](https://docs.vllm.ai/en/latest/getting_started/installation/cpu/)。
 - [llama.cpp token generation 性能入口](https://github.com/ggml-org/llama.cpp/blob/77c4540ce4667f4577753fe034a3a8042f510b8f/docs/development/token_generation_performance_tips.md)；其中示例数字是历史结果，不是当前硬件对比。
 

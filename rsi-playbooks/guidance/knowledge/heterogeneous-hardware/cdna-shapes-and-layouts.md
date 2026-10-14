@@ -11,7 +11,7 @@ A matrix kernel tuned for a large prefill batch can be inefficient for decode or
 
 ## Follow the matrix tile through the machine
 
-For `X[M,K] W[K,N]`, arithmetic work is `2MKN`. Ignoring reuse outside the kernel, operand traffic is approximately `bytes(X)+bytes(W)+bytes(Y)`. At small M, many weights are read for few output tokens; at large M, each weight tile can serve many rows. A roofline estimate `min(compute_ceiling, bandwidth × arithmetic_intensity)` explains the shift but does not include launch overhead, register spills, or poor tile occupancy.
+For `X[M,K] W[K,N]`, arithmetic work is `2MKN`. Reading each input once and writing the output once gives a minimum logical traffic of `bytes(X)+bytes(W)+bytes(Y)`; tile reloads, scale reads, and spills add traffic. At small M, many weights are read for few output tokens; at large M, each weight tile can serve many rows. A roofline estimate `min(compute_ceiling, bandwidth × arithmetic_intensity)` explains the shift but does not include launch overhead, register spills, or poor tile occupancy.
 
 A tiled CDNA kernel loads operands from HBM, stages data in LDS or registers, feeds Matrix Fused Multiply Add (MFMA) instructions, accumulates, and writes an epilogue. Its lane-to-element mapping must match the instruction and datatype. A 64-thread wavefront does not execute a 32-thread CUDA warp's layout unchanged. Larger tiles increase reuse but consume more registers/LDS and can leave few blocks available when M is tiny.
 
@@ -21,7 +21,7 @@ For example, a projection with `M=4` wastes most rows of a tile designed for `M=
 
 ## What upstream already supplies
 
-AMD's current vLLM guide documents AITER linear and skinny-GEMM paths, hipBLASLt selection, FP8 padding, and CDNA4 FP4 assembly GEMM. The FP4 assembly path specifically requires MI350X/MI355X with MXFP4 weights; it is not a CDNA3 FP4 recommendation. AITER already ships operator implementations, model/architecture tuning configurations, and GEMM/MoE test entry points. Recreating these dispatches is not a useful candidate.
+AMD's current vLLM guide documents AITER linear and skinny-GEMM paths, hipBLASLt selection, FP8 padding, and CDNA4 FP4 assembly GEMM. The FP4 assembly path requires MI350X/MI355X with MXFP4 weights. AITER ships operator implementations, model/architecture tuning configurations, and GEMM/MoE test entry points.
 
 The checked vLLM MXFP4 implementation also contains backend-specific format conversion and an explicit gfx942 groupwise-int4 conversion path. That is a different execution representation from native CDNA4 MXFP4 arithmetic. Comparing them only by “four-bit weights” hides the conversion and kernel differences.
 
@@ -31,10 +31,11 @@ Remaining gains can come from missing production shapes, scale/weight layout ali
 
 Use AITER's existing `op_tests/test_gemm_a8w8.py` and `test_moe.py` as entry points, adapting their inputs to actual model shapes and retaining the owning library's measurement procedure. Compare the current selected kernel with another supported schedule. Inspect instruction utilization, LDS/register pressure, spills, launch count, padding, and output error. Include uneven expert token counts rather than only uniform synthetic batches.
 
-Then measure low-load decode and mixed prefill/decode service workloads. Observe TTFT, TPOT, successful throughput, and memory headroom. If GEMM improves but latency does not, check attention, launch gaps, and collectives before adding more tuning dimensions.
+Compare low-load decode with mixed prefill/decode: they expose different M distributions and competition with attention and collectives.
+
 ## Sources
 
-Checked 2026-10-14; identities are in the [category index](README.md).
+Checked 2026-10-14; source snapshots are linked below.
 
 - [AMD architecture specifications](https://rocm.docs.amd.com/en/latest/reference/gpu-arch-specs.html).
 - [Current vLLM/AITER optimization guide](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/optimization/vllm-v1-optimization.html).

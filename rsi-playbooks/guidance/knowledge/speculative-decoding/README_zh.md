@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 | [推理知识](../README_zh.md)
 
-根据生成、验证、校正和提交流程中实际观察到的成本或失败选择机制。来源与引擎支持边界核对日期为 2026-10-14。
+根据生成、验证、校正和提交流程中实际观察到的成本或失败选择机制。
 
 - 固定推测长度有利于单请求，却降低负载下的容量：[按验证成本分配预算](adaptive-verification-budget_zh.md)，比较已有动态分段与自适应验证，并核对 runner、graph 和并行条件。
 - 训练准确率不错，但多步接受跨度很短：[让训练对齐实际解码](draft-training-and-alignment_zh.md)，区分公开 EAGLE3 配对、原生 MTP 和需要新训练权重的目标。
@@ -17,6 +17,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 - 目标前向结束后，词表处理与校正仍昂贵：[采样与校正成本](sampling-and-correction-cost_zh.md)，比较精确逐 token 采样器和受支持的块验证。
 - 并行 token 单独合理，组合后却不连贯：[联合候选选择](joint-block-candidate-selection_zh.md)。LiLiCorr 已有实现支持，但检查到的引擎文档明确尚无公开 draft 权重，因此仍是训练研究起点。
 
-状态存储与递归层回退见[递归状态推测回放](../attention-state/recurrent-speculation-replay_zh.md)。这些条目关注废弃未提交候选、从校正历史继续；截短 attention cache 不能恢复所有模型架构。
+状态存储与循环层回退见[循环状态推测回放](../attention-state/recurrent-speculation-replay_zh.md)。这些条目关注废弃未提交候选、从校正历史继续；截短 attention cache 不能恢复所有模型架构。
 
 保留 target/draft 版本、真实 proposal 分布、采样规则、生成/验证/提交长度和调度模式。分阶段时间需要与客户端 TTFT、输出间隔、完成时间、吞吐及 SLO 容量配对。

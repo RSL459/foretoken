@@ -13,7 +13,7 @@ CUDA Graph 用较少的主机提交重放已记录的设备执行，但仍会完
 
 vLLM v0.31.0 的 dispatcher 分别保存 FULL 和 PIECEWISE key，把 token 数补齐到捕获尺寸，并按需要包含请求几何和 LoRA 状态。运行时先尝试 FULL，再尝试 PIECEWISE，否则选择 NONE。推测解码的 uniform batch 可以每请求包含多个 query token，因此 token 总数并不足以判断图是否兼容。
 
-这些能力已存在。研究重点是结合真实批次分布、attention 后端、混合层和 adapter，改善覆盖率与执行成本。
+图覆盖率和执行成本取决于真实批次分布、attention 后端、混合层及活跃 adapter。
 
 ## Padding 与捕获成本的取舍
 

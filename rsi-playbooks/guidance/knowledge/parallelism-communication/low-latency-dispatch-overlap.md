@@ -11,7 +11,7 @@ English | [简体中文](low-latency-dispatch-overlap_zh.md)
 
 MoE dispatch and combine can dominate decode when each rank has few tokens. Asynchronous APIs alone do not remove the dependency between dispatch and expert GEMM, or between combine and the next layer. Useful overlap requires independent work or finer producer-completion information.
 
-DeepEP main is now V2.5 with a unified `EPBuffer`; it removed the V1 API and NVSHMEM dependency. Its current README explicitly says EP dispatch/combine use GPU SMs and zero-SM RDMA EP is not supported. vLLM already implements dual-batch overlap (DBO). Single-batch overlap (SBO) also exists in DeepEP's separate `antgroup-opt` branch. Neither mechanism should be presented as an undiscovered optimization.
+DeepEP main is now V2.5 with a unified `EPBuffer`; it removed the V1 API and NVSHMEM dependency. Its current README explicitly says EP dispatch/combine use GPU SMs and zero-SM RDMA EP is not supported. vLLM already implements dual-batch overlap (DBO). Single-batch overlap (SBO) also exists in DeepEP's separate `antgroup-opt` branch.
 
 ## Execution mechanisms
 
@@ -39,4 +39,4 @@ Validate full-model outputs, then compare unprofiled service TPOT/TTFT and susta
 
 ## Sources and status
 
-Checked 2026-10-14: DeepEP [main 93eb6eb2](https://github.com/deepseek-ai/DeepEP/tree/93eb6eb238127e96c6d7a4a625a6dad158348509); vLLM [DBO design at 6849ca69](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/design/dbo.md); [PR #483](https://github.com/deepseek-ai/DeepEP/pull/483), actual diff and API state: merged into `antgroup-opt` on 2025-11-21, merge `9f2fc4b3`, not evidence of V2-main support. [PR #453](https://github.com/deepseek-ai/DeepEP/pull/453) was open, unmerged when checked. Remaining research is target-version integration, safe resource allocation, and measured workload eligibility.
+Checked 2026-10-14: DeepEP [main 93eb6eb2](https://github.com/deepseek-ai/DeepEP/tree/93eb6eb238127e96c6d7a4a625a6dad158348509); vLLM [DBO design at 6849ca69](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/docs/design/dbo.md); [PR #483](https://github.com/deepseek-ai/DeepEP/pull/483), merged into `antgroup-opt` rather than V2 main on 2025-11-21, merge `9f2fc4b3`. [PR #453](https://github.com/deepseek-ai/DeepEP/pull/453) was open, unmerged when checked. Remaining research is target-version integration, safe resource allocation, and measured workload eligibility.

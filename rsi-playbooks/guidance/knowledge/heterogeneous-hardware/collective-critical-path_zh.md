@@ -29,18 +29,19 @@ NCCL、RCCL、MCCL 接口相近，但设备 kernel、拓扑发现、传输和图
 
 已核对的 MetaX communicator 安装 backend-specific all-to-all manager，并让 MACA all-gather 走基础 process-group 路径。优化要保留实际 communicator 与张量搬运，不应随意换成看起来更快、顺序却不同的直接 wrapper。同一 rank 集合可能有多个 communicator，它们的计数空间不能混用。
 
-量化 collective 又是独立选择。减少字节可能改善带宽瓶颈，但增加量化计算和数值误差。AMD 指南描述了 Quick Reduce 的低位模式；这是已有能力，不是待发明的压缩通信。应核对目标归约和模型的适用性及质量。
+量化 collective 又是独立选择。减少字节可能改善带宽瓶颈，但增加量化计算和数值误差。AMD 指南描述了 Quick Reduce 的低位模式；支持的归约形状与可接受的量化误差决定其适用范围。
 
 ## 剩余空间与测量
 
-有价值的工作包括按实际消息分布选择受支持算法、减少布局 copy、找到可重叠部分，以及平衡计算通信资源。不是跨厂商照搬环境变量。BF16/FP16 payload、低位归约、TP collective、EP dispatch/combine 要分开分析。
+有价值的工作包括按实际消息分布选择受支持算法、减少布局 copy、找到可重叠部分，以及平衡计算通信资源。BF16/FP16 payload、低位归约、TP collective、EP dispatch/combine 要分开分析。
 
 先用通信库现有 benchmark 测真实 rank 数和消息大小，再加入前后模型阶段，保留实际 stream 和 communicator。分别测通信、计算和 overlap，记录设备完成、rank 不均衡、打包流量及输出误差。孤立带宽改善却让 GEMM 变慢，是阶段层面的负收益。
 
-完整服务覆盖低并发与目标混合流量，观察 TPOT、TTFT、成功 token 吞吐、尾延迟、质量和所有 rank 的进展。当最慢 rank 仍主导时，更快通信可能只改善容量，不改善延迟。
+比较低并发与目标混合流量，观察消息大小和 rank 不均衡如何变化。当最慢 rank 仍主导时，更快通信可能只改善容量，延迟保持不变。
+
 ## 来源
 
-核对日期：2026-10-14；源码身份见[分类入口](README_zh.md)。
+核对日期：2026-10-14；源码快照见下方链接。
 
 - [当前 ROCm systems 源码](https://github.com/ROCm/rocm-systems/tree/f1b316f12c75430787032e99405834f59a026ae1/projects/rccl)。
 - [AMD 通信与 Quick Reduce 指南](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/optimization/vllm-v1-optimization.html)。

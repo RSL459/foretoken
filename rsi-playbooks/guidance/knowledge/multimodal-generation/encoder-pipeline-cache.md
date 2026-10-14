@@ -17,7 +17,7 @@ EAServe, submitted in September 2026, studies adaptive encoder microbatching alo
 
 Consider four image requests arriving unevenly. The encoder collects ready processed tensors until its microbatch fills or the idle-gap condition fires. It runs the vision model, associates each output with its request and input-item position, and publishes transfer metadata. The consuming prefill scheduler waits for the required embeddings, schedules a load, and executes text-plus-image prefill only after completion. Meanwhile the encoder can compute another microbatch. Transfer and compute overlap only if the timeline shows them running concurrently, not merely because both APIs are asynchronous.
 
-For V visual tokens, decoder embedding width d, and b bytes per element, an embedding transfer has approximately Vdb payload bytes. At V=4,096, d=3,584, b=2, that is about 28 MiB before metadata and protocol overhead. This arithmetic is an illustrative shape calculation, not a measured throughput claim. Reusing a cached embedding may eliminate encoding but still require a transfer to the consuming worker.
+For V visual tokens, decoder embedding width d, and b bytes per element, an embedding transfer has approximately Vdb payload bytes. At V=4,096, d=3,584, b=2, that is about 28 MiB before metadata and protocol overhead. Reusing a cached embedding may eliminate encoding but still require a transfer to the consuming worker.
 
 Current vLLM's encoder cache manager tracks references by request and input position. Released references make an item reclaimable; the embedding can remain cached until another allocation needs space. Eviction notifications exclude entries reused later in the same scheduling pass. These distinctions prevent a logical release from becoming premature physical deletion. Cancellation must also remove request references and terminate or complete owned transfers before buffers are reused.
 
@@ -33,7 +33,7 @@ Replay the same images and arrival timestamps through immediate dispatch, fixed 
 
 Measure preprocessing completion, encoder queue wait, encode duration, transfer completion, decoder wait, TTFT tails, device utilization, transferred bytes, peak live embedding memory, and SLO-compliant successful requests. Include cancellations while queued, during encoding, and during transfer; observe whether memory returns to its expected steady state. Do not count canceled requests as completed goodput.
 
-If bigger batches reduce encode time per image but worsen TTFT, waiting dominates. If adaptive dispatch improves only steady Poisson arrivals but not bursts, test the estimator's response time rather than claiming a universally better batch size. The remaining opportunity is a measured arrival-aware execution policy that respects embedding lifetime and handoff costs, not another implementation of already available encoder disaggregation.
+If bigger batches reduce encode time per image but worsen TTFT, waiting dominates. If adaptive dispatch improves only steady Poisson arrivals but not bursts, test the estimator's response time rather than claiming a universally better batch size. The remaining question is how arrival-aware execution balances embedding lifetime and handoff costs.
 
 ## Sources and checked state
 
@@ -41,4 +41,4 @@ Checked 2026-10-14.
 
 - [EAServe, arXiv:2609.31551v1](https://arxiv.org/html/2609.31551v1): September 2026 microbatch and transfer method; public author code not identified.
 - [vLLM encoder disaggregation](https://docs.vllm.ai/en/latest/features/disagg_encoder/): current flow, connectors, examples, and audio restrictions.
-- [Encoder-cache manager at `6849ca6`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/core/encoder_cache_manager.py): full lifetime unit; commit dated 2026-10-13. Existing cache and separation mechanisms are the starting point, not proposed new features.
+- [Encoder-cache manager at `6849ca6`](https://github.com/vllm-project/vllm/blob/6849ca696ac9fbecec29a8a8c47f6ee18aea1ee9/vllm/v1/core/encoder_cache_manager.py): embedding lifetime and eviction; commit dated 2026-10-13.

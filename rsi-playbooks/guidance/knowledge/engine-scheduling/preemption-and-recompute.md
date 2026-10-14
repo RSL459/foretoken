@@ -15,7 +15,7 @@ The inspected vLLM V1 scheduler calls `kv_cache_manager.allocate_slots` while bu
 
 `_preempt_request` releases KV and encoder state, resets computed-token progress, clears speculative tokens, marks the request preempted, and returns it to the waiting queue. If already selected work is removed from the current schedule, the appropriate budget is restored. Resuming requires rebuilding the missing state for the retained request history. Prefix caching may salvage reusable blocks, so reset progress should not be interpreted as a guarantee that every historical token is recomputed.
 
-This is established functionality. vLLM's current optimization guide recommends watching preemption counts and reducing concurrent pressure or supplying more KV space. It identifies recomputation as V1's default rather than presenting CPU swapping as the default remedy.
+vLLM's current optimization guide recommends watching preemption counts and reducing concurrent pressure or supplying more KV space. It identifies recomputation as V1's default rather than presenting CPU swapping as the default remedy.
 
 ## Why admission-time fit is insufficient
 
@@ -31,9 +31,9 @@ There is a continuum between current-footprint admission and reserving the maxim
 
 ## Ownership and remaining design space
 
-Only the engine can decide whether blocks are reclaimable, select a victim consistent with scheduling state, and resume execution correctly. Foretoken's request layer can avoid sending more work to a pressured instance using its observations and can enforce ingress concurrency. It must not pretend that lowering router concurrency frees already-running KV. Cluster orchestration supplies replicas or a different parallelism layout on a slower timescale.
+Only the engine can decide whether blocks are reclaimable, select a victim consistent with scheduling state, and resume execution correctly. Foretoken's request layer can avoid sending more work to a pressured instance using its observations and can enforce ingress concurrency. Lower ingress concurrency limits new work; existing KV is released by the engine as requests finish or are canceled. Cluster orchestration supplies replicas or a different parallelism layout on a slower timescale.
 
-A candidate policy can consider estimated remaining output, saved computation, priority, and deadline slack when selecting the running set. The trade-off is explicit: evicting a large old request may recover substantial memory but destroy expensive progress; evicting short requests can harm many deadlines. There is no evidence here that one paper's predictor or victim policy is universally best, or that it is absent from every current engine.
+A candidate policy can consider estimated remaining output, saved computation, priority, and deadline slack when selecting the running set. The trade-off is explicit: evicting a large old request may recover substantial memory but destroy expensive progress; evicting short requests can harm many deadlines.
 
 ## Experiment that exposes thrashing
 
@@ -42,6 +42,7 @@ Keep prompt distribution constant and vary only output tails: mostly short respo
 Record original arrivals, completed requests satisfying TTFT and TPOT, preemptions per completion, recomputed tokens, GPU work spent on recovery, KV occupancy, and time to resume each victim. Collect p99 token gaps as well as average TPOT: a pause followed by fast generation can hide in the average. Track per-class completion so a policy cannot improve aggregate goodput merely by repeatedly displacing one tenant.
 
 Revisit token budgets and active-sequence limits before changing recovery machinery. If reducing the running set removes preemption at similar goodput, that simpler control is a stronger candidate than a new eviction implementation.
+
 ## Sources
 
 Checked 2026-10-14.

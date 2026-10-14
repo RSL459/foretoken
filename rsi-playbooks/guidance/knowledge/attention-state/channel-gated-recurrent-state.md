@@ -49,7 +49,7 @@ Promising questions include whether a state layout favors both recurrent readout
 
 Compare chunk and recurrent execution on the same token stream, initial state, gate values, normalization, and output scale. Feed a prefill-produced final state into decode; a layout error can remain hidden when both tests start from zero. Include repeated keys, sharply different channel decays, long streams, empty-padding slots, and variable-length packing.
 
-Profile short decode and long prefill separately. Measure state bytes moved, register use, temporary chunk storage, and inactive-slot work, not only token throughput. Then evaluate the real hybrid model at several context lengths and concurrency levels. Separate KDA time from MLA and MoE time, inspect long-context retrieval and continuation quality, and check that recycling one request slot does not leak state into another. Report precision and service results independently of the Kimi paper's claims.
+Profile short decode and long prefill separately. Measure state bytes moved, register use, temporary chunk storage, and inactive-slot work, not only token throughput. Then evaluate the real hybrid model at several context lengths and concurrency levels. Separate KDA time from MLA and MoE time, inspect long-context retrieval and continuation quality, and check that recycling one request slot does not leak state into another. Relate precision and service results to the measured KDA fraction of model time.
 
 ## Sources and checked state
 

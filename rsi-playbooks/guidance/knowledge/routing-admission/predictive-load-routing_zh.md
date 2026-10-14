@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 Dynamo 当前 selector 结合活跃 prefill token、缓存 overlap、decode 成本与活跃请求压力，并非只选请求数最少的实例。Production Stack 在完成 tokenization 和缓存查询后使用当时的路由监测统计，但负载仍是 in-prefill 加 in-decoding 请求数。AIBrix 除 prefix/load 混合外已经提供 Preble 策略。
 
-llm-d 当前 predicted-latency producer 和 scorer 更进一步：XGBoost sidecar 预测逐 endpoint TTFT/TPOT，请求生命周期 hook 追踪 in-flight 工作，endpoint attributes 保存预测及 SLO headroom。因此 prediction-driven routing 已是现有 upstream 能力，不能当作假想新功能。
+llm-d 当前 predicted-latency producer 和 scorer 更进一步：XGBoost sidecar 预测逐 endpoint TTFT/TPOT，请求生命周期 hook 追踪 in-flight 工作，endpoint attributes 保存预测及 SLO headroom。
 
 ## 预测工作量而非只数请求
 

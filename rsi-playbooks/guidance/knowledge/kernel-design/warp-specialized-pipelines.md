@@ -11,7 +11,7 @@ English | [简体中文](warp-specialized-pipelines_zh.md)
 
 Ordinary parallel decomposition gives different warps different elements of the same computation. Warp specialization gives them different jobs. One partition loads operands, another issues matrix operations, and another converts and stores completed results. These partitions communicate through shared-memory buffers and barriers.
 
-This is an existing capability in Triton Gluon and CUTLASS. It is useful knowledge for designing a new workload-specific pipeline, not a missing optimization to switch on everywhere. The current Gluon tutorial's elementwise example targets Hopper and newer; its `tcgen05` matrix example targets Blackwell. Different devices require different instruction and synchronization designs.
+Triton Gluon and CUTLASS provide warp-specialized implementations. The Gluon tutorial's elementwise example targets Hopper and newer; its `tcgen05` matrix example targets Blackwell. Different devices require different instruction and synchronization designs.
 
 ## One pipeline cycle
 
@@ -33,11 +33,11 @@ The opportunity is to tailor role allocation, buffer depth, accumulator ownershi
 
 Keep arithmetic and tile dimensions fixed while varying one of buffer depth, role allocation, or epilogue subtile size. Include a small decode shape, an intermediate shape, and a sustained prefill shape. Measure registers, spills, shared memory, occupancy, and complete kernel duration. Numerical comparison must include edge tiles and partially filled buffers, where incorrect phase handling or masks often become visible.
 
-Integrate the best candidate with its actual producer and consumer tensors. Check whether conversion or repacking cancels the improvement. Finally compare service latency and throughput with an unprofiled run; trace instrumentation is for explaining the pipeline.
+Integrate the best candidate with its actual producer and consumer tensors. Check whether conversion or repacking cancels the improvement.
 
 ## Sources and implementation state
 
-Checked 2026-10-14; mechanisms are already available upstream.
+Checked 2026-10-14.
 
 - [Gluon warp-specialization tutorial](https://triton-lang.org/main/getting-started/tutorials/gluon/warp-specialization.html), including barrier phases, proxy fences, and epilogue subtiling.
 - [Pinned implementation](https://github.com/triton-lang/triton/blob/4ee1a827440d453ca276ded4219190d5e7346b8b/python/tutorials/gluon/08-warp-specialization.py).

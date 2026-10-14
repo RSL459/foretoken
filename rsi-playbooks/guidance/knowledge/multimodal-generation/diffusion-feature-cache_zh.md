@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 扩散 transformer 会多次计算相近的 latent。跳过部分执行可以不用训练新模型就加速，但会改变数值轨迹。TeaCache、TaylorSeer 分别提供两个基础思路：判断残差何时还能复用，或预测特征而不是直接保持旧值。2026 年 10 月的 AutoTarget 提出更近的问题：少步模型应该缓存哪种面向求解器的量？这些都是近似方法，不是无损 kernel 融合。
 
-当前 vLLM-Omni 已有 cache-dit 集成文档，应复用其设施，不把基本缓存再列为新能力。也不能由此推断所有论文方法或执行模式均受支持：本次核对的执行模式文档明确表示 step execution 不支持扩散 cache backend。
+vLLM-Omni 在请求级扩散执行中集成 cache-dit；引用版本的 step execution 不支持扩散 cache backend。
 
 ## 一个去噪区间如何执行
 
@@ -39,7 +39,7 @@ FP16/BF16 特征也会累积预测误差；FP8 缓存量化又是另一项近似
 
 核对日期：2026-10-14。
 
-- [TeaCache，arXiv:2411.19108v1](https://arxiv.org/html/2411.19108v1) 与[作者代码](https://github.com/ali-vilab/TeaCache)：残差与累积代理机制，仅作基础。
+- [TeaCache，arXiv:2411.19108v1](https://arxiv.org/html/2411.19108v1) 与[作者代码](https://github.com/ali-vilab/TeaCache)：残差与累积代理机制。
 - [TaylorSeer，arXiv:2503.06923v1](https://arxiv.org/html/2503.06923v1) 与[作者代码](https://github.com/Shenyi-Z/TaylorSeer)：预测递推及模型入口。
 - [AutoTarget，arXiv:2610.03577v1](https://arxiv.org/html/2610.03577v1)：2026-10-02 提交，方法；[公开实现](https://github.com/wali1024-offical/AutoTarget/tree/e91a428b8bbc37a6661576a182e39e94e3cc55dd)版本为 2026-10-01 的 `e91a428`。
-- [Omni 执行模式](https://docs.vllm.ai/projects/vllm-omni/en/latest/user_guide/diffusion/execution_modes/)与 [cache-dit 文档](https://github.com/vllm-project/vllm-omni/blob/37f094a388ba1c79f83c129fda39797c1ebfc2a4/docs/user_guide/diffusion/cache_acceleration/cache_dit.md)：源码路径版本为 2026-10-13 的 `37f094a`；`v0.30.0` 发布于 2026-09-25，main 状态不能直接当作 release 状态。
+- [Omni 执行模式](https://docs.vllm.ai/projects/vllm-omni/en/latest/user_guide/diffusion/execution_modes/)与 [cache-dit 文档](https://github.com/vllm-project/vllm-omni/blob/37f094a388ba1c79f83c129fda39797c1ebfc2a4/docs/user_guide/diffusion/cache_acceleration/cache_dit.md)：源码路径版本为 2026-10-13 的 `37f094a`；`v0.30.0` 发布于 2026-09-25。

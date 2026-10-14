@@ -28,7 +28,7 @@ subject to sum_r x[e,r] = n_e
            x[e,r] >= 0, only where replica(e,r) exists
 ```
 
-This expresses the token-count objective, not the exact interior-point solver equations. `n_e` is current logical demand, and `x[e,r]` is demand assigned to a permitted copy. Finite row counts require an integer realization after fractional planning; the source's mapping kernel implements that stage.
+Here `e` indexes logical experts, `r` indexes destination GPU ranks, `n_e` is current logical demand, `x[e,r]` is demand assigned to a copy on rank `r`, and `z` bounds each rank's total assigned rows. This token-count model assumes comparable cost per expert row. Finite row counts require an integer realization after fractional planning; the source's mapping kernel implements that stage.
 
 Suppose rank A has 80 token-expert rows and B has 20; 40 of A's rows belong to an expert replicated on B. Moving 30 of those rows gives totals 50 and 50. Moving rows for an unreplicated expert is not permitted. With a top-k router these are expert evaluations, not independent request counts.
 

@@ -11,7 +11,7 @@ English | [简体中文](goodput-tail-attribution_zh.md) · [Measurement and sim
 
 Suppose one configuration completes 100 requests/s but only 60 meet the latency requirements. Another completes 80 requests/s and 76 meet them. The second has lower throughput and higher request goodput. If long outputs dominate token totals, token goodput can rank these configurations differently again. The objective must identify which requests count as useful and which resource denominator matters.
 
-For request i, define gᵢ = 1 only when it succeeds and satisfies every required condition; otherwise gᵢ = 0. Over duration T, request goodput is Σgᵢ/T, token goodput is Σgᵢnᵢ/T for output length nᵢ, and attainment is Σgᵢ/N for N attempted requests. These definitions prevent failures from disappearing from attainment, but they do not make unlike workload mixtures comparable.
+For request i, define gᵢ = 1 only when it succeeds and satisfies every required condition; otherwise gᵢ = 0. For a cohort of N attempted requests observed through completion or failure over duration T, request goodput is Σgᵢ/T, token goodput is Σgᵢnᵢ/T for output length nᵢ, and attainment is Σgᵢ/N. T spans measurement start through drain completion, excluding warmup. For fixed steady-state windows, instead count completions in the window and report unfinished work separately. Token goodput requires reported output counts for compliant requests. Failures remain in the attainment denominator; compare matching workload mixtures.
 
 ## A joint requirement is not a set of independent percentiles
 

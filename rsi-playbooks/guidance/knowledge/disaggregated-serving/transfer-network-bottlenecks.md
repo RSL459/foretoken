@@ -21,7 +21,7 @@ A useful latency decomposition is `T_X = Q_X + setup + pack + K/B_effective + un
 
 Keep GPU/NIC affinity, NUMA, PCIe and rail count explicit. Device-to-device RDMA differs from TCP staging through pinned host memory; the latter adds GPU↔host copies, memory-bandwidth contention and extra buffers. A node-local NVLink path is different again. More transfer concurrency can improve utilization until it increases queueing or stalls compute.
 
-The producer owns its source pages until the consumer no longer needs them or transfer failure is resolved. Cancellation must not free registered buffers while DMA is still active. Cross-TP layouts may need reshaping or replicated sends; topology-compatible placement can save more than a faster transport backend. Do not silently assume a connector supports arbitrary TP, KV dtype or model-state combinations.
+The producer retains source pages until transport completion confirms that they will no longer be read; the consumer retains its destination pages for decode. A failed or canceled transfer must be quiesced before either buffer is reused. Cross-TP layouts may need reshaping or replicated sends; topology-compatible placement can save more than a faster transport backend. Do not silently assume a connector supports arbitrary TP, KV dtype or model-state combinations.
 
 ## Public evidence and integration
 
@@ -29,7 +29,7 @@ Checked 2026-10-14. [NIXLBench's README](https://github.com/ai-dynamo/nixl/blob/
 
 The 2026 [AFD design-space paper](https://arxiv.org/html/2605.28302v1) explicitly models congestion and compute/communication overlap with AstraSim. Its 450-versus-25 GB/s placement comparison is a modeled NVLink/InfiniBand contrast, not a portable measured KV speedup. [MegaScale-Infer](https://arxiv.org/html/2504.02263) measures BF16 MoE M2N communication and explains completion, CPU proxy, small-message and traffic effects. That per-layer activation traffic is not the same payload as one-time P/D KV transfer.
 
-Foretoken's [E/P/D deployment guide](../../../../examples/encoder-prefill-decode/README.md) states Mooncake RDMA by default and host-staged TCP as an alternative, while encoder state uses shared storage in that example. Its [workflow](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs) retains cross-stage cleanup. Those facts do not establish bandwidth, zero-copy behavior on every backend, or transfer-aware routing.
+Foretoken's [E/P/D deployment guide](../../../../examples/encoder-prefill-decode/README.md) states Mooncake RDMA by default and host-staged TCP as an alternative, while encoder state uses shared storage in that example. Its [workflow](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs) retains cross-stage cleanup.
 
 ## Experiments and remaining questions
 

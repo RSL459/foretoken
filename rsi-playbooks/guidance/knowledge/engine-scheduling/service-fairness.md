@@ -13,13 +13,13 @@ Equal request counts do not imply equal service. A client submitting long genera
 
 Virtual Token Counter (VTC) measures weighted token service rather than requests. In its basic model, `service = wp × input_tokens + wq × output_tokens`. Output tokens can carry a greater weight because decode has a different execution cost. These weights are a policy and cost approximation, not a universal conversion into GPU milliseconds.
 
-When capacity becomes available, VTC admits a request from the queued client with the smallest counter. Prompt processing charges input service; each generated token charges output service. A returning client's counter is lifted to the active population's minimum, or the last departed client's counter when the system was empty. Without this lift, an idle client could accumulate an artificial advantage and monopolize the next busy period.
+When capacity becomes available, VTC admits a request from the queued client with the smallest counter. Prompt processing charges input service; each generated token charges output service. When a client adds its first waiting request, its counter becomes the maximum of its retained value and the minimum counter among clients already waiting. If the waiting queue was empty, the comparison uses the last client that left it. This lift prevents idle time from creating extra credit while preserving service already charged; running clients without queued requests are not the comparison set.
 
 For example, with weights 1 and 2, client A's 1,000-token input and 100-token output cost 1,200 units. Client B's 100-token input and 1,000-token output cost 2,100. A request-count policy calls these equal; VTC does not. The paper's bounded-service-difference result assumes bounded inputs and batches, positive server capacity, and no preemption. It is not a hard per-request latency guarantee.
 
 ## Locality changes the objective
 
-VTC's token order can disrupt prefix reuse. The 2025 Locality-aware Fair Scheduling paper introduces DLPM: favor longest-prefix matches, but admit a client only while its deficit is positive. Replenish exhausted clients with a service quantum, then charge uncached input extension and generated output. Thus a client can receive a cache-local run of work without taking unlimited service.
+VTC's token order can disrupt prefix reuse. The 2025 Locality-aware Fair Scheduling paper introduces DLPM: favor longest-prefix matches, but admit a client only while its deficit is positive. Once every queued client has a nonpositive deficit, replenish active clients whose deficit is nonpositive with a service quantum. Charge uncached input extension and generated output against that credit. Thus a client can receive a cache-local run of work without taking unlimited service.
 
 The choice of accounting is consequential. Charging all input tokens treats long cache-hot prompts as expensive even when they require little new prefill. Charging only the uncached extension measures executed work more closely but gives cache-hot clients more logical tokens for the same share. Neither definition is automatically correct: decide whether fairness concerns computational service, delivered tokens, or a commercial entitlement.
 
@@ -27,9 +27,9 @@ DLPM's service bound depends on request cost and quantum; larger quanta improve 
 
 ## Current implementations are different contracts
 
-AIBrix currently has a `vtc-basic` router. The inspected implementation estimates input/output tokens, uses per-user tracked usage with load to select a pod, and charges estimated usage at routing. It does not implement the paper's engine iteration scheduler or actual completion-token reconciliation in that file. Calling it VTC therefore does not transfer every theorem from the paper to the gateway.
+AIBrix currently has a `vtc-basic` router. The inspected implementation estimates input/output tokens, uses per-user tracked usage with load to select a pod, and charges estimated usage at routing. It does not implement the paper's engine iteration scheduler or actual completion-token reconciliation in that file. Its fairness scope is gateway-local estimated dispatch service.
 
-llm-d's current program-aware fairness plugin offers least-attained-service with decayed weighted token service and a turn-priority strategy. These are dispatch-queue policies. Its documentation explicitly discusses in-flight state and session-identity assumptions. Foretoken also already separates role-based waiting and fair dispatch from instance scoring. These established mechanisms are starting points, not absent capabilities to invent.
+llm-d's current program-aware fairness plugin offers least-attained-service with decayed weighted token service and a turn-priority strategy. These are dispatch-queue policies. Its documentation explicitly discusses in-flight state and session-identity assumptions. Foretoken also already separates role-based waiting and fair dispatch from instance scoring.
 
 The engine owns actual batch service and token accounting; the request layer owns trusted identity, ingress fairness, and dispatch; cluster orchestration owns capacity. A multi-router service needs an explicit accounting scope. Per-replica counters do not establish a global service bound, and copying counters into a second controller would create a competing owner.
 
@@ -40,6 +40,7 @@ Use continuously backlogged clients with unequal input/output lengths, plus a cl
 Measure per-client weighted service over time, maximum backlogged service difference, p95/p99 waiting time, worst-client SLO attainment, cache reuse, goodput, and scheduler overhead. State whether cached tokens are charged. Include cancellations and predictor error when a gateway uses estimated output lengths. Trace actual generated tokens so fair dispatch is not mistaken for fair execution.
 
 The remaining question is which service definition fits the deployment and how gateway admission cooperates with engine execution. Reuse existing fair queues and lifecycle accounting before adding a second fairness subsystem.
+
 ## Sources
 
 Checked 2026-10-14.

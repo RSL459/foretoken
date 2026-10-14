@@ -11,11 +11,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 当前失败路径
 
-已核查的 vLLM V1 在生成调度结果时调用 `kv_cache_manager.allocate_slots`。分配失败后选择运行中的 victim：priority 策略取最大的 `(priority, arrival_time)`，其他策略取运行列表尾部。实际执行抢占前，还要确认块确实可释放。In-flight 执行和延后释放会影响结果，逻辑取消不等于所有块立即可用。
+引用版本的 vLLM V1 在生成调度结果时调用 `kv_cache_manager.allocate_slots`。分配失败后选择运行中的 victim：priority 策略取最大的 `(priority, arrival_time)`，其他策略取运行列表尾部。实际执行抢占前，还要确认块确实可释放。In-flight 执行和延后释放会影响结果，逻辑取消不等于所有块立即可用。
 
 `_preempt_request` 释放 KV 和编码器状态，重置已计算 token 进度，清理推测 token，标记 PREEMPTED，并把请求放回等待队列。若 victim 已进入本轮调度，还需归还对应预算。恢复时要为保留的请求历史重建缺失状态；prefix caching 可能复用部分块，因此重置进度并不意味着历史 token 必然全部重算。
 
-这些都是已有功能。vLLM 官方优化指南建议观察抢占次数，降低并发压力或增加 KV 空间，并明确 V1 默认采用重算，而不是默认 CPU swapping。
+vLLM 官方优化指南建议观察抢占次数，降低并发压力或增加 KV 空间，并明确 V1 默认采用重算，而不是默认 CPU swapping。
 
 ## 为什么初始可放入还不够
 
@@ -31,9 +31,9 @@ SOLA 的 peak-memory prediction 在执行前检查新增请求对未来内存的
 
 ## 职责与设计空间
 
-只有引擎知道块是否可回收，能按调度状态选择 victim，并正确恢复执行。Foretoken 请求层可根据观测减少向高压实例发送工作，也能限制入口并发；降低路由并发并不会立即释放已经运行的 KV。集群编排在更慢时间尺度提供副本或不同并行布局。
+只有引擎知道块是否可回收，能按调度状态选择 victim，并正确恢复执行。Foretoken 请求层可根据观测减少向高压实例发送工作，也能通过入口并发限制新增工作。已有 KV 由引擎在请求完成或取消后释放。集群编排在更慢时间尺度提供副本或不同并行布局。
 
-候选策略可在运行集合选择中考虑预计剩余输出、已完成计算、priority 与 deadline 余量。取舍很具体：驱逐大而旧的请求能回收很多内存，却可能毁掉昂贵进度；驱逐短请求可能同时伤害更多 deadline。现有证据不能证明某篇论文的预测器或 victim 规则普遍最优，也不能据此声称所有当前引擎都缺少它。
+候选策略可在运行集合选择中考虑预计剩余输出、已完成计算、priority 与 deadline 余量。取舍很具体：驱逐大而旧的请求能回收很多内存，却可能毁掉昂贵进度；驱逐短请求可能同时伤害更多 deadline。
 
 ## 暴露 thrashing 的实验
 
@@ -42,6 +42,7 @@ SOLA 的 peak-memory prediction 在执行前检查新增请求对未来内存的
 记录原始到达数、同时满足 TTFT/TPOT 的完成数、每次完成对应的抢占数、重算 token 数、恢复占用的 GPU 工作、KV 占用和每个 victim 的恢复时间。除平均 TPOT 外还需记录 p99 token 间隔；长时间暂停后快速生成，可能被平均值掩盖。逐类别完成率可防止策略靠反复挤掉同一租户来提高总 goodput。
 
 改变恢复机制前，先检查 token 预算和活跃序列上限。如果缩小运行集合能以接近的 goodput 消除抢占，这种直接控制比新增驱逐实现更值得保留。
+
 ## 来源
 
 核查日期：2026-10-14。

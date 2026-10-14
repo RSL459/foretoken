@@ -16,6 +16,4 @@ Choose an entry by the work that dominates attention execution or prevents safe 
 - [Hybrid prefix checkpoints](hybrid-prefix-checkpoints.md): align attention KV, recurrent state, and convolution state at reusable boundaries; weigh checkpoint copies against replay and capacity.
 - [Recurrent decode and speculative replay](recurrent-speculation-replay.md): amortize recurrent-state writes and commit accepted tokens without intermediate matrix snapshots, while preserving flush and export semantics.
 
-Each entry identifies already available upstream mechanisms separately from remaining research questions. Sources and integration states were checked on 2026-10-14.
-
 Return to [inference knowledge](../README.md).

@@ -21,7 +21,7 @@ In the Qwen2.5-Omni report, waveform decoding uses a flow-matching DiT and modif
 
 For video output, the checked Omni API sends a `video.chunk_metadata` JSON message immediately followed by a binary frame containing fragmented MP4 bytes. Receive order is part of the delivery contract. The endpoint is `WS /v1/realtime/video`; it generates video output rather than accepting live conversational video. Its documented format is `m4s`, and the pipeline must support step execution and chunk emission. Merely turning on a streaming flag does not make a final-only model incremental.
 
-A simple playback relation helps: if a chunk contains D seconds of media and arrives every A seconds after startup, average A<D is necessary for sustained playback, but tail gaps can still exhaust the client buffer. Startup latency and long-gap probability therefore matter separately from average generation speed.
+A simple playback relation helps: if a chunk contains D seconds of media and arrives every A seconds after startup, A≤D is necessary on average for sustained playback, and A<D leaves room to refill the buffer after delays; tail gaps can still exhaust it. Startup latency and long-gap probability therefore matter separately from average generation speed.
 
 ## Weights, state, and quality
 
@@ -37,7 +37,7 @@ Replay identical prompts with several supported chunk sizes and fixed model, pre
 
 Measure first codec token, first decoded waveform/frame, first playable client media, inter-chunk P50/P95/P99 gaps, real-time factor, underrun duration, queued bytes, GPU memory, cancellation cleanup time, and accepted media-seconds per second. Speech evaluation should include intelligibility, speaker consistency, and chunk-boundary artifacts; video evaluation should include motion and identity continuity.
 
-If early codec tokens do not improve first playable media, inspect decoder lookahead or packaging. If average real-time factor improves but underruns increase, bursty delivery defeated playback. Remaining opportunities concern chunk-level overlap, buffer control, and quality-preserving operating points, not treating already implemented stage pipelines as an unmerged feature.
+If early codec tokens do not improve first playable media, inspect decoder lookahead or packaging. If average real-time factor improves but underruns increase, bursty delivery defeated playback. Remaining opportunities concern chunk-level overlap, buffer control, and quality-preserving operating points.
 
 ## Sources and checked state
 

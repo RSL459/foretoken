@@ -35,7 +35,7 @@ The remaining design space is choosing the smallest recovery procedure that impr
 
 Compare direct calibration, existing AutoRound, and scale-only recovery on the same model and calibration/held-out split. Record calibration duration, peak memory, reconstruction error, task scores, and per-expert coverage. If comparing joint training, report its different trainable-state budget. Reload the exported checkpoint in the intended engine and check that the kernel and scale granularity match the planned format.
 
-Local timing should include activation quantization and both projections of a representative MLP or MoE stage. At service level, observe quality, TTFT, TPOT, successful token throughput, and output lengths. The ideal recovery changes quality without adding runtime operators, but an export that silently selects a different backend needs separate attribution.
+Local timing should include activation quantization and all projections of a representative MLP or MoE stage, including gate/up and down projections for a gated MLP. At service level, observe quality, TTFT, TPOT, successful token throughput, and output lengths. The ideal recovery changes quality without adding runtime operators, but an export that silently selects a different backend needs separate attribution.
 ## Sources
 
 Checked 2026-10-14; snapshots are listed in the [category index](README.md).

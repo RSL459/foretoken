@@ -11,9 +11,9 @@ A cached prefix saves computation only after the selected worker can run the req
 
 ## Current upstream behavior
 
-All four inspected serving projects already combine or expose cache and load signals. Dynamo's current worker selector charges prefill backlog, decode cost, and active requests while crediting overlap. It can decay device-cache credit when a worker's prefill backlog exceeds the least-loaded eligible worker. AIBrix's current prefix-routing documentation describes normalized cache/load blending, with a default documented score of `5 × prefix + 4 × load_balance`; it also has a cache-first mode with load qualification. Production Stack's load-aware router scores matched-token ratio minus a relative in-flight-load penalty. llm-d supplies separate prefix, queue, load, and latency scorers that can be composed.
+Dynamo's current worker selector charges prefill backlog, decode cost, and active requests while crediting overlap. It can decay device-cache credit when a worker's prefill backlog exceeds the least-loaded eligible worker. AIBrix's current prefix-routing documentation describes normalized cache/load blending, with a default documented score of `5 × prefix + 4 × load_balance`; it also has a cache-first mode with load qualification. Production Stack's load-aware router scores matched-token ratio minus a relative in-flight-load penalty. llm-d supplies separate prefix, queue, load, and latency scorers that can be composed.
 
-Foretoken already offers `kv_least_loaded`, `prefix`, `token_load`, and `two_tier`. Its cache weights express preferences, not measured transfer-time predictions. Consequently, “add cache-aware routing” is not the research increment. Calibrating the opportunity cost and checking whether a policy behaves well under changing queues are better questions.
+Foretoken already offers `kv_least_loaded`, `prefix`, `token_load`, and `two_tier`. Its cache weights express preferences, not measured transfer-time predictions. The open questions are how to calibrate the opportunity cost and maintain useful rankings as queues change.
 
 ## A routing decision in milliseconds
 
@@ -25,7 +25,7 @@ A useful decomposition is:
 
 This is an analysis model, not the exact formula used by every router. Cache-ready time depends on where the state resides and whether it is usable before scheduling; an advertised prefix is not necessarily ready device memory.
 
-Preble estimates recent compute load, new-request prefill cost, and cache-eviction consequences. DualMap's February 2026 method limits each request to two hash-derived candidates, prefers reuse, and switches to the less-loaded candidate when estimated TTFT violates its SLO. Adaptive prefix keys distribute hot prefixes while retaining locality for colder ones. Queued migrations target the precomputed backup and require estimated positive latency benefit. This is a constrained choice architecture, not a full-fleet optimal search.
+Preble estimates recent compute load, new-request prefill cost, and cache-eviction consequences. DualMap's February 2026 method limits each request to two hash-derived candidates, prefers reuse, and switches to the less-loaded candidate when estimated TTFT violates its SLO. Adaptive prefix keys distribute hot prefixes while retaining locality for colder ones. Queued migrations target the precomputed backup and require estimated positive latency benefit. Restricting selection and migration to two candidates bounds search and coordination costs.
 
 ## What to reuse and what to test
 
@@ -39,9 +39,10 @@ The engine owns cache validity, allocation, and iteration scheduling. Foretoken'
 
 Replay a mixed workload with one increasingly hot prefix family, several cold families, and periodic continuation requests. Hold input/output lengths and aggregate offered rate constant while changing hot-family concentration. Compare current cache/load blending, load-only selection, affinity-only selection, and a cost-calibrated candidate. Add controlled observation delay and actual prefix eviction.
 
-Report TTFT distributions, goodput under a declared TTFT/TPOT objective, uncached tokens executed, per-worker prefill backlog, selection imbalance, cache-hit ratio, and routing overhead. Explain whether a miss was chosen because it was genuinely faster or because observations were wrong. A higher hit ratio with worse tail TTFT is a negative result, not a partial success.
+Report TTFT distributions, goodput under a declared TTFT/TPOT objective, uncached tokens executed, per-worker prefill backlog, selection imbalance, cache-hit ratio, and routing overhead. Explain whether a miss was chosen because it was genuinely faster or because observations were wrong.
 
 The remaining design space is robust calibration of queue cost and cache-ready cost under uncertain observations.
+
 ## Sources
 
 Checked 2026-10-14; current code is pinned below.

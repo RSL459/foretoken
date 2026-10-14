@@ -17,17 +17,17 @@ An adapter cache also competes with KV memory. Reserving more adapter slots may 
 
 Current SGLang's memory pool first uses empty slots. When full, it selects an eviction victim excluding adapters needed by the current batch and pinned adapters. It copies compatible weights into the slot, updates UID-to-slot mappings, and clears missing module data to avoid retaining another adapter's update. Removed adapters clear their buffers; base-only replay must not read stale low-rank weights. Tensor-parallel ranks must agree on slot assignments.
 
-CLIMB's public artifact labels `gate_rr` as its main policy. The inspected implementation tracks an active adapter set and in-flight work. It removes idle entries, fills available capacity with VIP adapters, uses remaining capacity for background adapters, and selects the oldest request among eligible active adapters. When VIP backlog reaches the residency capacity, it stops admitting background adapters. Separate round-robin indices advance adapter selection. The engine execution and confirmation of actual device residency are outside that policy file.
+CLIMB's public artifact labels `gate_rr` as its main policy. The policy tracks an active adapter set and in-flight work. It removes idle entries, fills available capacity with VIP adapters, uses remaining capacity for background adapters, and selects the oldest request among eligible active adapters. When the number of distinct VIP adapters with queued or in-flight work reaches the residency capacity, it pauses background dispatch. Separate round-robin indices advance adapter selection. The engine execution and confirmation of actual device residency are outside that policy file.
 
 For example, with four slots and eight demanded adapters, admitting every queued request can continually force loads. Holding non-active background requests outside the engine reduces churn affecting urgent work, but does not erase their waiting. End-to-end latency must include the ingress queue.
 
-The relevant memory estimate per adapted linear is b r(h+o), before sharding and padding. Rank 128 therefore uses sixteen times the raw A/B bytes of rank 8 for the same layer. A pool padded to maximum rank may reserve substantially more than the bytes of currently loaded tensors.
+For an adapted linear layer with input width h, output width o, rank r, and b bytes per weight element, raw adapter memory is b r(h+o), before sharding and padding. Rank 128 therefore uses sixteen times the raw A/B bytes of rank 8 for the same layer. A pool padded to maximum rank may reserve substantially more than the bytes of currently loaded tensors.
 
 ## Availability, precision, and constraints
 
 CLIMB's artifact includes policy code, curated paper data, workload configurations, and a GPU rerun wrapper. The wrapper depends on a separately supplied full serving harness; this is not a self-contained production implementation. Its synthetic rank-128 adapters reproduce residency pressure, not trained task quality. Real experiments should obtain compatible trained LoRAs and their base checkpoint, target modules, scaling, and tokenizer information separately.
 
-SGLang exposes pinned adapters, LRU/FIFO eviction, CPU loaded-adapter limits, and overlap loading. Overlap can reduce exposed copy time but constrain multi-adapter prefill batching. vLLM exposes runtime load/unload/replacement; TensorRT-LLM documents host/device caches. These are existing facilities, not new candidates.
+SGLang exposes pinned adapters, LRU/FIFO eviction, CPU loaded-adapter limits, and overlap loading. Overlap can reduce exposed copy time but constrain multi-adapter prefill batching. vLLM exposes runtime load/unload/replacement; TensorRT-LLM documents host/device caches.
 
 Use actual FP16/BF16 buffer sizes and pinned-host memory accounting; base quantization does not halve every adapter buffer. PCIe transfer, host pinning, and accelerator support determine the switch cost. Prefetching an adapter that is never used can evict useful state or contend with current kernels. In-place replacement needs an explicit version/lifetime boundary so active requests do not mix old and new weights.
 
@@ -43,6 +43,6 @@ If engine tails improve but ingress tails worsen equally, waiting moved rather t
 
 Checked 2026-10-14.
 
-- [CLIMB, ICML 2026](https://proceedings.mlr.press/v306/zhang26dg.html): publication mechanism and artifact link. [Artifact](https://github.com/maxsignalll/CLIMB_artifact/tree/a96f7f3cb65b9bb86dec3d0a1f0c511705f05360) README and `policies/gate_rr.py` at `a96f7f3`, dated 2026-06-12; GPU-harness and weight gaps are explicit.
+- [CLIMB, ICML 2026](https://proceedings.mlr.press/v306/zhang26dg.html): publication mechanism and artifact link. [Artifact](https://github.com/maxsignalll/CLIMB_artifact/tree/a96f7f3cb65b9bb86dec3d0a1f0c511705f05360) README and `policies/gate_rr.py` at `a96f7f3`, dated 2026-06-12; GPU reruns require an external serving harness; synthetic weights exercise residency pressure.
 - [SGLang memory pool](https://github.com/sgl-project/sglang/blob/e9400c5a8f3a0d0312a37aecef694f5edfd69341/python/sglang/srt/lora/mem_pool.py): full unit at `e9400c5`, dated 2026-10-13; [runtime documentation](https://docs.sglang.io/advanced_features/lora.html).
 - [vLLM LoRA](https://docs.vllm.ai/en/latest/features/lora/) and [TensorRT-LLM LoRA](https://nvidia.github.io/TensorRT-LLM/advanced/lora.html): current loading/cache documentation; TensorRT-LLM main checked at `31c1a3f`, dated 2026-10-13.
