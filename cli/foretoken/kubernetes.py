@@ -162,7 +162,9 @@ class Kubectl:
         name, namespace, uid = metadata["name"], metadata["namespace"], metadata["uid"]
         deadline = time.monotonic() + timeout_seconds(timeout)
         while True:
-            current = self.get_if_exists(resource, name, namespace)
+            current = self.get_if_exists(
+                resource, name, namespace, timeout=max(1, deadline - time.monotonic())
+            )
             if current is None or current["metadata"]["uid"] != uid:
                 return
             if time.monotonic() >= deadline:
@@ -275,13 +277,13 @@ class Kubectl:
         )
 
     def get_if_exists(
-        self, kind: str, name: str, namespace: str = ""
+        self, kind: str, name: str, namespace: str = "", *, timeout: float | None = None
     ) -> dict[str, Any] | None:
         """Return one Kubernetes object, or None while it does not exist."""
         args = ["get", kind, name, "--ignore-not-found"]
         if namespace:
             args.extend(["--namespace", namespace])
-        output = self.run([*args, "-o", "json"]).stdout.strip()
+        output = self.run([*args, "-o", "json"], timeout=timeout).stdout.strip()
         return _decode_object(output) if output else None
 
     def get_resources(
