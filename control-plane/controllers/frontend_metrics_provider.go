@@ -398,8 +398,8 @@ func (provider *HTTPScalingMetricsProvider) getModelTelemetry(ctx context.Contex
 	if err := json.NewDecoder(response.Body).Decode(&telemetry); err != nil {
 		return modelServerTelemetry{}, fmt.Errorf("decode response: %w", err)
 	}
-	if telemetry.Version != modelServerTelemetryVersion {
-		return modelServerTelemetry{}, fmt.Errorf("unsupported version %d", telemetry.Version)
+	if err := telemetry.validateVersion(); err != nil {
+		return modelServerTelemetry{}, err
 	}
 	return telemetry, nil
 }

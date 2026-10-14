@@ -11,7 +11,11 @@ use foretoken_kv_indexer::KvPrefixIndexer;
 pub struct ThroughputScorer;
 
 impl RouteScorer for ThroughputScorer {
-    /// Returns negative weighted token costs; missing or non-finite costs receive negative infinity.
+    fn needs_request_length_history(&self) -> bool {
+        true
+    }
+
+    /// Ranks measured costs and explores idle targets until their request history is available.
     fn score(
         &self,
         _request: &RouterRequest,
@@ -23,23 +27,24 @@ impl RouteScorer for ThroughputScorer {
         candidates
             .iter()
             .map(|candidate| {
-                let Some(stats) = &candidate.route_target_stats else {
-                    return super::cost_score(None);
+                let cost = candidate
+                    .route_target_stats
+                    .as_ref()
+                    .and_then(|stats| {
+                        Some(
+                            2.0 * stats.prompt_tokens_per_request?
+                                + stats.generation_tokens_per_request?,
+                        )
+                    })
+                    .filter(|cost| cost.is_finite());
+                // Measured targets retain their cost ordering in (0, 1]. Router's
+                // reservations keep concurrent exploration from piling onto one cold target.
+                let preference = match cost {
+                    Some(cost) => 1.0 / (1.0 + cost),
+                    None if candidate.local_load.requests == 0 => 2.0,
+                    None => -(candidate.local_load.requests as f64),
                 };
-                let (Some(prompt), Some(generation)) = (
-                    stats.prompt_tokens_per_request,
-                    stats.generation_tokens_per_request,
-                ) else {
-                    return super::cost_score(None);
-                };
-                // An idle daily range has an undefined 0/0 mean, not a zero-token request.
-                // Do not let a NaN participate in the picker's total floating-point ordering.
-                let cost = 2.0 * prompt + generation;
-                if cost.is_finite() {
-                    super::cost_score(Some(cost))
-                } else {
-                    super::cost_score(None)
-                }
+                RouteScore { preference }
             })
             .collect()
     }

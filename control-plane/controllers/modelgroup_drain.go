@@ -33,7 +33,6 @@ const (
 	conditionDrained            = "Drained"
 	modelGroupDrainPollInterval = time.Second
 	frontendHTTPPortName        = "http"
-	modelServerTelemetryVersion = 2
 )
 
 type modelServerTelemetry struct {
@@ -43,6 +42,14 @@ type modelServerTelemetry struct {
 	RunningRequests          uint64  `json:"running_requests"`
 	SchedulerRunningRequests *uint64 `json:"scheduler_running_requests"`
 	SchedulerWaitingRequests *uint64 `json:"scheduler_waiting_requests"`
+}
+
+// validateVersion accepts telemetry schemas whose admission and load fields are compatible.
+func (telemetry modelServerTelemetry) validateVersion() error {
+	if telemetry.Version != 2 && telemetry.Version != 3 {
+		return fmt.Errorf("unsupported model-server telemetry version %d", telemetry.Version)
+	}
+	return nil
 }
 
 type frontendDiagnostics struct {
@@ -116,8 +123,8 @@ func (client *httpModelGroupDrainClient) CloseAdmission(ctx context.Context, end
 	if err := json.NewDecoder(response.Body).Decode(&telemetry); err != nil {
 		return modelServerTelemetry{}, fmt.Errorf("decode admission close response: %w", err)
 	}
-	if telemetry.Version != modelServerTelemetryVersion {
-		return modelServerTelemetry{}, fmt.Errorf("unsupported model-server telemetry version %d", telemetry.Version)
+	if err := telemetry.validateVersion(); err != nil {
+		return modelServerTelemetry{}, err
 	}
 	return telemetry, nil
 }

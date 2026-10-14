@@ -54,13 +54,6 @@ impl From<Vec<RouteScore>> for ScoringOutcome {
     }
 }
 
-/// Converts a lower-is-better cost to Router preference; missing costs rank last.
-pub(super) fn cost_score(cost: Option<f64>) -> RouteScore {
-    RouteScore {
-        preference: cost.map_or(f64::NEG_INFINITY, |cost| -cost),
-    }
-}
-
 /// Converts request-count observations into inverse min-max preferences.
 pub(super) fn inverse_normalized_scores(
     counts: impl IntoIterator<Item = Option<u64>>,
@@ -104,6 +97,11 @@ pub(super) fn inverse_normalized_scores(
 pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     /// Declares that scoring consumes prefix matches, preparing live observations before routing.
     fn needs_kv_prefix(&self) -> bool {
+        false
+    }
+
+    /// Requests the registry's daily request-length history only while this scorer is active.
+    fn needs_request_length_history(&self) -> bool {
         false
     }
 

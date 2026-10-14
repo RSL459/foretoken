@@ -129,6 +129,11 @@ impl<C: Send + 'static> RouterPipelines<C> {
             .map_or(&self.default, |stages| stages.get(role))
     }
 
+    /// Reports whether a model role's scorer consumes daily request-length observations.
+    pub fn needs_request_length_history(&self, model: &str, role: ModelServerRole) -> bool {
+        self.get(model, role).scorer.needs_request_length_history()
+    }
+
     /// Commits scorer settings at the existing atomic runtime-publication boundary.
     pub fn activate(&self, version: u64) {
         self.default.activate(version);

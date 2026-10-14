@@ -32,7 +32,7 @@ impl RouteTargetStatsHistory {
     /// Records one cumulative telemetry snapshot and evicts expired or reset history.
     ///
     /// Backend readiness refresh supplies the snapshot, which is stored in this bounded history.
-    pub(crate) fn push(&mut self, snapshot: TelemetryResponse) {
+    pub(crate) fn push(&mut self, snapshot: TelemetryResponse, request_lengths: bool) {
         // Keep only compact length counters for the daily window, not full telemetry snapshots.
         // Unlike short-window latency statistics, these histories account for counter resets.
         if self
@@ -40,17 +40,18 @@ impl RouteTargetStatsHistory {
             .back()
             .is_some_and(|previous| snapshot.collected_at_unix_ms <= previous.collected_at_unix_ms)
         {
-            self.prompt_lengths = RequestLengthHistory::default();
-            self.generation_lengths = RequestLengthHistory::default();
+            self.clear_request_lengths();
         }
-        self.prompt_lengths.push(
-            snapshot.collected_at_unix_ms,
-            snapshot.request_cost.prompt_tokens,
-        );
-        self.generation_lengths.push(
-            snapshot.collected_at_unix_ms,
-            snapshot.request_cost.generation_tokens,
-        );
+        if request_lengths {
+            self.prompt_lengths.push(
+                snapshot.collected_at_unix_ms,
+                snapshot.request_cost.prompt_tokens,
+            );
+            self.generation_lengths.push(
+                snapshot.collected_at_unix_ms,
+                snapshot.request_cost.generation_tokens,
+            );
+        }
         if self.snapshots.back().is_some_and(|previous| {
             snapshot.collected_at_unix_ms <= previous.collected_at_unix_ms
                 || counters_reset(previous, &snapshot)
@@ -67,6 +68,12 @@ impl RouteTargetStatsHistory {
         {
             self.snapshots.pop_front();
         }
+    }
+
+    /// Releases daily samples when the accepted routing configuration no longer consumes them.
+    pub(crate) fn clear_request_lengths(&mut self) {
+        self.prompt_lengths = RequestLengthHistory::default();
+        self.generation_lengths = RequestLengthHistory::default();
     }
 
     /// Returns current gauges immediately and derives counter statistics when history covers the window.
@@ -148,6 +155,8 @@ impl RouteTargetStatsHistory {
 #[derive(Default)]
 struct RequestLengthHistory {
     samples: VecDeque<(u64, HistogramMoments)>,
+    sum_delta: f64,
+    count_delta: f64,
     mean: Option<f64>,
 }
 
@@ -156,21 +165,34 @@ impl RequestLengthHistory {
     fn push(&mut self, now: u64, value: Option<HistogramMoments>) {
         const WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
         if let Some(value) = value {
+            if let Some((_, previous)) = self.samples.back() {
+                self.sum_delta += counter_step(previous.sum, value.sum);
+                self.count_delta += counter_step(previous.count as f64, value.count as f64);
+            }
             self.samples.push_back((now, value));
         }
+        // Each corrected counter edge enters and leaves the window once.
         while self
             .samples
             .front()
             .is_some_and(|(at, _)| now - at >= WINDOW_MS)
         {
-            self.samples.pop_front();
+            let (_, removed) = self.samples.pop_front().expect("window has a first sample");
+            if let Some((_, next)) = self.samples.front() {
+                self.sum_delta -= counter_step(removed.sum, next.sum);
+                self.count_delta -= counter_step(removed.count as f64, next.count as f64);
+            }
         }
         self.mean = if self.samples.len() < 2 {
+            self.sum_delta = 0.0;
+            self.count_delta = 0.0;
+            None
+        } else if self.count_delta == 0.0 {
             None
         } else {
             Some(
-                self.increase(now, WINDOW_MS, |value| value.sum)
-                    / self.increase(now, WINDOW_MS, |value| value.count as f64),
+                self.increase(now, WINDOW_MS, self.sum_delta, |value| value.sum)
+                    / self.increase(now, WINDOW_MS, self.count_delta, |value| value.count as f64),
             )
         };
     }
@@ -181,20 +203,12 @@ impl RequestLengthHistory {
         &self,
         now: u64,
         window_ms: u64,
+        delta: f64,
         counter: impl Fn(&HistogramMoments) -> f64,
     ) -> f64 {
         let (first_at, first) = self.samples.front().expect("at least two counter samples");
-        let (last_at, last) = self.samples.back().expect("at least two counter samples");
+        let (last_at, _) = self.samples.back().expect("at least two counter samples");
         let first_value = counter(first);
-        let mut delta = counter(last) - first_value;
-        let mut previous = first_value;
-        for (_, value) in self.samples.iter().skip(1) {
-            let current = counter(value);
-            if current < previous {
-                delta += previous;
-            }
-            previous = current;
-        }
         let interval = (last_at - first_at) as f64 / 1_000.0;
         let spacing = interval / (self.samples.len() - 1) as f64;
         let mut to_start = (window_ms - (now - first_at)) as f64 / 1_000.0;
@@ -209,6 +223,15 @@ impl RequestLengthHistory {
             to_end = spacing / 2.0;
         }
         delta * ((interval + to_start + to_end) / interval)
+    }
+}
+
+// A counter reset contributes only the observations collected since its restart.
+fn counter_step(previous: f64, current: f64) -> f64 {
+    if current < previous {
+        current
+    } else {
+        current - previous
     }
 }
 

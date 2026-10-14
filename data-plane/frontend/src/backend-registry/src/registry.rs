@@ -28,10 +28,16 @@ pub struct BackendRegistry {
     configured_models: BTreeSet<String>,
     components: BTreeMap<RouteTargetId, Component>,
     health: BTreeMap<RouteTargetId, AtomicBool>,
-    stats: Mutex<BTreeMap<RouteTargetId, RouteTargetStatsHistory>>,
+    stats: Mutex<RegistryStats>,
     metadata: Mutex<BTreeMap<RouteTargetId, RuntimeMetadataResponse>>,
     health_client: reqwest::Client,
 }
+#[derive(Default)]
+struct RegistryStats {
+    histories: BTreeMap<RouteTargetId, RouteTargetStatsHistory>,
+    request_length_targets: BTreeSet<RouteTargetId>,
+}
+
 pub(crate) enum Component {
     Aggregate {
         endpoint: String,
@@ -86,7 +92,7 @@ impl BackendRegistry {
             configured_models,
             components,
             health,
-            stats: Mutex::new(BTreeMap::new()),
+            stats: Mutex::default(),
             metadata: Mutex::new(BTreeMap::new()),
             health_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(1))
@@ -94,6 +100,18 @@ impl BackendRegistry {
                 .expect("static client"),
         })
     }
+    /// Applies the accepted generation's history consumers without changing short-window telemetry.
+    /// Runtime publication owns this transition; in-flight probes use the latest accepted set.
+    pub fn set_request_length_targets(&self, targets: BTreeSet<RouteTargetId>) {
+        let mut stats = self.stats.lock().expect("backend stats mutex");
+        for (id, history) in &mut stats.histories {
+            if !targets.contains(id) {
+                history.clear_request_lengths();
+            }
+        }
+        stats.request_length_targets = targets;
+    }
+
     /// Returns an owned list of logical model names declared by the current snapshot.
     pub fn configured_models(&self) -> Vec<String> {
         self.configured_models.iter().cloned().collect()
@@ -302,7 +320,7 @@ impl BackendRegistry {
         });
         let results = futures::future::join_all(probes).await;
         let mut next_metadata = BTreeMap::new();
-        let mut histories = self.stats.lock().expect("backend stats mutex");
+        let mut registry_stats = self.stats.lock().expect("backend stats mutex");
         for (id, healthy, metadata, stats) in results {
             self.health
                 .get(&id)
@@ -310,21 +328,23 @@ impl BackendRegistry {
                 .store(healthy, Ordering::Release);
             if healthy {
                 if let Some(stats) = stats {
-                    histories
+                    let request_lengths = registry_stats.request_length_targets.contains(&id);
+                    registry_stats
+                        .histories
                         .entry(id.clone())
                         .or_insert_with(|| {
                             RouteTargetStatsHistory::new(ROUTE_TARGET_STATS_RETENTION)
                         })
-                        .push(stats);
+                        .push(stats, request_lengths);
                 } else {
-                    histories.remove(&id);
+                    registry_stats.histories.remove(&id);
                 }
                 next_metadata.insert(id, metadata.expect("validated above"));
             } else {
-                histories.remove(&id);
+                registry_stats.histories.remove(&id);
             }
         }
-        drop(histories);
+        drop(registry_stats);
         *self.metadata.lock().expect("metadata mutex") = next_metadata;
     }
 }
@@ -404,7 +424,12 @@ impl RouteInventory for BackendRegistry {
 
 impl RouteTargetStatsReader for BackendRegistry {
     fn stats(&self, route_target_id: &RouteTargetId, window: Duration) -> Option<RouteTargetStats> {
-        self.stats.lock().ok()?.get(route_target_id)?.stats(window)
+        self.stats
+            .lock()
+            .ok()?
+            .histories
+            .get(route_target_id)?
+            .stats(window)
     }
 }
 

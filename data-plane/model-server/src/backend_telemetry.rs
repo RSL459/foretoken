@@ -231,9 +231,9 @@ fn request_cost_metrics(labels: &EngineLabels) -> foretoken_model_protocol::Requ
         ("prompt", &METRICS.request.request_prompt_tokens),
         ("generation", &METRICS.request.request_generation_tokens),
     ] {
-        if let Some(histogram) = family.get(labels) {
-            registry.register(name, "Internal histogram observation", histogram.clone());
-        }
+        // Every configured rank has a zero baseline before its first request.
+        let histogram = family.get_or_create(labels);
+        registry.register(name, "Internal histogram observation", histogram.clone());
     }
     let mut encoded = String::new();
     encode(&mut encoded, &registry).expect("encoding in-memory histograms into String cannot fail");
