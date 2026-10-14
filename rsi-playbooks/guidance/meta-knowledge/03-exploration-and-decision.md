@@ -22,11 +22,9 @@ Choose directions by their importance and potential benefit. Do not limit work t
 
 ## Turn findings into research tasks
 
-The lead, Advisors, and Workers actively formulate concrete questions from references, source code, and measurements. The lead coordinates directions and resources and makes cross-direction decisions; Advisors contribute independent research, alternatives, and counterexamples. Each Worker owns research, analysis, design, implementation, deployment, measurement, and interpretation for its assigned question, without waiting for an Advisor proposal. A task might be to reduce Gated DeltaNet (GDN) input preparation and intermediate writeback, improve work partitioning for small-batch MoE, or investigate a new scheduling or disaggregated architecture.
+The lead, Advisors, and Workers actively formulate concrete questions from references, source code, and measurements. The lead coordinates directions and resources and makes cross-direction decisions; Advisors contribute independent research, alternatives, and counterexamples. Each Worker owns research, analysis, design, implementation, deployment, measurement, and interpretation for its assigned question, without waiting for an Advisor proposal.
 
 For each investigation, state what is known, what should change, and how the next step will produce useful results. If no ready-made switch, script, or tuner exists, reuse upstream capabilities or construct a focused experiment for the question, then proceed into implementation.
-
-For example, if increasing speculative steps raises the number of accepted tokens but barely changes throughput, investigate the separate costs of drafting, verification, sampling, and communication. If sampling is a shared source of overhead, examine work partitioning and data reuse, then propose and compare alternative implementations.
 
 ## Keep digging as results emerge
 
@@ -37,7 +35,7 @@ Once a direction is chosen, give source analysis, experiments, and implementatio
 - Local speedups yield limited service gains: trace the integrated execution and investigate batching, scheduling, data placement, and effects on other stages.
 - Parameter settings repeatedly produce similar results: reconsider their shared execution strategy and explore different algorithms, parallel dimensions, or ways to organize work.
 
-Larger changes can be divided into key hypotheses, a core implementation, and full integration. Address the technical questions that most affect feasibility first, then complete execution with real requests. For Attention/FFN disaggregation, for example, investigate batching requirements, activation transfer, scheduling overlap, and multi-request execution in turn, always keeping the overall objective in view.
+Larger changes can be divided into key hypotheses, a core implementation, and full integration. Address the technical questions that most affect feasibility first, then complete execution with real requests.
 
 ## Maintain the research direction
 

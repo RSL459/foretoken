@@ -34,8 +34,6 @@ The lead actively develops and revises optimization directions rather than only 
 
 At execution start, assign the roles below to team members. Give each Worker a self-contained research question with a clear expected outcome, not a sequence of separately approved commands. State the allowed changes, resources and handoff plan, remaining budget, completion conditions, collaborators, and evidence/output locations. Pass absolute paths to [the role contract](roles/common.md), role file, task, applicable repository instructions, and original evidence; members read these inputs themselves. Keep context across related assignments.
 
-For example, assign a Worker to investigate queueing delay under the task's mixed-length workload: identify its cause, implement a suitable change if warranted, and compare the service against the retained approach without changing request acceptance or response semantics. Specify its checkout, service resources, budget, and Recorder. This authorizes investigation, candidate refinement, deployment, and measurement within those boundaries; it does not prescribe a particular algorithm or require a code change when the hypothesis is rejected.
-
 | Role instructions | Initial assignment and scaling | Record ownership |
 | --- | --- | --- |
 | Lead | The lead develops and reflects on the approach, coordinates the team, and may execute work directly. | Decisions, acceptance, and user delivery; the Recorder records the decisions. |
