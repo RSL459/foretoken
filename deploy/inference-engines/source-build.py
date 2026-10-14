@@ -68,12 +68,18 @@ def prepare_patches(
     patches = []
     if metax:
         configuration = json.loads((METAX_ROOT / "source-environment.json").read_text())
-        for target, directory in (("core", core), ("metax", plugin)):
-            if directory is not None:
-                patches.extend(
-                    (directory, METAX_ROOT / name)
-                    for name in configuration["patches"][target]
-                )
+        # SDK backports target the manifest's core version. Custom runtimes
+        # provide their own matching SDK adaptations.
+        if (
+            Version(version).base_version
+            == Version(configuration["core"]["version"]).base_version
+        ):
+            for target, directory in (("core", core), ("metax", plugin)):
+                if directory is not None:
+                    patches.extend(
+                        (directory, METAX_ROOT / name)
+                        for name in configuration["patches"][target]
+                    )
     patches.extend((core, patch) for patch in engine_patches(core, version, PATCH_ROOT))
     # A changed input may reset one file of a multi-file patch. Restore all patch
     # inputs together before applying the ordered series to avoid mixed states.
@@ -119,6 +125,9 @@ def compile_native(source: Path, cache: Path, version: str) -> None:
         FETCHCONTENT_BASE_DIR=str(cache / "dependencies"),
         CCACHE_DIR=str(cache / "ccache"),
     )
+    if getattr(torch.version, "maca", None):
+        # The SDK CMake wrapper must preserve failures before its cleanup commands.
+        environment["BASH_ERREXIT"] = "1"
     if not environment.get("TORCH_CUDA_ARCH_LIST"):
         # Upstream CMake selects its supported architectures for CPU-only builds.
         environment.pop("TORCH_CUDA_ARCH_LIST", None)
@@ -163,12 +172,21 @@ def export_overlay(
         # A namespace package would let Python select the image's old regular package.
         raise RuntimeError(f"engine source must provide {package}/__init__.py")
     runtime = package_directory(package)
+    # Keep package assets, including hidden native libraries, but not repository metadata.
+    excluded = {
+        ".git",
+        ".gitkeep",
+        ".gitignore",
+        ".gitattributes",
+        ".gitmodules",
+        "__pycache__",
+    }
     # Ordinary Python modules come only from source. The image supplies native
     # libraries and generated/vendor packages.
     for path in runtime.rglob("*"):
-        if not path.is_file() or "__pycache__" in path.parts:
-            continue
         relative = path.relative_to(runtime)
+        if not path.is_file() or any(part in excluded for part in relative.parts):
+            continue
         if (
             path.name in {"_version.py", "vllm-rs"}
             or path.name.endswith(".so")
@@ -180,7 +198,12 @@ def export_overlay(
             shutil.copy2(path, target)
     native = cache / "native-install"
     if (native / package).is_dir():
-        shutil.copytree(native / package, destination / package, dirs_exist_ok=True)
+        shutil.copytree(
+            native / package,
+            destination / package,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(*excluded),
+        )
         known = json.loads((cache / "native-files.json").read_text())
         for name in known:
             if not (native / name).is_file():
@@ -195,6 +218,8 @@ def export_overlay(
         }
         files.update(name for name in patched_files if name.startswith(package + "/"))
         for name in sorted(files):
+            if any(part in excluded for part in Path(name).parts):
+                continue
             target = destination / name
             if target.is_dir():
                 shutil.rmtree(target)
