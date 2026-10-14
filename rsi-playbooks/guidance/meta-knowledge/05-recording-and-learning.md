@@ -34,33 +34,11 @@ For candidates with local gains, state how far full-model and service validation
 - Put search, analysis, decision-making, design, and learning methods in [meta-knowledge](README.md).
 - Keep each iteration's configurations, logs, and raw results in the experiment directory.
 
-Use a title that names the topic directly and add a one-sentence description of its purpose to the knowledge index. Make entries easy to find by symptom, technical term, or implementation location.
+Use a title that expresses the complete goal and method, and place the note in its category directory. Update the knowledge index when adding a category so readers can find it.
 
 ## Knowledge note template
 
-Choose and adjust sections to suit the content. Start from the [knowledge note template](../../templates/guidance-template.md).
-
-```markdown
-# Name of the Knowledge or Lesson
-
-## Problem and approach
-What problem needs solving? What is the key finding or method?
-Explain why it works using execution steps, equations, or examples.
-
-## Applicable conditions
-Which models, workloads, hardware, versions, or implementations are involved?
-What are the trade-offs, known issues, and explanations still to be tested?
-
-## Evidence and implementation
-Link original sources, relevant code, and experiment records.
-Identify conclusions reported by sources and those supported by measurements.
-Preserve reusable input construction, experiment entry points, and run procedures.
-
-## Application and next steps
-When is this worth consulting? How can it inform the next analysis or design?
-For inefficient practices, how can similar detours be recognized and avoided early?
-How far have implementation and validation progressed, and what remains unresolved?
-```
+Use the [knowledge note template](../../templates/guidance-template.md): observations and motivation, principles and analysis, design, implementation, impact and results, and references. Start from the observed behavior, explain its causes and the method's mechanism, then connect implementation choices to their effects. Use a short target object and core technique for the file name, not a full sentence; let the title express the complete goal and method.
 
 ## Update and use the knowledge in subsequent research
 
