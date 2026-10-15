@@ -36,7 +36,7 @@ At execution start, assign the roles below to team members. Give each Worker a r
 
 | Role instructions | Initial assignment and scaling | Record ownership |
 | --- | --- | --- |
-| Lead | Develops the approach, selects directions, assigns development, and makes decisions; owns environment preparation and all candidate execution, including parallel runs and integrated validation. | Actual commands, runtime identities, results, decisions, and final delivery; the Recorder maintains the records. |
+| Lead | Develops the approach, selects directions, assigns development, reviews candidate code, and makes decisions; owns environment preparation and all candidate execution, including parallel runs and integrated validation. | Actual commands, runtime identities, results, decisions, and final delivery; the Recorder maintains the records. |
 | [Advisor](roles/advisor.md) | At least two members focus on complementary research questions, understand the code and system, explore community ideas, and provide bottleneck analysis, alternatives, feedback, and reflection. The lead sets staffing from useful perspectives, budget, and harness capacity. | Research findings and recommendations supplied to Workers, the lead, and the Recorder. |
 | [Worker](roles/worker.md) | Owns research, bottleneck analysis, design, code changes, and analysis of results returned by the lead. At least one Worker studies the end-to-end code path. Multiple Workers develop independent candidates while the lead runs experiments. | Candidate code, change explanations, and result analysis supplied to the lead and Recorder. |
 | [Recorder](roles/recorder.md) | One by default, independently reviewing candidate behavior, comparison conditions, and attribution, and maintaining unified records and reusable findings with input from Advisors. Does not implement the candidates it reviews. | Experiment overview, iteration and decision history, evidence links, and final report. |
@@ -70,10 +70,11 @@ Remove an experimental worktree only after its changes and evidence have been re
 
 The [Worker workflow](roles/worker.md) covers research, design, code changes, and analysis of returned results. The lead connects development to execution:
 
-1. Develop and prioritize hypotheses with Advisors and Workers. Assign independent code changes and prepare the shared environment while research continues.
-2. Receive candidate changes, choose comparisons, and execute builds, representative diagnostics, deployments, and measurements. Use existing sweeps for predetermined groups and run independent candidates concurrently when resources permit.
-3. Send each completed result and its runtime configuration to the responsible Worker and Recorder. The Worker analyzes and revises code; the Recorder independently reviews results and updates the iteration history, summary, and report. Share observations with Advisors for broader reflection.
-4. Decide which changes to retain, assign their code integration, and execute combined validation. Reconsider directions, staffing, and resource allocation as findings arrive; the Monitor helps locate waiting and idle capacity.
+1. Develop and prioritize hypotheses with Advisors and Workers. Before arranging execution, consult the [deployment guide](../../../docs/custom-deployment.md), [benchmark recipes](../../../benchmarks/docs/recipes.md), maintained examples, and relevant CLI help. Reuse the available deployment, sweep, profiling, recording, and result-comparison capabilities. Assign independent code changes and prepare the shared environment while research continues.
+2. Personally read each delivered candidate's code changes and relevant call paths. Review implementation correctness, fit with the system architecture, and the conditions under which the change takes effect. Discuss implementation issues with the Worker, then choose comparisons and validation from this understanding.
+3. Build and deploy the candidate. Use targeted diagnostics as needed to confirm the intended execution path before formal measurements. Use existing sweeps for predetermined groups and run independent candidates concurrently when resources permit.
+4. Send each completed result and its runtime configuration to the responsible Worker and Recorder. The Worker analyzes and revises code; the Recorder independently reviews results and updates the iteration history, summary, and report. Share observations with Advisors for broader reflection.
+5. Decide which changes to retain, assign their code integration, and execute combined validation. Reconsider directions, staffing, and resource allocation as findings arrive; the Monitor helps locate waiting and idle capacity.
 
 Follow the [role contract](roles/common.md) for updates and handoffs. Continue authorized development after an intermediate result. On resumption, reconcile actual results and running processes before the lead starts further execution.
 
