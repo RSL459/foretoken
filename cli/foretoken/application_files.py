@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator
@@ -585,7 +586,9 @@ class ApplicationFiles:
         finally:
             if builder is not None:
                 builder.cancellation.unregister(stop)
-            self._delete_owned("jobs", metadata, timeout)
+                builder.cancellation.cleanup(stop, sys.exc_info()[1])
+            else:
+                self._delete_owned("jobs", metadata, timeout)
 
     def _delete_owned(
         self, resource: str, metadata: dict[str, Any], timeout: str

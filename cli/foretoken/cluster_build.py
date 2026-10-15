@@ -13,6 +13,7 @@ import re
 import shlex
 import signal
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -76,13 +77,24 @@ class BuildCancellation(AbstractContextManager):
             if not self._cancelled.is_set():
                 self._callbacks.add(callback)
                 return
-        callback()
+        self.cleanup(callback, self._error)
         self.check()
 
     def unregister(self, callback: Callable[[], None]) -> None:
         """Release a resource's cancellation hook after its normal lifetime ends."""
         with self._lock:
             self._callbacks.discard(callback)
+
+    def cleanup(
+        self, callback: Callable[[], None], error: BaseException | None = None
+    ) -> None:
+        """Report operational cleanup failures without replacing an existing build failure."""
+        try:
+            callback()
+        except (DeploymentError, OSError) as cleanup_error:
+            print(f"Source cleanup failed: {cleanup_error}", file=sys.stderr, flush=True)
+            if error is None:
+                raise
 
     def cancel(self, error: BaseException | None = None) -> None:
         """Stop live resources before joining workers, retaining the first failure as their cause."""
@@ -94,7 +106,7 @@ class BuildCancellation(AbstractContextManager):
             callbacks = tuple(self._callbacks)
         if callbacks:
             with ThreadPoolExecutor(max_workers=len(callbacks)) as cleanup:
-                futures = [cleanup.submit(callback) for callback in callbacks]
+                futures = [cleanup.submit(self.cleanup, callback, error) for callback in callbacks]
                 for future in futures:
                     future.result()
 
@@ -777,18 +789,18 @@ chmod 600 "$state/buildkit.toml"
             raise
         return self
 
-    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+    def __exit__(self, exc_type: object, exc_value: BaseException | None, traceback: object) -> None:
         """Retain successful builders and clean transient or failed build state."""
         try:
             if exc_type is not None:
                 # A disconnected buildctl can leave executor children alive in the
                 # rootless worker's shared PID namespace. Retire reused Pods as well.
-                self.retire()
+                self.cancellation.cleanup(self.retire, exc_value)
                 return
             try:
                 self._retain_build_cache()
-            except BaseException:
-                self.retire()
+            except BaseException as error:
+                self.cancellation.cleanup(self.retire, error)
                 raise
         finally:
             self.cancellation.unregister(self.retire)
