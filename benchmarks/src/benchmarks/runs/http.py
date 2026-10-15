@@ -507,6 +507,7 @@ class HttpBenchmark:
                 measurements=measurements,
                 artifacts=artifacts,
                 time_origin=origin,
+                exit_code=0 if metrics["success_num"] else 1,
                 http_series_published=progress is not None,
             )
             outputs.publish(run)

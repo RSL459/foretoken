@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.results.plots.data import Chart, _method
+from benchmarks.results.tasks import task_source
 from benchmarks.results.plots.measurements import (
     _quality_charts,
     _slo_charts,
@@ -42,10 +43,13 @@ class _RecordedRun:
     metrics: dict[str, Any] | None
     exit_code: int | None
     started: bool
+    status: str | None = None
 
 
 def _conditions(config: dict[str, Any]) -> dict[str, Any]:
     """Separate saved workload choices from deployment and output locations."""
+    if config.get("mode") == "slo_search" and "base" in config:
+        return {**_conditions(config["base"]), "mode": "slo_search"}
     conditions = {key: value for key, value in config.items() if key not in {
         "service", "services", "service_choices", "output", "wandb", "sweep", "resolved", "url",
     }}
@@ -142,21 +146,28 @@ def _comparison_changes(records: list[dict[str, Any]]) -> None:
 
 def _leaf(
     directory: Path, configuration: Path, conditions: dict[str, Any], method: str,
-    exit_code: int | None, started: bool,
+    exit_code: int | None, started: bool, status: str | None = None,
 ) -> _RecordedRun:
     """Read one measurement, retaining the parent's plan when execution never reached it."""
-    if (directory / "config.json").is_file():
-        configuration = directory / "config.json"
+    task_path = directory / "task.json"
+    if task_path.is_file():
+        task = json.loads(task_path.read_text())
+        exit_code, status, started = task["exit_code"], task["status"], True
+        if status == "completed" and exit_code:
+            status = "failed"
+    source = task_source(directory)
+    if (source / "config.json").is_file():
+        configuration = source / "config.json"
         conditions = _conditions(json.loads(configuration.read_text()))
         started = True
-    metrics_path = directory / "metrics.json"
+    metrics_path = source / "metrics.json"
     metrics = json.loads(metrics_path.read_text()) if metrics_path.is_file() else None
-    return _RecordedRun(directory, configuration, conditions, method, metrics, exit_code, started)
+    return _RecordedRun(directory, configuration, conditions, method, metrics, exit_code, started, status)
 
 
 def _recorded_runs(directory: Path, context: dict[str, Any]) -> Iterator[_RecordedRun]:
     """Follow the saved sweep/evaluation plan rather than rediscovering nested native reports."""
-    configuration = directory / "config.json"
+    configuration = task_source(directory) / "config.json"
     if not configuration.is_file():
         search_path = directory / "slo_results.json"
         if search_path.is_file():
@@ -194,7 +205,9 @@ def _recorded_runs(directory: Path, context: dict[str, Any]) -> Iterator[_Record
             for number, child in enumerate(children):
                 point = observed.get((combination["dir"], number))
                 yield _leaf(child, configuration, planned, method,
-                            point["exit_code"] if point is not None else None, point is not None)
+                            point["exit_code"] if point is not None else None,
+                            point is not None and point.get("status") != "pending",
+                            point.get("status") if point is not None else None)
         return
     metrics_path = directory / "metrics.json"
     metrics = json.loads(metrics_path.read_text()) if metrics_path.is_file() else None
@@ -205,8 +218,8 @@ def _recorded_runs(directory: Path, context: dict[str, Any]) -> Iterator[_Record
             yield _leaf(directory / method["directory"], configuration, _conditions(config),
                         method["label"], method["exit_code"], method["status"] != "not_started")
         return
-    yield _RecordedRun(directory, configuration, _conditions(config), _method({"bench": config}),
-                       metrics, context.get("exit_code"), True)
+    yield _leaf(directory, configuration, _conditions(config), _method({"bench": config}),
+                context.get("exit_code"), True)
 
 
 def _parent_plan(directory: Path) -> tuple[Path, str] | None:
@@ -222,7 +235,7 @@ def _parent_plan(directory: Path) -> tuple[Path, str] | None:
         metrics = json.loads(metrics_path.read_text()) if metrics_path.is_file() else {}
         if "evaluation_comparison" in metrics:
             return parent, "evaluation"
-        if (parent / "slo_results.json").is_file():
+        if config.get("mode") == "slo_search" or (parent / "slo_results.json").is_file():
             return parent, "slo_search"
     return None
 
@@ -283,7 +296,7 @@ def _discover(
         if not found:
             yield _ResultDirectory(directory, group or directory, command)
         return
-    if (directory / "config.json").is_file() or (directory / "slo_results.json").is_file():
+    if any((directory / name).is_file() for name in ("config.json", "slo_results.json", "task.json")):
         yield _ResultDirectory(directory, group or directory, context or _enclosing_context(directory))
         return
     if (directory / "iterations").is_dir():
@@ -335,9 +348,9 @@ def read_saved_results(
     for path in selected:
         if not path.is_dir():
             raise NotADirectoryError(f"Result directory does not exist: {path}")
-    # An enclosing selection owns traversal of its descendants, independently of
-    # argument order. This also avoids counting aggregate reports and their children.
-    selected = [path for path in selected if not any(
+    # Keep an explicit base first so it owns shared resumed measurements. Other
+    # enclosing selections own traversal; leaf evidence is still counted only once.
+    selected = [path for path in selected if path == base or not any(
         path != parent and path.is_relative_to(parent) for parent in selected
     )]
     directories: list[_ResultDirectory] = []
@@ -346,10 +359,7 @@ def read_saved_results(
         if not discovered:
             raise FileNotFoundError(f"No saved benchmark results in {source}")
         directories.extend(discovered)
-    groups = list(dict.fromkeys(item.group for item in directories))
-    if base is not None and base not in groups:
-        groups.append(base)
-    labels = _directory_labels(groups)
+    labels = _directory_labels(list(dict.fromkeys(item.group for item in directories)))
     base_approaches: set[str] = set()
     runs: list[dict[str, Any]] = []
     points: list[dict[str, Any]] = []
@@ -375,7 +385,9 @@ def read_saved_results(
         found = False
         for saved in _selected_runs(source.directory, context, plans):
             found = True
-            result_path = saved.directory.resolve()
+            task_path = saved.directory.resolve()
+            result_path = task_source(task_path)
+            saved = replace(saved, directory=result_path)
             if result_path in observed:
                 continue
             observed.add(result_path)
@@ -408,12 +420,8 @@ def read_saved_results(
                 continue
             if comparison is not None and methods:
                 method_filters[saved.directory] = tuple(chosen)
-            # Split a base selected below an input container, but keep distinct
-            # approaches inside a base container separate rather than pooling them.
-            is_base = base is not None and result_path.is_relative_to(base)
+            is_base = base is not None and task_path.is_relative_to(base)
             group = source.group
-            if base is not None and is_base and not group.is_relative_to(base):
-                group = base
             label = labels[group] + (f" / {saved.method}" if saved.method != "default" else "")
             if is_base:
                 base_approaches.add(label)
@@ -425,6 +433,7 @@ def read_saved_results(
                          "approach": label, "workload": combination,
                          "result": str(saved.directory), "measured": saved.metrics is not None or bool(charts),
                          "started": saved.started, "measurement_exit_code": saved.exit_code,
+                         "task": str(task_path), "task_status": saved.status,
                          "config": str(saved.configuration) if saved.configuration is not None else None,
                          "conditions": saved.conditions,
                          "environment": next((str(path) for name in ("environment.json", "serving_environments.json")

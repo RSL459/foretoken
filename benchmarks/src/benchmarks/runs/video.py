@@ -136,7 +136,7 @@ async def run_video_benchmark(
             "Video dry run validated config:\n%s",
             json.dumps(config.to_dict(), indent=2, ensure_ascii=False),
         )
-        return {"metrics": {"request_num": 0, "success_num": 0}, "dry_run": True}
+        return {"metrics": {"request_num": 0, "success_num": 0}, "dry_run": True, "exit_code": 0}
 
     record = video_run_record(config)
     result_output_dir = None
@@ -175,4 +175,4 @@ async def run_video_benchmark(
         outputs.publish(run)
         if config.outputs.saves_local:
             result_output_dir = outputs.execution_dir
-    return {"metrics": run.metrics, "output_dir": result_output_dir}
+    return {"metrics": run.metrics, "output_dir": result_output_dir, "exit_code": run.exit_code}

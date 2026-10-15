@@ -62,6 +62,8 @@ Supported search metrics are:
 
 ## Read results
 
-The console and `slo_results.json` report each criterion group's highest passing request peak, its configured limit, the last measured peak and limit, and the stopping reason.
+The console and `slo_results.json` report each criterion group's highest passing request peak, its configured limit, the last measured peak and limit, and the stopping reason. The command exits nonzero if any group has no passing probe.
+
+To continue an interrupted search, repeat the command with `--resume RESULT_DIR`, using its saved result directory. Each completed repetition at a criterion group and concurrency is reused, including negative observations; an interrupted repetition is measured again. See [result retention and continuation](sweep.md#continue-a-saved-sweep).
 
 If you explicitly deployed the Quick Start service, remove it with `foretoken delete examples/quickstart` when it is no longer needed.

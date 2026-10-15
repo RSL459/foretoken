@@ -28,6 +28,7 @@ from benchmarks.results.plots.measurements import (
     phase_summary_charts,
 )
 from benchmarks.results.plots.saved_results import read_saved_results
+from benchmarks.results.tasks import task_source
 
 _PALETTE = (
     "#2a78d6",
@@ -446,6 +447,8 @@ def render_results(
     out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others, base=base)
     if columns not in (1, 2):
         raise ValueError("columns must be 1 or 2")
+    if base is None and not others:
+        source = task_source(source)
     direct = base is None and not others and ((source / "config.json").is_file() or (source / "slo_results.json").is_file())
     comparison_results = None if direct else read_saved_results((source, *map(Path, others)), methods=methods, base=base)
     if base is None and comparison_results is not None and (source / "generated/context.json").is_file() and len(comparison_results.runs) == 1:

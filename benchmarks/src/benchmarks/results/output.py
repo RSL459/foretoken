@@ -66,7 +66,7 @@ class BenchmarkRun:
     measurements: list[RequestMeasurement] | None
     artifacts: dict[str, Path]
     time_origin: float | None = None
-    # Quality evaluations have an execution status independent of the model's score.
+    # Execution outcome is distinct from measured scores and aggregate request counts.
     exit_code: int | None = None
     http_series_published: bool = False
 
@@ -383,13 +383,15 @@ def result_directory_path(
 
 
 def write_json(directory: str, filename: str, data: Any, *, compact: bool = False) -> Path:
-    """Write one JSON artifact into a result directory and return its path."""
+    """Atomically replace a JSON artifact so interrupted writes leave the previous record readable."""
     path = Path(directory) / filename
-    with path.open("w", encoding="utf-8") as file:
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("w", encoding="utf-8") as file:
         if compact:
             json.dump(data, file, ensure_ascii=False, separators=(",", ":"))
         else:
             json.dump(data, file, indent=4, ensure_ascii=False)
+    temporary.replace(path)
     return path
 
 
