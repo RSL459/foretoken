@@ -11,6 +11,8 @@ For installation, deployment and parallel candidate commands, see [Deploy Foreto
 
 Platform installation owns the shared controller, CRDs and runtime defaults. Deployment builds frontend and model-server code from the selected checkout and applies it only to the submitted services. Keeping these operations separate prevents one candidate from changing the platform used by others.
 
+Dependency environments are reusable images, separate from application source and compiler caches. Rebuild an environment when its recipe or selected base image changes; otherwise, reuse its completed image across checkouts. Installation resolves configured base images, while deployment keeps changes local to the selected services.
+
 The CLI records engine directory choices per checkout and includes source deletions when preparing a build. Deleted engine files must not reappear from the base image. Builds must remain compatible with the selected Python and accelerator libraries.
 
 ## Concurrent builds

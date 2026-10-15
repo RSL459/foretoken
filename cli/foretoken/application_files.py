@@ -284,8 +284,9 @@ class ApplicationFiles:
         sources: dict[str, Any] | None = None,
         image: str | None = None,
         parts: list[str] | None = None,
+        previous_image: str | None = None,
     ) -> str:
-        """Publish a compiler export with provenance and return the selected immutable revision."""
+        """Publish an export, checking the producer-selected base when reusing application parts."""
         command = [
             "python",
             "-c",
@@ -299,6 +300,7 @@ class ApplicationFiles:
             json.dumps(sources),
             json.dumps(image),
             json.dumps(parts),
+            json.dumps(previous_image),
         ]
         if parts is not None and not previous:
             raise DeploymentError("partial publication requires a completed application")

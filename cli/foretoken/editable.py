@@ -19,13 +19,18 @@ from typing import Any
 
 import yaml
 
-from foretoken.application_files import SERVICE_COMPONENTS, SOURCE_REVISION, ApplicationFiles
+from foretoken.application_files import (
+    SERVICE_COMPONENTS,
+    SOURCE_REVISION,
+    ApplicationFiles,
+)
 from foretoken.arguments import InstallCommand
 from foretoken.cluster_build import (
     ClusterBuilder,
     find_build_cache,
     registry_credentials,
 )
+from foretoken.engine_environment import engine_build_arguments
 from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import (
     DeploymentError,
@@ -150,13 +155,18 @@ class EditableDeployment:
                 self.state["platform_uid"] != self.platform["platform_uid"]
                 or self.state.get("platform_inputs") != self.platform["inputs"]
             )
+            self.build_arguments = self.state["build"]["arguments"]
             if platform_changed:
                 # Refresh platform intent, retaining this checkout's input versions
                 # and effective outputs until the environment build succeeds.
                 self.state["command"] = copy.deepcopy(self.platform["command"])
                 self.state["base_image"] = self.platform.get("base_image")
-                for key in ("configuration", "arguments", "registry_mirrors", "runtime_backend", "build_metax_runtime"):
+                self.build_arguments = self.platform["build"]["arguments"]
+                for key in ("configuration", "registry_mirrors", "runtime_backend", "build_metax_runtime"):
                     self.state["build"][key] = copy.deepcopy(self.platform["build"][key])
+                self.state["build"]["environments"] = copy.deepcopy(
+                    self.platform["build"].get("environments", {})
+                )
                 self.state["runtime"].update({
                     key: copy.deepcopy(value)
                     for key, value in self.platform["runtime"].items()
@@ -193,7 +203,7 @@ class EditableDeployment:
             "VLLM_REVISION"
         ) != pinned_rust_revision(self.root):
             print(
-                "Source plan: build this checkout's runtime environments",
+                "Source plan: prepare this checkout's runtime environments",
                 flush=True,
             )
             self._rebuild(timeout)
@@ -262,7 +272,7 @@ class EditableDeployment:
                 rebuild = True
         if rebuild:
             print(
-                "Source plan: build this checkout's runtime environments",
+                "Source plan: prepare this checkout's runtime environments",
                 flush=True,
             )
             self._rebuild(timeout)
@@ -338,8 +348,7 @@ class EditableDeployment:
             command, namespace, values, self.state.get("base_image"),
             origin=origin, checkout=self.directory,
             components=("frontend", "model-server"),
-            installed_images=("", runtime["image"], runtime["model_image"]),
-            saved_arguments=build["arguments"],
+            saved_arguments=self.build_arguments,
             runtime_backend=build.get("runtime_backend", "nvidia"),
             build_metax_runtime=build.get("build_metax_runtime", False),
         ) as prepared:
@@ -551,38 +560,17 @@ class EditableDeployment:
                 staging = builder.root + "/output/" + revision
                 payload = staging + "/payload"
                 parts = bundle.get("parts", _APPLICATION_PARTS[component])
-                if "rust" in parts:
-                    arguments = dict(build["arguments"])
-                    if component == "model-server":
-                        arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"][
-                            "model_image"
-                        ]
-                    builder.build(
-                        f"data-plane/{component}/Dockerfile",
-                        target="source-export",
-                        destination=payload,
-                        arguments=arguments,
-                    )
-                else:
-                    # Clear partial exports before retrying. File-only changes use
-                    # the synchronized workspace, independently of the Dockerfile.
-                    script = 'rm -rf "$1"; mkdir -p "$1"'
-                    if "python" in parts:
-                        script += (
-                            '; mkdir "$1/python"; '
-                            'if test -d "$2"; then cp -pR "$2/." "$1/python/"; fi'
-                        )
-                    builder.run([
-                        "sh", "-ec", script, "export", payload,
-                        builder.workspace + "/data-plane/model-server/python",
-                    ])
+                arguments = dict(build["arguments"])
+                if component == "model-server":
+                    arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"]["model_image"]
+                builder.export_application(component, payload, arguments, list(parts))
                 if component == "model-server" and build_engine:
                     builder.build(
                         "deploy/inference-engines/source-build.Dockerfile",
                         target="source-export",
                         destination=staging + "/engine",
                         arguments={
-                            **build["arguments"],
+                            **engine_build_arguments(build["arguments"]),
                             "RUNTIME_IMAGE": self.state["runtime"]["model_image"],
                             "CACHE_ID": build["engine_caches"][
                                 "" if build["registry"] else origin.node

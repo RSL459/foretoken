@@ -97,8 +97,9 @@ def publish(
     sources: dict | None = None,
     image: str | None = None,
     parts: list[str] | None = None,
+    previous_image: str | None = None,
 ) -> Path:
-    """Publish a complete application, optionally replacing selected outputs of a completed base."""
+    """Publish complete files, checking the producer's selected environment before partial reuse."""
     if (destination / "manifest.json").is_file():
         return destination
     if not source.is_dir():
@@ -118,8 +119,11 @@ def publish(
     if parts is not None:
         if metadata is None:
             raise FileNotFoundError(f"completed application is missing: {previous}")
-        if metadata.get("image") != image:
-            raise ValueError("partial publication requires the previous environment image")
+        # A dependency-stage producer may retain the same native runtime while
+        # replacing engine Python dependencies. It selects the compatible prior
+        # application explicitly; ordinary file updates keep their current image.
+        if metadata.get("image") != (previous_image if previous_image is not None else image):
+            raise ValueError("partial publication requires the selected previous environment image")
         # Exports may include other build outputs. Accept only selected groups,
         # replacing each in full so deleted files cannot survive from the base.
         inputs = {
@@ -237,6 +241,7 @@ if __name__ == "__main__":
             sources=json.loads(sys.argv[7]),
             image=json.loads(sys.argv[8]),
             parts=json.loads(sys.argv[9]),
+            previous_image=json.loads(sys.argv[10]),
         )
         retained = json.loads(sys.argv[5])
         if retained is not None:
