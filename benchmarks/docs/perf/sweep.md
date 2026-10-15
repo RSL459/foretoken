@@ -131,17 +131,13 @@ All points for one method run before the next method starts. Temporary deploymen
 
 Use `sweep_summary.csv` and the comparison plots to compare latency and throughput under the same workload settings. Error bars show sample standard deviation across repetitions, including for per-run percentiles; one repetition has no error estimate. Check each metric's sample count and failed runs when comparing points.
 
-`sweep_points.json` records progress before and after each measurement. The `sweep` section in `metrics.json` reports completed, failed, interrupted, and pending tasks; the final status is `completed`, `partial`, or `failed`. The command exits nonzero if any task is unsuccessful or unfinished. Request failure rates remain part of the measured results.
-
 Every invocation creates a separate result directory; `--experiment-name` supplies its name prefix. To change metrics, layout or compare earlier runs, see [plotting saved results](../recipes.md#plot-saved-results).
 
 ## Continue a saved sweep
 
-After the original command has stopped, repeat it with `--resume RESULT_DIR`, replacing `RESULT_DIR` with its printed result directory. Keep the workload, service choices, and repetition count unchanged; output and W&B settings may change.
+After an interruption, repeat the original command with `--resume RESULT_DIR`, using the result directory it printed. Keep the same workload and measurement settings.
 
-Continuation writes a new result directory. Each completed successful repetition is reused; failed or interrupted repetitions restart with their own warmup and measurement. Keep the original result directories, which supply the reused evidence.
-
-For a sweep containing [SLO searches](slo.md), completed probe repetitions are reused inside an unfinished search, including probes that did not satisfy the target. Video sweeps use one complete video workload repetition as the recovery unit.
+The command reuses completed results and runs the remaining measurements. Results are saved in a new directory; keep the original result directories, which are still used.
 
 ## Video settings
 
