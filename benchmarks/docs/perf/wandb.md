@@ -12,13 +12,13 @@ foretoken perf examples/quickstart \
   --wandb-run-name quickstart
 ```
 
-Results are saved locally and uploaded in the background after measurement. Open the run links from the printed publication log; its location also appears in quiet mode.
+Open the run links from the printed publication log to follow progress. The log location also appears in quiet mode.
 
 Use `--wandb-entity` to select an account or team. Set the same `--wandb-group` for runs you want to compare in a group's Workspace. Sweeps and multi-dataset runs generate a group when none is supplied; single runs are ungrouped by default.
 
 ## Follow progress and compare results
 
-Use request-order curves to inspect individual requests, cumulative curves to review overall progress, and one-second completion windows to compare throughput and P50/P95/P99 latency over time. These snapshots are captured during measurement and appear in W&B after publication, on their original measurement axes. Final aggregate metrics remain in Summary.
+Use request-order curves to inspect individual requests, cumulative curves to follow overall progress, and one-second completion windows to compare throughput and P50/P95/P99 latency over time. These views update as measurement proceeds. Final aggregate metrics remain in Summary.
 
 ![Per-request timings and token counts](../imgs/request-order-wandb.png)
 
@@ -38,6 +38,6 @@ Publish pending results recorded with `wandb` output, without rerunning measurem
 foretoken publish results
 ```
 
-Pass a specific run, sweep, or experiment directory to narrow the selection. The command waits for active uploads and skips completed ones. The default total time limit is ten minutes; add `--timeout 1h` for larger result sets.
+Pass a specific run, sweep, or experiment directory to narrow the selection. The command waits for active uploads and skips completed ones. The upload time budget is ten minutes, excluding waits for ongoing measurements; add `--timeout 1h` for larger result sets.
 
 The command prints run links; automatic uploads write them to `publication.log`. Failed uploads have details in the affected run's `wandb-publish.log`. Keep the saved results and referenced files until publication completes.

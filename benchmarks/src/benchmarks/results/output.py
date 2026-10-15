@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import csv
+import fcntl
 import json
 import logging
 import os
@@ -17,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Any, Protocol, Self, cast
+from typing import Any, Protocol, Self, TextIO, cast
 
 from foretoken.arguments import ProfileCommand
 from foretoken.manifest import DeploymentError
@@ -41,7 +42,7 @@ from benchmarks.results.environment import (
 from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
 from benchmarks.results.progress import HttpProgress
 from benchmarks.results.prometheus import PrometheusObserver
-from benchmarks.results.publication import WandbSink, start_publication
+from benchmarks.results.publication import RECORDING_LOCK, WandbSink, start_publication
 from benchmarks.results.records import RequestRecordWriter
 from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.responses import ResponseWriter
@@ -341,8 +342,9 @@ def build_benchmark_run_record(
 class ResultOutputs:
     """Own local evidence, measurement observers, and cleanup for one run.
 
-    W&B output retains local evidence. Only the outermost result scope starts an
-    uploader, after child measurements, service cleanup, and log capture finish.
+    W&B output retains local evidence and starts one independent publisher at
+    the outermost scope. The recording lock keeps final artifacts and logs with
+    their writer until cleanup finishes; measurement never waits for upload.
     Console-only execution uses temporary files, retained on measurement failure.
     """
 
@@ -375,6 +377,7 @@ class ResultOutputs:
         self._exit_code = 0
         self._publication_token: Token[bool] | None = None
         self._owns_publication = False
+        self._recording_lock: TextIO | None = None
 
     @property
     def execution_dir(self) -> str:
@@ -436,7 +439,14 @@ class ResultOutputs:
             self._resources.enter_context(
                 capture_run_logs(self.execution_dir, quiet=outputs.includes("quiet"))
             )
+            if outputs.includes("wandb"):
+                self._recording_lock = (Path(self.execution_dir) / RECORDING_LOCK).open("a")
+                fcntl.flock(self._recording_lock, fcntl.LOCK_EX)
         except BaseException:
+            self._resources.close()
+            if self._recording_lock is not None:
+                self._recording_lock.close()
+                self._recording_lock = None
             self._release_execution_directory(preserve=outputs.includes("wandb"))
             self._execution_dir = None
             raise
@@ -506,6 +516,8 @@ class ResultOutputs:
         for sink in sinks:
             self._resources.callback(self._close_sink, sink)
             sink.open(record)
+        if self._owns_publication and outputs.includes("wandb"):
+            start_publication(Path(directory))
         if outputs.saves_local:
             self._environment = {
                 "client": client_environment(),
@@ -621,13 +633,13 @@ class ResultOutputs:
                     return False
                 raise
         finally:
-            directory = Path(self.execution_dir)
+            if self._recording_lock is not None:
+                self._recording_lock.close()
+                self._recording_lock = None
             self._release_execution_directory(preserve=failed)
             if self._publication_token is not None:
                 _publication_scope.reset(self._publication_token)
                 self._publication_token = None
-            if self._owns_publication and self.benchmark.outputs.includes("wandb"):
-                start_publication(directory)
             self._sinks = []
             self._execution_dir = None
             self._replica_observer = None

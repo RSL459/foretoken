@@ -38,7 +38,7 @@ foretoken perf video \
 
 生成的视频保存在 `--output-dir` 指定的目录中。用 `--warmup-requests N` 在测量前预热 N 个请求，或用 `--duration 5min` 将发送请求的时长设为五分钟，已发送的请求会继续等待完成。比较生成参数和负载设置时，添加 `--sweep benchmarks/examples/video-sweep.jsonl`。
 
-启用 W&B 后，每个请求完成时都会在本地记录成功数、失败数和客户端耗时；这些曲线、生成的视频及汇总指标在测量结束后于后台发布。文件位置和输出选项见[结果设置](../../README_zh.md#查看和保存结果)。
+启用 W&B 后，每个请求完成时都会更新成功数、失败数和客户端耗时，生成的视频及汇总指标在运行结束后上传。文件位置和输出选项见[结果设置](../../README_zh.md#查看和保存结果)。
 
 ![TI2V 评测汇总结果](../imgs/video-ti2v-benchmark-summary.png)
 

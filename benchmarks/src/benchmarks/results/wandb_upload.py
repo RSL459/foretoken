@@ -7,13 +7,19 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import wandb
 
 from benchmarks.results.output import BenchmarkRun
-from benchmarks.results.publication import HISTORY_FILE, STATUS_FILE, write_publication_state
+from benchmarks.results.publication import (
+    HISTORY_FILE,
+    STATUS_FILE,
+    recording_active,
+    write_publication_state,
+)
 from benchmarks.results.records import load_http_measurements
 
 
@@ -32,7 +38,7 @@ class _ReplayRun:
     def log(self, values: dict[str, Any]) -> None:
         """Replay a stable row sequence, skipping history already accepted by the remote run."""
         if self.step >= self.resume_step:
-            self.run.log(values, step=self.step)
+            self.run.log(values, step=self.step, commit=True)
         self.step += 1
 
     def log_artifact(self, artifact: Any) -> Any:
@@ -87,6 +93,41 @@ def _publish_result(session: _ReplayRun, result: BenchmarkRun) -> None:
         raise ValueError(f"Unsupported benchmark publication mode: {mode}")
 
 
+def _stream_history(session: _ReplayRun, directory: Path, status: dict[str, Any]) -> None:
+    """Follow complete journal rows until the result owner releases its files, retaining replay steps."""
+    defined: set[tuple[str, str]] = set()
+    with (directory / HISTORY_FILE).open("rb") as history:
+        while True:
+            # Check the writer before reading: once it has stopped, a final
+            # read drains everything flushed before the recording lock closed.
+            recording = recording_active(directory)
+            position = history.tell()
+            line = history.readline()
+            complete = line.endswith(b"\n")
+            waiting = recording and not complete
+            if status.get("waiting_for_measurement") != waiting:
+                status["waiting_for_measurement"] = waiting
+                write_publication_state(directory / STATUS_FILE, status)
+            if not complete:
+                if not recording:
+                    if line:
+                        raise ValueError("W&B progress journal ends with an incomplete record")
+                    return
+                history.seek(position)
+                time.sleep(0.2)
+                continue
+            event = json.loads(line)
+            axis, row = event["axis"], event["values"]
+            if (axis, axis) not in defined:
+                session.define_metric(axis, hidden=True)
+                defined.add((axis, axis))
+            for key in sorted(row.keys() - {axis}):
+                if (key, axis) not in defined:
+                    session.define_metric(key, step_metric=axis, step_sync=False)
+                    defined.add((key, axis))
+            session.log(row)
+
+
 def upload(job_path: Path) -> None:
     """Publish retained records without accessing a model service or changing measurement evidence."""
     job = json.loads(job_path.read_text(encoding="utf-8"))
@@ -119,21 +160,10 @@ def upload(job_path: Path) -> None:
     print(f"W&B results: {sdk_run.url}", flush=True)
     session = _ReplayRun(sdk_run)
 
-    # Replay the captured axes and row order rather than recomputing live windows
-    # from completion records. Resume uses the same run ID and history step space.
-    defined: set[tuple[str, str]] = set()
-    with (directory / HISTORY_FILE).open(encoding="utf-8") as history:
-        for line in history:
-            event = json.loads(line)
-            axis, row = event["axis"], event["values"]
-            if (axis, axis) not in defined:
-                session.define_metric(axis, hidden=True)
-                defined.add((axis, axis))
-            for key in sorted(row.keys() - {axis}):
-                if (key, axis) not in defined:
-                    session.define_metric(key, step_metric=axis, step_sync=False)
-                    defined.add((key, axis))
-            session.log(row)
+    _stream_history(session, directory, status)
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    if job["exit_code"] is None:
+        raise RuntimeError("Measurement stopped without finalizing its publication record")
 
     saved = job["result"]
     artifacts: dict[str, Path] = {}

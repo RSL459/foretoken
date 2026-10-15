@@ -107,7 +107,7 @@ foretoken eval examples/quickstart \
 
 ## 查看评分
 
-运行期间，本地持续记录 lm-evaluation-harness 已完成的生成或似然评分窗口数，以及 EvalScope 已保存的预测和评分数。恢复 lm-evaluation-harness 时，复用的结果单独计数。选择 W&B 后，这些进度曲线与最终任务得分会在评测结束后于后台发布。
+运行期间，W&B 实时展示 lm-evaluation-harness 已完成的生成或似然评分窗口数，以及 EvalScope 已保存的预测和评分数。恢复 lm-evaluation-harness 时，复用的结果单独计数。任务得分在框架完成评分后发布。
 
 打开命令打印的结果目录：
 

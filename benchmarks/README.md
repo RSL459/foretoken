@@ -66,7 +66,7 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
 
-Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. W&B uploads run in the background after measurement, with run links in the printed publication log. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs. See [W&B output](docs/perf/wandb.md) to view results or publish saved runs.
+Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. With W&B selected, open the run links from the printed publication log to follow progress and view results. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs. See [W&B output](docs/perf/wandb.md) to view results or publish saved runs.
 
 | Record | Use |
 | --- | --- |

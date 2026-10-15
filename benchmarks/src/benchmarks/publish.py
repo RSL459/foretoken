@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from benchmarks.config.benchmark import parse_duration_seconds
-from benchmarks.results.publication import publication_jobs, publish_results
+from benchmarks.results.publication import publish_results
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -27,16 +27,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument(
         "--timeout", type=parse_duration_seconds, default="10min", metavar="DURATION",
-        help="total upload time budget, e.g. 10min or 1h (default: %(default)s)",
+        help="total upload time budget, excluding waits for measurements (default: %(default)s)",
     )
     arguments = parser.parse_args(sys.argv[1:] if argv is None else argv)
     if not math.isfinite(arguments.timeout) or arguments.timeout <= 0:
         parser.error("--timeout must be positive and finite")
     try:
-        jobs = publication_jobs(tuple(arguments.directories))
-        if not jobs:
-            raise ValueError("No saved W&B publications found; record results with --output wandb")
-        if not publish_results(jobs, timeout=arguments.timeout):
+        if not publish_results(tuple(arguments.directories), timeout=arguments.timeout):
             raise SystemExit(1)
     except (OSError, ValueError) as error:
         raise SystemExit(str(error)) from error

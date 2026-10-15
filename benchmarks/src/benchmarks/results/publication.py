@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 PUBLICATION_FILE = "wandb-publication.json"
 STATUS_FILE = "wandb-status.json"
 HISTORY_FILE = "wandb-history.jsonl"
+RECORDING_LOCK = "wandb-recording.lock"
 
 
 def write_publication_state(path: Path, value: dict[str, Any]) -> None:
@@ -37,8 +38,22 @@ def write_publication_state(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def recording_active(directory: Path) -> bool:
+    """Observe the result owner's lifetime without waiting for measurement or log cleanup."""
+    try:
+        lock = (directory / RECORDING_LOCK).open("r")
+    except FileNotFoundError:
+        return False
+    with lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+    return False
+
+
 class WandbSink:
-    """Record upload inputs locally; the enclosing result lifecycle starts network publication."""
+    """Record upload inputs locally while an independent publisher follows the progress journal."""
 
     def __init__(
         self,
@@ -59,15 +74,17 @@ class WandbSink:
             "group": group,
             "config": run_config,
             "result": None,
+            "exit_code": None,
         }
         self.history: RequestRecordWriter | None = None
 
     def open(self, record: dict[str, Any]) -> None:
-        """Open the progress journal without initializing a remote SDK session."""
+        """Expose the run identity and journal before measurement, without opening a remote session."""
         self.history = RequestRecordWriter(self.directory / HISTORY_FILE)
+        write_publication_state(self.directory / PUBLICATION_FILE, self.job)
 
     def log_progress(self, row: dict[str, Any], *, axis: str) -> None:
-        """Retain each chart snapshot on its original measurement axis for later replay."""
+        """Retain each chart snapshot on its original measurement axis for live upload and replay."""
         if self.history is None:
             raise RuntimeError("W&B recording is not open")
         self.history.write({"axis": axis, "values": row})
@@ -85,7 +102,7 @@ class WandbSink:
         }
 
     def close(self, *, exit_code: int = 0) -> None:
-        """Make the run available for upload only after its local progress stream has closed."""
+        """Seal the progress journal and publish the final result references for the uploader."""
         if self.history is None:
             return
         self.history.close()
@@ -102,7 +119,7 @@ class WandbSink:
 
 
 def publication_jobs(sources: tuple[Path, ...]) -> list[Path]:
-    """Find finalized publication records under result, sweep, or experiment directories once."""
+    """Find active and completed publication records under selected result directories once."""
     jobs: set[Path] = set()
     for source in sources:
         source = source.resolve()
@@ -113,7 +130,7 @@ def publication_jobs(sources: tuple[Path, ...]) -> list[Path]:
 
 
 def start_publication(directory: Path) -> None:
-    """Start one detached, bounded uploader for an enclosing run without delaying the caller."""
+    """Start one independent publisher that follows an enclosing measurement and its child runs."""
     directory = directory.resolve()
     if not next(directory.rglob(PUBLICATION_FILE), None):
         return
@@ -132,72 +149,127 @@ def start_publication(directory: Path) -> None:
         print_result_location(f"W&B publication started; log: {log_path}\nRetry or wait for publication: {retry}")
 
 
-def publish_results(jobs: list[Path], *, timeout: float) -> bool:
-    """Upload saved runs within one deadline; retain failed jobs and serialize concurrent publishers."""
-    deadline = time.monotonic() + timeout
-    succeeded = True
-    for job in jobs:
-        directory = job.parent
-        status_path = directory / STATUS_FILE
-        with (directory / "wandb-publication.lock").open("a") as lock:
-            waiting = False
-            while True:
+def _publish_job(job: Path, deadline: float) -> tuple[bool, float]:
+    """Serialize one run's publishers and bound SDK work without charging measurement waits."""
+    directory = job.parent
+    status_path = directory / STATUS_FILE
+    with (directory / "wandb-publication.lock").open("a") as lock:
+        waiting = False
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if not waiting:
+                    print(f"Waiting for active publication: {directory}", flush=True)
+                    waiting = True
+                if time.monotonic() >= deadline:
+                    print("Publication deadline reached while waiting for another publisher.", flush=True)
+                    return False, deadline
+                started = time.monotonic()
+                time.sleep(0.2)
+                status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.is_file() else {}
+                if status.get("waiting_for_measurement"):
+                    deadline += time.monotonic() - started
+        status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.is_file() else {}
+        if status.get("state") == "published":
+            print(f"Already published: {status.get('url') or directory}", flush=True)
+            return True, deadline
+        status.update(state="uploading", waiting_for_measurement=False)
+        status.pop("error", None)
+        write_publication_state(status_path, status)
+        log_path = directory / "wandb-publish.log"
+        print(f"Publishing {directory}; log: {log_path}", flush=True)
+        error = None
+        # SDK calls and teardown are bounded by the parent process. Waiting for
+        # new local measurements is not network work and may span a long run.
+        try:
+            with (
+                log_path.open("a", encoding="utf-8") as log,
+                subprocess.Popen(
+                    [sys.executable, "-m", "benchmarks.results.wandb_upload", str(job)],
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                    pass_fds=(lock.fileno(),),
+                ) as process,
+            ):
                 try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    if not waiting:
-                        print(f"Waiting for active publication: {directory}", flush=True)
-                        waiting = True
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        print("Publication deadline reached while waiting for another publisher.", flush=True)
-                        return False
-                    time.sleep(min(0.2, remaining))
-            status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.is_file() else {}
-            if status.get("state") == "published":
-                print(f"Already published: {status.get('url') or directory}", flush=True)
+                    previous = time.monotonic()
+                    reported_url = None
+                    while process.poll() is None:
+                        time.sleep(0.2)
+                        now = time.monotonic()
+                        status = json.loads(status_path.read_text(encoding="utf-8"))
+                        if status.get("url") and status["url"] != reported_url:
+                            reported_url = status["url"]
+                            print(f"W&B results: {reported_url}", flush=True)
+                        if status.get("waiting_for_measurement"):
+                            deadline += now - previous
+                        previous = now
+                        if now >= deadline and process.poll() is None:
+                            process.kill()
+                            process.wait()
+                            error = f"Publication timed out; see {log_path}"
+                            break
+                    if error is None and process.returncode:
+                        error = f"Publisher exited with status {process.returncode}; see {log_path}"
+                except BaseException:
+                    process.kill()
+                    process.wait()
+                    raise
+        except OSError as failure:
+            error = str(failure)
+        except BaseException:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            status.update(state="pending", error="Publication interrupted")
+            status.pop("waiting_for_measurement", None)
+            write_publication_state(status_path, status)
+            raise
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        status.pop("waiting_for_measurement", None)
+        if error is not None:
+            status.update(state="pending", error=error)
+            print(error, flush=True)
+        else:
+            status.update(state="published")
+            status.pop("error", None)
+            print(f"Published: {status['url']}", flush=True)
+        write_publication_state(status_path, status)
+        return error is None, deadline
+
+
+def publish_results(sources: tuple[Path, ...], *, timeout: float) -> bool:
+    """Follow local result owners, publishing each run once without holding up measurement."""
+    sources = tuple(source.resolve() for source in sources)
+    if not publication_jobs(sources):
+        raise ValueError("No saved W&B publications found; record results with --output wandb")
+    deadline = time.monotonic() + timeout
+    attempted: set[Path] = set()
+    succeeded = True
+    while True:
+        idle_started = time.monotonic()
+        # Observe owner lifetimes before discovering jobs, so a final child
+        # created during cleanup is included before the enclosing scope ends.
+        active = any(recording_active(source) for source in sources)
+        jobs = publication_jobs(sources)
+        for job in jobs:
+            recording = recording_active(job.parent)
+            active = active or recording
+            if job in attempted:
                 continue
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if recording and (job.parent / HISTORY_FILE).stat().st_size == 0:
+                continue
+            deadline += time.monotonic() - idle_started
+            if time.monotonic() >= deadline:
                 print("Publication deadline reached; remaining runs are pending.", flush=True)
                 return False
-            status.update(state="uploading")
-            status.pop("error", None)
-            write_publication_state(status_path, status)
-            log_path = directory / "wandb-publish.log"
-            print(f"Publishing {directory}; log: {log_path}", flush=True)
-            error = None
-            # SDK retries and teardown can outlast their individual request
-            # timeouts. The supervisor owns the deadline and reaps the worker.
-            try:
-                with log_path.open("a", encoding="utf-8") as log:
-                    result = subprocess.run(
-                        [sys.executable, "-m", "benchmarks.results.wandb_upload", str(job)],
-                        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                        timeout=remaining, check=False, pass_fds=(lock.fileno(),),
-                    )
-                if result.returncode:
-                    error = f"Publisher exited with status {result.returncode}; see {log_path}"
-            except subprocess.TimeoutExpired:
-                error = f"Publication timed out; see {log_path}"
-            except OSError as failure:
-                error = str(failure)
-            except BaseException:
-                status = json.loads(status_path.read_text(encoding="utf-8"))
-                status.update(state="pending", error="Publication interrupted")
-                write_publication_state(status_path, status)
-                raise
-            # The worker records the resolved remote identity. Its exit includes
-            # artifact acknowledgements, run.finish(), and SDK process teardown.
-            status = json.loads(status_path.read_text(encoding="utf-8"))
-            if error is not None:
-                status.update(state="pending", error=error)
-                succeeded = False
-                print(error, flush=True)
-            else:
-                status.update(state="published")
-                status.pop("error", None)
-                print(f"Published: {status['url']}", flush=True)
-            write_publication_state(status_path, status)
-    return succeeded
+            completed, deadline = _publish_job(job, deadline)
+            idle_started = time.monotonic()
+            succeeded = completed and succeeded
+            attempted.add(job)
+        # An ancestor selection has no recording lock of its own. Its running
+        # children may have added jobs while an earlier upload was in progress.
+        if not active and set(publication_jobs(sources)).issubset(attempted):
+            return succeeded
+        # No remote operation is pending between discovery passes.
+        time.sleep(0.2)
+        deadline += time.monotonic() - idle_started
