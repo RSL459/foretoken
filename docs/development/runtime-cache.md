@@ -15,7 +15,7 @@ Dynamic caches request storage from a StorageClass. If `maxSize` is configured, 
 
 For directory caches, the CLI resolves node-visible paths before applying user intent. The RuntimeCache controller creates the PVC and determines its name, volume name, access mode and binding capacity. The CLI reads that claim to prepare a static PV; it does not maintain a second naming or capacity algorithm. Binding capacity does not create a filesystem quota.
 
-Local k3d mounts retain their discovered PV node affinity. A remote ReadWriteOnce directory can be used in a multi-node cluster when all model consumers, including existing services and Pool selectors, select the same single node. ReadWriteMany directories retain cluster-wide shared-storage placement across redeployments. Directory mode does not provision shared storage or transfer files between nodes.
+A remote ReadWriteOnce directory requires the effective node selectors of all models sharing the cache to select one node. ReadWriteMany requires the directory to expose the same shared filesystem on every cluster node. Local k3d volumes use PV node affinity based on the nodes' host bind mounts. Directory mode does not create shared storage or copy files between nodes.
 
 ## Retention and redeployment
 
