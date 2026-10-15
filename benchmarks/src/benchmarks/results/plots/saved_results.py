@@ -137,8 +137,6 @@ def _comparison_changes(records: list[dict[str, Any]]) -> None:
         output = "conditions_changes" if section == "conditions" else "environment_changes"
         for record, value in zip(records, values):
             record[output] = {key: value[key] for key in sorted(changed) if value is not None and key in value}
-            if section == "environment_settings":
-                record.pop(section, None)
 
 
 def _leaf(
@@ -408,6 +406,7 @@ def read_saved_results(
                      saved.directory if saved.configuration is None or quality and saved.conditions["evaluation"] is None else None)
             combination = combinations.setdefault(fixed, f"workload-{len(combinations) + 1}")
             runs.append({**identity, "method": saved.method, "methods": chosen,
+                         "approach": label, "workload": combination,
                          "result": str(saved.directory), "measured": saved.metrics is not None or bool(charts),
                          "started": saved.started, "measurement_exit_code": saved.exit_code,
                          "config": str(saved.configuration) if saved.configuration is not None else None,

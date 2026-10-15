@@ -190,12 +190,18 @@ foretoken plot results/baseline results/candidate
 
 You can also select an experiment directory or a folder containing several runs. The output includes PDF, SVG, PNG and CSV files. One input writes to its `plots/` subdirectory; multiple inputs write to `./plots`.
 
-Choose a metric, figure width and output location:
+For performance results, select a reference approach with `--base` to generate measured values and relative changes:
 
 ```bash
 foretoken plot results/baseline results/candidate \
-  --metric generation_tokens_per_second --columns 2 \
+  --base baseline --metric generation_tokens_per_second --columns 2 \
   --output-dir results/comparison
 ```
 
-Repeat `--metric` to select more metrics, or use `--method` to select named methods. Compare results in the figures and inspect values and condition differences in the accompanying CSV files. For score definitions, see [quality results](eval/README.md#read-scores).
+`--base` takes the directory or iteration name, or `directory / method` for a named method. Exact labels, including disambiguated directory names, appear in the `approach` column of `comparison-runs.csv`.
+
+`comparison-base.csv` compares each candidate with the base under matching workloads: means, repeat counts and standard deviations, failures, condition differences, and original result paths. Available success and actual token-length metrics accompany selected speed metrics. Values retain their saved units; standard deviation is unavailable for a single repeat.
+
+Change is `(candidate mean / base mean - 1) × 100%`; lower latency and higher throughput indicate improvement. Missing workloads or metrics and a zero base leave the percentage empty, with the reason in `status`. Review environment differences and missing records alongside the results; warmup settings alone do not establish cache state.
+
+Repeat `--metric` to select more metrics, or use `--method` to select named methods. For score definitions, see [quality results](eval/README.md#read-scores).

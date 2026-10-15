@@ -42,6 +42,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=[],
         help="Method to include; repeat to select several",
     )
+    parser.add_argument(
+        "--base",
+        help="Performance approach to compare against (directory or iteration label; include its results in RESULT_DIR)",
+    )
     options = parser.parse_args(argv)
     from benchmarks.results.plots.figures import (
         default_output_directory,
@@ -55,6 +59,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             columns=options.columns,
             metrics=tuple(options.metric),
             methods=tuple(options.method),
+            base=options.base,
         )
     except (OSError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
