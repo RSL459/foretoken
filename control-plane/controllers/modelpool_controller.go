@@ -13,6 +13,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -51,9 +52,28 @@ func (reconciler *ModelPoolReconciler) SetupWithManager(manager ctrl.Manager) er
 		Owns(&inferencev1alpha1.ModelGroup{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
+		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForStorageClaim)).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForInstancePod)).
 		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForService)).
 		Complete(reconciler)
+}
+
+// poolsForStorageClaim wakes pools whose encoder transfer uses a changed claim.
+func (reconciler *ModelPoolReconciler) poolsForStorageClaim(ctx context.Context, object client.Object) []reconcile.Request {
+	var pools inferencev1alpha1.ModelPoolList
+	if err := reconciler.List(ctx, &pools, client.InNamespace(object.GetNamespace())); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "list pools for encoder storage claim")
+		return nil
+	}
+	var requests []reconcile.Request
+	for index := range pools.Items {
+		pool := &pools.Items[index]
+		template, err := reconciler.TemplateResolver.Resolve(pool.Spec.Template)
+		if err == nil && template.ECRuntime != nil && template.ECRuntime.SharedStorageClaim == object.GetName() {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pool)})
+		}
+	}
+	return requests
 }
 
 // poolsForService maps a ModelService update to its owned ModelPools.
@@ -103,6 +123,17 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 		return ctrl.Result{}, fmt.Errorf("ModelPool template resolver is not configured")
 	}
 	template, err := reconciler.TemplateResolver.Resolve(pool.Spec.Template)
+	if err == nil && template.ECRuntime != nil {
+		claim := new(corev1.PersistentVolumeClaim)
+		err = reader.Get(ctx, client.ObjectKey{Namespace: pool.Namespace, Name: template.ECRuntime.SharedStorageClaim}, claim)
+		if err == nil {
+			template.ECRuntime.SharedStorageIdentity, err = runtimeconfig.ParseStorageIdentity(claim.Annotations[runtimeconfig.DirectoryOwnerAnnotation])
+			if err == nil && template.ECRuntime.SharedStorageIdentity == nil {
+				identity := runtimeconfig.DefaultStorageIdentity()
+				template.ECRuntime.SharedStorageIdentity = &identity
+			}
+		}
+	}
 	if err != nil {
 		state, stateErr := reconciler.currentActiveState(ctx, pool, serviceServingRevision(service, pool))
 		state.Reason, state.Message = "ResolutionFailed", "The target Pool execution config could not be resolved"

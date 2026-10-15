@@ -366,8 +366,6 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 					ServiceAccountName:           preparationSourceName(group.Spec),
 					AutomountServiceAccountToken: &automountToken,
 					RestartPolicy:                corev1.RestartPolicyNever,
-					SecurityContext:              runtimeCachePodSecurityContext(cache),
-					InitContainers:               runtimeCacheInitContainers(group.Spec.Runtime.Image, cache),
 					ImagePullSecrets:             slices.Clone(imagePullSecrets),
 					NodeSelector:                 nodeSelector,
 					Tolerations:                  tolerations,
@@ -390,6 +388,8 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 		job.Spec.Template.Annotations = map[string]string{runtimeconfig.SourceRevisionAnnotation: revision}
 	}
 	files.Configure(&job.Spec.Template, &job.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), "foretoken-model-server")
+	access := runtimeconfig.CacheStorageAccess(cache)
+	runtimeconfig.ConfigurePodStorage(&job.Spec.Template.Spec, files.Image, access.Identity, access)
 	return job, nil
 }
 
@@ -580,9 +580,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 			)
 		}
 	}
-	if group.Spec.ECRuntime != nil {
-		volumes = append(volumes, corev1.Volume{Name: "ec-shared-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: group.Spec.ECRuntime.SharedStorageClaim}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: "ec-shared-storage", MountPath: group.Spec.ECRuntime.SharedStoragePath})
+	if ec := group.Spec.ECRuntime; ec != nil {
+		directory := runtimeconfig.EncoderCacheDirectory(ec)
+		volumes = append(volumes, corev1.Volume{Name: "ec-shared-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: ec.SharedStorageClaim}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "ec-shared-storage", MountPath: path.Join(ec.SharedStoragePath, directory), SubPath: directory})
 	}
 	if group.Spec.KVRuntime != nil && group.Spec.KVRuntime.Offload != nil && group.Spec.KVRuntime.Offload.Filesystem {
 		volumes = append(volumes, corev1.Volume{Name: "kv-offload", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
@@ -625,8 +626,6 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 					NodeSelector:                  maps.Clone(group.Spec.Accelerator.NodeSelector),
 					Tolerations:                   acceleratorTolerations(group.Spec.Accelerator.DeviceResourceName),
 					TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
-					SecurityContext:               runtimeCachePodSecurityContext(group.Spec.Artifacts.Cache),
-					InitContainers:                runtimeCacheInitContainers(group.Spec.Runtime.Image, group.Spec.Artifacts.Cache),
 					Volumes:                       volumes,
 					Containers: []corev1.Container{{
 						Name:            "model-server",
@@ -661,6 +660,19 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if err := configureModelEnvironment(group.Spec, container); err != nil {
 		return nil, err
 	}
+	access := runtimeconfig.CacheStorageAccess(group.Spec.Artifacts.Cache)
+	accesses := []runtimeconfig.VolumeAccess{access}
+	if ec := group.Spec.ECRuntime; ec != nil {
+		identity := runtimeconfig.DefaultStorageIdentity()
+		if ec.SharedStorageIdentity != nil {
+			identity = *ec.SharedStorageIdentity
+		}
+		accesses = append(accesses, runtimeconfig.VolumeAccess{
+			Name: "ec-shared-storage", Identity: identity,
+			Directories: []string{runtimeconfig.EncoderCacheDirectory(ec)},
+		})
+	}
+	runtimeconfig.ConfigurePodStorage(&deployment.Spec.Template.Spec, files.Image, access.Identity, accesses...)
 	return deployment, nil
 }
 

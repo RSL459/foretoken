@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net/url"
 	"path"
 	"reflect"
 	"regexp"
@@ -263,7 +262,7 @@ func buildECPlan(group inferencev1alpha1.ModelGroupSpec) (*LaunchECPlan, error) 
 	return &LaunchECPlan{
 		ProfileName: ec.ProfileName, ProfileRevision: ec.ProfileRevision,
 		Connector: ec.Connector, Role: string(ec.Role),
-		SharedStoragePath: path.Join(ec.SharedStoragePath, ec.ServiceUID, fmt.Sprint(ec.Generation), "profile="+url.PathEscape(ec.ProfileRevision)),
+		SharedStoragePath: path.Join(ec.SharedStoragePath, runtimeconfig.EncoderCacheDirectory(ec)),
 	}, nil
 }
 

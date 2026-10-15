@@ -191,7 +191,11 @@ func main() {
 		ctrl.Log.Error(err, "invalid application file configuration")
 		os.Exit(1)
 	}
-	if (sourceMode || videoWorkerApplicationURL != "" || frontendApplicationURL != "" || modelServerApplicationURL != "") && (applicationFiles.Image == "" || applicationFiles.Script == "" || applicationFiles.MountPath == "" || (sourceMode && applicationFiles.Origin == "")) {
+	if applicationFiles.Image == "" {
+		ctrl.Log.Error(errors.New("application-files image must be nonempty"), "invalid platform tools configuration")
+		os.Exit(1)
+	}
+	if (sourceMode || videoWorkerApplicationURL != "" || frontendApplicationURL != "" || modelServerApplicationURL != "") && (applicationFiles.Script == "" || applicationFiles.MountPath == "" || (sourceMode && applicationFiles.Origin == "")) {
 		ctrl.Log.Error(errors.New("source-mode and video-worker-application-url require application-files; source-mode also requires its origin"), "invalid application file configuration")
 		os.Exit(1)
 	}

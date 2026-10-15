@@ -638,8 +638,8 @@ spec:
                         minLength: 1
                         type: string
                       directoryOwner:
-                        description: DirectoryOwner preserves a locally discovered
-                          directory identity across cache consumers.
+                        description: DirectoryOwner preserves the discovered directory
+                          identity across cache consumers.
                         properties:
                           gid:
                             format: int64
