@@ -26,7 +26,7 @@ from typing import Any, Self
 import yaml
 
 from foretoken.build_storage import SOURCE_BUILD_UID
-from foretoken.kubernetes import Kubectl
+from foretoken.kubernetes import Kubectl, _wait_for_object, timeout_seconds
 from foretoken.manifest import DeploymentError
 from foretoken.node_images import (
     SOURCE_BUILD_BINDING_LABEL,
@@ -417,6 +417,7 @@ class ClusterBuilder(AbstractContextManager):
                 {
                     "name": "workspace",
                     "image": image,
+                    "terminationMessagePolicy": "FallbackToLogsOnError",
                     "command": [
                         "sh",
                         "-ec",
@@ -472,6 +473,7 @@ chmod 600 "$state/buildkit.toml"
         container: dict[str, Any] = {
             "name": "builder",
             "image": image,
+            "terminationMessagePolicy": "FallbackToLogsOnError",
             "env": [
                 {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
                 {"name": "HOME", "value": self.runtime_root + "/home"},
@@ -585,6 +587,28 @@ chmod 600 "$state/buildkit.toml"
             "spec": spec,
         }
         print(f"Preparing cluster builder {self.namespace}/{self.name}", flush=True)
+        deadline = time.monotonic() + timeout_seconds(self.timeout)
+
+        def ready(value: dict[str, Any]) -> bool:
+            """Surface terminal startup failures while their Kubernetes diagnostics still exist."""
+            status = value.get("status", {})
+            for field, initializing in (("initContainerStatuses", True), ("containerStatuses", False)):
+                for container_status in status.get(field, []):
+                    terminated = container_status.get("state", {}).get("terminated")
+                    if terminated is None or initializing and terminated["exitCode"] == 0:
+                        continue
+                    detail = terminated.get("message") or terminated.get("reason") or "container exited"
+                    raise DeploymentError(
+                        f"cluster builder {self.namespace}/{self.name}: "
+                        f"{container_status['name']} exited with {terminated['exitCode']}: {detail}"
+                    )
+            if status.get("phase") in {"Failed", "Succeeded"}:
+                raise DeploymentError(
+                    f"cluster builder {self.namespace}/{self.name} stopped before becoming ready: "
+                    + (status.get("message") or status["phase"])
+                )
+            return _pod_ready(value)
+
         try:
             created = self.kubectl.run(
                 ["create", "-f", "-", "-o", "json"], input_text=yaml.safe_dump(pod)
@@ -618,15 +642,14 @@ chmod 600 "$state/buildkit.toml"
                         }
                     ),
                 )
-            self.kubectl.run(
-                [
-                    "wait",
-                    "pod/" + self.name,
-                    "-n",
-                    self.namespace,
-                    "--for=condition=Ready",
-                    "--timeout=" + self.timeout,
-                ]
+            _wait_for_object(
+                lambda: self.kubectl.get(
+                    "pod", self.name, self.namespace,
+                    timeout=max(1.0, deadline - time.monotonic()),
+                ),
+                ready,
+                deadline,
+                f"cluster builder {self.namespace}/{self.name}",
             )
             self.run(
                 [
@@ -882,7 +905,7 @@ rm -rf "$incoming"
     def _share_output(self, path: str) -> None:
         """Give the existing publisher group access to generated exports, not compiler snapshots."""
         self.run([
-            "sh", "-ec", 'chgrp -Rh 1000 "$1"; chmod -R g+rwX "$1"',
+            "sh", "-ec", 'chgrp -Rh 1000 "$1"; chmod -R g+rX "$1"',
             "share", path,
         ])
 
