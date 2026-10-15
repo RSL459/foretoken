@@ -743,8 +743,16 @@ def ensure_build_cache(
         kubectl.run(["create", "namespace", namespace])
     storage_class = configuration["storageClassName"] or SOURCE_BUILD_STORAGE_CLASS
     existing = kubectl.get_if_exists("pvc", name, namespace)
-    if existing is not None and existing["metadata"].get("labels", {}).get(_BUILD_CACHE_LABEL) != "true":
-        raise DeploymentError(f"{namespace}/{name} is not a Foretoken build cache")
+    if existing is not None:
+        if existing["metadata"].get("labels", {}).get(_BUILD_CACHE_LABEL) != "true":
+            raise DeploymentError(f"{namespace}/{name} is not a Foretoken build cache")
+        actual_class = existing["spec"].get("storageClassName", "")
+        if configuration["storageClassName"] and actual_class != configuration["storageClassName"]:
+            raise DeploymentError(
+                f"compiler cache {namespace}/{name} uses StorageClass {actual_class!r}; "
+                "an existing compiler volume cannot change its storage class"
+            )
+        storage_class = actual_class
     if (
         storage_class == SOURCE_BUILD_STORAGE_CLASS
         and (existing is None or existing.get("status", {}).get("phase") != "Bound")
@@ -757,7 +765,6 @@ def ensure_build_cache(
     if existing is not None:
         spec = {
             "resources": {"requests": {"storage": configuration["storageSize"]}},
-            "storageClassName": storage_class,
         }
         if any(existing["spec"].get(key) != value for key, value in spec.items()):
             kubectl.run(
