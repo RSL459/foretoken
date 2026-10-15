@@ -573,7 +573,13 @@ def resource_progress(
             if condition_status == "True" and int(status.get("servingGeneration") or 0) != generation:
                 message += "\nThe previous generation remains available."
             return ResourceProgress(resource, "Failed", str(target["reason"]), message, False)
-    if condition_status == "True":
+    stopped = (
+        resource.kind == "FrontendService"
+        and (value.get("spec") or {}).get("replicas") == 0
+        and condition_status == "False"
+        and reason == "ScaledToZero"
+    )
+    if condition_status == "True" or stopped:
         if (
             resource.kind == "ModelService"
             and int(status.get("servingGeneration") or 0) != generation
@@ -594,7 +600,7 @@ def resource_progress(
                 resource, "Progressing", "AlertsReconciling",
                 "Waiting for the selected service alerts", False,
             )
-        return ResourceProgress(resource, "Ready", reason, message, True)
+        return ResourceProgress(resource, "Stopped" if stopped else "Ready", reason, message, True)
     if condition_status == "False" and reason in {
         "InvalidIntent", "ConfigurationRejected", "DeploymentRequired",
     }:
