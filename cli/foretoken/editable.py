@@ -367,6 +367,9 @@ class EditableDeployment:
             component = SERVICE_COMPONENTS.get(obj.get("kind"))
             if component is None:
                 continue
+            # Retain pending bundles in checkout state until a frontend requests execution.
+            if component == "frontend" and obj["spec"].get("replicas", 1) == 0:
+                continue
             metadata = obj["metadata"]
             annotations = metadata.setdefault("annotations", {})
             annotations.pop(SOURCE_REVISION, None)
@@ -849,12 +852,6 @@ class EditableDeployment:
         deadline = time.monotonic() + timeout_seconds(timeout)
         routes: dict[str, set[str]] = {}
         consumers = dict(self.selected)
-        # The deployment wait has confirmed retirement; zero capacity has no executable to verify.
-        for obj in deployment.objects:
-            if obj.get("kind") == "FrontendService" and obj["spec"].get("replicas") == 0:
-                metadata = obj["metadata"]
-                namespace = metadata.get("namespace") or deployment.namespace or "default"
-                consumers.pop(("FrontendService", namespace, metadata["name"]), None)
         # Unchanged frontend code still needs to consume a new backend cohort.
         namespaces = {
             namespace for kind, namespace, _ in self.selected if kind == "ModelService"
