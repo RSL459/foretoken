@@ -367,6 +367,9 @@ class EditableDeployment:
             component = SERVICE_COMPONENTS.get(obj.get("kind"))
             if component is None:
                 continue
+            # Retain pending bundles in checkout state until a frontend requests execution.
+            if component == "frontend" and obj["spec"].get("replicas", 1) == 0:
+                continue
             metadata = obj["metadata"]
             annotations = metadata.setdefault("annotations", {})
             annotations.pop(SOURCE_REVISION, None)
