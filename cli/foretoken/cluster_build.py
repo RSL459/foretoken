@@ -374,7 +374,6 @@ class ClusterBuilder(AbstractContextManager):
         self.workspace = f"{self.root}/workspace"
         self._image_lock = Lock()
         self._generated_layouts: dict[str, dict[str, str]] = {}
-        self._image_builds: dict[str, tuple[list[str], str]] = {}
         self._used_images: set[str] = set()
         self._built_images: set[str] = set()
         self._resolved_images: dict[str, str] = {}
@@ -1045,8 +1044,8 @@ rm -rf "$incoming"
         if image in self._resolved_images:
             return self._resolved_images[image]
         name = _image_reference(image)
-        if name in self._image_builds:
-            digest = self._image_builds[name][1]
+        if name in self._generated_layouts:
+            digest = self._generated_layouts[name]["digest"]
         elif self.containerd_socket:
             digest = NodeImageStore(
                 self.kubectl, self.namespace, self.name, self.binding
@@ -1065,7 +1064,7 @@ rm -rf "$incoming"
             try:
                 metadata = self.build(
                     dockerfile, image="foretoken-resolve:" + uuid.uuid4().hex,
-                    arguments={"BASE_IMAGE": image}, capture=True,
+                    arguments={"BASE_IMAGE": image}, capture=True, metadata_only=True,
                 )
             except DeploymentError as error:
                 message = str(error)
@@ -1124,9 +1123,9 @@ rm -rf "$incoming"
         if not self.containerd_socket or image == "scratch":
             return None
         name = _image_reference(image)
-        if name in self._image_builds:
+        if name in self._generated_layouts:
             self._used_images.add(name)
-            return self._export_image(name)
+            return self._generated_layouts[name]
         images = self._node_images()
         if name not in images:
             return None
@@ -1182,10 +1181,11 @@ rm -rf "$incoming"
         push: bool = False,
         arguments: dict[str, str] | None = None,
         capture: bool = False,
+        metadata_only: bool = False,
     ) -> dict[str, Any]:
-        """Build files or images, deferring local OCI export until consumption.
+        """Build files or complete images, retaining local OCI outputs until delivery.
 
-        Metadata-only resolution captures diagnostics; ordinary builds stream compiler output.
+        Dependency resolution uses metadata_only to inspect a base without exporting its layers.
         """
         metadata = self.root + "/results/" + uuid.uuid4().hex + ".json"
         args = [
@@ -1250,15 +1250,19 @@ rm -rf "$incoming"
                 ]
                 value = alias
             args += ["--opt", f"build-arg:{key}={value}"]
+        layout = ""
         if destination:
             # Prepare traversable parents before BuildKit creates its private export root.
             self.run(["mkdir", "-p", destination])
             # BuildKit mirrors each owned export directory so retries cannot revive removed files.
             output = "type=local,mode=delete,dest=" + destination
+        elif metadata_only:
+            output = f"type=image,name={image},oci-mediatypes=true,store=false,push=false"
         elif self.containerd_socket:
-            output = (
-                f"type=image,name={image},oci-mediatypes=true,store=false,push=false"
-            )
+            # An exported layout owns the result independently of BuildKit's cache.
+            # Replaying a completed solve for delivery can rebuild evicted dependency layers.
+            layout = self.root + "/transfers/" + uuid.uuid4().hex
+            output = f"type=oci,name={image},oci-mediatypes=true,dest={layout},tar=false"
         else:
             output = f"type=image,name={image},push={str(push).lower()}"
         started = time.monotonic()
@@ -1273,46 +1277,23 @@ rm -rf "$incoming"
             f"in {time.monotonic() - started:.1f}s",
             flush=True,
         )
-        if self.containerd_socket and not destination:
-            self._image_builds[image] = (args, result["containerimage.digest"])
-        return result
-
-    def _export_image(self, image: str) -> dict[str, str]:
-        """Materialize a previewed image only when a local build or node needs its layers."""
-        if image in self._generated_layouts:
-            return self._generated_layouts[image]
-        args, digest = self._image_builds[image]
-        layout = self.root + "/transfers/" + uuid.uuid4().hex
-        self.run(
-            [
-                *args,
-                "--output",
-                f"type=oci,name={image},oci-mediatypes=true,dest={layout},tar=false",
-            ]
-        )
-        exported = self.read_json(args[args.index("--metadata-file") + 1])[
-            "containerimage.digest"
-        ]
-        descriptor = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
-        if exported != digest or descriptor != digest:
-            self.run(["rm", "-rf", "--", layout])
-            raise DeploymentError(
-                f"source image {image} changed between build and OCI export; rerun the source operation"
-            )
-        result = {"path": layout, "digest": digest}
-        self._generated_layouts[image] = result
+        if layout:
+            self._generated_layouts[_image_reference(image)] = {
+                "path": layout, "digest": result["containerimage.digest"],
+            }
         return result
 
     def import_image(self, image: str, reference: str) -> None:
         """Deliver a selected OCI output after source builds, reusing an identical node image."""
-        _, digest = self._image_builds[image]
+        image = _image_reference(image)
+        layout = self._generated_layouts[image]
+        digest = layout["digest"]
         if self._node_image_matches(reference, digest):
             print(f"Reusing unchanged node image {reference}", flush=True)
             NodeImageStore(
                 self.kubectl, self.namespace, self.name, self.binding
             ).pin_owned(reference)
         else:
-            layout = self._export_image(image)
             NodeImageStore(
                 self.kubectl, self.namespace, self.name, self.binding
             ).import_layout(layout["path"], reference)
@@ -1322,7 +1303,6 @@ rm -rf "$incoming"
             # A generated environment consumed by this build is also the next
             # iteration's input. Retain its immutable OCI files without copying
             # layer bytes or invalidating in-flight commands' original paths.
-            layout = self._export_image(image)
             cached = self.root + "/images/" + uuid.uuid4().hex
             self.run(["mkdir", "-p", self.root + "/images"])
             self.run(["cp", "-al", layout["path"], cached])
