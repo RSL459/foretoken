@@ -162,6 +162,7 @@ def create_video_benchmark_run(
         metrics=metrics,
         measurements=None,
         artifacts={"raw_results": raw_results},
+        exit_code=0 if metrics["success_num"] else 1,
     )
 
 
