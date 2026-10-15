@@ -23,7 +23,7 @@ CLI 按代码目录记录引擎目录选择，并在准备构建时同步源码�
 
 ## 构建存储与执行
 
-源码安装为编译 PVC 准备独立的 local-path provisioner 和非默认存储类。Provisioner 负责节点目录的创建与删除，构建器在执行前核对实际挂载的文件系统。工作区、BuildKit snapshot 和编译缓存一起保留在本地 PVC；应用文件和模型存储沿用各自的配置与管理职责。
+源码安装默认为编译 PVC 准备独立的 local-path provisioner 和非默认存储类。Provisioner 负责节点目录的创建与删除，构建器在执行前核对实际挂载的文件系统。工作区、BuildKit snapshot 和编译缓存一起保留在本地 PVC；应用文件和模型存储沿用各自的配置与管理职责。
 
 Rootless 构建器使用 UID 65531，账户和 subordinate-ID 文件根据上游镜像在 Pod 内准备，宿主账户保持不变。编译卷根目录使用组 1000 和权限 2775，与发布者的 `fsGroup` 一致，避免递归修改 rootless snapshot 的属主。生成的导出文件向该组开放访问，发布者继续使用 UID 1000。
 

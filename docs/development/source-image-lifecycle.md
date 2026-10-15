@@ -23,7 +23,7 @@ Compiler caches speed up builds; running services use published application file
 
 ## Build storage and execution
 
-Source installation prepares a dedicated local-path provisioner and non-default StorageClass for compiler PVCs. The provisioner owns node-directory creation and deletion; the builder verifies the mounted filesystem before execution. Workspaces, BuildKit snapshots and compiler cache mounts remain together on the local PVC. Application and model storage retain their separate configuration and ownership.
+By default, source installation prepares a dedicated local-path provisioner and non-default StorageClass for compiler PVCs. The provisioner owns node-directory creation and deletion; the builder verifies the mounted filesystem before execution. Workspaces, BuildKit snapshots and compiler cache mounts remain together on the local PVC. Application and model storage retain their separate configuration and ownership.
 
 The rootless builder uses UID 65531. Its account and subordinate-ID files are prepared inside the Pod from the upstream image; host accounts remain unchanged. Compiler volume roots use group 1000 and mode 2775, matching the publisher's `fsGroup` and avoiding recursive ownership changes to rootless snapshots. Generated exports are shared with that group; the publisher continues running as UID 1000.
 
