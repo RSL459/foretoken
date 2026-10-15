@@ -9,7 +9,7 @@ Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl and Helm, and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass. To use another storage class, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
+Prepare Python 3.11+, Git, kubectl and Helm, and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass for application files.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -30,6 +30,8 @@ foretoken install -e .
 ```
 
 This installs the shared Foretoken platform; builds run in the cluster. It can also replace a published platform installed through the CLI. For k3d GPU setup, follow [Deploy Foretoken with k3d](k3d-deployment.md). Other Kubernetes clusters need a registry reachable by the builder and nodes; [Deploy Foretoken on Kubernetes](kubernetes-deployment.md#2-install-foretoken-from-source) covers the installation command and registry authentication.
+
+Installation automatically prepares persistent node-local build storage. Repeated builds reuse the compiler cache, including after a builder is replaced. Application files keep using the cluster's default StorageClass. To customize either choice, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`. A custom build storage class must provide a non-NFS filesystem.
 
 ## Deploy a model service
 

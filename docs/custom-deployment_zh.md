@@ -9,7 +9,7 @@
 
 ## 从源码安装
 
-准备 Python 3.11+、Git、kubectl 和 Helm，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并提供默认存储类（StorageClass）。需要使用其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName` 或 `applicationFiles.storageClassName`，通过 `--values` 传入。
+准备 Python 3.11+、Git、kubectl 和 Helm，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并为应用文件提供默认存储类（StorageClass）。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -30,6 +30,8 @@ foretoken install -e .
 ```
 
 这会安装共享的 Foretoken 平台，构建在集群中进行；也可替换已通过 CLI 安装的发布版平台。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。其他 Kubernetes 集群需要构建任务和节点都能访问的镜像仓库，安装命令及仓库认证见[Kubernetes 部署指南](kubernetes-deployment_zh.md#2-从源码安装-foretoken)。
+
+安装会自动准备节点本地的持久化构建存储。后续构建继续复用编译缓存，构建器重建后也能沿用。应用文件仍使用集群默认存储类。需要自定义时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName` 或 `applicationFiles.storageClassName`，通过 `--values` 传入；自定义构建存储类需提供非 NFS 文件系统。
 
 ## 部署模型服务
 

@@ -21,6 +21,14 @@ Serialize source preparation and service submission for the same checkout. Other
 
 Compiler caches speed up builds; running services use published application files. Keep each candidate's writable source and export directories isolated, and stop abandoned publishers before reusing their outputs.
 
+## Build storage and execution
+
+Source installation prepares a dedicated local-path provisioner and non-default StorageClass for compiler PVCs. The provisioner owns node-directory creation and deletion; the builder verifies the mounted filesystem before execution. Workspaces, BuildKit snapshots and compiler cache mounts remain together on the local PVC. Application and model storage retain their separate configuration and ownership.
+
+The rootless builder uses UID 65531. Its account and subordinate-ID files are prepared inside the Pod from the upstream image; host accounts remain unchanged. Compiler volume roots use group 1000 and mode 2775, matching the publisher's `fsGroup` and avoiding recursive ownership changes to rootless snapshots. Generated exports are shared with that group; the publisher continues running as UID 1000.
+
+Successful operations retain the daemon. Failure or cancellation retires its Pod, including reused daemons, so executor children exit together; the next Pod reuses the same PVC. A layout change retires incompatible builders and selects a new compiler claim rather than rewriting old snapshot ownership. Completed environment images and published applications remain reusable. Uninstall removes compiler claims and waits for their PV directories to be reclaimed before removing the provisioner.
+
 ## Building and publishing applications
 
 Rust executables, Python adapters and inference-engine files have separate build inputs. Rebuild affected outputs and reuse unchanged files only from a completed application matching the previous inputs and runtime environment. Replace each updated group in full, including deletions. If a previous build or publication is incomplete, build the complete application from the current inputs.
