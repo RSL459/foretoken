@@ -1484,6 +1484,10 @@ dependencies = [
 [[package]]
 name = "foretoken-xtask"
 version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "form_urlencoded"
