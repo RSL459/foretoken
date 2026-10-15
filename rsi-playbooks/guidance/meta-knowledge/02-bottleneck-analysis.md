@@ -45,8 +45,6 @@ Use event and operator names to locate the actual implementation. Read its input
 - Long communication: compare preceding computation, collective entry times, message sizes, and topology across ranks. Distinguish load imbalance and synchronization waits from transfer costs.
 - Workload-specific regressions: use actual batch sizes, KV lengths, tokens per expert, and cache state to explain why the implementation slows down under those conditions.
 
-For example, if one rank finishes expert computation late and other ranks wait in a collective, investigate expert load and work partitioning next. If all ranks enter communication together and duration grows with message volume, investigate the transfer path and communication implementation.
-
 ## Continue with focused experiments
 
 For a hotspot worth investigating further, extract real input shapes, data types, layouts, and state. Reuse upstream tests or write a small experiment for the current question. Retain adjacent operations, synchronization, or loop state where needed to explain the behavior of the actual execution.

@@ -17,6 +17,7 @@ use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
     throughput_scorer => ThroughputScorer = "throughput",
+    endpoint_attribute_scorer => EndpointAttributeScorer = "endpoint_attribute",
     active_request_scorer => ActiveRequestScorer = "active_request",
     token_load_scorer => TokenLoadScorer = "token_load",
     prefix_scorer => PrefixScorer = "prefix",

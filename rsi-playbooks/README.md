@@ -26,7 +26,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 This enables Agent Teams for this session. Paste the following into that session, or one with Teams already enabled. Replace the file path to use your own task:
 
 ```text
-/goal Use the RSI skill and an Agent Team to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. Read the task, prior experiment records, and relevant guidance under rsi-playbooks/guidance/. As lead, develop the approach, break down tasks, reflect on findings, and keep the team moving, participating in execution when useful. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
+/goal Use the RSI skill and an Agent Team to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. Read the task, prior experiment records, and relevant guidance under rsi-playbooks/guidance/. Create a dedicated Git worktree for this task and separate worktrees for parallel experimental candidates; edit, build, deploy, and measure from each candidate's own checkout. When resuming, reuse the recorded worktrees after checking their state. As lead, develop the approach, delegate complete research questions with scope and resources for autonomous execution, integrate findings, and validate the combined approach, participating in execution when useful. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
 ```
 
 The lead uses one goal for the overall outcome and team progress, while members work within their roles. To pause, use `/goal clear` to end automatic continuation, then ask the team to stop this task's experiments and collectors.
@@ -36,7 +36,7 @@ The lead uses one goal for the overall outcome and team progress, while members 
 Open Codex in the repository and paste:
 
 ```text
-/goal Use the RSI skill to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. Read the task, prior experiment records, and relevant guidance under rsi-playbooks/guidance/. As lead, develop the approach, break down tasks, reflect on findings, and coordinate native agents, participating in execution when useful. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
+/goal Use the RSI skill to complete the inference-system optimization in rsi-playbooks/tasks/qwen-decode.md and deliver its required results. Read the task, prior experiment records, and relevant guidance under rsi-playbooks/guidance/. Create a dedicated Git worktree for this task and separate worktrees for parallel experimental candidates; edit, build, deploy, and measure from each candidate's own checkout. When resuming, reuse the recorded worktrees after checking their state. As lead, develop the approach, delegate complete research questions with scope and resources for autonomous execution, integrate findings, and validate the combined approach, participating in execution when useful. Maintain the task's required number of actively working agents and respond to results and requests for new work. Follow the task's resources, time budget, and end conditions; on a user pause or stop, halt further work and arrange the necessary cleanup.
 ```
 
 Codex uses its native `/goal` to maintain the task objective and its agent tools for delegation and follow-up. Use `/goal pause` to pause the goal and ask members to stop the task's experiments and collectors; use `/goal resume` to continue.
@@ -48,15 +48,18 @@ Multiple Workers advance optimization directions in parallel, supported by the o
 | Role | Responsibility and staffing |
 | --- | --- |
 | Lead | Develops, reflects on, and chooses optimization directions; owns task breakdown, evidence synthesis, resource coordination, useful parallel work, and delivery, participating in execution when useful. |
-| Direction and progress | One advisor independently examines assumptions, methods, and progress, connects findings across directions, proactively recommends questions to investigate and changes of approach, and writes the experiment overview. |
+| Advisor | At least two members focus on research, bottleneck analysis, exploration, feedback, and reflection. They understand the code and system, search community sources for ideas, and challenge local assumptions with broader evidence. The lead sets staffing within the budget and harness limits. |
 | Worker | Owns an optimization direction from code and bottleneck analysis through design, implementation, integration, deployment, measurement, and result analysis. At least one Worker follows the system's end-to-end execution path. Prefer one or more dedicated Workers per active direction; the lead determines total staffing. |
-| Recorder | Independently reviews directions and candidates for benchmark shortcuts, comparison conditions, and the source of gains; owns iteration notes and captures reusable conclusions, applicability, and negative results in `guidance/`. Does not review its own implemented candidate. |
-| Knowledge research and exploration | Researchers by direction examine original sources and upstream practice, proposing applicable methods and recording findings. |
-| Team efficiency | One supervisor covers the whole team's work efficiency and resource utilization. Periodically checks tasks, member progress, and useful parallelism, maintains continuous GPU collection, and follows up on delayed handoffs, duplicate work, blockers, or idle resources. |
+| Recorder | One by default. Independently reviews candidate behavior, comparison conditions, and gain attribution; maintains iteration history, the current overview, evidence links, and the final report. Does not implement the candidates it reviews. |
+| Monitor | One supervisor covers the whole team's work efficiency and resource utilization. Periodically checks tasks, member progress, and useful parallelism, maintains continuous GPU collection, and follows up on delayed handoffs, duplicate work, blockers, or idle resources. |
 
-Working-agent counts include Workers, researchers, and Recorders while they are doing assigned work. Direction and efficiency advisors are additional. The lead arranges useful work within task and harness limits and addresses staffing shortfalls.
+Member names combine a role with a number or codename, such as `lead-01`, `advisor-01`, `worker-01`, `recorder-01`, `monitor-01`, or `worker-alpha`. Names stay stable across assignments; responsibilities belong in task descriptions. The [shared skill](../.agents/skills/rsi/SKILL.md#set-up-the-team-and-assignments) defines naming and assignment details.
 
-Workers and researchers discuss methods directly. Workers send changes, raw results, and interpretation to Recorders, who return review findings and requests for missing evidence to Workers. The lead coordinates key trade-offs, priorities, and resources. Members request new work on completion or blockage; the lead assigns follow-up work or adjusts responsibilities. Where shared task tools are available, members may also claim ready work within their authorization. The direction advisor owns the overview, Recorders own assigned iteration notes, and the lead accepts their outputs. On resumption, preserve the original budget and records and recreate missing members.
+Working-agent counts include Workers, Advisors, and Recorders actually doing assigned work, counted once per member. Exclude the lead and Monitor; waiting, blocked, or completed members do not count as working. The lead arranges useful work within task and harness limits and addresses staffing shortfalls.
+
+Assign each Worker a research question, scope, resources, budget, and expected outcome. Within that assignment, it owns research and design as well as execution, without waiting for an Advisor proposal or approval for each command or intermediate result. Advisors and Recorders collaborate directly with the Worker; review and recording overlap independent preparation. The lead handles changes of direction or shared resources, selects retained changes, and owns integrated validation and delivery.
+
+Members report findings that affect others and request follow-up when their assignment is complete or cannot advance. The Recorder owns the overview and iteration notes, linking original evidence rather than duplicating it. On resumption, preserve the original budget, reconcile records with actual results and processes, and recreate missing members.
 
 ### Parallel workspaces
 
@@ -75,17 +78,14 @@ Experiment counts and GPU allocations come from the task. Reviewers examine each
 
 ## Steps
 
-An iteration covers one candidate change, from deployment through the required performance comparisons and result analysis to a decision to retain or revert it. Measurements of that candidate across workloads and concurrency levels belong to the same iteration.
+A research question may span several candidate iterations or conclude with evidence that an approach is unsuitable. An iteration evaluates one candidate; its workload groups and repeats belong together. Completion of the overall task follows its objectives, budget, and end conditions.
 
-1. Define the behavior to improve and how to judge success, such as reducing time to first token under a given workload while preserving answer quality.
-2. Set the scope: focus on routing, the inference engine, or another specific area, or leave it open to changes across the whole system.
-3. Read the code and relevant research and practice. Use existing measurements to understand the system's current behavior, taking additional measurements as needed.
-4. Analyze the causes and opportunities for improvement, develop your own hypotheses, and design an approach. State the expected effects and choose workloads and metrics that test those hypotheses. If comparable results are unavailable, measure the service before making the change.
-5. Change the code or configuration and update the inference service through the [source deployment workflow](../docs/custom-deployment.md).
-6. Run the selected [evaluations](../benchmarks/README.md) and compare results before and after the change. Use model outputs, logs, and profiling to determine what accounts for the differences.
-7. Have an independent reviewer examine the implementation and raw results for benchmark shortcuts, changed model behavior, and comparison conditions, assessing attribution and any needed follow-up measurements.
-8. Record each run, its interpretation, and review findings following the [experiment records guide](experiment-records.md).
-9. Keep, refine, or revert the change, then choose the next question to investigate. Add reusable findings to the guidance and references.
+1. Define the behavior to improve, scope, and success criteria. Read relevant code, research, and prior results to identify a question worth investigating.
+2. Develop a hypothesis and a comparison that can support or contradict it. Reuse comparable evidence; otherwise measure the reference approach. Resolve important feasibility questions before committing to a larger implementation.
+3. Implement a viable candidate and use the [source deployment workflow](../docs/custom-deployment.md). Confirm the intended behavior through a representative execution before expanding measurements.
+4. Run the selected [evaluations](../benchmarks/README.md). Use existing [sweeps](../benchmarks/docs/recipes.md) for predetermined workload groups where applicable, keeping comparison conditions stable. Analyze model outputs, logs, and profiles to explain differences.
+5. Have an independent Recorder review the implementation and original results for behavior, comparison conditions, and attribution. Address questions while unrelated preparation continues, and preserve the evidence and conclusions in the [experiment records](experiment-records.md).
+6. Refine or discard experimental candidates as evidence warrants. The lead selects reviewed changes for the retained approach and arranges combined service validation. Feed reusable findings into guidance and choose the next question within the remaining task budget.
 
 ## Choose evaluations
 

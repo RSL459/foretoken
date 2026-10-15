@@ -4,16 +4,18 @@
 
 ```text
 模型：Qwen3.5-35B-A3B
+起始配置：examples/rsi/qwen-decode；可修改的 BF16 TP4 起点，不固定后续优化策略
 优化目标：提升单并发解码速度和 16 并发总输出吞吐（token/s），降低两组的解码延迟（TPOT）
 精度：固定 BF16
-部署形态：聚合部署、预填充/解码分离等，不限
-单服务配置：每个服务最多 8 卡；具体 GPU 数、并行方式、CPU 核数和内存由 Agent 选择
+部署形态：在最终单机 GPU 预算内自主选择并行方式和各阶段安排
+最终部署预算：单机 4 卡；模型与 frontend 工作负载合计不超过 32 核 CPU、512 GiB 内存
+实验规模：服务候选遵守最终预算；算子、编译或正确性等局部实验按需使用更少资源，包括单卡
 可用资源：2 台节点，每台可用 8 卡 MetaX C500、64 核 CPU、1 TiB 内存
 最小并行工作子 Agent 数：6
 最大并行工作子 Agent 数：20
-最小并行实验数：2
-最大并行实验数：由 Agent 根据可用资源和单实验需求确定上限，并写入实验说明
-并行安排：两台节点均用于并行实验，按单实验资源需求安排候选；通过并行调查与实现持续提供待测方案
+最小并行实验数：两节点合计 4 组独立实验
+最大并行实验数：不固定为 4；按 GPU、CPU、内存和存储的实际需求确定并记录，纳入更小规模的实验
+并行安排：每节点安排两组四卡候选，或更多小规模实验；为平台、构建和评测客户端保留 CPU 与内存，隔离可写缓存和访问入口，工作结束后及时交接资源。不足四组时记录并处理具体的准备或资源阻塞，不让完整服务配额因等待而持续闲置
 评测负载：每个服务分别测量并发 1 和 16，覆盖随机长度负载和 StudyChat 对话；具体命令见下方“评测命令”
 精度评测：针对可能影响精度的改动按需执行 foretoken eval，每完成 20 轮速度迭代最多执行一次
 可改动范围：在上述精度与资源约束内不限，可修改源码、配置等；优化方向包括部署配置、并发与批处理、并行策略、预填充/解码分离、推理引擎与调度、算子优化与融合、编译与图执行、通信、显存管理、KV 缓存与卸载、推测解码、采样、Router 与负载均衡、准入与排队、扩缩容、CPU 与 I/O 优化等
@@ -27,22 +29,24 @@
   - 结果证据：W&B 链接、图表和原始结果路径，写入同一 iteration.md 的“结果证据”部分；命令自动保存的原始产物保留在 results/qwen-decode/iterations/<iteration>/runs/ 下。
   - 执行效率：按任务开始至结束的完整时间区间，统计正在执行任务的子 Agent 数的时间加权平均值，并分别统计两台节点的 GPU 平均利用率，写入 results/qwen-decode/notes/experiment.md 的“执行效率”部分；注明统计时段、资源范围、采样覆盖及低利用率原因，并引用原始记录。
   - 最终方案：保留方案、对应代码／配置、各负载实测结果及逐轮对照汇总，写入 results/qwen-decode/notes/experiment.md。
-  - 用户汇总：按实验名创建 rsi-playbooks/tasks/qwen-decode/<experiment>/，将 experiment.md 中的主要结论、逐轮性能对照、执行效率和 W&B 链接整理到该目录的 report.md，关键图表放入 figures/ 并用相对路径引用；交付汇总文件路径。
+  - 用户汇总：按实验名创建 rsi-playbooks/tasks/qwen-decode/<experiment>/，按 rsi-playbooks/templates/report-template_zh.md 为未参与实验的读者编写该目录的 report.md，展示逐轮改动、指标实测值及相对 base 的变化、结论、执行效率和 W&B 结果链接，关键图表放入 figures/ 并用相对路径引用；交付汇总文件路径。
 ```
 
 执行与资源安排见[优化任务](README_zh.md#自主执行)，记录方法见[实验记录手册](../experiment-records_zh.md)。
 
+## 起始部署
+
+[四卡起始配置](../../examples/rsi/qwen-decode/)需要已配置兼容运行环境的沐曦 Foretoken 平台、Gateway 前端访问，以及支持 `ReadWriteOnce` 的默认 StorageClass。执行 `foretoken deploy examples/rsi/qwen-decode --timeout 60m` 部署，再在任务预算内演进。各并行候选使用自己的 worktree、namespace、Gateway hostname 和可写缓存。服务收益采用可比的四卡结果判断，小型验证用于回答局部问题，不代替最终服务评测。交付前在没有竞争实验负载的条件下验证保留方案。
+
 ## 评测命令
 
-在仓库根目录执行，将部署目录和 W&B API key 占位符替换为实际值。结果统一保存到执行机器上的 `results/qwen-decode/`；`baseline` 是初始方案名，新方案更名，同一方案补测沿用名称。上述笔记由 Agent 填写，指标与图表由命令生成。
+在仓库根目录执行。下列命令使用起始部署，对照其他方案时换成各候选自己的部署目录。使用 W&B 前先通过 `wandb login` 登录。结果统一保存到执行机器上的 `results/qwen-decode/`；`baseline` 是初始方案名，新方案更名，同一方案补测沿用名称。上述笔记由 Agent 填写，指标与图表由命令生成。
 
 随机负载需分别用 `--max-concurrency 1` 和 `16` 运行两次；两次运行的请求数、预热量和评测样本量保持一致。最终保留方案还需用 StudyChat 分别测量并发 1 和 16，每组 128 条正式请求，使用相同输入和预热量；中间迭代按需执行。更多负载见 [recipes](../../benchmarks/docs/recipes_zh.md)。
 
 ```bash
-export WANDB_API_KEY="<your-wandb-api-key>"
-
 # 每轮速度迭代：不同输入输出长度
-foretoken perf path/to/qwen-deployment --dataset random \
+foretoken perf examples/rsi/qwen-decode --dataset random \
   --min-prompt-length 128 --max-prompt-length 4096 \
   --min-output-length 128 --max-output-length 512 \
   --max-concurrency 16 --num-prompts 160 --warmup-requests 4 \
@@ -50,14 +54,14 @@ foretoken perf path/to/qwen-deployment --dataset random \
   --output-dir results/qwen-decode --iteration baseline
 
 # 最终保留方案必跑，中间按需：StudyChat 对话
-foretoken perf path/to/qwen-deployment \
+foretoken perf examples/rsi/qwen-decode \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --max-concurrency 16 --num-prompts 128 --max-tokens 2048 \
   --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
   --output-dir results/qwen-decode --iteration baseline
 
 # 按需精度评测
-foretoken eval path/to/qwen-deployment \
+foretoken eval examples/rsi/qwen-decode \
   --tasks gsm8k --num_fewshot 0 --limit 20 --output experiment,plot,wandb \
   --output-dir results/qwen-decode --iteration baseline
 ```

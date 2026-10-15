@@ -42,6 +42,7 @@ Choose a scorer for the workload:
 | Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
 | Prefer the same model replica for requests with the same `session_id` in the request body | `session_affinity` |
 | Prefer lower weighted request lengths | `throughput` |
+| Prefer a configured endpoint observation | `endpoint_attribute` |
 | Give every target an equal score | `uniform` |
 
 Scorer-specific options go under `scorer.parameters`. For example, give cache affinity more weight in the default strategy:
