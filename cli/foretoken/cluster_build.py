@@ -63,6 +63,9 @@ class BuildCancellation(AbstractContextManager):
     def __exit__(self, exc_type: object, exc_value: BaseException | None, traceback: object) -> None:
         if exc_value is not None:
             self.cancel(exc_value)
+            # Cancelling a sibling can also fail its in-flight API call.
+            if self._error is not None and isinstance(exc_value, (CancelledError, DeploymentError, OSError)):
+                raise self._error
 
     def check(self) -> None:
         """Prevent subsequent source work once the owning operation has stopped."""
@@ -109,6 +112,11 @@ class BuildCancellation(AbstractContextManager):
                 futures = [cleanup.submit(self.cleanup, callback, error) for callback in callbacks]
                 for future in futures:
                     future.result()
+
+    def run_stage(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Cancel sibling work when a submitted stage fails, before its Future completes."""
+        with self:
+            return function(*args, **kwargs)
 
     def run(
         self,

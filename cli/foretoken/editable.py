@@ -593,7 +593,7 @@ class EditableDeployment:
             # their shared source snapshot or allowing any publisher to consume them.
             with ThreadPoolExecutor(max_workers=len(missing)) as builds, builder.cancellation:
                 pending_builds = [
-                    builds.submit(build_application, component)
+                    builds.submit(builder.cancellation.run_stage, build_application, component)
                     for component in sorted(missing)
                 ]
                 for future in pending_builds:
@@ -610,7 +610,7 @@ class EditableDeployment:
                     previous = bundle.get("previous", "")
                     previous_revisions[component] = previous
                     futures[component] = publications.submit(
-                        origin.publish,
+                        builder.cancellation.run_stage, origin.publish,
                         builder,
                         builder.root + "/output/" + revision + "/payload",
                         component,

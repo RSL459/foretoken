@@ -1363,7 +1363,7 @@ def prepare_source_images(
             with ThreadPoolExecutor(max_workers=1) as application_build, cancellation:
                 payload = publisher.root + "/applications/" + component
                 application = application_build.submit(
-                    publisher.export_application, component, payload, arguments, parts,
+                    cancellation.run_stage, publisher.export_application, component, payload, arguments, parts,
                 )
                 if component == "model-server" and engines:
                     cache_prefix = "-".join((
@@ -1422,7 +1422,7 @@ def prepare_source_images(
 
         with ThreadPoolExecutor(max_workers=len(references)) as builds, cancellation:
             pending_builds = {
-                component: builds.submit(build_component, component, dockerfile)
+                component: builds.submit(cancellation.run_stage, build_component, component, dockerfile)
                 for component, dockerfile in (
                     ("control-plane", "control-plane/Dockerfile"),
                     ("frontend", "data-plane/frontend/Dockerfile"),
@@ -1463,7 +1463,7 @@ def prepare_source_images(
             for component, image in references.items():
                 prior = prior_revisions[component]
                 pending[component] = publications.submit(
-                    origin.publish,
+                    cancellation.run_stage, origin.publish,
                     publisher,
                     publisher.root + "/applications/" + component,
                     component,

@@ -552,7 +552,7 @@ class PlatformLifecycle:
                     cancellation=source_cancellation,
                 )
                 source_future = installation_workers.submit(
-                    source_artifacts.enter_context, context
+                    source_cancellation.run_stage, source_artifacts.enter_context, context
                 )
             elif not kubectl.exists("namespace", platform.namespace):
                 kubectl.run(["create", "namespace", platform.namespace])
