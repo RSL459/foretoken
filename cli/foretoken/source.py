@@ -742,9 +742,18 @@ def ensure_build_cache(
         kubectl.run(["create", "namespace", namespace])
     storage_class = configuration["storageClassName"] or SOURCE_BUILD_STORAGE_CLASS
     existing = kubectl.get_if_exists("pvc", name, namespace)
+    if existing is not None and existing["metadata"].get("labels", {}).get(_BUILD_CACHE_LABEL) != "true":
+        raise DeploymentError(f"{namespace}/{name} is not a Foretoken build cache")
+    if (
+        storage_class == SOURCE_BUILD_STORAGE_CLASS
+        and (existing is None or existing.get("status", {}).get("phase") != "Bound")
+        and not kubectl.exists("storageclass", storage_class)
+    ):
+        raise DeploymentError(
+            "source build storage is not installed; update the source platform "
+            "with `foretoken install -e PATH` before deploying"
+        )
     if existing is not None:
-        if existing["metadata"].get("labels", {}).get(_BUILD_CACHE_LABEL) != "true":
-            raise DeploymentError(f"{namespace}/{name} is not a Foretoken build cache")
         spec = {
             "resources": {"requests": {"storage": configuration["storageSize"]}},
             "storageClassName": storage_class,
