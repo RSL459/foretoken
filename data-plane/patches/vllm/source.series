@@ -29,3 +29,4 @@ common/spec-decode-timing-hooks.patch
 compatibility/v1-current/spec-decode-timing.patch
 common/scheduler-load.patch
 compatibility/v1-current/scheduler-load.patch
+common/compile-cache-publication.patch

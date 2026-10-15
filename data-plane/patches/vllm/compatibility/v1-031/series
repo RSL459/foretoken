@@ -16,3 +16,4 @@ common/shm-nonblocking-read.patch
 compatibility/v1-031/spec-decode-timing.patch
 common/scheduler-load.patch
 compatibility/v1-031/scheduler-load.patch
+common/compile-cache-publication.patch
