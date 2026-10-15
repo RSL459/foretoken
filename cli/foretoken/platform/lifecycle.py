@@ -651,6 +651,8 @@ class PlatformLifecycle:
             if source_future is not None:
                 source_future.cancel()
             source_cancellation.cancel(error)
+            if isinstance(error, (DeploymentError, OSError)):
+                source_cancellation.check()
             raise
         finally:
             # Resolve dependency success or failure before joining: the source
