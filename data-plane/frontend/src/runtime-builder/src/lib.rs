@@ -14,7 +14,8 @@ use foretoken_backend_registry::{
 use foretoken_kv_indexer::{KvIndexDegradedReason, KvIndexer};
 use foretoken_llm_facade::LlmFacadeResolver;
 use foretoken_router::{
-    PipelineRouter, RouteInventory, Router, RouterPipelineConfigError, RouterPipelines,
+    PipelineRouter, RouteInventory, RouteTargetId, Router, RouterPipelineConfigError,
+    RouterPipelines,
 };
 use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
@@ -145,6 +146,13 @@ impl RuntimeBuilder {
             published_backends: self.backends.clone(),
             pipeline: pipeline.clone(),
             published_pipeline: self.router_pipeline.clone(),
+            request_length_targets: registry
+                .model_routes()
+                .routes()
+                .iter()
+                .filter(|route| pipeline.needs_request_length_history(&route.model, route.role))
+                .map(|route| route.route_target_id.clone())
+                .collect(),
         });
         let models = backends
             .models
@@ -333,6 +341,7 @@ pub enum RuntimeBuildError {
 }
 
 struct RegistryRuntimeControl {
+    request_length_targets: BTreeSet<RouteTargetId>,
     logging: Arc<foretoken_tracing::LogControl>,
     log_level: tracing::level_filters::LevelFilter,
     pipeline: Arc<RouterPipelines>,
@@ -345,6 +354,9 @@ struct RegistryRuntimeControl {
 impl RuntimeControl for RegistryRuntimeControl {
     fn activate(&self, version: u64) {
         self.pipeline.activate(version);
+        self.backends
+            .registry
+            .set_request_length_targets(self.request_length_targets.clone());
         self.logging.apply(self.log_level);
         *self
             .published_backends

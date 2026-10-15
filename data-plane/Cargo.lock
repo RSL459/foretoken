@@ -1334,6 +1334,7 @@ dependencies = [
  "foretoken-model-protocol",
  "foretoken-request-ledger",
  "futures",
+ "prometheus-client",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",

@@ -16,6 +16,7 @@ use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 // `kv_least_loaded_scorer.rs`, the `KvLeastLoadedScorer` type, and the user-facing name.
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
+    throughput_scorer => ThroughputScorer = "throughput",
     endpoint_attribute_scorer => EndpointAttributeScorer = "endpoint_attribute",
     active_request_scorer => ActiveRequestScorer = "active_request",
     token_load_scorer => TokenLoadScorer = "token_load",
@@ -97,6 +98,11 @@ pub(super) fn inverse_normalized_scores(
 pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     /// Declares that scoring consumes prefix matches, preparing live observations before routing.
     fn needs_kv_prefix(&self) -> bool {
+        false
+    }
+
+    /// Requests the registry's daily request-length history only while this scorer is active.
+    fn needs_request_length_history(&self) -> bool {
         false
     }
 
