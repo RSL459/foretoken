@@ -28,4 +28,10 @@ Open the run's Artifacts to download configuration, metrics, request records, an
 
 Warmup is excluded from performance metrics and panels. Its records remain in the `benchmark-warmup` artifact. Adding `plot` to `--output local,wandb` saves exported figures locally and in the `benchmark-plots` artifact.
 
-If W&B publication fails, the command reports an error and retains the local execution files for inspection.
+## Resume an upload
+
+If synchronization is interrupted, replace `WANDB_RUN_DIR` with the printed W&B local run directory:
+
+```bash
+wandb sync --include-synced WANDB_RUN_DIR
+```

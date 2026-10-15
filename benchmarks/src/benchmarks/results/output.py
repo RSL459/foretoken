@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -46,6 +47,7 @@ from benchmarks.results.records import RequestRecordWriter
 from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.responses import ResponseWriter
 from benchmarks.results.wandb import publish_http_wandb
+from benchmarks.results.wandb_sync import start_sync
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +238,7 @@ class PlotSink:
 
 
 class WandbSink:
-    """Own one W&B SDK run and delegate benchmark-specific content publication."""
+    """Record one native W&B run locally while an independent process synchronizes it."""
 
     def __init__(
         self,
@@ -255,16 +257,19 @@ class WandbSink:
         self.publisher = publisher
         self.run_config = run_config
         self._run: Any | None = None
+        self._sync: subprocess.Popen[bytes] | None = None
         self._progress_fields: set[tuple[str, str]] = set()
 
     def open(self, record: dict[str, Any]) -> None:
-        """Create the SDK run before requests so system metrics cover execution."""
+        """Open native recording before requests, preserving W&B's configured offline/disabled modes."""
+        requested_mode = wandb.setup().settings.mode
         wandb_config = self.benchmark.wandb
         run_config = self.run_config or self.benchmark.to_dict()
         init_kwargs: dict[str, Any] = {
             "project": wandb_config.project,
             "name": self.run_name,
             "reinit": "create_new",
+            "mode": "disabled" if requested_mode == "disabled" else "offline",
             "config": run_config,
             "dir": self.execution_dir,
             "settings": wandb.Settings(
@@ -279,12 +284,18 @@ class WandbSink:
         try:
             self._run = wandb.init(**init_kwargs)
         except wandb.errors.Error:
-            logger.exception("W&B initialization failed")
+            logger.exception("W&B local recording initialization failed")
             raise
         if self._run is None:
             raise RuntimeError("W&B initialization returned no run")
-        if self._run.url:
-            print_result_location(f"W&B results: {self._run.url}")
+        if requested_mode != "disabled":
+            directory = Path(self._run.settings.sync_dir).resolve()
+            print_result_location(f"W&B local run: {directory}")
+            if requested_mode not in {"offline", "dryrun"}:
+                try:
+                    self._sync = start_sync(directory)
+                except OSError as error:
+                    logger.error("W&B live sync could not start: %s; local run retained at %s", error, directory)
 
     def log_progress(self, row: dict[str, Any], *, axis: str) -> None:
         """Bind live fields to their domain axis and queue them through the owned run."""
@@ -314,11 +325,11 @@ class WandbSink:
                 artifact.add_dir(str(directory))
                 self._run.log_artifact(artifact)
         except wandb.errors.Error:
-            logger.exception("W&B publication failed")
+            logger.exception("W&B local recording failed")
             raise
 
     def close(self, *, exit_code: int = 0) -> None:
-        """Finish the owned SDK run once with the benchmark exit status."""
+        """Seal local records with the benchmark status and release sync without waiting for upload."""
         run = self._run
         self._run = None
         if run is None:
@@ -342,8 +353,12 @@ class WandbSink:
             finally:
                 run.finish(exit_code=exit_code)
         except wandb.errors.Error:
-            logger.exception("W&B finalization failed")
+            logger.exception("W&B local recording finalization failed")
             raise
+        finally:
+            if self._sync is not None:
+                self._sync.stdin.close()
+                self._sync = None
 
 
 def result_directory_path(
@@ -459,10 +474,9 @@ def build_benchmark_run_record(
 class ResultOutputs:
     """Own preparation logs, measurement observers, publication, and cleanup for one run.
 
-    The execution directory is the local result directory when local output is
-    enabled and a temporary directory otherwise; the engine writes its files
-    there. Temporary files are removed after success and retained when an
-    explicitly selected W&B lifecycle or benchmark execution fails.
+    File outputs and W&B synchronization retain the execution directory.
+    Console-only execution uses a temporary directory, removed after success
+    and retained when local recording or benchmark execution fails.
     """
 
     def __init__(
@@ -546,6 +560,7 @@ class ResultOutputs:
         else:
             self._temporary_execution_dir = True
             self._execution_dir = mkdtemp(prefix="foretoken-benchmark-")
+        self._execution_dir = str(Path(self._execution_dir).resolve())
 
         try:
             os.makedirs(self.execution_dir, exist_ok=True)
@@ -575,7 +590,7 @@ class ResultOutputs:
                     "standard benchmark results require a service"
                 )
             standard_benchmark = cast(BenchmarkConfig, self.benchmark)
-            if outputs.saves_local or outputs.includes("wandb"):
+            if outputs.saves_local:
                 sinks.append(
                     BenchmarkArtifactSink(
                         standard_benchmark,
@@ -621,7 +636,7 @@ class ResultOutputs:
         for sink in sinks:
             self._resources.callback(self._close_sink, sink)
             sink.open(record)
-        if outputs.saves_local or outputs.includes("wandb"):
+        if outputs.saves_local:
             self._environment = {
                 "client": client_environment(),
             }
@@ -658,10 +673,7 @@ class ResultOutputs:
         if (
             self.service is not None
             and self.service.model_service_refs
-            and (
-                outputs.saves_local
-                or outputs.includes("wandb")
-            )
+            and outputs.saves_local
         ):
             try:
                 observer = KubernetesReplicaObserver(

@@ -131,7 +131,7 @@ All points for one method run before the next method starts. Temporary deploymen
 
 Use `sweep_summary.csv` and the comparison plots to compare latency and throughput under the same workload settings. Error bars show sample standard deviation across repetitions, including for per-run percentiles; one repetition has no error estimate. Check each metric's sample count and failed runs when comparing points.
 
-Reusing the same `--experiment-name` replaces that experiment directory; omitting it creates a timestamped directory. To change metrics, layout or compare earlier runs, see [plotting saved results](../recipes.md#plot-saved-results).
+Every invocation creates a separate result directory; `--experiment-name` supplies its name prefix. To change metrics, layout or compare earlier runs, see [plotting saved results](../recipes.md#plot-saved-results).
 
 ## Video settings
 
