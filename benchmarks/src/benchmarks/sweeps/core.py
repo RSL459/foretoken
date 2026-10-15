@@ -213,12 +213,15 @@ def run_sweep(
         if config.outputs.saves_local:
             selected.append(LocalDirectorySink(execution_dir))
         if config.outputs.includes("wandb") and not dry_run:
+            from benchmarks.results.wandb import publish_sweep_wandb
+
             selected.append(
                 WandbSink(
-                    config.wandb,
+                    config,
                     execution_dir=execution_dir,
                     run_name=f"{config.wandb.run_name or name or Path(execution_dir).name}_comparison",
                     group=plan["wandb_group"],
+                    publisher=publish_sweep_wandb,
                     run_config=plan,
                 )
             )

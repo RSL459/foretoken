@@ -66,7 +66,7 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
 
-Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. With W&B selected, open the run links from the printed publication log to follow progress and view results. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs. See [W&B output](docs/perf/wandb.md) to view results or publish saved runs.
+Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. With W&B selected, open the printed run link to follow progress and view results. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs. See [W&B output](docs/perf/wandb.md) to view results or resume an upload.
 
 | Record | Use |
 | --- | --- |
@@ -75,7 +75,7 @@ Local results use a separate directory under `results/` for each run; `--output-
 | `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect requests as they complete, including records retained after interruption |
 | `responses.jsonl`, with `--output local,raw` | Inspect HTTP inputs and response content, including reasoning and tool calls |
 
-Logs are recorded in both normal and quiet modes. `quiet` suppresses terminal progress and summaries while keeping errors visible. Warmup records use the `warmup_` filename prefix. Quality scores, framework reports, and profiling captures are described in the linked guides below.
+Logs are recorded in both normal and quiet modes. `quiet` suppresses benchmark progress and summaries; errors and W&B synchronization messages remain visible. Warmup records use the `warmup_` filename prefix. Quality scores, framework reports, and profiling captures are described in the linked guides below.
 
 Use `experiment` to group measurements under a named iteration. Run from the checkout containing the code changes:
 

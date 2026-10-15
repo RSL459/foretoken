@@ -213,6 +213,7 @@ def distribution_comparison_sinks(config: EvaluationConfig, record: dict[str, An
         record,
         directory,
         console_sink=DistributionComparisonConsoleSink(),
+        publisher=publish_distribution_comparison_wandb,
     )
     return [sinks[0], DistributionComparisonArtifactSink(directory), *sinks[1:]]
 
@@ -318,5 +319,6 @@ def greedy_comparison_sinks(config: EvaluationConfig, record: dict[str, Any], di
     sinks = evaluation_sinks(
         config, record, directory,
         console_sink=GreedyComparisonConsoleSink(),
+        publisher=publish_greedy_comparison_wandb,
     )
     return [sinks[0], GreedyComparisonArtifactSink(directory), *sinks[1:]]

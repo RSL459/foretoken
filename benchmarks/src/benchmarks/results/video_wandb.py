@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import wandb
+
+from benchmarks.config.video import VideoBenchmarkConfig
 
 if TYPE_CHECKING:
     from benchmarks.results.output import BenchmarkRun
@@ -76,7 +79,11 @@ def video_metrics_to_wandb(metrics: dict[str, Any]) -> dict[str, float | int]:
     return message
 
 
-def publish_video_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
+def publish_video_wandb(
+    config: VideoBenchmarkConfig,
+    sdk_run: Any,
+    run: BenchmarkRun,
+) -> None:
     """Publish video summaries, request rows, media, and artifacts to an open run."""
     raw_results = json.loads(
         run.artifacts["raw_results"].read_text(encoding="utf-8")
@@ -110,15 +117,17 @@ def publish_video_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
         for result in raw_results
         if result.get("success")
         and result.get("output_path")
+        and Path(result["output_path"]).is_file()
     ]
     if videos:
         sdk_run.log({"video/generated_videos": videos})
 
     artifact = wandb.Artifact(
-        name=f"{sdk_run.config['name']}-{sdk_run.id}",
+        name=f"{config.name}-{sdk_run.id}",
         type="video-generation-benchmark",
     )
     for name in ("config", "raw_results", "metrics"):
-        path = run.artifacts[name]
-        artifact.add_file(str(path), name=path.name)
+        path = run.artifacts.get(name)
+        if path is not None and path.is_file():
+            artifact.add_file(str(path), name=path.name)
     sdk_run.log_artifact(artifact)

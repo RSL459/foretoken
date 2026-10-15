@@ -507,7 +507,7 @@ class HttpBenchmark:
                 measurements=measurements,
                 artifacts=artifacts,
                 time_origin=origin,
-                http_series_recorded=progress is not None,
+                http_series_published=progress is not None,
             )
             outputs.publish(run)
             return run

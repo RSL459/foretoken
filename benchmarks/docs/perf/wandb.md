@@ -12,13 +12,11 @@ foretoken perf examples/quickstart \
   --wandb-run-name quickstart
 ```
 
-Open the run links from the printed publication log to follow progress. The log location also appears in quiet mode.
-
-Use `--wandb-entity` to select an account or team. Set the same `--wandb-group` for runs you want to compare in a group's Workspace. Sweeps and multi-dataset runs generate a group when none is supplied; single runs are ungrouped by default.
+Open the run link printed by the command; it also appears in quiet mode. Use `--wandb-entity` to select an account or team. Set the same `--wandb-group` for runs you want to compare in a group's Workspace. Sweeps and multi-dataset runs generate a group when none is supplied; single runs are ungrouped by default.
 
 ## Follow progress and compare results
 
-Use request-order curves to inspect individual requests, cumulative curves to follow overall progress, and one-second completion windows to compare throughput and P50/P95/P99 latency over time. These views update as measurement proceeds. Final aggregate metrics remain in Summary.
+Use request-order curves to inspect individual requests, cumulative curves to follow overall progress, and one-second completion windows to compare throughput and P50/P95/P99 latency over time. These views update during HTTP measurement; windows may wait for earlier unfinished requests. Final aggregate metrics appear when measurement finishes and remain in Summary.
 
 ![Per-request timings and token counts](../imgs/request-order-wandb.png)
 
@@ -30,14 +28,10 @@ Open the run's Artifacts to download configuration, metrics, request records, an
 
 Warmup is excluded from performance metrics and panels. Its records remain in the `benchmark-warmup` artifact. Adding `plot` to `--output local,wandb` saves exported figures locally and in the `benchmark-plots` artifact.
 
-## Publish saved results
+## Resume an upload
 
-Publish pending results recorded with `wandb` output, without rerunning measurements:
+If synchronization is interrupted, replace `WANDB_RUN_DIR` with the printed W&B local run directory:
 
 ```bash
-foretoken publish results
+wandb sync --include-synced WANDB_RUN_DIR
 ```
-
-Pass a specific run, sweep, or experiment directory to narrow the selection. The command waits for active uploads and skips completed ones. The upload time budget is ten minutes, excluding waits for ongoing measurements; add `--timeout 1h` for larger result sets.
-
-The command prints run links; automatic uploads write them to `publication.log`. Failed uploads have details in the affected run's `wandb-publish.log`. Keep the saved results and referenced files until publication completes.
