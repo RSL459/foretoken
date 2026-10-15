@@ -24,7 +24,6 @@ from benchmarks.results.output import (
     wandb_group_name,
     write_json,
 )
-from benchmarks.results.wandb import publish_slo_wandb
 from benchmarks.runs.http import HttpBenchmark
 
 _SLO_ALIASES = {
@@ -269,11 +268,10 @@ class SloAutoTuneBenchmark:
                 selected.append(LocalDirectorySink(directory))
             if self.benchmark.outputs.includes("wandb"):
                 selected.append(WandbSink(
-                    self.benchmark,
+                    self.benchmark.wandb,
                     execution_dir=directory,
                     run_name=f"{self.benchmark.wandb.run_name or self.service.model}_slo_{self.label or Path(directory).name}",
                     group=wandb_group,
-                    publisher=publish_slo_wandb,
                     run_config={**self.benchmark.to_dict(), **record},
                 ))
             return selected

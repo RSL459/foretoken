@@ -10,7 +10,6 @@ import logging
 import sys
 from collections.abc import Sequence
 
-import wandb
 from foretoken.manifest import DeploymentError
 
 from benchmarks.config.benchmark import BenchmarkConfig
@@ -59,7 +58,7 @@ def _run_video(arguments: Sequence[str], *, command_name: str) -> None:
             )
             if not result.get("dry_run") and result["metrics"]["success_num"] == 0:
                 raise SystemExit(1)
-    except (ValueError, wandb.errors.Error) as exc:
+    except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
 
@@ -89,7 +88,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     run = run_benchmark(benchmark, service, outputs=outputs)
             if run.metrics["success_num"] == 0:
                 raise SystemExit(1)
-    except (DeploymentError, ValueError, wandb.errors.Error) as exc:
+    except (DeploymentError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
 
 

@@ -107,7 +107,7 @@ Use `--resume` instead of native `--use_cache` or `--use-cache` for this workflo
 
 ## Read scores
 
-W&B shows completed generations or likelihood windows for lm-evaluation-harness, and saved predictions and reviews for EvalScope, as the evaluation runs. Resumed lm-evaluation-harness runs report reused work separately. Task scores appear after the framework finishes scoring.
+Completion counts are recorded locally as evaluation runs: generations or likelihood windows for lm-evaluation-harness, and saved predictions and reviews for EvalScope. Resumed lm-evaluation-harness runs report reused work separately. With W&B selected, these progress curves and the final task scores are published in the background after evaluation finishes.
 
 Open the result directory printed by the command:
 

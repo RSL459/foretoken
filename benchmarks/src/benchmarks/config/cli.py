@@ -439,7 +439,7 @@ def _add_benchmark_arguments(
     parser.add_argument(
         "--experiment-name",
         default=_default(ParameterSweepConfig, "experiment_name"),
-        help="Sweep directory name under --output-dir",
+        help="Name prefix for a new sweep directory under --output-dir",
     )
 
     parser.add_argument(

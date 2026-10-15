@@ -58,7 +58,7 @@ foretoken eval examples/quickstart \
 | --- | --- |
 | 不传 `--output`，或使用 `local,wandb` | 打印结果、保存本地文件并上传 W&B |
 | `local` | 打印结果并保存本地文件 |
-| `wandb` | 打印结果并上传 W&B |
+| `wandb` | 打印结果、保留本地文件，并在后台发布到 W&B |
 | `plot` | 保存结果并导出 PDF、SVG、PNG 和 CSV |
 | `experiment` | 按实验迭代组织结果，并保存本次运行的源码和命令信息 |
 | `raw` | 性能评测额外保存实际请求和响应内容，并保留本地结果 |
@@ -66,7 +66,7 @@ foretoken eval examples/quickstart \
 | `local,quiet` | 保存本地文件，不打印控制台汇总 |
 | `local,wandb,quiet` | 保存并上传结果，不打印控制台汇总 |
 
-本地结果按运行分别保存在 `results/` 下，`--output-dir` 可修改结果父目录。选择 W&B 时，打开终端打印的链接查看进度，在 Artifacts 中下载记录。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。
+本地结果按运行分别保存在 `results/` 下，`--output-dir` 可修改结果父目录。W&B 在测量结束后于后台上传，运行链接见终端打印的发布日志。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。查看图表或发布已有结果，见 [W&B 输出](docs/perf/wandb_zh.md)。
 
 | 记录 | 用途 |
 | --- | --- |

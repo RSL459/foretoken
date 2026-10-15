@@ -61,7 +61,7 @@ results/decode/parallelism/
                 └── …
 ```
 
-Records are saved on the machine running the evaluation. Relative paths start from the command's working directory. For remote runs, inspect the printed paths on the remote machine. A parameter sweep can produce several result directories within one run. With W&B enabled, the printed links also let you inspect curves and compare results.
+Records are saved on the machine running the evaluation. Relative paths start from the command's working directory. For remote runs, inspect the printed paths on the remote machine. A parameter sweep can produce several result directories within one run. With W&B enabled, run links appear in the printed publication log. See [W&B output](../benchmarks/docs/perf/wandb.md) to view curves or publish saved results.
 
 ## Analyze results
 

@@ -8,7 +8,6 @@ from __future__ import annotations
 import csv
 import json
 import logging
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -275,9 +274,6 @@ class EvaluationArtifactSink:
         write_json(self.directory, "config.json", {**self.config.to_dict(), **record})
 
     def publish(self, run: BenchmarkRun) -> None:
-        run.artifacts["metrics"] = write_json(
-            self.directory, "metrics.json", run.metrics
-        )
         run.artifacts["config"] = Path(self.directory) / "config.json"
 
     def close(self, *, exit_code: int = 0) -> None:
@@ -397,7 +393,6 @@ def evaluation_comparison_sinks(config: EvaluationConfig, record: dict[str, Any]
     sinks = evaluation_sinks(
         config, record, directory,
         console_sink=EvaluationComparisonConsoleSink(),
-        publisher=publish_evaluation_comparison_wandb,
     )
     return [sinks[0], EvaluationComparisonArtifactSink(directory), *sinks[1:]]
 
@@ -406,7 +401,6 @@ def evaluation_sinks(
     config: EvaluationConfig, record: dict[str, Any], directory: str,
     *,
     console_sink: ResultSink | None = None,
-    publisher: Callable[[Any, BenchmarkRun], None] = publish_quality_wandb,
 ) -> list[ResultSink]:
     """Use the existing publication lifecycle with evaluation-specific presentation."""
     sinks: list[ResultSink] = [EvaluationArtifactSink(config, directory)]
@@ -416,14 +410,13 @@ def evaluation_sinks(
     if config.outputs.includes("wandb"):
         sinks.append(
             WandbSink(
-                config,
+                config.wandb,
                 execution_dir=directory,
                 run_name=config.wandb.run_name
                 or "_".join(str(part) for part in (
                     record.get("model"), record.get("evaluator"), Path(directory).name,
                 ) if part),
                 group=config.wandb.group,
-                publisher=publisher,
                 run_config={**config.to_dict(), **record},
             )
         )

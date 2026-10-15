@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import statistics
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +18,6 @@ from benchmarks.results.output import (
     WandbSink,
     write_json,
 )
-from benchmarks.results.video_wandb import publish_video_wandb
 
 logger = logging.getLogger(__name__)
 
@@ -184,9 +182,6 @@ class VideoArtifactSink:
         if self.config_path is None:
             raise RuntimeError("video artifact sink is not open")
         run.artifacts["config"] = self.config_path
-        run.artifacts["metrics"] = write_json(
-            str(self.run_dir), "metrics.json", run.metrics
-        )
 
     def close(self, *, exit_code: int = 0) -> None:
         """Release no resources because ResultOutputs owns the directory."""
@@ -243,15 +238,13 @@ def video_result_sinks(
     if config.outputs.includes("wandb"):
         sinks.append(
             WandbSink(
-                config,
+                config.wandb,
                 execution_dir=str(run_dir),
                 run_name=config.wandb.run_name.strip() or run_dir.name,
                 group=config.wandb.group.strip(),
-                publisher=partial(publish_video_wandb, config),
                 run_config={
                     **config.to_dict(),
                     "metric_scopes": {
-                        "wandb_system": "benchmark_client",
                         "video_response": "remote_service",
                     },
                 },

@@ -107,6 +107,13 @@ class PlotCommand:
 
 
 @dataclass(frozen=True)
+class PublishCommand:
+    """Forward saved-result publication arguments without loading benchmark dependencies."""
+
+    arguments: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ProfileCommand:
     """Describe one runtime-owned capture requested by deploy or perf."""
 
@@ -162,6 +169,7 @@ ParsedCommand = (
     | PerformanceCommand
     | EvaluationCommand
     | PlotCommand
+    | PublishCommand
     | ProfileViewCommand
 )
 
@@ -411,6 +419,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "plot", add_help=False,
         help="Export publication figures and tables from saved benchmark results",
     )
+    subparsers.add_parser(
+        "publish", add_help=False,
+        help="Publish saved benchmark results to W&B without rerunning measurements",
+    )
     return parser
 
 
@@ -423,6 +435,8 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
         return EvaluationCommand(arguments[1:])
     if arguments and arguments[0] == "plot":
         return PlotCommand(arguments[1:])
+    if arguments and arguments[0] == "publish":
+        return PublishCommand(arguments[1:])
 
     parser = _build_parser()
     parsed_args = parser.parse_args(arguments)

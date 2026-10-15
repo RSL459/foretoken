@@ -11,7 +11,6 @@ import json
 import logging
 import math
 import os
-import shutil
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack, nullcontext
@@ -196,12 +195,6 @@ def run_sweep(
     for _, _, point_config in prepared:
         adapter.validate_point(point_config)
     name = definition.experiment_name.strip().replace("/", "-")
-    directory = os.path.join(config.outputs.output_dir, name) if name else None
-    if directory is not None:
-        # An explicit experiment name identifies a replaceable result set.
-        if os.path.exists(directory):
-            shutil.rmtree(directory)
-        os.makedirs(directory)
     plan = {
         "mode": mode,
         "sweep": definition.path,
@@ -220,15 +213,12 @@ def run_sweep(
         if config.outputs.saves_local:
             selected.append(LocalDirectorySink(execution_dir))
         if config.outputs.includes("wandb") and not dry_run:
-            from benchmarks.results.wandb import publish_sweep_wandb
-
             selected.append(
                 WandbSink(
-                    config,
+                    config.wandb,
                     execution_dir=execution_dir,
                     run_name=f"{config.wandb.run_name or name or Path(execution_dir).name}_comparison",
                     group=plan["wandb_group"],
-                    publisher=publish_sweep_wandb,
                     run_config=plan,
                 )
             )
@@ -237,7 +227,7 @@ def run_sweep(
     all_points: list[dict[str, Any]] = []
     artifacts: dict[str, Path] = {}
     with (
-        ResultOutputs(config, None, output_dir=directory, sink_factory=sinks) as outputs,
+        ResultOutputs(config, None, directory_prefix=f"{name}-" if name else "", sink_factory=sinks) as outputs,
         service_resources if service_resources is not None else nullcontext(),
     ):
         experiment_dir = outputs.execution_dir
