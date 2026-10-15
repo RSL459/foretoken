@@ -476,7 +476,7 @@ class EditableDeployment:
             node_uid = self.kubectl.get("node", origin.node)["metadata"]["uid"][:8]
             claim = next(
                 (claim for node, _, claim in local_caches if node == origin.node),
-                "foretoken-application-build-" + node_uid,
+                "foretoken-application-compiler-" + node_uid,
             ) + "-" + build["binding"][:12]
         ensure_build_cache(
             self.kubectl,

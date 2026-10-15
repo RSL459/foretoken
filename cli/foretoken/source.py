@@ -30,6 +30,11 @@ from foretoken.application_files import (
 )
 from foretoken.arguments import InstallCommand
 from foretoken.build_environments import BuildEnvironments
+from foretoken.build_storage import (
+    SOURCE_BUILD_PROVISIONER_IMAGE,
+    SOURCE_BUILD_STORAGE_CLASS,
+    ensure_build_storage,
+)
 from foretoken.cluster_build import (
     ClusterBuilder,
     find_build_cache,
@@ -703,6 +708,27 @@ def build_arguments(environment: dict[str, str]) -> dict[str, str]:
     return result
 
 
+def prepare_build_storage(
+    kubectl: Kubectl,
+    namespace: str,
+    configuration: dict[str, str],
+    arguments: dict[str, str],
+    registry_mirrors: dict[str, list[str]],
+    pull_secrets: tuple[str, ...],
+    timeout: str,
+) -> None:
+    """Prepare the managed compiler StorageClass using this build's image sources and credentials."""
+    if configuration["storageClassName"] not in ("", SOURCE_BUILD_STORAGE_CLASS):
+        return
+    automatic = registry_mirrors.get("docker.io", ["docker.io"])[0]
+    registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
+    image = registry + "/" + SOURCE_BUILD_PROVISIONER_IMAGE.split("/", 1)[1]
+    ensure_build_storage(
+        kubectl, namespace, image_tools_image(arguments, registry_mirrors),
+        image, pull_secrets, timeout,
+    )
+
+
 def ensure_build_cache(
     kubectl: Kubectl,
     namespace: str,
@@ -714,13 +740,15 @@ def ensure_build_cache(
     """Create or resize the compiler cache without taking over an unrelated volume."""
     if not kubectl.exists("namespace", namespace):
         kubectl.run(["create", "namespace", namespace])
+    storage_class = configuration["storageClassName"] or SOURCE_BUILD_STORAGE_CLASS
     existing = kubectl.get_if_exists("pvc", name, namespace)
     if existing is not None:
         if existing["metadata"].get("labels", {}).get(_BUILD_CACHE_LABEL) != "true":
             raise DeploymentError(f"{namespace}/{name} is not a Foretoken build cache")
-        spec = {"resources": {"requests": {"storage": configuration["storageSize"]}}}
-        if configuration["storageClassName"]:
-            spec["storageClassName"] = configuration["storageClassName"]
+        spec = {
+            "resources": {"requests": {"storage": configuration["storageSize"]}},
+            "storageClassName": storage_class,
+        }
         if any(existing["spec"].get(key) != value for key, value in spec.items()):
             kubectl.run(
                 [
@@ -738,9 +766,8 @@ def ensure_build_cache(
     spec: dict[str, Any] = {
         "accessModes": ["ReadWriteOnce"],
         "resources": {"requests": {"storage": configuration["storageSize"]}},
+        "storageClassName": storage_class,
     }
-    if configuration["storageClassName"]:
-        spec["storageClassName"] = configuration["storageClassName"]
     kubectl.run(
         ["create", "-f", "-"],
         input_text=yaml.safe_dump(
@@ -979,7 +1006,7 @@ def local_build_nodes(
 ) -> list[tuple[str, str, str]]:
     """Resolve node-local image stores for local and K3s clusters without a registry."""
     if registry:
-        return [("", "", "foretoken-source-build")]
+        return [("", "", "foretoken-compiler-cache")]
     nodes = [
         node
         for node in kubectl.list_resources(("nodes",), "")
@@ -999,7 +1026,7 @@ def local_build_nodes(
         (
             node["metadata"]["name"],
             socket,
-            "foretoken-source-build-" + node["metadata"]["uid"][:8],
+            "foretoken-compiler-cache-" + node["metadata"]["uid"][:8],
         )
         for node in nodes
     ]
@@ -1116,7 +1143,7 @@ def prepare_source_images(
             kubectl, namespace, binding, origin.node, "/var/cache/foretoken"
         )
         node_uid = kubectl.get("node", origin.node)["metadata"]["uid"][:8]
-        default_claim = "foretoken-application-build-" + node_uid
+        default_claim = "foretoken-application-compiler-" + node_uid
         if checkout is not None:
             default_claim += "-" + binding[:12]
         nodes = [(origin.node, "", claim or default_claim)]
@@ -1139,6 +1166,11 @@ def prepare_source_images(
             },
         },
     )
+    if checkout is None:
+        prepare_build_storage(
+            kubectl, namespace, configuration, arguments,
+            registry_mirrors, secret_names, command.timeout,
+        )
     for _, _, claim in nodes:
         ensure_build_cache(kubectl, namespace, claim, configuration)
     with capture_build_inputs(root, engines) as snapshot, ExitStack() as build_contexts:

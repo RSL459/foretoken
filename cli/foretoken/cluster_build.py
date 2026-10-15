@@ -25,6 +25,7 @@ from typing import Any, Self
 
 import yaml
 
+from foretoken.build_storage import SOURCE_BUILD_UID
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
 from foretoken.node_images import (
@@ -38,6 +39,8 @@ from foretoken.node_images import (
 _BUILD_POD_LABEL = SOURCE_BUILD_POD_LABEL
 _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
 _BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
+_BUILD_LAYOUT_ANNOTATION = "inference.foretoken.io/source-build-layout"
+_BUILD_LAYOUT = "local-pvc-v1"
 
 
 class ImageNotFoundError(DeploymentError):
@@ -118,6 +121,8 @@ def find_build_cache(
     for pod in kubectl.list_resources(("pods",), namespace, label_selector=selector):
         if pod["spec"].get("nodeName") != node:
             continue
+        if pod["metadata"].get("annotations", {}).get(_BUILD_LAYOUT_ANNOTATION) != _BUILD_LAYOUT:
+            continue
         builders = [
             container
             for container in pod["spec"]["containers"]
@@ -177,7 +182,7 @@ def registry_credentials(images: list[str]) -> dict[str, Any]:
 
 
 def _cache_gc_limits(quantity: str) -> tuple[str, str, str]:
-    """Apply the pinned BuildKit defaults to its PVC allocation instead of a shared host disk."""
+    """Apply the pinned BuildKit defaults to the execution-volume budget, not the whole host disk."""
     match = re.fullmatch(
         r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)([KMGTPE]i|[numkKMGTPE])?",
         quantity,
@@ -250,8 +255,8 @@ class ClusterBuilder(AbstractContextManager):
         self.registry_mirrors = registry_mirrors or {}
         self.name = "foretoken-build-" + uuid.uuid4().hex[:12]
         self.root = f"{self.mount}/build/{binding}"
+        self.runtime_root = "/run/foretoken-build"
         self.workspace = f"{self.root}/workspace"
-        self._created = False
         self._image_lock = Lock()
         self._generated_layouts: dict[str, dict[str, str]] = {}
         self._image_builds: dict[str, tuple[list[str], str]] = {}
@@ -267,6 +272,9 @@ class ClusterBuilder(AbstractContextManager):
         for pod in self.kubectl.list_resources(
             ("pods",), self.namespace, label_selector=selector
         ):
+            if pod["metadata"].get("annotations", {}).get(_BUILD_LAYOUT_ANNOTATION) != _BUILD_LAYOUT:
+                occupants.append(pod)
+                continue
             if not any(
                 volume["name"] == "cache"
                 and volume.get("persistentVolumeClaim", {}).get("claimName")
@@ -293,6 +301,8 @@ class ClusterBuilder(AbstractContextManager):
                 None,
             )
             if builder is None or builder.get("image") != self.image:
+                continue
+            if builder.get("securityContext", {}).get("runAsUser") != SOURCE_BUILD_UID:
                 continue
             images = next(
                 (
@@ -357,15 +367,19 @@ class ClusterBuilder(AbstractContextManager):
         if reusable is not None:
             self.name = reusable["metadata"]["name"]
             print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
-            self.run(
-                [
-                    "sh",
-                    "-ec",
-                    'rm -rf -- "$1/transfers" "$1/output" "$1/results"; mkdir -p "$1/results"',
-                    "prepare",
-                    self.root,
-                ]
-            )
+            try:
+                self.run(
+                    [
+                        "sh",
+                        "-ec",
+                        'rm -rf -- "$1/transfers" "$1/output" "$1/results"; mkdir -p "$1/results"',
+                        "prepare",
+                        self.root,
+                    ]
+                )
+            except BaseException:
+                self.retire()
+                raise
             return self
         image = self.image
         pvc = self.kubectl.get("pvc", self.claim, self.namespace)
@@ -386,6 +400,7 @@ class ClusterBuilder(AbstractContextManager):
             "hostNetwork": True,
             "dnsPolicy": "Default",
             "automountServiceAccountToken": False,
+            "securityContext": {"supplementalGroups": [1000]},
             "tolerations": [
                 {"key": key, "operator": "Exists", "effect": "NoSchedule"}
                 for key in (
@@ -395,7 +410,8 @@ class ClusterBuilder(AbstractContextManager):
             ],
             "imagePullSecrets": [{"name": name} for name in self.pull_secrets],
             "volumes": [
-                {"name": "cache", "persistentVolumeClaim": {"claimName": self.claim}}
+                {"name": "cache", "persistentVolumeClaim": {"claimName": self.claim}},
+                {"name": "runtime", "emptyDir": {}},
             ],
             "initContainers": [
                 {
@@ -404,42 +420,88 @@ class ClusterBuilder(AbstractContextManager):
                     "command": [
                         "sh",
                         "-ec",
-                        """mount="$(dirname "$(dirname "$1")")"
-mkdir -p "$mount" "$1"
-chown 1000:1000 "$mount" "$mount/build" "$(dirname "$1")" "$1"
-chmod 2775 "$mount" "$mount/build" "$(dirname "$1")" "$1"
+                        """persistent=$1; state=$6; uid=$7; mount=$8
+filesystem=$(stat -f -c %t "$mount")
+case "$filesystem" in
+    6969)
+        printf '%s\\n' 'The compiler volume uses NFS; use the managed local build storage or a block-backed StorageClass.' >&2
+        exit 1
+        ;;
+esac
+mkdir -p "$persistent" "$state/etc" "$state/home" "$state/runtime" "$state/tmp"
+chown "$uid:1000" "$mount" "$persistent"
+chmod 2775 "$mount" "$persistent"
+# Account changes are confined to this Pod, preserving the image's mapping helpers.
+awk -F: -v OFS=: -v uid="$uid" -v home="$state/home" '$3 == 1000 { $3 = uid; $4 = uid; $6 = home } { print }' /etc/passwd > "$state/etc/passwd"
+awk -F: -v OFS=: -v uid="$uid" '$3 == 1000 { $3 = uid } { print }' /etc/group > "$state/etc/group"
+for file in subuid subgid; do
+    awk -F: -v OFS=: -v uid="$uid" '$1 == 1000 { $1 = uid } { print }' "/etc/$file" > "$state/etc/$file"
+done
+cp -a "$HOME/." "$state/home/"
+chown -R "$uid:$uid" "$state/home" "$state/runtime" "$state/tmp"
+chown "$uid:$uid" "$state"
+chmod 700 "$state/runtime"
+chmod 644 "$state/etc/"*
 configuration="${XDG_CONFIG_HOME:-$HOME/.config}/buildkit/buildkitd.toml"
 if test -f "$configuration"; then
-    cp "$configuration" "$1/buildkit.toml"
+    cp "$configuration" "$state/buildkit.toml"
 else
     printf "[worker.oci]\\nreservedSpace = %s\\nminFreeSpace = %s\\nmaxUsedSpace = %s\\n" \\
-        "$2" "$3" "$4" > "$1/buildkit.toml"
-    printf "%s" "$5" >> "$1/buildkit.toml"
+        "$2" "$3" "$4" > "$state/buildkit.toml"
+    printf "%s" "$5" >> "$state/buildkit.toml"
 fi
-chown 1000:1000 "$1/buildkit.toml"
-chmod 600 "$1/buildkit.toml"
+chown "$uid:$uid" "$state/buildkit.toml"
+chmod 600 "$state/buildkit.toml"
 """,
                         "prepare",
                         self.root,
                         *gc_limits,
                         mirrors,
+                        self.runtime_root,
+                        str(SOURCE_BUILD_UID),
+                        self.mount,
                     ],
                     "securityContext": {"runAsUser": 0},
-                    "volumeMounts": [{"name": "cache", "mountPath": self.mount}],
+                    "volumeMounts": [
+                        {"name": "cache", "mountPath": self.mount},
+                        {"name": "runtime", "mountPath": self.runtime_root},
+                    ],
                 }
             ],
         }
         container: dict[str, Any] = {
             "name": "builder",
             "image": image,
-            "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
+            "env": [
+                {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
+                {"name": "HOME", "value": self.runtime_root + "/home"},
+                {"name": "TMPDIR", "value": self.runtime_root + "/tmp"},
+                {"name": "XDG_RUNTIME_DIR", "value": self.runtime_root + "/runtime"},
+                {
+                    "name": "BUILDKIT_HOST",
+                    "value": "unix://" + self.runtime_root + "/runtime/buildkit/buildkitd.sock",
+                },
+            ],
+            "workingDir": self.root,
             "args": [
                 "--root",
                 f"{self.root}/buildkit",
                 "--config",
-                f"{self.root}/buildkit.toml",
+                f"{self.runtime_root}/buildkit.toml",
             ],
-            "volumeMounts": [{"name": "cache", "mountPath": self.mount}],
+            "volumeMounts": [
+                {"name": "cache", "mountPath": self.mount},
+                {"name": "runtime", "mountPath": self.runtime_root},
+                *(
+                    {
+                        "name": "runtime",
+                        "mountPath": "/etc/" + name,
+                        "subPath": "etc/" + name,
+                        "readOnly": True,
+                    }
+                    for name in ("passwd", "group", "subuid", "subgid")
+                ),
+            ],
             "readinessProbe": {
                 "exec": {"command": ["buildctl", "debug", "workers"]},
                 "periodSeconds": 2,
@@ -447,8 +509,8 @@ chmod 600 "$1/buildkit.toml"
         }
         container["args"].append("--oci-worker-no-process-sandbox")
         container["securityContext"] = {
-            "runAsUser": 1000,
-            "runAsGroup": 1000,
+            "runAsUser": SOURCE_BUILD_UID,
+            "runAsGroup": SOURCE_BUILD_UID,
             "seccompProfile": {"type": "Unconfined"},
             "appArmorProfile": {"type": "Unconfined"},
         }
@@ -499,6 +561,7 @@ chmod 600 "$1/buildkit.toml"
             images, volumes = images_container_spec(
                 self.tools_image, self.containerd_socket
             )
+            images["securityContext"]["runAsUser"] = SOURCE_BUILD_UID
             images["volumeMounts"].insert(0, {"name": "cache", "mountPath": self.mount})
             spec["volumes"] += volumes
             spec["containers"].append(images)
@@ -509,6 +572,7 @@ chmod 600 "$1/buildkit.toml"
                 "name": self.name,
                 "namespace": self.namespace,
                 "annotations": {
+                    _BUILD_LAYOUT_ANNOTATION: _BUILD_LAYOUT,
                     _BUILD_MIRRORS_ANNOTATION: json.dumps(
                         self.registry_mirrors, sort_keys=True
                     ),
@@ -525,7 +589,6 @@ chmod 600 "$1/buildkit.toml"
             created = self.kubectl.run(
                 ["create", "-f", "-", "-o", "json"], input_text=yaml.safe_dump(pod)
             )
-            self._created = True
             pod_uid = json.loads(created.stdout)["metadata"]["uid"]
             if self.credentials:
                 self.kubectl.run(
@@ -582,23 +645,18 @@ chmod 600 "$1/buildkit.toml"
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         """Retain successful builders and clean transient or failed build state."""
         if exc_type is not None:
-            # A failed daemon may no longer accept exec. Retire a new Pod directly;
-            # the next successful entry removes partial exports from a reused cache.
-            if self._created:
-                self.kubectl.run(
-                    [
-                        "delete",
-                        "pod",
-                        self.name,
-                        "-n",
-                        self.namespace,
-                        "--ignore-not-found",
-                        "--wait=true",
-                        "--timeout=" + self.timeout,
-                    ]
-                )
-                self._created = False
+            # A disconnected buildctl can leave executor children alive in the
+            # rootless worker's shared PID namespace. Retire reused Pods as well.
+            self.retire()
             return
+        try:
+            self._retain_build_cache()
+        except BaseException:
+            self.retire()
+            raise
+
+    def _retain_build_cache(self) -> None:
+        """Remove transient outputs and unreferenced OCI layouts after successful execution."""
         self.run(["rm", "-rf", "--", self.root + "/results", self.root + "/transfers"])
         if self._used_images:
             path = self.root + "/images.json"
@@ -625,6 +683,15 @@ chmod 600 "$1/buildkit.toml"
             )
             if stale:
                 self.run(["rm", "-rf", "--", *stale])
+
+    def retire(self) -> None:
+        """Stop this binding's daemon and executors while retaining its last saved artifacts."""
+        self.kubectl.run(
+            [
+                "delete", "pod", self.name, "-n", self.namespace,
+                "--ignore-not-found", "--wait=true", "--timeout=" + self.timeout,
+            ]
+        )
 
     def command(self, args: list[str], *, container: str = "builder") -> list[str]:
         """Address the build Pod for both streamed input and ordinary commands."""
@@ -809,6 +876,14 @@ rm -rf "$incoming"
         self.run([
             "sh", "-ec", script, "export", destination,
             self.workspace + "/data-plane/model-server/python",
+        ])
+        self._share_output(destination)
+
+    def _share_output(self, path: str) -> None:
+        """Give the existing publisher group access to generated exports, not compiler snapshots."""
+        self.run([
+            "sh", "-ec", 'chgrp -Rh 1000 "$1"; chmod -R g+rwX "$1"',
+            "share", path,
         ])
 
     def _containerd(self) -> list[str]:
@@ -1028,6 +1103,8 @@ rm -rf "$incoming"
                 value = alias
             args += ["--opt", f"build-arg:{key}={value}"]
         if destination:
+            # Prepare traversable parents before BuildKit creates its private export root.
+            self.run(["mkdir", "-p", destination])
             # BuildKit mirrors each owned export directory so retries cannot revive removed files.
             output = "type=local,mode=delete,dest=" + destination
         elif self.containerd_socket:
@@ -1038,6 +1115,8 @@ rm -rf "$incoming"
             output = f"type=image,name={image},push={str(push).lower()}"
         started = time.monotonic()
         self.run([*args, "--output", output], capture=capture)
+        if destination:
+            self._share_output(destination)
         result = self.read_json(metadata)
         target_name = target or "default"
         output_name = destination or image or "files"
