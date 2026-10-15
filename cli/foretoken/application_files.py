@@ -557,6 +557,8 @@ class ApplicationFiles:
             ]
         deadline = time.monotonic() + seconds
         while True:
+            if builder is not None:
+                builder.cancellation.check()
             try:
                 created = self.kubectl.run(
                     ["create", "-f", "-", "-o", "json"], input_text=json.dumps(job)
@@ -572,9 +574,17 @@ class ApplicationFiles:
                     ) from None
                 time.sleep(1)
         metadata = json.loads(created.stdout)["metadata"]
+
+        def stop() -> None:
+            self._delete_owned("jobs", metadata, timeout)
+
         try:
+            if builder is not None:
+                builder.cancellation.register(stop)
             yield metadata
         finally:
+            if builder is not None:
+                builder.cancellation.unregister(stop)
             self._delete_owned("jobs", metadata, timeout)
 
     def _delete_owned(

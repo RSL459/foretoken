@@ -591,7 +591,7 @@ class EditableDeployment:
 
             # Each component owns its export directory. Join builds before validating
             # their shared source snapshot or allowing any publisher to consume them.
-            with ThreadPoolExecutor(max_workers=len(missing)) as builds:
+            with ThreadPoolExecutor(max_workers=len(missing)) as builds, builder.cancellation:
                 pending_builds = [
                     builds.submit(build_application, component)
                     for component in sorted(missing)
@@ -602,7 +602,7 @@ class EditableDeployment:
             # Join every publisher before committing selections or releasing their exports.
             published_at = time.monotonic()
             previous_revisions = {}
-            with ThreadPoolExecutor(max_workers=len(missing)) as publications:
+            with ThreadPoolExecutor(max_workers=len(missing)) as publications, builder.cancellation:
                 futures = {}
                 for component in sorted(missing):
                     bundle = self.state["bundles"][component]

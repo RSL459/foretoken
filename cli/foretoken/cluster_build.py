@@ -11,16 +11,19 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import tarfile
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, Self
 
 import yaml
@@ -41,6 +44,104 @@ _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
 _BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
 _BUILD_LAYOUT_ANNOTATION = "inference.foretoken.io/source-build-layout"
 _BUILD_LAYOUT = "local-pvc-v1"
+
+
+class BuildCancellation(AbstractContextManager):
+    """Propagate one source operation's cancellation to its live builders and commands."""
+
+    def __init__(self) -> None:
+        self._cancelled = Event()
+        self._error: BaseException | None = None
+        self._lock = Lock()
+        self._callbacks: set[Callable[[], None]] = set()
+
+    def __enter__(self) -> Self:
+        self.check()
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: BaseException | None, traceback: object) -> None:
+        if exc_value is not None:
+            self.cancel(exc_value)
+
+    def check(self) -> None:
+        """Prevent subsequent source work once the owning operation has stopped."""
+        if self._cancelled.is_set():
+            if self._error is not None:
+                raise self._error
+            raise CancelledError("source build cancelled")
+
+    def register(self, callback: Callable[[], None]) -> None:
+        """Register live cleanup, also closing a resource created during cancellation."""
+        with self._lock:
+            if not self._cancelled.is_set():
+                self._callbacks.add(callback)
+                return
+        callback()
+        self.check()
+
+    def unregister(self, callback: Callable[[], None]) -> None:
+        """Release a resource's cancellation hook after its normal lifetime ends."""
+        with self._lock:
+            self._callbacks.discard(callback)
+
+    def cancel(self, error: BaseException | None = None) -> None:
+        """Stop live resources before joining workers, retaining the first failure as their cause."""
+        with self._lock:
+            if self._cancelled.is_set():
+                return
+            self._error = error
+            self._cancelled.set()
+            callbacks = tuple(self._callbacks)
+        if callbacks:
+            with ThreadPoolExecutor(max_workers=len(callbacks)) as cleanup:
+                futures = [cleanup.submit(callback) for callback in callbacks]
+                for future in futures:
+                    future.result()
+
+    def run(
+        self,
+        args: list[str],
+        *,
+        input: str | None = None,
+        stdin: Any = None,
+        text: bool = False,
+        capture_output: bool = False,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[Any]:
+        """Run an owned command in its own process group and reap it on cancellation."""
+        self.check()
+        with subprocess.Popen(
+            args,
+            stdin=subprocess.PIPE if input is not None else stdin,
+            stdout=subprocess.PIPE if capture_output else None,
+            stderr=subprocess.PIPE if capture_output else None,
+            text=text, cwd=cwd, env=env, start_new_session=True,
+        ) as process:
+            def stop() -> None:
+                if process.poll() is not None:
+                    return
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        # Let clients close cooperatively without waiting on an ignored signal.
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                except ProcessLookupError:
+                    process.wait()
+
+            self.register(stop)
+            try:
+                stdout, stderr = process.communicate(input)
+                self.check()
+                return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+            except BaseException as error:
+                self.cancel(error)
+                raise
+            finally:
+                self.unregister(stop)
 
 
 class ImageNotFoundError(DeploymentError):
@@ -239,7 +340,9 @@ class ClusterBuilder(AbstractContextManager):
         pull_secrets: tuple[str, ...] = (),
         credentials: dict[str, Any] | None = None,
         registry_mirrors: dict[str, list[str]] | None = None,
+        cancellation: BuildCancellation | None = None,
     ) -> None:
+        self.cancellation = cancellation or BuildCancellation()
         self.kubectl = kubectl
         self.namespace = namespace
         self.claim = claim
@@ -363,7 +466,13 @@ class ClusterBuilder(AbstractContextManager):
 
     def __enter__(self) -> Self:
         """Reuse or start the compiler daemon on the cache's node."""
-        reusable = self._reuse_or_retire_pods()
+        self.cancellation.check()
+        self.cancellation.register(self.retire)
+        try:
+            reusable = self._reuse_or_retire_pods()
+        except BaseException:
+            self.cancellation.unregister(self.retire)
+            raise
         if reusable is not None:
             self.name = reusable["metadata"]["name"]
             print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
@@ -377,8 +486,8 @@ class ClusterBuilder(AbstractContextManager):
                         self.root,
                     ]
                 )
-            except BaseException:
-                self.retire()
+            except BaseException as error:
+                self.__exit__(type(error), error, error.__traceback__)
                 raise
             return self
         image = self.image
@@ -591,6 +700,7 @@ chmod 600 "$state/buildkit.toml"
 
         def ready(value: dict[str, Any]) -> bool:
             """Surface terminal startup failures while their Kubernetes diagnostics still exist."""
+            self.cancellation.check()
             status = value.get("status", {})
             for field, initializing in (("initContainerStatuses", True), ("containerStatuses", False)):
                 for container_status in status.get(field, []):
@@ -610,9 +720,11 @@ chmod 600 "$state/buildkit.toml"
             return _pod_ready(value)
 
         try:
+            self.cancellation.check()
             created = self.kubectl.run(
                 ["create", "-f", "-", "-o", "json"], input_text=yaml.safe_dump(pod)
             )
+            self.cancellation.check()
             pod_uid = json.loads(created.stdout)["metadata"]["uid"]
             if self.credentials:
                 self.kubectl.run(
@@ -667,16 +779,19 @@ chmod 600 "$state/buildkit.toml"
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         """Retain successful builders and clean transient or failed build state."""
-        if exc_type is not None:
-            # A disconnected buildctl can leave executor children alive in the
-            # rootless worker's shared PID namespace. Retire reused Pods as well.
-            self.retire()
-            return
         try:
-            self._retain_build_cache()
-        except BaseException:
-            self.retire()
-            raise
+            if exc_type is not None:
+                # A disconnected buildctl can leave executor children alive in the
+                # rootless worker's shared PID namespace. Retire reused Pods as well.
+                self.retire()
+                return
+            try:
+                self._retain_build_cache()
+            except BaseException:
+                self.retire()
+                raise
+        finally:
+            self.cancellation.unregister(self.retire)
 
     def _retain_build_cache(self) -> None:
         """Remove transient outputs and unreferenced OCI layouts after successful execution."""
@@ -742,9 +857,8 @@ chmod 600 "$state/buildkit.toml"
     ) -> str:
         """Execute a build stage, preserving live compiler and daemon diagnostics on failure."""
         started = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        result = subprocess.run(
+        result = self.cancellation.run(
             self.command(args, container=container),
-            check=False,
             text=True,
             capture_output=capture,
             input=input_text,
@@ -844,7 +958,7 @@ rm -rf "$incoming"
                 flush=True,
             )
             stream.seek(0)
-            result = subprocess.run(
+            result = self.cancellation.run(
                 self.command(
                     [
                         "sh",
@@ -857,7 +971,6 @@ rm -rf "$incoming"
                     ]
                 ),
                 stdin=stream,
-                check=False,
             )
         if result.returncode:
             raise DeploymentError("source delta upload failed")

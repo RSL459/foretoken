@@ -24,6 +24,7 @@ from foretoken.build_storage import (
     managed_build_storage_resources,
     remove_build_storage,
 )
+from foretoken.cluster_build import BuildCancellation
 from foretoken.kubernetes import (
     Kubectl,
     control_plane_deployments,
@@ -521,6 +522,7 @@ class PlatformLifecycle:
         )
 
         installation_workers = ThreadPoolExecutor(max_workers=2)
+        source_cancellation = BuildCancellation()
         source_future = None
         dependencies: Future[None] = Future()
         # Only the worker enters source contexts. Join it before the outer stack
@@ -547,6 +549,7 @@ class PlatformLifecycle:
                     else "nvidia",
                     saved_arguments=source_build_arguments,
                     before_delivery=dependencies.result,
+                    cancellation=source_cancellation,
                 )
                 source_future = installation_workers.submit(
                     source_artifacts.enter_context, context
@@ -645,6 +648,9 @@ class PlatformLifecycle:
         except BaseException as error:
             if not dependencies.done():
                 dependencies.set_exception(error)
+            if source_future is not None:
+                source_future.cancel()
+            source_cancellation.cancel(error)
             raise
         finally:
             # Resolve dependency success or failure before joining: the source

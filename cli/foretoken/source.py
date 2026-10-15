@@ -36,6 +36,7 @@ from foretoken.build_storage import (
     ensure_build_storage,
 )
 from foretoken.cluster_build import (
+    BuildCancellation,
     ClusterBuilder,
     find_build_cache,
     registry_credentials,
@@ -1055,12 +1056,15 @@ def prepare_source_images(
     before_delivery: Callable[[], None] | None = None,
     checkout: Path | None = None,
     components: tuple[str, ...] = ("control-plane", "frontend", "model-server"),
+    cancellation: BuildCancellation | None = None,
 ) -> Iterator[SourceImages]:
     """Prepare installation artifacts, awaiting dependencies before node image delivery.
 
     The platform supplies before_delivery when preparing dependencies concurrently.
     Inputs remain owned by this context until record_install commits them.
     """
+    cancellation = cancellation or BuildCancellation()
+    cancellation.check()
     root = Path(command.editable or "").expanduser().resolve()
     if (
         not (root / "Makefile").is_file()
@@ -1102,11 +1106,10 @@ def prepare_source_images(
         environment.update(saved_arguments)
         arguments = dict(saved_arguments)
     if build_metax_runtime:
-        prepared = subprocess.run(
+        prepared = cancellation.run(
             [str(root / "deploy/mooncake/prepare-source")],
             cwd=root,
             env=environment,
-            check=False,
         )
         if prepared.returncode:
             raise DeploymentError(
@@ -1175,12 +1178,14 @@ def prepare_source_images(
             },
         },
     )
+    cancellation.check()
     if checkout is None:
         prepare_build_storage(
             kubectl, namespace, configuration, arguments,
             registry_mirrors, secret_names, command.timeout,
         )
     for _, _, claim in nodes:
+        cancellation.check()
         ensure_build_cache(kubectl, namespace, claim, configuration)
     with capture_build_inputs(root, engines) as snapshot, ExitStack() as build_contexts:
         # Resolve automatic defaults from the same inputs used by the build, without
@@ -1242,6 +1247,7 @@ def prepare_source_images(
                     pull_secrets=secret_names,
                     credentials=credentials,
                     registry_mirrors=registry_mirrors,
+                    cancellation=cancellation,
                 )
             )
             builders.append(builder)
@@ -1354,7 +1360,7 @@ def prepare_source_images(
                 parts = sorted(selected_parts)
             application_parts[component] = parts
             # Join the file export before publication or releasing its workspace.
-            with ThreadPoolExecutor(max_workers=1) as application_build:
+            with ThreadPoolExecutor(max_workers=1) as application_build, cancellation:
                 payload = publisher.root + "/applications/" + component
                 application = application_build.submit(
                     publisher.export_application, component, payload, arguments, parts,
@@ -1414,7 +1420,7 @@ def prepare_source_images(
                     ])
                 return selected
 
-        with ThreadPoolExecutor(max_workers=len(references)) as builds:
+        with ThreadPoolExecutor(max_workers=len(references)) as builds, cancellation:
             pending_builds = {
                 component: builds.submit(build_component, component, dockerfile)
                 for component, dockerfile in (
@@ -1452,7 +1458,7 @@ def prepare_source_images(
                 )
         # Candidate GC is binding-scoped; retain every in-flight component until
         # service intent is committed. Platform publication defers GC to install.
-        with ThreadPoolExecutor(max_workers=len(references)) as publications:
+        with ThreadPoolExecutor(max_workers=len(references)) as publications, cancellation:
             pending = {}
             for component, image in references.items():
                 prior = prior_revisions[component]
