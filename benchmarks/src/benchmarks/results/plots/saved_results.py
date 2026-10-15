@@ -28,6 +28,7 @@ class SavedResults:
     summary: list[dict[str, Any]]
     native: list[Chart]
     method_filters: dict[Path, tuple[str, ...]]
+    base_approaches: tuple[str, ...]
 
 
 @dataclass
@@ -319,15 +320,18 @@ def _directory_labels(paths: list[Path]) -> dict[Path, str]:
 
 
 def read_saved_results(
-    sources: tuple[Path, ...], *, methods: tuple[str, ...] = (),
+    sources: tuple[Path, ...], *, methods: tuple[str, ...] = (), base: Path | None = None,
 ) -> SavedResults:
     """Read directory selections once and group measurements by their recorded workloads.
 
     Experiment iterations and declared sweep repetitions retain their statistical
     identity. Standalone result sets remain separate approaches. Native scores keep
     evaluator errors, and incomplete command records remain visible without metrics.
+    An optional base directory is included once and retains its own repetition group
+    when selected inside a broader candidate directory.
     """
-    selected = list(dict.fromkeys(path.resolve() for path in sources))
+    base = base.resolve() if base is not None else None
+    selected = list(dict.fromkeys(path.resolve() for path in ((base, *sources) if base is not None else sources)))
     for path in selected:
         if not path.is_dir():
             raise NotADirectoryError(f"Result directory does not exist: {path}")
@@ -342,7 +346,11 @@ def read_saved_results(
         if not discovered:
             raise FileNotFoundError(f"No saved benchmark results in {source}")
         directories.extend(discovered)
-    labels = _directory_labels(list(dict.fromkeys(item.group for item in directories)))
+    groups = list(dict.fromkeys(item.group for item in directories))
+    if base is not None and base not in groups:
+        groups.append(base)
+    labels = _directory_labels(groups)
+    base_approaches: set[str] = set()
     runs: list[dict[str, Any]] = []
     points: list[dict[str, Any]] = []
     native: dict[tuple[Any, ...], Chart] = {}
@@ -400,12 +408,20 @@ def read_saved_results(
                 continue
             if comparison is not None and methods:
                 method_filters[saved.directory] = tuple(chosen)
-            label = labels[source.group] + (f" / {saved.method}" if saved.method != "default" else "")
+            # Split a base selected below an input container, but keep distinct
+            # approaches inside a base container separate rather than pooling them.
+            is_base = base is not None and result_path.is_relative_to(base)
+            group = source.group
+            if base is not None and is_base and not group.is_relative_to(base):
+                group = base
+            label = labels[group] + (f" / {saved.method}" if saved.method != "default" else "")
+            if is_base:
+                base_approaches.add(label)
             # Missing workload configuration is unknown, not equal to another run's.
             fixed = (json.dumps(saved.conditions, sort_keys=True),
                      saved.directory if saved.configuration is None or quality and saved.conditions["evaluation"] is None else None)
             combination = combinations.setdefault(fixed, f"workload-{len(combinations) + 1}")
-            runs.append({**identity, "method": saved.method, "methods": chosen,
+            runs.append({**identity, "label": labels[group], "method": saved.method, "methods": chosen,
                          "approach": label, "workload": combination,
                          "result": str(saved.directory), "measured": saved.metrics is not None or bool(charts),
                          "started": saved.started, "measurement_exit_code": saved.exit_code,
@@ -422,9 +438,9 @@ def read_saved_results(
                         method = str(item.records[0].get("method") or item.name) if comparison is not None else saved.method
                         if method not in chosen:
                             continue
-                        method_label = labels[source.group] + (f" / {method}" if method != "default" else "")
+                        method_label = labels[group] + (f" / {method}" if method != "default" else "")
                         name = method_label
-                        if command is not None and source.group != command:
+                        if command is not None and group != command:
                             name += f" / {command.name}"
                         if comparison is not None and item.name != method:
                             name += f" / {item.name}"
@@ -459,4 +475,4 @@ def read_saved_results(
     summary = summarize_sweep(points)
     for row in summary:
         row.update(repetition_counts[row["method"], row["combination"]])
-    return SavedResults(runs, points, summary, list(native.values()), method_filters)
+    return SavedResults(runs, points, summary, list(native.values()), method_filters, tuple(sorted(base_approaches)))

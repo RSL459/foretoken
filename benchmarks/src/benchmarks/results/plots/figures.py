@@ -422,9 +422,9 @@ def _pareto(
     return exported
 
 
-def default_output_directory(source: Path, *others: Path) -> Path:
+def default_output_directory(source: Path, *others: Path, base: Path | None = None) -> Path:
     """Choose the shared default for the standalone CLI and automatic result exporter."""
-    return Path("plots") if others else Path(source) / "plots"
+    return Path("plots") if others or base is not None else Path(source) / "plots"
 
 
 def render_results(
@@ -434,7 +434,7 @@ def render_results(
     columns: int = 1,
     metrics: tuple[str, ...] = (),
     methods: tuple[str, ...] = (),
-    base: str | None = None,
+    base: Path | None = None,
 ) -> dict[str, Path]:
     """Render saved results from one or more directories into figures and comparison tables.
 
@@ -443,11 +443,11 @@ def render_results(
     changes the existing JSON or native evaluator outputs.
     """
     source = Path(source)
-    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others)
+    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others, base=base)
     if columns not in (1, 2):
         raise ValueError("columns must be 1 or 2")
     direct = base is None and not others and ((source / "config.json").is_file() or (source / "slo_results.json").is_file())
-    comparison_results = None if direct else read_saved_results((source, *map(Path, others)), methods=methods)
+    comparison_results = None if direct else read_saved_results((source, *map(Path, others)), methods=methods, base=base)
     if base is None and comparison_results is not None and (source / "generated/context.json").is_file() and len(comparison_results.runs) == 1:
         measured = comparison_results.runs[0].get("result")
         collection_metrics = {row["metric"] for row in comparison_results.summary} | {

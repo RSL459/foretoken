@@ -6,13 +6,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from benchmarks.results.plots.saved_results import SavedResults, _comparison_changes
 
 
 def compare_to_base(
-    results: SavedResults, base: str, *, metrics: tuple[str, ...] = (),
+    results: SavedResults, base_directory: Path, *, metrics: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Build base-relative CSV rows for the saved-result exporter without rerunning measurements.
 
@@ -28,9 +29,12 @@ def compare_to_base(
         }:
             continue
         summaries.setdefault(row["method"], {}).setdefault(row["combination"], {})[row["metric"]] = row
-    if base not in summaries:
-        available = ", ".join(summaries) or "none"
-        raise ValueError(f"Unknown performance base {base!r}. Available approaches: {available}")
+    bases = [name for name in results.base_approaches if name in summaries]
+    if not bases:
+        raise ValueError(f"No saved performance results in base directory: {base_directory}")
+    if len(bases) != 1:
+        raise ValueError(f"Base directory contains multiple approaches: {', '.join(bases)}. Select one result or iteration directory")
+    base = bases[0]
     if len(summaries) < 2:
         raise ValueError("Base comparison requires another performance approach; select candidate results as well")
 
