@@ -2,7 +2,7 @@
 
 [English](iteration-template.md) | 简体中文
 
-编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。注明执行者、记录负责人和独立审查者。每次 perf/eval 结束后，执行者分析本次结果，由记录负责人整合测量与解释，支撑证据引用本轮 `../runs/` 中的记录。独立审查单独注明来源，不代替执行者自身的分析；主 Agent 审阅证据，将保留或集成决定交给记录负责人。按[记录手册](../experiment-records_zh.md#完善实验说明)保留解释、审查和决策的演进过程。
+编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。注明执行者（主 Agent）、开发者（Worker）、记录负责人（Recorder）和独立审查者。每次 perf/eval 后，主 Agent 提供执行记录并返回结果，Worker 分析结果并继续修改实现，Recorder 整理分析并引用本轮 `../runs/` 中的证据。独立审查单独注明来源，不代替开发者分析。主 Agent 审阅证据、完成集成验证与最终验收，并提供保留或集成决定。按[记录手册](../experiment-records_zh.md#完善实验说明)保留分析、审查和决策的演进过程。
 
 ## 问题与分析
 
@@ -10,11 +10,11 @@
 
 ## 假设与设计
 
-说明提出的改进、预期有效的原因和具体设计，列出能够支持或否定假设的测量。
+记录 Worker 提出的改进、预期有效的机制和具体设计，以及主 Agent 围绕假设选择的对照。
 
 ## 实现与部署
 
-完成实现后说明实际改动，链接源码和配置记录，标明部署版本及实现与设计的重要差异。
+说明 Worker 交付的改动，链接 worktree、版本或改动文件及解释。记录主 Agent 实际构建部署的版本、环境和配置，以及与设计的重要差异，注明执行期间保持不变的工作区。
 
 ## 测量与解释
 

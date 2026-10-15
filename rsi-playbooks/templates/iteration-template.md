@@ -2,7 +2,7 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Name the executor, assigned writer, and independent reviewer. After each perf/eval command, the executor analyzes the result and the writer incorporates that interpretation, linking supporting records under `../runs/`. Keep independent review separately attributed in the same note; it does not replace the executor's analysis. The lead reviews the evidence and sends retention or integration decisions to the assigned writer. Preserve the sequence of interpretations, reviews, and decisions according to the [recording guide](../experiment-records.md#complete-the-experiment-notes).
+Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Name the executor (lead), developer (Worker), assigned writer (Recorder), and independent reviewer. The lead supplies execution records and returns results after each perf/eval command. The Worker analyzes those results and refines the implementation; the Recorder incorporates that analysis with links under `../runs/`. Attribute independent review separately; it does not replace developer analysis. The lead reviews the evidence, performs integrated validation and final acceptance, and supplies retention or integration decisions. Preserve the sequence of analysis, reviews, and decisions according to the [recording guide](../experiment-records.md#complete-the-experiment-notes).
 
 ## Question and analysis
 
@@ -10,11 +10,11 @@ State the question and your analysis of its causes. Cite the code, observations,
 
 ## Hypothesis and design
 
-Describe the proposed improvement, why it should work, and the concrete design. Identify measurements that would support or contradict the hypothesis.
+Record the Worker's proposed improvement, expected mechanism, and concrete design. Record the lead's selected comparisons alongside the hypothesis.
 
 ## Implementation and deployment
 
-After implementation, describe the actual changes and link source and configuration records. Identify the deployed version and material departures from the design.
+Describe the Worker's delivered changes, linking the worktree, revision or changed files, and explanation. Record the version, environment, and configuration the lead actually built and deployed, including material departures from the design. Identify the checkout held unchanged during execution.
 
 ## Measurements and interpretation
 

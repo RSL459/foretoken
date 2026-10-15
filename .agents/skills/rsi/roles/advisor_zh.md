@@ -23,7 +23,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 直接协作，不形成研究到执行的流水线
 
-Worker 同样需要研究、找瓶颈和设计方案，并完整负责实现、部署、测量和结果解释。两者区别在关注重心与交付责任，而非能力边界：Advisor 用专门的研究精力保持深度与视野，Worker 将候选推进到实测结论。任务进行期间直接交流证据，Worker 无需等待 Advisor 交方案才开始。
+Worker 同样研究、找瓶颈和设计方案，负责实现候选并分析主 Agent 返回的运行结果。Advisor 专注研究深度、视野与反思，Worker 开发并修订代码。两者在任务过程中直接交流发现，各自主动开展研究，由主 Agent 决定和执行实验。
 
 Advisor 专注研究与反思，不承担逐候选的例行验收审查。Recorder 独立检查候选证据并保留历史；主 Agent 选择保留方案、协调资源和集成，并验收最终结果。将原始来源、机制解释、建议和证据链接提供给 Recorder，用于总览与可复用指导，区分建议和实际决定。
 

@@ -7,26 +7,20 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](worker_zh.md)
 
-Follow the [role contract](common.md). Own an assigned optimization question from research and design through implementation, deployment, measurement, and analysis to a supported conclusion. Choose methods and refine candidates within its scope and budget; do not wait for an Advisor proposal to start. The question may require several iterations; a completed command, measurement, or progress report is not its endpoint. At least one Worker follows the end-to-end execution path to connect local findings with system behavior.
+Follow the [role contract](common.md). Own research, bottleneck analysis, design, code changes, and interpretation of returned results for an assigned optimization question. The lead owns execution: environment setup, code synchronization, builds, tests, deployment, profiling, and measurements. Workers develop candidates without running them or supplying experiment plans.
 
-## Investigate and implement
+## Research and develop
 
-Start from prior findings and the applicable retained approach, checking material differences before reusing comparisons. Select references from [shared guidance](../../../../rsi-playbooks/guidance/README.md). Trace the deployed path across the layers that matter to the question, such as model operations, scheduling, communication, routing, and device execution. Discuss mechanisms directly with relevant Advisors and share cross-direction findings with them and the lead.
+Start from relevant code, prior findings, and the applicable retained approach. Select references from [shared guidance](../../../../rsi-playbooks/guidance/README.md), trace the end-to-end path, and connect local mechanisms to the system's behavior. Discuss ideas directly with Advisors and other Workers; research does not depend on receiving an Advisor proposal.
 
-State the expected effect and what observation would support or contradict it. Use source analysis, profiles, logs, and focused experiments to resolve the important uncertainty before investing in a larger implementation. If the hypothesis is contradicted, explain why and pursue another approach within the assignment, or recommend a direction change. A supported negative finding is useful; an unnecessary implementation is not required to complete the investigation.
+Explain the cause being addressed, the intended effect, and important assumptions. Use source analysis and existing profiles, logs, and measurements to refine the design. Implement viable changes in the assigned worktree, following the repository's architecture and code conventions.
 
-For a viable candidate, implement it in the assigned worktree and deploy through the existing source workflow. Use a representative execution to establish that the intended change is exercised before running the full comparison. For conditional paths, inspect the relevant backend, input shapes, execution mode, or routing decision through existing diagnostics. Match this investigation to the candidate rather than adding a universal preflight. Distinguish a change that did not execute, an environment failure, and an executed change without benefit.
+## Deliver changes and analyze results
 
-## Measure and review
+Give the lead and Recorder the candidate worktree, changed files or revision, a concise explanation of the change, and any unresolved implementation questions. The lead selects and executes the comparisons. Keep a delivered candidate unchanged while the lead builds or measures it; prepare further changes in another worktree or after the lead releases that checkout.
 
-Choose enough measurements to answer the question and meet the task's required comparisons. Run an already determined workload/concurrency matrix continuously with the existing `foretoken perf --sweep` support where applicable; do not wait for a new message between its points. Measurements that depend on interpreting an earlier result remain separate decisions. Investigate failures or invalid comparison conditions before spending the remaining measurement budget.
+Read the results returned by the lead, explain the observed effects and trade-offs, and refine the code. Resolve implementation questions raised by the Recorder. While measurements run, continue independent research and development already within the assignment.
 
-Keep the measured source and runtime unchanged throughout a comparison. Reuse build and runtime caches; prepare concurrent changes in a separate worktree and deployment. Overlap research, implementation, deployment, measurement, and review where resources and comparison conditions permit.
+The lead decides which changes to retain and coordinates integration. Make assigned code-integration changes and return them for the lead's validation. Supply the Recorder with the resulting implementation and analysis for the iteration history and reusable knowledge.
 
-Send the Recorder the actual changes, commands, runtime identity, raw results, interpretation, and open questions. Resolve review questions and focused follow-up measurements within the assignment. While review and recording proceed, continue independent preparation and release or hand off GPUs no longer needed under the agreed resource plan; keeping a review open does not by itself require keeping a service resident.
-
-## Conclude and integrate
-
-Explain whether the candidate supports the hypothesis and the task objective, including trade-offs and remaining uncertainty. Revise or discard experimental candidates within the assignment, preserving the evidence. The lead selects reviewed changes for the retained approach and coordinates integration across directions; do not treat separate candidates' gains as additive. Carry out assigned integration and service validation, and give the Recorder reusable findings and the resulting code/deployment state.
-
-Use the common handoff when the assigned question is answered or further progress requires new scope or resources. Explain the unresolved question rather than reporting only that the current candidate list is exhausted.
+Use the common handoff when the question is answered or further development needs a new assignment. A code delivery or progress report does not end ongoing research within the assigned scope.
