@@ -23,6 +23,7 @@ from foretoken.manifest import (
     ResourceRef,
     deployment_path,
     parse_deployment,
+    service_requires_execution,
 )
 from foretoken.tools import resolve_tool
 
@@ -44,13 +45,13 @@ class FrontendEndpoint:
 
 @dataclass(frozen=True)
 class ResourceProgress:
-    """Current-generation readiness reported by one Foretoken service."""
+    """Current service state and convergence of its requested running or stopped intent."""
 
     resource: ResourceRef
     state: str
     reason: str
     message: str
-    ready: bool
+    converged: bool
 
     @property
     def detail(self) -> str:
@@ -60,6 +61,10 @@ class ResourceProgress:
 
 class KubernetesServiceUnavailableError(DeploymentError):
     """Identify API-server unavailability for callers that own a readiness deadline."""
+
+
+class KubernetesVersionConflictError(DeploymentError):
+    """Identify failed API version preconditions without reclassifying field ownership errors."""
 
 
 class Kubectl:
@@ -117,6 +122,11 @@ class Kubectl:
             message = f"{' '.join(command)} failed: {detail}"
             if detail.startswith("Error from server (ServiceUnavailable):"):
                 raise KubernetesServiceUnavailableError(message)
+            if (
+                "the object has been modified; please apply your changes to the latest version" in detail
+                or "metadata.resourceVersion: Invalid value: 0: must be specified for an update" in detail
+            ):
+                raise KubernetesVersionConflictError(message)
             raise DeploymentError(message)
         return completed
 
@@ -568,6 +578,8 @@ def resource_progress(
     generation = int(metadata.get("generation") or 0)
     observed_generation = int(status.get("observedGeneration") or 0)
     conditions = status.get("conditions") or []
+    execution_required = service_requires_execution(value)
+    suspended = (value.get("spec") or {}).get("suspend", False)
     alerts = ((value.get("spec") or {}).get("observability") or {}).get("alerts") or {}
     alerts_selected = bool(alerts.get("rules"))
     alerts_condition = next(
@@ -577,7 +589,7 @@ def resource_progress(
         alerts_condition is not None
         and int(alerts_condition.get("observedGeneration") or 0) == generation
     )
-    if alerts_current and alerts_condition.get("status") == "False":
+    if not suspended and alerts_current and alerts_condition.get("status") == "False":
         return ResourceProgress(
             resource, "Failed", str(alerts_condition.get("reason") or "AlertsFailed"),
             str(alerts_condition.get("message") or "Service alerts are not configured"), False,
@@ -619,11 +631,27 @@ def resource_progress(
             if condition_status == "True" and int(status.get("servingGeneration") or 0) != generation:
                 message += "\nThe previous generation remains available."
             return ResourceProgress(resource, "Failed", str(target["reason"]), message, False)
+        if (
+            condition_status == "True"
+            and target is not None
+            and int(target.get("observedGeneration") or 0) == generation
+            and target.get("status") != "True"
+        ):
+            return ResourceProgress(
+                resource, "Progressing", str(target["reason"]), str(target["message"]), False
+            )
     stopped = (
-        resource.kind == "FrontendService"
-        and (value.get("spec") or {}).get("replicas") == 0
-        and condition_status == "False"
+        condition_status == "False"
         and reason == "ScaledToZero"
+        and not execution_required
+        and (
+            resource.kind == "FrontendService"
+            or resource.kind == "ModelService"
+            and target is not None
+            and target.get("observedGeneration") == generation
+            and target.get("status") == "True"
+            and target.get("reason") == "ScaledToZero"
+        )
     )
     if condition_status == "True" or stopped:
         if (
@@ -634,12 +662,12 @@ def resource_progress(
                 resource, "Progressing", "Updating",
                 "Waiting for the current ModelService generation to serve", False,
             )
-        if not alerts_selected and alerts_condition is not None:
+        if not suspended and not alerts_selected and alerts_condition is not None:
             return ResourceProgress(
                 resource, "Progressing", "AlertsRemoving",
                 "Waiting for service alert removal", False,
             )
-        if alerts_selected and (
+        if not suspended and alerts_selected and (
             not alerts_current or alerts_condition.get("status") != "True"
         ):
             return ResourceProgress(
@@ -709,7 +737,7 @@ def wait_for_resources(
     observe: Callable[[tuple[ResourceRef, ...], float, float], None] | None = None,
     expected_revisions: dict[ResourceRef, str] | None = None,
 ) -> tuple[ResourceProgress, ...]:
-    """Wait until every service reports Ready for its current generation."""
+    """Wait until every service reaches its requested running or stopped state."""
     timeout_value = timeout_seconds(timeout)
     started = time.monotonic()
     deadline = started + timeout_value
@@ -725,7 +753,7 @@ def wait_for_resources(
                 if previous.get(progress.resource) != signature:
                     report(elapsed, progress)
                     previous[progress.resource] = signature
-        if all(progress.ready for progress in latest):
+        if all(progress.converged for progress in latest):
             return latest
         if any(progress.state == "Failed" for progress in latest):
             failed = next(progress for progress in latest if progress.state == "Failed")
@@ -736,7 +764,7 @@ def wait_for_resources(
             pending = "; ".join(
                 f"{item.resource.display_name}: {item.detail or item.state}"
                 for item in latest
-                if not item.ready
+                if not item.converged
             )
             raise DeploymentError(
                 f"timed out after {timeout} waiting for Foretoken services: {pending}"
