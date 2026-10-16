@@ -34,7 +34,7 @@ def engine_cache_scope(
 ) -> dict[str, Any]:
     """Keep a binding's compiler namespace across recipe changes and failed builds.
 
-    Callers separate metadata and native workspaces by the resolved engine base image,
+    Callers separate metadata and native workspaces by engine base and interpreter,
     not by the digest of a newly built dependency environment.
     """
     names = sorted(engines)

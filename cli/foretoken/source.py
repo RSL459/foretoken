@@ -1689,16 +1689,17 @@ def prepare_source_images(
                     engine_arguments["RUNTIME_IMAGE"] = selected["image"]
                     node_arguments = {}
                     # Dependency exports can acquire new OCI digests on every retry.
-                    # The engine base owns Python/accelerator ABI; runtime_constraints
-                    # retains it while CMake and ccache track native source/tool inputs.
+                    # The engine base and selected interpreter own Python/accelerator ABI;
+                    # CMake and ccache track native source/tool inputs within that environment.
+                    python_executable = arguments.get("FORETOKEN_VLLM_PYTHON") or "python3"
                     for builder in builders:
                         base_digest = builder.resolve_image(engine_image)
                         node_arguments[builder.node] = {
                             "RUNTIME_USER": builder.image_user(selected["image"]),
-                            "CACHE_ID": cache_prefix + "-metadata-" + base_digest,
+                            "CACHE_ID": f"{cache_prefix}-metadata-{base_digest}-{python_executable}",
                         }
                         key = "" if registry else builder.node
-                        engine_caches[key] = cache_prefix + "-native-" + base_digest
+                        engine_caches[key] = f"{cache_prefix}-native-{base_digest}-{python_executable}"
                     pending_state["build"]["engine_caches"] = dict(engine_caches)
                     _write_json(pending_path, pending_state)
                     selected = environments.build(
