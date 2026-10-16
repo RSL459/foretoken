@@ -10,6 +10,8 @@ import select
 import shlex
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -27,7 +29,39 @@ def start_sync(directory: Path) -> subprocess.Popen[bytes]:
     )
 
 
+@contextmanager
+def publication_lock(directory: Path) -> Iterator[None]:
+    """Serialize original synchronization and same-run recovery so old exit records cannot arrive last."""
+    with (directory / ".foretoken-publish.lock").open("a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+
+            if lock.tell() == 0:
+                lock.write(b"\0")
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def synchronize(directory: Path) -> int:
+    """Own native synchronization until its recorder exits, excluding recovery of the same run."""
+    with publication_lock(directory):
+        return _synchronize(directory)
+
+
+def _synchronize(directory: Path) -> int:
     """Delegate transfer and replay to W&B, allowing bounded drain after recording stops."""
     retry = f"wandb sync --include-synced {shlex.quote(str(directory))}"
     try:

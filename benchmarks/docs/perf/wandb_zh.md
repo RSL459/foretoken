@@ -30,8 +30,10 @@ foretoken perf examples/quickstart \
 
 ## 恢复上传
 
-同步中断后，将 `WANDB_RUN_DIR` 换成终端打印的 W&B 本地运行目录：
+测量已完成，但绘图或结果发布失败时，使用终端打印的结果目录恢复：
 
 ```bash
-wandb sync --include-synced WANDB_RUN_DIR
+foretoken perf --resume RESULT_DIR --output local,wandb,plot
 ```
+
+命令根据已有测量补齐输出，继续发布到原来的 W&B 运行，不再向模型发送请求。请保留原始结果目录。离线时先重建本地输出，W&B 发布保持待完成；联网后重复该命令即可补发。

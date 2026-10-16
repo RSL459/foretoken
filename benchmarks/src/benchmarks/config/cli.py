@@ -143,8 +143,7 @@ def _add_benchmark_arguments(
     )
     parser.add_argument(
         "--resume", default="", metavar="RESULT_DIR",
-        help=("Continue a saved video sweep from completed measurements" if video
-              else "Continue a saved sweep or SLO search from completed measurements"),
+        help="Recover saved outputs or continue unfinished measurements from a previous run",
     )
     parser.add_argument(
         "--output-dir",
@@ -612,6 +611,4 @@ def parse_benchmark_arguments(
     parsed_args = parser.parse_args(argv)
     validate_profile_arguments(parser, parsed_args)
     config = _benchmark_config(parsed_args)
-    if config.sweep.resume and not (config.sweep.path or len(config.service_choices) > 1 or config.slo.search):
-        parser.error("--resume requires --sweep, multiple services, or --slo-search")
     return config

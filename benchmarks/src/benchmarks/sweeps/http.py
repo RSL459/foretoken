@@ -19,7 +19,7 @@ from benchmarks.config.benchmark import (
     normalize_output_token_limit,
     parse_duration_seconds,
 )
-from benchmarks.model_service import resolve_benchmark_service
+from benchmarks.model_service import ModelService, resolve_benchmark_service
 from benchmarks.results.console import format_benchmark_config, log_sweep_results
 from benchmarks.results.output import BenchmarkRun, wandb_run_timestamp
 from benchmarks.runs.http import HttpBenchmark
@@ -181,24 +181,28 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
             config, sweep=ParameterSweepConfig(),
             wandb=replace(config.wandb, group=wandb_group),
         )
-        allow_multiple = bool(config.trace.trace_selector or config.is_multi_turn)
-        selection = (config.service, allow_multiple)
-        if selection != self.selection:
-            self.resources.close()
-            self.service = self.resources.enter_context(resolve_benchmark_service(point_config))
-            self.selection = selection
-        logger.info("%s", format_benchmark_config(point_config, self.service))
+        selection = (config.service, bool(config.trace.trace_selector or config.is_multi_turn))
+
+        def prepare_service() -> ModelService:
+            """Reuse the service across adjacent sweep points with the same selection."""
+            if selection != self.selection:
+                self.resources.close()
+                self.service = self.resources.enter_context(resolve_benchmark_service(point_config))
+                self.selection = selection
+            logger.info("%s", format_benchmark_config(point_config, self.service))
+            return self.service
+
         if point_config.slo.search:
             result = SloAutoTuneBenchmark(
                 point_config,
-                self.service,
+                prepare_service,
                 label=label,
                 output_dir=output_dir,
             ).run()
         else:
             result = HttpBenchmark(
                 point_config,
-                self.service,
+                prepare_service(),
                 label=label,
                 output_dir=output_dir,
                 wandb_group=wandb_group,
@@ -206,8 +210,9 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
         metrics = dict(result.metrics)
         metrics["gpu_count"] = (
             self.service.gpu_count
-            if metrics.get("throughput", {}).get("generation_tokens_per_second_per_gpu") is not None
-            else None
+            if self.service is not None and self.selection == selection
+            and metrics.get("throughput", {}).get("generation_tokens_per_second_per_gpu") is not None
+            else metrics.get("gpu_count")
         )
         metrics["label"] = label
         return replace(result, metrics=metrics)

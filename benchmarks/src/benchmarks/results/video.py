@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import statistics
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -137,6 +136,7 @@ def video_run_record(config: VideoBenchmarkConfig) -> dict[str, Any]:
     """Build the shared result record for one video benchmark run."""
     return {
         "mode": "video_generation",
+        "name": config.name,
         "dataset": config.dataset_source,
         "max_concurrency": config.concurrency,
         "num_prompts": len(config.requests),
@@ -245,7 +245,7 @@ def video_result_sinks(
                 execution_dir=str(run_dir),
                 run_name=config.wandb.run_name.strip() or run_dir.name,
                 group=config.wandb.group.strip(),
-                publisher=partial(publish_video_wandb, config),
+                publisher=publish_video_wandb,
                 run_config={
                     **config.to_dict(),
                     "metric_scopes": {

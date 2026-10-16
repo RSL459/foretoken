@@ -340,6 +340,16 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
                 f"  {concurrency_label:<11}: {concurrency_value}",
             ]
         )
+    if "planned_num" in metrics:
+        planned = metrics["planned_num"]
+        lines.append(f"  Prepared requests: {planned if planned is not None else 'not fixed (duration-limited run)'}")
+        lines.append(f"  Failed requests: {metrics['failed_num']}")
+        lines.append(f"  Not executed: {metrics['not_executed_num']}")
+        for reason, count in metrics["not_executed_reasons"].items():
+            if count:
+                lines.append(f"    {reason}: {count}")
+    for reason in metrics.get("failure_reasons", []):
+        lines.append(f"  Request failure ({reason['request_num']}): HTTP {reason['status_code']}, {reason['error']}")
     if run_record.get("datasets"):
         lines.append(f"  Datasets   : {run_record['datasets']}")
     elif run_record.get("dataset"):

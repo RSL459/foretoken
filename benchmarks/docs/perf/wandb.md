@@ -30,8 +30,10 @@ Warmup is excluded from performance metrics and panels. Its records remain in th
 
 ## Resume an upload
 
-If synchronization is interrupted, replace `WANDB_RUN_DIR` with the printed W&B local run directory:
+If measurement finished but saving plots or publishing results failed, use the printed result directory:
 
 ```bash
-wandb sync --include-synced WANDB_RUN_DIR
+foretoken perf --resume RESULT_DIR --output local,wandb,plot
 ```
+
+This rebuilds outputs from the saved measurements and completes the same W&B run without sending new model requests. Keep the original result directory. In offline mode, local outputs are rebuilt and W&B publication remains pending; repeat the command online to upload.

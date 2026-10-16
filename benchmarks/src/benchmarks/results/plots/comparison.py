@@ -45,6 +45,7 @@ def compare_to_base(
 
     # Keep actual workload and completion outcomes alongside selected speed metrics.
     contextual_metrics = {
+        "planned_num", "admitted_num", "not_executed_num",
         "request_num", "success_num", "failed_num", "success_rate",
         "avg_input_tokens", "avg_output_tokens", "avg_cached_input_tokens",
     }
