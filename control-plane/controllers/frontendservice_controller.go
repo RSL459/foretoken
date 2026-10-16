@@ -339,6 +339,14 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	if !frontend.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
+	current, err := reconciler.retireFrontendReplicas(ctx, frontend)
+	if err != nil {
+		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ReplicaRetirementFailed", FailureMessage: err.Error()})
+		return ctrl.Result{}, errors.Join(err, statusErr)
+	}
+	if frontend.Spec.Replicas != nil && *frontend.Spec.Replicas == 0 {
+		return reconciler.reconcileStoppedFrontend(ctx, frontend, current)
+	}
 	var services inferencev1alpha1.ModelServiceList
 	if err := reconciler.List(ctx, &services, client.InNamespace(frontend.Namespace)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list ModelServices for frontend: %w", err)
@@ -484,13 +492,10 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	profile.RuntimeCache = runtimeCache
 	applyDeployment := true
 	if !cacheReady {
-		current := new(appsv1.Deployment)
-		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), current); err == nil {
+		if current != nil {
 			applyDeployment = false
-		} else if apierrors.IsNotFound(err) {
-			profile.RuntimeCache = nil
 		} else {
-			return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
+			profile.RuntimeCache = nil
 		}
 	}
 
@@ -545,10 +550,7 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	// Apply returns the persisted objects; an informer read can still contain the previous template.
 	currentDeployment := deployment
 	if !applyDeployment {
-		currentDeployment = new(appsv1.Deployment)
-		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(deployment), currentDeployment); err != nil {
-			return ctrl.Result{}, fmt.Errorf("get frontend Deployment: %w", err)
-		}
+		currentDeployment = current
 	}
 	if frontend.Spec.VideoTasks == nil && applyDeployment &&
 		currentDeployment.Status.ObservedGeneration >= currentDeployment.Generation &&
@@ -598,6 +600,75 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		result.RequeueAfter = time.Second
 	}
 	return result, reconciler.updateStatus(ctx, frontend, state)
+}
+
+// retireFrontendReplicas applies capacity reductions without resolving a replacement Pod template.
+// Increasing capacity remains part of normal application and storage reconciliation.
+func (reconciler *FrontendServiceReconciler) retireFrontendReplicas(ctx context.Context, frontend *inferencev1alpha1.FrontendService) (*appsv1.Deployment, error) {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	deployment := new(appsv1.Deployment)
+	if err := reader.Get(ctx, client.ObjectKeyFromObject(frontend), deployment); apierrors.IsNotFound(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("read frontend Deployment for replica retirement: %w", err)
+	}
+	if !metav1.IsControlledBy(deployment, frontend) {
+		return nil, fmt.Errorf("Deployment %q is not controlled by FrontendService", deployment.Name)
+	}
+	currentReplicas := int32(1)
+	if deployment.Spec.Replicas != nil {
+		currentReplicas = *deployment.Spec.Replicas
+	}
+	if target := frontend.Spec.Replicas; target != nil && *target < currentReplicas {
+		base := deployment.DeepCopy()
+		deployment.Spec.Replicas = target
+		if err := reconciler.Patch(ctx, deployment, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}), client.FieldOwner(frontendServiceFieldOwner)); err != nil {
+			return nil, fmt.Errorf("reduce frontend replicas: %w", err)
+		}
+	}
+	return deployment, nil
+}
+
+// reconcileStoppedFrontend retains configuration and storage while waiting for every old replica to exit.
+// ScaledToZero confirms retirement, not serving readiness or application activation.
+func (reconciler *FrontendServiceReconciler) reconcileStoppedFrontend(ctx context.Context, frontend *inferencev1alpha1.FrontendService, deployment *appsv1.Deployment) (ctrl.Result, error) {
+	if _, err := reconciler.reconcileServingSnapshot(ctx, frontend, nil, true); err != nil {
+		return ctrl.Result{}, err
+	}
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	// Published members remain authoritative when their Deployment or ReplicaSet has already gone.
+	var previous []string
+	for _, version := range frontendServingConfigVersions(frontend) {
+		configuration := new(corev1.ConfigMap)
+		key := client.ObjectKey{Namespace: frontend.Namespace, Name: frontendServingConfigMapName(frontend, version)}
+		if err := reader.Get(ctx, key, configuration); apierrors.IsNotFound(err) {
+			continue
+		} else if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !metav1.IsControlledBy(configuration, frontend) {
+			return ctrl.Result{}, fmt.Errorf("ConfigMap %q is not controlled by FrontendService", configuration.Name)
+		}
+		snapshot, _, err := readServingPublication([]byte(configuration.Data[servingSnapshotKey]))
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		previous = append(previous, snapshot.FrontendInstances...)
+	}
+	pods, err := reconciler.frontendInstancePods(ctx, frontend, previous)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(pods) != 0 || deployment != nil && (deployment.Status.ObservedGeneration < deployment.Generation || deployment.Status.Replicas != 0) {
+		return ctrl.Result{RequeueAfter: time.Second}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ScalingDown", FailureMessage: "Waiting for frontend replicas to stop"})
+	}
+	return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{Stopped: true})
 }
 
 func (profile FrontendRuntimeProfile) validate() error {
@@ -678,6 +749,7 @@ type frontendState struct {
 	// ExecutionReady concerns the selected application and target capacity; Available
 	// still reports a previous Deployment that is serving during deferred replacement.
 	ExecutionReady bool
+	Stopped        bool
 	Materialized   bool
 	Available      bool
 	RouteRequired  bool
@@ -694,6 +766,13 @@ func (reconciler *FrontendServiceReconciler) updateStatus(ctx context.Context, f
 	if state.FailureReason != "" {
 		for _, conditionType := range frontendConditionTypes {
 			setFrontendCondition(frontend, conditionType, metav1.ConditionFalse, state.FailureReason, state.FailureMessage)
+		}
+	} else if state.Stopped {
+		for _, conditionType := range []string{frontendConditionMaterialized, frontendConditionRouteReady} {
+			setFrontendCondition(frontend, conditionType, metav1.ConditionUnknown, "NotReconciled", "No frontend replicas are requested; retained resources are unchanged")
+		}
+		for _, conditionType := range []string{frontendConditionAvailable, frontendConditionRoutingReady, conditionReady} {
+			setFrontendCondition(frontend, conditionType, metav1.ConditionFalse, "ScaledToZero", "All frontend replicas have stopped")
 		}
 	} else {
 		setFrontendCondition(

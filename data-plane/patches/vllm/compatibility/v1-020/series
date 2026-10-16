@@ -1,9 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-
-common/python-profiling.patch
-common/worker-profiling.patch
-common/engine-abort-completion.patch
-compatibility/v1-020/ready-logprobs.patch
-common/scheduler-load.patch
-compatibility/v1-current/scheduler-load.patch

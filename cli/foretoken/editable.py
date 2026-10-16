@@ -60,7 +60,8 @@ from foretoken.source import (
     local_build_nodes,
     pinned_rust_revision,
     prepare_source_images,
-    reconcile_source_images,
+    reconcile_source_resources,
+    record_source_deployment,
     snapshot_versions,
     source_checkout,
     validate_build_inputs,
@@ -128,9 +129,10 @@ class EditableDeployment:
         return cls(kubectl, directory, state, source_checkout(editable), engine_sources)
 
     @contextmanager
-    def operation(self, timeout: str) -> Iterator[None]:
-        """Load and commit only this checkout while unrelated candidates keep building."""
+    def operation(self, deployment: ForetokenDeployment, timeout: str) -> Iterator[None]:
+        """Register intended services and own this checkout's builds through service submission."""
         with checkout_operation(self.directory, self.kubectl, timeout):
+            record_source_deployment(self.directory, deployment)
             path = self.directory / "install.json"
             saved = json.loads(path.read_text()) if path.is_file() else None
             if saved is None:
@@ -146,6 +148,7 @@ class EditableDeployment:
                     },
                 )
                 self.state["build"]["binding"] = self.directory.name
+                self.state["build"]["caches"] = []
                 self.state["build"]["borrowed_images"] = True
                 if str(self.root) != self.platform["root"]:
                     self.state["engines"] = {}
@@ -188,9 +191,9 @@ class EditableDeployment:
             _write_json(path, self.state)
             print(f"Source checkout: {self.root}", flush=True)
             if (self.directory / "build.json").is_file():
-                reconcile_source_images(self.kubectl, timeout, checkout=self.directory)
+                reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
             yield
-            reconcile_source_images(self.kubectl, timeout, checkout=self.directory)
+            reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
 
     def prepare(self, timeout: str) -> None:
         """Prepare changed runtime artifacts and retire candidates not retained by committed state."""
@@ -331,7 +334,7 @@ class EditableDeployment:
         # Reclaim unused environments before allocating another. Interrupted
         # builds were already reconciled when entering the checkout operation.
         if not (self.directory / "build.json").is_file():
-            reconcile_source_images(self.kubectl, timeout, checkout=self.directory)
+            reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
         settings = dict(self.state["command"])
         settings.update(values=(), timeout=timeout, editable=str(self.root))
         command = InstallCommand(**settings)
@@ -375,6 +378,9 @@ class EditableDeployment:
         for obj in objects:
             component = SERVICE_COMPONENTS.get(obj.get("kind"))
             if component is None:
+                continue
+            # Retain pending bundles in checkout state until a frontend requests execution.
+            if component == "frontend" and obj["spec"].get("replicas", 1) == 0:
                 continue
             metadata = obj["metadata"]
             annotations = metadata.setdefault("annotations", {})
@@ -451,7 +457,12 @@ class EditableDeployment:
         }
         snapshot = self.directory / self.state["inputs"]
         helm = Helm(default_platform_config(self.state["command"]["oci_registry"]))
+        # A completed application no longer depends on its partial-publication base.
+        for component in pending - missing:
+            if bundle := self.state["bundles"].get(component):
+                self.state["bundles"][component] = {"revision": bundle["revision"]}
         if not missing:
+            _write_json(self.directory / "install.json", self.state)
             return
 
         origin.prepare(timeout)
@@ -478,7 +489,7 @@ class EditableDeployment:
                 (claim for node, _, claim in local_caches if node == origin.node),
                 "foretoken-application-compiler-" + node_uid,
             ) + "-" + build["binding"][:12]
-        ensure_build_cache(
+        identity = ensure_build_cache(
             self.kubectl,
             namespace,
             claim,
@@ -492,6 +503,9 @@ class EditableDeployment:
                 "uid": origin.claim_uid,
             },
         )
+        if identity is not None and identity not in build.setdefault("caches", []):
+            build["caches"].append(identity)
+            _write_json(self.directory / "install.json", self.state)
         build_engine = (
             "model-server" in missing
             and bool(self.state.get("engines"))
@@ -637,7 +651,7 @@ class EditableDeployment:
                 if published_revision == default_revision:
                     self.state["bundles"].pop(component)
                 else:
-                    self.state["bundles"][component]["revision"] = published_revision
+                    self.state["bundles"][component] = {"revision": published_revision}
                 publication = (
                     "reused"
                     if published_revision == previous_revisions[component]

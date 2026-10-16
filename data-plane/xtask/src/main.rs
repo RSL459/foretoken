@@ -7,9 +7,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
+use serde::Deserialize;
+
 const METADATA_SECTION: &str = "[workspace.metadata.foretoken]";
 const VLLM_SOURCE_KEY: &str = "vllm_source";
-const VLLM_PATCH_SERIES_KEY: &str = "vllm_patch_series";
+const VLLM_PATCH_CATALOG_KEY: &str = "vllm_patch_catalog";
 
 #[derive(Debug)]
 struct WorkspaceMetadata {
@@ -70,17 +72,19 @@ fn workspace_metadata() -> Result<WorkspaceMetadata, String> {
         .map_err(|error| format!("read {}: {error}", manifest_path.display()))?;
     let values = metadata_values(&manifest)?;
     let vllm_source = data_plane_root.join(values.vllm_source);
-    let series_path = data_plane_root.join(values.vllm_patch_series);
-    let patch_root = series_path
+    let catalog_path = data_plane_root.join(values.vllm_patch_catalog);
+    let patch_root = catalog_path
         .parent()
-        .ok_or_else(|| "vLLM patch series has no parent directory".to_owned())?;
-    let series = fs::read_to_string(&series_path)
-        .map_err(|error| format!("read {}: {error}", series_path.display()))?;
-    let vllm_patches = series
-        .lines()
-        .map(|line| line.split('#').next().unwrap_or_default().trim())
-        .filter(|line| !line.is_empty())
-        .map(|path| patch_root.join(path))
+        .ok_or_else(|| "vLLM patch catalog has no parent directory".to_owned())?;
+    let contents = fs::read_to_string(&catalog_path)
+        .map_err(|error| format!("read {}: {error}", catalog_path.display()))?;
+    let catalog: PatchCatalog = serde_json::from_str(&contents)
+        .map_err(|error| format!("parse {}: {error}", catalog_path.display()))?;
+    let vllm_patches = catalog
+        .patches
+        .into_iter()
+        .filter(|patch| patch.rust)
+        .map(|patch| patch_root.join(patch.path))
         .collect();
     Ok(WorkspaceMetadata {
         data_plane_root,
@@ -89,11 +93,24 @@ fn workspace_metadata() -> Result<WorkspaceMetadata, String> {
     })
 }
 
-/// Parse the small, local metadata table without adding a manifest parser dependency.
+// Source preparation reads only the catalog fields owned by the pinned Rust checkout.
+#[derive(Deserialize)]
+struct PatchCatalog {
+    patches: Vec<CatalogPatch>,
+}
+
+#[derive(Deserialize)]
+struct CatalogPatch {
+    path: PathBuf,
+    #[serde(default)]
+    rust: bool,
+}
+
+/// Read the two repository paths from Cargo workspace metadata.
 fn metadata_values(manifest: &str) -> Result<MetadataValues, String> {
     let mut in_section = false;
     let mut vllm_source = None;
-    let mut vllm_patch_series = None;
+    let mut vllm_patch_catalog = None;
 
     for line in manifest.lines() {
         let line = line.split('#').next().unwrap_or_default().trim();
@@ -108,22 +125,22 @@ fn metadata_values(manifest: &str) -> Result<MetadataValues, String> {
             vllm_source = Some(parse_string(value)?);
             continue;
         }
-        if let Some(value) = line.strip_prefix(&format!("{VLLM_PATCH_SERIES_KEY} =")) {
-            vllm_patch_series = Some(parse_string(value)?);
+        if let Some(value) = line.strip_prefix(&format!("{VLLM_PATCH_CATALOG_KEY} =")) {
+            vllm_patch_catalog = Some(parse_string(value)?);
         }
     }
 
     Ok(MetadataValues {
         vllm_source: vllm_source.ok_or_else(|| format!("missing {VLLM_SOURCE_KEY} metadata"))?,
-        vllm_patch_series: vllm_patch_series
-            .ok_or_else(|| format!("missing {VLLM_PATCH_SERIES_KEY} metadata"))?,
+        vllm_patch_catalog: vllm_patch_catalog
+            .ok_or_else(|| format!("missing {VLLM_PATCH_CATALOG_KEY} metadata"))?,
     })
 }
 
 #[derive(Debug)]
 struct MetadataValues {
     vllm_source: String,
-    vllm_patch_series: String,
+    vllm_patch_catalog: String,
 }
 
 fn parse_string(value: &str) -> Result<String, String> {

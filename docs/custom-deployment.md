@@ -31,7 +31,7 @@ foretoken install -e .
 
 This installs the shared Foretoken platform; builds run in the cluster. It can also replace a published platform installed through the CLI. For k3d GPU setup, follow [Deploy Foretoken with k3d](k3d-deployment.md). Other Kubernetes clusters need a registry reachable by the builder and nodes; [Deploy Foretoken on Kubernetes](kubernetes-deployment.md#2-install-foretoken-from-source) covers the installation command and registry authentication.
 
-Installation automatically prepares persistent node-local build storage. Repeated builds reuse the compiler cache, including after a builder is replaced. Application files keep using the cluster's default StorageClass. To customize either choice, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`. A custom build storage class must provide a non-NFS filesystem.
+Source builds use persistent node-local storage by default; application files use the cluster's default StorageClass. To override these settings, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`. Build storage must use a non-NFS filesystem; existing volumes keep their StorageClass.
 
 ## Deploy a model service
 
@@ -110,11 +110,13 @@ Use separate source directories, namespaces and iteration names for other candid
 
 Results are saved in each source directory. The [experiment records guide](../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
 
-Delete only the candidate's deployment when finished:
+Delete the candidate when finished:
 
 ```bash
 foretoken delete examples/candidate
 ```
+
+Deletion also cleans up build resources no longer in use, while preserving source directories, experiment results and source archives.
 
 Uninstall the platform only after all candidates have finished.
 

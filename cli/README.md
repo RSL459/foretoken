@@ -96,7 +96,7 @@ Add `--gateway-section-name LISTENER` only when more than one listener matches.
 
 ### Current source
 
-The cluster needs a default StorageClass. Run from the Foretoken repository root:
+The cluster needs a default StorageClass for application files. Run from the Foretoken repository root:
 
 ```bash
 foretoken install -e .
@@ -168,7 +168,7 @@ foretoken deploy examples/multi-model-quickstart --timeout 20m
 
 The command applies the configuration, deploys the selected services, and updates existing services.
 
-While waiting, it shows service status and streams Pod and container logs with source prefixes. It exits when every service reports Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
+While waiting, it shows service status and streams Pod and container logs with source prefixes. It waits for models to report Ready and frontends to become Ready or, when `spec.replicas: 0`, confirm that their replicas have stopped. Selected alerts must also be configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
 
 Rejected model configuration ends the deployment command with the reported error, even if the previous version is still serving. Each model's `spec.timeouts.startup` also bounds how long a created serving workload may remain unready during startup or recovery; model preparation has its own budget. Exceeding this limit ends the command while Kubernetes continues recovery. Container restarts within the limit remain in progress.
 
@@ -217,7 +217,7 @@ Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU exec
 
 ## Clean up
 
-Delete the deployed services before uninstalling the platform:
+Delete the deployed services and their unused build resources before uninstalling the platform:
 
 ```bash
 foretoken delete examples/multi-model-quickstart

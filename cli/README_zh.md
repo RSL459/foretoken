@@ -96,7 +96,7 @@ foretoken install \
 
 ### 当前源码
 
-集群需有默认存储类（StorageClass）。在 Foretoken 仓库根目录运行：
+集群需为应用文件提供默认存储类（StorageClass）。在 Foretoken 仓库根目录运行：
 
 ```bash
 foretoken install -e .
@@ -168,7 +168,7 @@ foretoken deploy examples/multi-model-quickstart --timeout 20m
 
 命令会应用配置，部署所选服务，并更新已有服务。
 
-等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。所有服务 Ready 且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
+等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。模型 Ready、前端 Ready 或在 `spec.replicas: 0` 时确认副本全部停止，且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
 
 目标模型配置被拒绝时，部署命令会显示原因并失败退出，即使旧版本仍在提供服务。模型的 `spec.timeouts.startup` 还限定运行工作负载创建后等待启动或恢复就绪的时间，模型准备阶段单独计时。超过时限会结束本次命令，Kubernetes 继续恢复；时限内的容器重启仍按进行中处理。
 
@@ -217,7 +217,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## 清理
 
-先删除部署的服务，再卸载平台：
+先删除服务及其不再使用的构建资源，再卸载平台：
 
 ```bash
 foretoken delete examples/multi-model-quickstart
