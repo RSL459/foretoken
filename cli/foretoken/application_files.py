@@ -622,6 +622,13 @@ class ApplicationFiles:
                 **pod["spec"].get("securityContext", {}),
                 **compiler.get("securityContext", {}),
             }
+            execution_volume = "compiler"
+            if builder.execution_claim != builder.claim:
+                execution_volume = "execution"
+                volumes.append({
+                    "name": execution_volume,
+                    "persistentVolumeClaim": {"claimName": builder.execution_claim, "readOnly": True},
+                })
             archive_mount = {"name": "source-evidence", "mountPath": str(PurePosixPath(_SOURCE_ARCHIVE).parent)}
             volumes.append({"name": "source-evidence", "emptyDir": {}})
             mounts.append({**archive_mount, "readOnly": True})
@@ -640,7 +647,7 @@ class ApplicationFiles:
                     "capabilities": {"drop": ["ALL"]},
                 },
                 "volumeMounts": [
-                    {"name": "compiler", "mountPath": builder.mount, "readOnly": True},
+                    {"name": execution_volume, "mountPath": builder.execution_mount, "readOnly": True},
                     archive_mount,
                 ],
             }]
