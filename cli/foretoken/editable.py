@@ -483,6 +483,8 @@ class EditableDeployment:
             namespace,
             claim,
             build["configuration"],
+            binding=build["binding"],
+            timeout=timeout,
             owner={
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",

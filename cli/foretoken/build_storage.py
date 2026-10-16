@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import PurePosixPath
 from typing import Any
 
 import yaml
@@ -31,11 +32,58 @@ _NAMESPACED_KINDS = (
 _CLUSTER_KINDS = ("storageclasses", "clusterroles", "clusterrolebindings")
 
 
+def _node_paths(kubectl: Kubectl) -> list[dict[str, Any]]:
+    """Reuse upstream local-volume roots, including persistent mounts inside kind and k3d nodes."""
+    classes = sorted(
+        kubectl.list_cluster_resources(("storageclasses",)),
+        key=lambda item: (
+            item["metadata"].get("annotations", {}).get("storageclass.kubernetes.io/is-default-class") != "true",
+            item["metadata"]["name"],
+        ),
+    )
+    deployments = kubectl.list_all_resources(("deployments",))
+    for storage_class in classes:
+        if storage_class["provisioner"] == SOURCE_BUILD_PROVISIONER:
+            continue
+        for deployment in deployments:
+            spec = deployment["spec"]["template"]["spec"]
+            for container in spec["containers"]:
+                command = [*container.get("command", []), *container.get("args", [])]
+                if not any(PurePosixPath(arg).name == "local-path-provisioner" for arg in command):
+                    continue
+                options = {}
+                for index, arg in enumerate(command):
+                    if arg.startswith("--"):
+                        key, separator, value = arg.partition("=")
+                        options[key] = value if separator else command[index + 1] if index + 1 < len(command) else ""
+                environment = {item["name"]: item["value"] for item in container.get("env", []) if "value" in item}
+                provisioner = options.get("--provisioner-name", environment.get("PROVISIONER_NAME", "rancher.io/local-path"))
+                if storage_class["provisioner"] != provisioner:
+                    continue
+                config_path = PurePosixPath(options.get("--config", "/etc/config/config.json"))
+                volumes = {volume["name"]: volume for volume in spec.get("volumes", [])}
+                for mount in container.get("volumeMounts", []):
+                    volume = volumes[mount["name"]]
+                    if "configMap" not in volume or config_path.parent != PurePosixPath(mount["mountPath"]):
+                        continue
+                    config = kubectl.get("configmap", volume["configMap"]["name"], deployment["metadata"]["namespace"])
+                    key = next((item["key"] for item in volume["configMap"].get("items", []) if item["path"] == config_path.name), config_path.name)
+                    configured = json.loads(config["data"][key])
+                    selected = configured.get("storageClassConfigs", {}).get(storage_class["metadata"]["name"], configured)
+                    if "nodePathMap" in selected and not selected.get("sharedFileSystemPath"):
+                        return [
+                            {"node": entry["node"], "paths": [str(PurePosixPath(path) / SOURCE_BUILD_STORAGE_CLASS) for path in entry["paths"]]}
+                            for entry in selected["nodePathMap"]
+                        ]
+    return [{"node": "DEFAULT_PATH_FOR_NON_LISTED_NODES", "paths": [_NODE_DIRECTORY]}]
+
+
 def _resources(
     namespace: str,
     tools_image: str,
     provisioner_image: str,
     pull_secrets: tuple[str, ...],
+    node_paths: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Render the dedicated local-path-provisioner v0.0.37 resources and helper configuration."""
     name = SOURCE_BUILD_STORAGE_CLASS
@@ -148,16 +196,7 @@ def _resources(
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "data": {
-                "config.json": json.dumps(
-                    {
-                        "nodePathMap": [
-                            {
-                                "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
-                                "paths": [_NODE_DIRECTORY],
-                            }
-                        ]
-                    }
-                ),
+                "config.json": json.dumps({"nodePathMap": node_paths}),
                 # A local PV still uses the filesystem beneath its configured node path.
                 # Reject NFS before creating a compiler directory or changing its ownership.
                 "setup": """#!/bin/sh
@@ -298,7 +337,7 @@ def ensure_build_storage(
     The source installation owns this dependency across checkout bindings and
     supplies its selected images and namespace-local pull secrets.
     """
-    resources = _resources(namespace, tools_image, provisioner_image, pull_secrets)
+    resources = _resources(namespace, tools_image, provisioner_image, pull_secrets, _node_paths(kubectl))
     for document in resources:
         ref = resource_ref(document)
         existing = kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
@@ -319,12 +358,46 @@ def ensure_build_storage(
                 }
             )
         )
-    kubectl.apply(yaml.safe_dump_all(resources, sort_keys=False))
-    deployment = next(
-        document for document in resources if document["kind"] == "Deployment"
-    )
+    deployment = next(document for document in resources if document["kind"] == "Deployment")
+    kubectl.apply(yaml.safe_dump_all((document for document in resources if document is not deployment), sort_keys=False))
+    configuration = kubectl.get("configmap", SOURCE_BUILD_STORAGE_CLASS, namespace)
+    # Start with the current path selection before any new claim can be provisioned.
+    deployment["spec"]["template"]["metadata"]["annotations"] = {
+        "inference.foretoken.io/source-build-config-revision": configuration["metadata"]["resourceVersion"],
+    }
+    kubectl.apply(yaml.safe_dump(deployment, sort_keys=False))
     kubectl.rollout_status(resource_ref(deployment), timeout)
     return SOURCE_BUILD_STORAGE_CLASS
+
+
+def superseded_build_volume(kubectl: Kubectl, claim: dict[str, Any]) -> dict[str, Any] | None:
+    """Find a managed compiler volume whose old node directory is no longer selected.
+
+    The cache lifecycle replaces only Delete-policy volumes provisioned by Foretoken;
+    custom storage and published application volumes retain their existing owners.
+    """
+    if claim["spec"].get("storageClassName") != SOURCE_BUILD_STORAGE_CLASS or not claim["spec"].get("volumeName"):
+        return None
+    storage_class = kubectl.get_if_exists("storageclass", SOURCE_BUILD_STORAGE_CLASS)
+    namespace = (storage_class or {}).get("metadata", {}).get("labels", {}).get(_OWNER_LABEL)
+    if not namespace:
+        return None
+    configuration = kubectl.get_if_exists("configmap", SOURCE_BUILD_STORAGE_CLASS, namespace)
+    if configuration is None:
+        return None
+    volume = kubectl.get("pv", claim["spec"]["volumeName"])
+    annotations = volume["metadata"].get("annotations", {})
+    if annotations.get("pv.kubernetes.io/provisioned-by") != SOURCE_BUILD_PROVISIONER:
+        return None
+    node = annotations["local.path.provisioner/selected-node"]
+    node_paths = {entry["node"]: entry["paths"] for entry in json.loads(configuration["data"]["config.json"])["nodePathMap"]}
+    paths = node_paths.get(node, node_paths.get("DEFAULT_PATH_FOR_NON_LISTED_NODES", []))
+    directory = PurePosixPath((volume["spec"].get("local") or volume["spec"]["hostPath"])["path"])
+    if not paths or any(directory.is_relative_to(path) for path in paths):
+        return None
+    if volume["spec"].get("persistentVolumeReclaimPolicy") != "Delete":
+        raise DeploymentError(f"compiler volume {volume['metadata']['name']} needs a local-storage update but its reclaim policy is Retain")
+    return volume
 
 
 def managed_build_storage_resources(

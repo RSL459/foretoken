@@ -34,6 +34,7 @@ from foretoken.build_storage import (
     SOURCE_BUILD_PROVISIONER_IMAGE,
     SOURCE_BUILD_STORAGE_CLASS,
     ensure_build_storage,
+    superseded_build_volume,
 )
 from foretoken.cluster_build import (
     BuildCancellation,
@@ -46,6 +47,7 @@ from foretoken.engine_environment import engine_build_arguments, resolve_vllm_ba
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
 from foretoken.network_sources import select_build_sources
+from foretoken.node_images import SOURCE_BUILD_BINDING_LABEL, SOURCE_BUILD_POD_LABEL
 
 _BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 _INSTALL_SOURCE = "foretoken.io/install-source"
@@ -736,13 +738,16 @@ def ensure_build_cache(
     name: str,
     configuration: dict[str, str],
     *,
+    binding: str,
+    timeout: str,
     owner: dict[str, str] | None = None,
 ) -> None:
-    """Create or resize the compiler cache without taking over an unrelated volume."""
+    """Prepare this binding's compiler volume, reclaiming superseded local storage before rebuilding."""
     if not kubectl.exists("namespace", namespace):
         kubectl.run(["create", "namespace", namespace])
     storage_class = configuration["storageClassName"] or SOURCE_BUILD_STORAGE_CLASS
     existing = kubectl.get_if_exists("pvc", name, namespace)
+    owners = [owner] if owner is not None else []
     if existing is not None:
         if existing["metadata"].get("labels", {}).get(_BUILD_CACHE_LABEL) != "true":
             raise DeploymentError(f"{namespace}/{name} is not a Foretoken build cache")
@@ -753,6 +758,23 @@ def ensure_build_cache(
                 "an existing compiler volume cannot change its storage class"
             )
         storage_class = actual_class
+        volume = superseded_build_volume(kubectl, existing)
+        if volume is not None:
+            consumers = [
+                pod for pod in kubectl.list_resources(("pods",), namespace)
+                if any(item.get("persistentVolumeClaim", {}).get("claimName") == name for item in pod["spec"].get("volumes", []))
+            ]
+            for pod in consumers:
+                labels = pod["metadata"].get("labels", {})
+                if labels.get(SOURCE_BUILD_POD_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) != binding:
+                    raise DeploymentError(f"compiler cache {namespace}/{name} is still used by {pod['metadata']['name']}; finish that operation before updating storage")
+            print(f"Replacing compiler cache {namespace}/{name} on the selected local storage; published applications are retained", flush=True)
+            for pod in consumers:
+                kubectl.delete(json.dumps(pod), timeout)
+            owners = existing["metadata"].get("ownerReferences", owners)
+            kubectl.delete(json.dumps(existing), timeout)
+            kubectl.wait_deleted("persistentvolume", {**volume["metadata"], "namespace": ""}, timeout)
+            existing = None
     if (
         storage_class == SOURCE_BUILD_STORAGE_CLASS
         and (existing is None or existing.get("status", {}).get("phase") != "Bound")
@@ -795,7 +817,7 @@ def ensure_build_cache(
                     "name": name,
                     "namespace": namespace,
                     "labels": {_BUILD_CACHE_LABEL: "true"},
-                    **({"ownerReferences": [owner]} if owner is not None else {}),
+                    **({"ownerReferences": owners} if owners else {}),
                 },
                 "spec": spec,
             }
@@ -1193,7 +1215,7 @@ def prepare_source_images(
         )
     for _, _, claim in nodes:
         cancellation.check()
-        ensure_build_cache(kubectl, namespace, claim, configuration)
+        ensure_build_cache(kubectl, namespace, claim, configuration, binding=binding, timeout=command.timeout)
     with capture_build_inputs(root, engines) as snapshot, ExitStack() as build_contexts:
         # Resolve automatic defaults from the same inputs used by the build, without
         # recording them as an explicit base selection in the installation binding.
