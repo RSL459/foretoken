@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import json
 import logging
@@ -15,7 +16,7 @@ import time
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any, Protocol, Self, cast
@@ -503,8 +504,9 @@ class ResultOutputs:
         self._replica_observer: KubernetesReplicaObserver | None = None
         self._prometheus_observer: PrometheusObserver | None = None
         self._environment: dict[str, Any] | None = None
-        self._applications = ApplicationSources()
+        self._applications: ApplicationSources
         self._exit_code = 0
+        self._context: dict[str, Any] = {}
 
     @property
     def execution_dir(self) -> str:
@@ -560,17 +562,40 @@ class ResultOutputs:
             self._temporary_execution_dir = True
             self._execution_dir = mkdtemp(prefix="foretoken-benchmark-")
         self._execution_dir = str(Path(self._execution_dir).resolve())
+        self._applications = ApplicationSources(Path(self.execution_dir))
 
         try:
             os.makedirs(self.execution_dir, exist_ok=True)
+            self._context = {
+                "status": "running", "phase": "preparation", "exit_code": None,
+                "measurement_exit_code": None,
+                "started_at": datetime.now(UTC).isoformat(), "finished_at": None,
+            }
+            write_json(self.execution_dir, "context.json", self._context)
             self._resources.enter_context(
                 capture_run_logs(self.execution_dir, quiet=outputs.includes("quiet"))
             )
-        except BaseException:
-            self._release_execution_directory(preserve=outputs.includes("wandb"))
-            self._execution_dir = None
+        except BaseException as error:
+            self.__exit__(type(error), error, error.__traceback__)
             raise
         return self
+
+    def start_measurement(self) -> None:
+        """Record actual execution or checkpoint reuse before the leaf runner begins measurement."""
+        if self._context["phase"] == "preparation":
+            self._context["phase"] = "measurement"
+            write_json(self.execution_dir, "context.json", self._context)
+
+    def finish_measurement(self, exit_code: int) -> None:
+        """Retain the leaf's confirmed outcome before progress, transport, or profile cleanup."""
+        self._context.update(phase="finalization", measurement_exit_code=exit_code)
+        self._exit_code = exit_code
+        write_json(self.execution_dir, "context.json", self._context)
+
+    def save_measurement(self, run: BenchmarkRun) -> None:
+        """Retain actual leaf metrics and its explicit exit code before resource finalization."""
+        self.finish_measurement(cast(int, run.exit_code))
+        run.artifacts["metrics"] = write_json(self.execution_dir, "metrics.json", run.metrics)
 
     def open(self, record: dict[str, Any], *, start_observers: bool = True) -> None:
         """Open result sinks and configuration; callers may defer observation until after warmup."""
@@ -663,6 +688,15 @@ class ResultOutputs:
             return HttpProgress(self.publish_progress, stream=stream, criteria=criteria)
         return None
 
+    def capture_source_evidence(self, snapshot: dict[str, Any], *, deadline: float | None = None) -> None:
+        """Retain provenance and local archives from an already-observed service at a run boundary."""
+        if not self.benchmark.outputs.saves_local:
+            return
+        if deadline is None:
+            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        self._applications.capture(snapshot, deadline=deadline)
+        self._applications.save_archives(deadline=deadline)
+
     def start_observers(self, *, deadline: float | None = None) -> None:
         """Prepare observations within one budget; deferred starts get a fresh budget after warmup."""
         outputs = self.benchmark.outputs
@@ -670,7 +704,7 @@ class ResultOutputs:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         if self._environment is not None and self.service is not None:
             self._environment["before"] = serving_environment(self.service, deadline=deadline)
-            self._applications.capture(self._environment["before"], deadline=deadline)
+            self.capture_source_evidence(self._environment["before"], deadline=deadline)
             write_json(self.execution_dir, "environment.json", self._environment)
         if (
             self.service is not None
@@ -737,35 +771,54 @@ class ResultOutputs:
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool:
         """Close every sink once without replacing an active benchmark failure."""
-        failed = exc_type is not None or self._exit_code != 0
-        self._exit_code = 1 if failed else 0
-        if exc_value is not None:
-            logger.error("Benchmark failed: %s", exc_value)
-        deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
-        if self._replica_observer is not None:
-            self._replica_observer.stop(deadline)
-        if self._prometheus_observer is not None:
-            self._prometheus_observer.stop(deadline)
+        error = exc_value
+        if isinstance(error, (KeyboardInterrupt, asyncio.CancelledError)):
+            self._exit_code = 130
+        elif isinstance(error, SystemExit):
+            self._exit_code = error.code if isinstance(error.code, int) else int(error.code is not None)
+        elif error is not None:
+            self._exit_code = 1
+        if error is not None:
+            logger.error("Benchmark stopped: %s", error)
         try:
             try:
-                return self._resources.__exit__(
-                    exc_type, exc_value, traceback
-                )
-            except BaseException:
-                failed = True
-                if exc_type is not None:
+                deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+                try:
+                    if self._replica_observer is not None:
+                        self._replica_observer.stop(deadline)
+                    if self._prometheus_observer is not None:
+                        self._prometheus_observer.stop(deadline)
+                finally:
+                    self._resources.__exit__(exc_type, exc_value, traceback)
+            except BaseException as cleanup_error:
+                if error is not None:
                     logger.exception("Result cleanup also failed")
-                    return False
-                raise
+                else:
+                    error = cleanup_error
+                    self._exit_code = 130 if isinstance(error, (KeyboardInterrupt, asyncio.CancelledError)) else 1
+                    raise
         finally:
-            self._release_execution_directory(
-                preserve=failed
+            self._context.update(
+                status="interrupted" if self._exit_code == 130 else "failed" if self._exit_code else "completed",
+                exit_code=self._exit_code, finished_at=datetime.now(UTC).isoformat(),
             )
-            self._sinks = []
-            self._execution_dir = None
-            self._replica_observer = None
-            self._prometheus_observer = None
-            self._exit_code = 0
+            if error is not None:
+                self._context["error_type"] = type(error).__name__
+            try:
+                write_json(self.execution_dir, "context.json", self._context)
+            except OSError:
+                if error is None:
+                    self._exit_code = 1
+                    raise
+                logger.exception("Could not retain final run context")
+            finally:
+                self._release_execution_directory(preserve=self._exit_code != 0)
+                self._sinks = []
+                self._execution_dir = None
+                self._replica_observer = None
+                self._prometheus_observer = None
+                self._exit_code = 0
+        return False
 
     def record_warmup(self, rows: list[dict[str, Any]], metrics: dict[str, Any]) -> None:
         """Persist the completed warmup before measurement or a warmup failure."""
@@ -796,6 +849,8 @@ class ResultOutputs:
 
     def publish(self, run: BenchmarkRun) -> None:
         """Save completed measurements before bounded observation finalization and presentation."""
+        self._context["phase"] = "finalization"
+        write_json(self.execution_dir, "context.json", self._context)
         run.artifacts["metrics"] = write_json(self.execution_dir, "metrics.json", run.metrics)
         deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         # Stop both samplers before joining either. Their in-flight reads and
@@ -877,6 +932,7 @@ class ResultOutputs:
                 )
             if "after" in self._environment:
                 self._applications.capture(self._environment["after"], deadline=deadline)
+            self._applications.save_archives(deadline=deadline)
             if self._applications.records:
                 self._environment["applications"] = self._applications.records
             run.artifacts["environment"] = write_json(
