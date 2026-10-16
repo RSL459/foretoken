@@ -115,15 +115,13 @@ def _recover_wandb(directory: Path, run: BenchmarkRun) -> bool:
         }
         write_json(str(directory), "wandb.json", identity)
     identity = json.loads(identity_path.read_text())
+    if identity.get("recovered") and ("plots" not in run.artifacts or identity.get("plots_published")):
+        return True
+    if wandb.setup().settings.mode in {"offline", "dryrun", "disabled"}:
+        logger.info("W&B publication retained for online recovery: %s", directory)
+        return False
     native = (directory / identity["directory"]).resolve()
     with publication_lock(native):
-        identity = json.loads(identity_path.read_text())
-        if identity.get("recovered") and ("plots" not in run.artifacts or identity.get("plots_published")):
-            return True
-        mode = wandb.setup().settings.mode
-        if mode in {"offline", "dryrun", "disabled"}:
-            logger.info("W&B publication retained for online recovery: %s", directory)
-            return False
         api = wandb.Api(overrides={"base_url": identity["base_url"]})
         entity = identity["entity"] or api.default_entity
         identity["entity"] = entity
