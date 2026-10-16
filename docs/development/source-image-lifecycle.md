@@ -5,30 +5,24 @@
 
 English | [简体中文](source-image-lifecycle_zh.md)
 
-For installation, deployment and parallel candidate commands, see [Deploy Foretoken from Source](../custom-deployment.md).
+This guide describes the behavior to preserve when maintaining source deployments. For commands and examples, see [Deploy Foretoken from Source](../custom-deployment.md).
 
-## Installation and deployment
+## Installation and updates
 
-Platform installation owns the shared controller, CRDs and runtime defaults. Deployment builds frontend and model-server code from the selected checkout and applies it only to the submitted services. Keeping these operations separate prevents one candidate from changing the platform used by others.
+`foretoken install -e .` updates the shared controller, CRDs and runtime defaults. `foretoken deploy` builds from the selected checkout and updates only the submitted services.
 
-Dependency environments are reusable images, separate from application source and compiler caches. Rebuild an environment when its recipe or selected base image changes; otherwise, reuse its completed image across checkouts. Installation resolves configured base images, while deployment keeps changes local to the selected services.
+Source changes reuse the existing runtime environment; dependency or base-image changes require rebuilding it. The CLI remembers each checkout's engine directories. Engine source must remain compatible with the selected Python, PyTorch and accelerator libraries.
 
-The CLI records engine directory choices per checkout and includes source deletions when preparing a build. Deleted engine files must not reappear from the base image. Builds must remain compatible with the selected Python and accelerator libraries.
+## Builds and publication
 
-## Concurrent builds
+Rebuild the application parts affected by a change and preserve source deletions. Publish a complete application before updating its services; running services must not depend on writable compiler caches.
 
-Serialize source preparation and service submission for the same checkout. Other checkouts can build concurrently, while platform installation and uninstall exclude those operations. Release source-operation locks before waiting for readiness so deletion can free devices for an unscheduled service.
+Separate worktrees can build concurrently. Serialize source preparation and submission within one checkout, and keep platform installation and removal exclusive. Waiting for service readiness must not prevent deletion from releasing occupied devices.
 
-Compiler caches speed up builds; running services use published application files. Keep each candidate's writable source and export directories isolated, and stop abandoned publishers before reusing their outputs.
+Deployment succeeds when the selected application and its serving routes are ready. Controllers manage rollout and request draining.
 
-## Building and publishing applications
+## Cleanup
 
-Rust executables, Python adapters and inference-engine files have separate build inputs. Rebuild affected outputs and reuse unchanged files only from a completed application matching the previous inputs and runtime environment. Replace each updated group in full, including deletions. If a previous build or publication is incomplete, build the complete application from the current inputs.
+Keep applications still needed by workloads or rollback. Remove unused build resources and publications through their owning lifecycle.
 
-Publish the assembled application before submitting it to a service. Each publication contains all files needed to run; its lifetime does not depend on the build cache or the applications it reused.
-
-## Serving and cleanup
-
-Publish the environment image and complete application files together in an immutable manifest at the trusted application origin. Controllers resolve and save that selection before creating workloads, so preparation, serving, restarts and scaling use the same code without rereading the manifest. Report deployment success only after that code and its serving routes are ready; rollout and draining remain controller-owned.
-
-Application storage belongs to the platform. Cleanup preserves publications referenced by services, workloads, active publishers, saved tasks or Helm rollback history, and removes only the publisher's unreferenced files. Candidate deletion removes its deployment, not the shared platform. Uninstall releases managed build resources and local source records while preserving model data.
+Deleting a candidate removes its deployment, not the shared platform. Uninstall the platform after its services have been deleted; model data is retained.
