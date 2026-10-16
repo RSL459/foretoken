@@ -44,7 +44,7 @@ _BUILD_POD_LABEL = SOURCE_BUILD_POD_LABEL
 _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
 _BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
 _BUILD_LAYOUT_ANNOTATION = "inference.foretoken.io/source-build-layout"
-_BUILD_LAYOUT = "local-pvc-v1"
+_BUILD_LAYOUT = "private-snapshots-v2"
 
 
 class BuildCancellation(AbstractContextManager):
@@ -385,6 +385,7 @@ class ClusterBuilder(AbstractContextManager):
         self._used_images: set[str] = set()
         self._built_images: set[str] = set()
         self._resolved_images: dict[str, str] = {}
+        self._image_users: dict[str, str] = {}
 
     def _reuse_or_retire_pods(self) -> dict[str, Any] | None:
         """Select a compatible daemon and retire other builders sharing its compiler cache."""
@@ -496,15 +497,7 @@ class ClusterBuilder(AbstractContextManager):
             self.name = reusable["metadata"]["name"]
             print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
             try:
-                self.run(
-                    [
-                        "sh",
-                        "-ec",
-                        'rm -rf -- "$1/transfers" "$1/output" "$1/results"; mkdir -p "$1/results"',
-                        "prepare",
-                        self.root,
-                    ]
-                )
+                self._prepare_outputs()
             except BaseException as error:
                 self.__exit__(type(error), error, error.__traceback__)
                 raise
@@ -560,6 +553,15 @@ esac
 mkdir -p "$persistent" "$state/etc" "$state/home" "$state/runtime" "$state/tmp"
 chown "$uid:1000" "$mount" "$persistent"
 chmod 2775 "$mount" "$persistent"
+# Snapshot ownership must stay inside the rootless UID/GID mapping. The publisher
+# shares exports, not compiler snapshots. Retire legacy state after its daemon stops.
+if test -d "$persistent/buildkit" && test "$(stat -c %g "$persistent/buildkit")" != "$uid"; then
+    printf '%s\\n' 'Recreating compiler snapshots with private rootless ownership; published images and applications are retained.'
+    rm -rf "$persistent/buildkit"
+fi
+mkdir -p "$persistent/buildkit"
+chown "$uid:$uid" "$persistent/buildkit"
+chmod 700 "$persistent/buildkit"
 # Account changes are confined to this Pod, preserving the image's mapping helpers.
 awk -F: -v OFS=: -v uid="$uid" -v home="$state/home" '$3 == 1000 { $3 = uid; $4 = uid; $6 = home } { print }' /etc/passwd > "$state/etc/passwd"
 awk -F: -v OFS=: -v uid="$uid" '$3 == 1000 { $3 = uid } { print }' /etc/group > "$state/etc/group"
@@ -782,15 +784,7 @@ chmod 600 "$state/buildkit.toml"
                 deadline,
                 f"cluster builder {self.namespace}/{self.name}",
             )
-            self.run(
-                [
-                    "sh",
-                    "-ec",
-                    'rm -rf -- "$1/transfers" "$1/output" "$1/results"; mkdir -p "$1/results"',
-                    "prepare",
-                    self.root,
-                ]
-            )
+            self._prepare_outputs()
         except BaseException as error:
             self.__exit__(type(error), error, error.__traceback__)
             raise
@@ -811,6 +805,24 @@ chmod 600 "$state/buildkit.toml"
                 raise
         finally:
             self.cancellation.unregister(self.retire)
+
+    def _prepare_outputs(self) -> None:
+        """Clear interrupted outputs under the binding lock, retaining only recorded OCI layouts."""
+        layouts = self.read_json(self.root + "/images.json")
+        self.run([
+            "sh", "-ec", '''root=$1; shift
+rm -rf -- "$root/transfers" "$root/output" "$root/results"
+mkdir -p "$root/results"
+for directory in "$root/images/"*; do
+    keep=
+    for retained; do
+        if test "$directory" = "$retained"; then keep=1; break; fi
+    done
+    if test -z "$keep"; then rm -rf -- "$directory"; fi
+done
+''',
+            "prepare", self.root, *sorted({layout["path"] for layout in layouts.values()}),
+        ])
 
     def _retain_build_cache(self) -> None:
         """Remove transient outputs and unreferenced OCI layouts after successful execution."""
@@ -1041,23 +1053,20 @@ rm -rf "$incoming"
             "share", path,
         ])
 
-    def _containerd(self) -> list[str]:
-        """Address the local development node's image store through its own client."""
-        return NodeImageStore(
-            self.kubectl, self.namespace, self.name, self.binding
-        ).containerd()
-
     def resolve_image(self, image: str) -> str:
         """Resolve a build dependency through the same node store or registry used by BuildKit."""
         if image in self._resolved_images:
             return self._resolved_images[image]
         name = _image_reference(image)
         if name in self._generated_layouts:
-            digest = self._generated_layouts[name]["digest"]
+            layout = self._generated_layouts[name]
+            digest = layout["digest"]
+            manifest = self.read_json(layout["path"] + "/blobs/" + self._context_digest(layout).replace(":", "/", 1))
+            configuration = self.read_json(layout["path"] + "/blobs/" + manifest["config"]["digest"].replace(":", "/", 1))
+            self._image_users[image] = configuration["config"].get("User", "") or "0"
         elif self.containerd_socket:
-            digest = NodeImageStore(
-                self.kubectl, self.namespace, self.name, self.binding
-            ).image_digest(name)
+            store = NodeImageStore(self.kubectl, self.namespace, self.name, self.binding)
+            digest = store.image_digest(name)
         else:
             digest = None
         if digest is None:
@@ -1082,8 +1091,24 @@ rm -rf "$incoming"
                     raise ImageNotFoundError(message) from error
                 raise
             digest = metadata["containerimage.digest"]
+            configuration = json.loads(self.run(
+                ["buildctl", "debug", "get", metadata["containerimage.config.digest"]],
+                capture=True,
+            ))
+            self._image_users[image] = configuration["config"].get("User", "") or "0"
         self._resolved_images[image] = digest
         return digest
+
+    def image_user(self, image: str) -> str:
+        """Preserve the resolved runtime's USER when a dependency stage temporarily runs as root."""
+        digest = self.resolve_image(image)
+        if image not in self._image_users:
+            machine = self.run(["uname", "-m"], capture=True).strip()
+            architecture = {"x86_64": "amd64", "aarch64": "arm64"}[machine]
+            self._image_users[image] = NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding,
+            ).image_user(digest, architecture)
+        return self._image_users[image]
 
     def image_matches(self, image: str, digest: str) -> bool:
         """Verify a retained environment against its producer's OCI descriptor on this node."""
@@ -1141,21 +1166,15 @@ rm -rf "$incoming"
         cached = self.read_json(self.root + "/images.json").get(name)
         if cached and cached["nodeDigest"] == images[name]:
             return cached
-        layout = self.root + "/images/" + uuid.uuid4().hex
+        identifier = uuid.uuid4().hex
+        # Interrupted exports belong to the existing transient-output cleanup.
+        layout = self.root + "/transfers/" + identifier
         self.run(["mkdir", "-p", layout])
         machine = self.run(["uname", "-m"], capture=True).strip()
         platform = "linux/" + {"x86_64": "amd64", "aarch64": "arm64"}[machine]
+        store = NodeImageStore(self.kubectl, self.namespace, self.name, self.binding)
         self.run(
-            [
-                *self._containerd(),
-                "images",
-                "export",
-                "--skip-manifest-json",
-                "--platform",
-                platform,
-                layout + "/image.tar",
-                name,
-            ],
+            store.export_command(name, layout + "/image.tar", platform),
             container="images",
         )
         self.run(
@@ -1169,8 +1188,11 @@ rm -rf "$incoming"
             container="images",
         )
         digest = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
-        self._save_layout(name, layout, digest)
-        return {"path": layout, "digest": digest, "nodeDigest": images[name]}
+        cached_path = self.root + "/images/" + identifier
+        self.run(["mkdir", "-p", self.root + "/images"])
+        self.run(["mv", layout, cached_path])
+        self._save_layout(name, cached_path, digest)
+        return {"path": cached_path, "digest": digest, "nodeDigest": images[name]}
 
     def _context_digest(self, layout: dict[str, str]) -> str:
         """Resolve a single-image index for BuildKit without changing export identities."""
