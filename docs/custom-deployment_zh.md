@@ -31,7 +31,7 @@ foretoken install -e .
 
 这会安装共享的 Foretoken 平台，构建在集群中进行；也可替换已通过 CLI 安装的发布版平台。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。其他 Kubernetes 集群需要构建任务和节点都能访问的镜像仓库，安装命令及仓库认证见[Kubernetes 部署指南](kubernetes-deployment_zh.md#2-从源码安装-foretoken)。
 
-源码构建默认使用节点本地的持久存储，应用文件使用集群默认存储类。需要调整时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName` 或 `applicationFiles.storageClassName`，通过 `--values` 传入。构建存储需使用非 NFS 文件系统，已有卷不会自动更换存储类。
+源码构建自动复用节点本地的持久编译缓存。需要将构建产物存入其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName`，通过 `--values` 传入；执行和编译缓存仍由框架自动安排在本地存储。支持动态供卷的原生 NFS 和 `nfs.csi.k8s.io`。应用文件使用集群默认存储类，也可通过 `applicationFiles.storageClassName` 指定。已有卷保留其存储类。
 
 ## 部署模型服务
 

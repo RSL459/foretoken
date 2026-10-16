@@ -17,7 +17,7 @@ Source updates reuse compatible runtime environments and rebuild them automatica
 
 Rebuild the application parts affected by a change and preserve source deletions. Publish a complete application before updating its services; running services must not depend on writable compiler caches.
 
-Compiler caches persist across builder replacement; application and model storage retain their own configuration and lifecycle.
+Compiler caches persist across builder replacement. An explicitly selected build StorageClass holds completed artifacts, while execution state stays on automatically managed local storage. Publication reads only completed exports; source archives are read from the corresponding local workspace. Both build volumes follow the same binding's cleanup. Application and model storage retain their own configuration and lifecycle.
 
 Independent source directories can build concurrently. Serialize source preparation and submission within one source directory, and keep platform installation and removal exclusive. Waiting for service readiness must not prevent deletion from releasing occupied devices.
 

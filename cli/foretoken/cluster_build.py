@@ -29,6 +29,7 @@ from typing import Any, Self
 
 import yaml
 
+from foretoken.build_artifacts import prepare_artifact_volume
 from foretoken.build_storage import SOURCE_BUILD_UID
 from foretoken.kubernetes import Kubectl, _wait_for_object, timeout_seconds
 from foretoken.manifest import DeploymentError
@@ -44,7 +45,7 @@ _BUILD_POD_LABEL = SOURCE_BUILD_POD_LABEL
 _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
 _BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
 _BUILD_LAYOUT_ANNOTATION = "inference.foretoken.io/source-build-layout"
-_BUILD_LAYOUT = "private-snapshots-v2"
+_BUILD_LAYOUT = "storage-tiers-v1"
 
 
 class BuildCancellation(AbstractContextManager):
@@ -355,6 +356,7 @@ class ClusterBuilder(AbstractContextManager):
         timeout: str,
         *,
         tools_image: str,
+        execution_claim: str = "",
         node: str = "",
         containerd_socket: str = "",
         pull_secrets: tuple[str, ...] = (),
@@ -378,8 +380,12 @@ class ClusterBuilder(AbstractContextManager):
         self.registry_mirrors = registry_mirrors or {}
         self.name = "foretoken-build-" + uuid.uuid4().hex[:12]
         self.root = f"{self.mount}/build/{binding}"
+        self.execution_claim = execution_claim or claim
+        self.execution_mount = "/var/lib/foretoken/compiler" if execution_claim and execution_claim != claim else self.mount
+        self.execution_root = f"{self.execution_mount}/build/{binding}"
+        self.artifact_container = "artifacts" if self.execution_claim != self.claim else "builder"
         self.runtime_root = "/run/foretoken-build"
-        self.workspace = f"{self.root}/workspace"
+        self.workspace = f"{self.execution_root}/workspace"
         self._image_lock = Lock()
         self._generated_layouts: dict[str, dict[str, str]] = {}
         self._used_images: set[str] = set()
@@ -406,6 +412,14 @@ class ClusterBuilder(AbstractContextManager):
             ):
                 continue
             occupants.append(pod)
+            if self.execution_claim != self.claim and not any(
+                volume["name"] == "execution"
+                and volume.get("persistentVolumeClaim", {}).get("claimName") == self.execution_claim
+                for volume in pod["spec"].get("volumes", [])
+            ):
+                continue
+            if self.execution_claim == self.claim and any(volume["name"] == "execution" for volume in pod["spec"].get("volumes", [])):
+                continue
             if not _pod_ready(pod) or pod.get("metadata", {}).get("deletionTimestamp"):
                 continue
             if self.node and pod.get("spec", {}).get("nodeName") != self.node:
@@ -415,6 +429,11 @@ class ClusterBuilder(AbstractContextManager):
             ) != json.dumps(self.registry_mirrors, sort_keys=True):
                 continue
             containers = pod.get("spec", {}).get("containers", [])
+            if self.execution_claim != self.claim and not any(
+                item["name"] == "artifacts" and item["image"] == self.tools_image
+                for item in containers
+            ):
+                continue
             builder = next(
                 (
                     container
@@ -497,21 +516,23 @@ class ClusterBuilder(AbstractContextManager):
             self.name = reusable["metadata"]["name"]
             print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
             try:
-                self.run(
-                    [
-                        "sh",
-                        "-ec",
-                        'rm -rf -- "$1/transfers" "$1/output" "$1/results"; mkdir -p "$1/results"',
-                        "prepare",
-                        self.root,
-                    ]
-                )
+                self._prepare_outputs()
             except BaseException as error:
                 self.__exit__(type(error), error, error.__traceback__)
                 raise
             return self
+        if self.execution_claim != self.claim:
+            try:
+                artifact_nfs_isolated = prepare_artifact_volume(
+                    self.kubectl, self.namespace, self.claim, self.binding,
+                    self.node, self.tools_image, self.pull_secrets, self.timeout,
+                    self.cancellation,
+                )
+            except BaseException:
+                self.cancellation.unregister(self.retire)
+                raise
         image = self.image
-        pvc = self.kubectl.get("pvc", self.claim, self.namespace)
+        pvc = self.kubectl.get("pvc", self.execution_claim, self.namespace)
         capacity = (
             pvc.get("status", {})
             .get("capacity", {})
@@ -593,16 +614,16 @@ chown "$uid:$uid" "$state/buildkit.toml"
 chmod 600 "$state/buildkit.toml"
 """,
                         "prepare",
-                        self.root,
+                        self.execution_root,
                         *gc_limits,
                         mirrors,
                         self.runtime_root,
                         str(SOURCE_BUILD_UID),
-                        self.mount,
+                        self.execution_mount,
                     ],
                     "securityContext": {"runAsUser": 0},
                     "volumeMounts": [
-                        {"name": "cache", "mountPath": self.mount},
+                        {"name": "execution" if self.execution_claim != self.claim else "cache", "mountPath": self.execution_mount},
                         {"name": "runtime", "mountPath": self.runtime_root},
                     ],
                 }
@@ -622,10 +643,10 @@ chmod 600 "$state/buildkit.toml"
                     "value": "unix://" + self.runtime_root + "/runtime/buildkit/buildkitd.sock",
                 },
             ],
-            "workingDir": self.root,
+            "workingDir": self.execution_root,
             "args": [
                 "--root",
-                f"{self.root}/buildkit",
+                f"{self.execution_root}/buildkit",
                 "--config",
                 f"{self.runtime_root}/buildkit.toml",
             ],
@@ -693,7 +714,63 @@ chmod 600 "$state/buildkit.toml"
             container["env"].append(
                 {"name": "DOCKER_CONFIG", "value": "/registry-auth"}
             )
+        if self.execution_claim != self.claim:
+            spec["volumes"].append({
+                "name": "execution",
+                "persistentVolumeClaim": {"claimName": self.execution_claim},
+            })
+            container["volumeMounts"].append({"name": "execution", "mountPath": self.execution_mount})
+            # The storage server's ordinary writer creates only this binding's
+            # staging tree; root-squashed NFS does not require host chown.
+            spec["initContainers"].append({
+                "name": "prepare-artifacts",
+                "image": self.tools_image,
+                "command": [
+                    "sh", "-ec",
+                    """if test "$(stat -f -c %t "$2")" = 6969 && test "$3" != true; then
+    printf '%s\\n' 'This NFS artifact provider has no supported isolated mount lifecycle; use a native NFS or nfs.csi.k8s.io volume.' >&2
+    exit 1
+fi
+if test "$3" = true; then
+    if ! test -d "$1"; then mkdir -p "$1"; chmod 2770 "$1"; fi
+else
+    mkdir -p "$1"
+    chown "$4:1000" "$1" "$2"
+    chmod 2775 "$1" "$2"
+fi
+if ! test -w "$1"; then
+    printf '%s\\n' 'Artifact storage must allow writes by publisher UID 1000 and group 1000; check the provisioner directory permissions.' >&2
+    exit 1
+fi
+""",
+                    "prepare", self.root, self.mount, str(artifact_nfs_isolated).lower(), str(SOURCE_BUILD_UID),
+                ],
+                "terminationMessagePolicy": "FallbackToLogsOnError",
+                "securityContext": {
+                    "runAsUser": 1000 if artifact_nfs_isolated else 0,
+                    "runAsGroup": 1000,
+                    "allowPrivilegeEscalation": False,
+                },
+                "volumeMounts": [{"name": "cache", "mountPath": self.mount}],
+            })
         spec["containers"] = [container]
+        if self.execution_claim != self.claim:
+            spec["containers"].append({
+                "name": "artifacts",
+                "image": self.tools_image,
+                "command": ["sh", "-c", "trap 'exit 0' TERM INT; sleep infinity & wait"],
+                "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
+                "securityContext": {
+                    "runAsUser": 1000 if artifact_nfs_isolated else SOURCE_BUILD_UID,
+                    "runAsGroup": 1000,
+                    "allowPrivilegeEscalation": False,
+                    "capabilities": {"drop": ["ALL"]},
+                },
+                "volumeMounts": [
+                    {"name": "cache", "mountPath": self.mount},
+                    {"name": "execution", "mountPath": self.execution_mount, "readOnly": True},
+                ],
+            })
         if self.containerd_socket:
             # Only local kind/k3d installation uses node image import. The compiler
             # never receives the runtime socket; archives remain on the cluster volume.
@@ -792,15 +869,7 @@ chmod 600 "$state/buildkit.toml"
                 deadline,
                 f"cluster builder {self.namespace}/{self.name}",
             )
-            self.run(
-                [
-                    "sh",
-                    "-ec",
-                    'rm -rf -- "$1/transfers" "$1/output" "$1/results"; mkdir -p "$1/results"',
-                    "prepare",
-                    self.root,
-                ]
-            )
+            self._prepare_outputs()
         except BaseException as error:
             self.__exit__(type(error), error, error.__traceback__)
             raise
@@ -822,9 +891,21 @@ chmod 600 "$state/buildkit.toml"
         finally:
             self.cancellation.unregister(self.retire)
 
+    def _prepare_outputs(self) -> None:
+        """Clear incomplete exports while preserving compiler state and completed OCI layouts."""
+        self.run(
+            ["rm", "-rf", "--", self.root + "/transfers", self.root + "/output"],
+            container=self.artifact_container,
+        )
+        self.run([
+            "sh", "-ec", 'rm -rf "$1/results" "$1/exports"; mkdir -p "$1/results" "$1/exports"',
+            "prepare", self.execution_root,
+        ])
+
     def _retain_build_cache(self) -> None:
         """Remove transient outputs and unreferenced OCI layouts after successful execution."""
-        self.run(["rm", "-rf", "--", self.root + "/results", self.root + "/transfers"])
+        self.run(["rm", "-rf", "--", self.execution_root + "/results", self.execution_root + "/exports"])
+        self.run(["rm", "-rf", "--", self.root + "/transfers"], container=self.artifact_container)
         if self._used_images:
             path = self.root + "/images.json"
             layouts = self.read_json(path)
@@ -849,7 +930,7 @@ chmod 600 "$state/buildkit.toml"
                 ]
             )
             if stale:
-                self.run(["rm", "-rf", "--", *stale])
+                self.run(["rm", "-rf", "--", *stale], container=self.artifact_container)
 
     def retire(self) -> None:
         """Stop this binding's daemon and executors while retaining its last saved artifacts."""
@@ -943,7 +1024,7 @@ chmod 600 "$state/buildkit.toml"
     def sync(self, files: dict[str, Path], versions: dict[str, str]) -> None:
         """Apply a path-level delta; an interrupted upload is replaced completely on retry."""
         started = time.monotonic()
-        marker = self.root + "/inputs.json"
+        marker = self.execution_root + "/inputs.json"
         previous = self.read_json(marker)
         changed = [name for name in files if previous.get(name) != versions[name]]
         removed = sorted(previous.keys() - versions.keys())
@@ -994,7 +1075,7 @@ rm -rf "$incoming"
                         "-c",
                         script,
                         "sync",
-                        self.root,
+                        self.execution_root,
                         self.workspace,
                         str(reset).lower(),
                     ]
@@ -1032,6 +1113,7 @@ rm -rf "$incoming"
                 arguments["INFERENCE_ENGINE_IMAGE"] = "scratch"
             self.build(dockerfile, target="source-export", destination=destination, arguments=arguments)
             return
+        local_output = self.execution_root + "/exports/" + uuid.uuid4().hex if self.execution_claim != self.claim else destination
         script = 'rm -rf "$1"; mkdir -p "$1"'
         if "python" in parts:
             script += (
@@ -1039,10 +1121,22 @@ rm -rf "$incoming"
                 'if test -d "$2"; then cp -pR "$2/." "$1/python/"; fi'
             )
         self.run([
-            "sh", "-ec", script, "export", destination,
+            "sh", "-ec", script, "export", local_output,
             self.workspace + "/data-plane/model-server/python",
         ])
-        self._share_output(destination)
+        self._deliver_output(local_output, destination)
+
+    def _deliver_output(self, source: str, destination: str) -> None:
+        """Hand complete local exports to the persistent volume's ordinary writer."""
+        self._share_output(source)
+        if source == destination:
+            return
+        self.run([
+            "sh", "-ec",
+            'rm -rf "$2"; mkdir -p "$2"; cp -R --preserve=mode,timestamps --no-preserve=ownership "$1/." "$2/"',
+            "deliver", source, destination,
+        ], container=self.artifact_container)
+        self.run(["rm", "-rf", "--", source])
 
     def _share_output(self, path: str) -> None:
         """Give the existing publisher group access to generated exports, not compiler snapshots."""
@@ -1153,7 +1247,7 @@ rm -rf "$incoming"
             ]
         )
         if previous and previous["path"] != layout:
-            self.run(["rm", "-rf", "--", previous["path"]])
+            self.run(["rm", "-rf", "--", previous["path"]], container=self.artifact_container)
 
     def _local_image(self, image: str) -> dict[str, str] | None:
         """Expose built OCI outputs or existing node images as registry-free BuildKit contexts."""
@@ -1171,7 +1265,9 @@ rm -rf "$incoming"
         if cached and cached["nodeDigest"] == images[name]:
             return cached
         layout = self.root + "/images/" + uuid.uuid4().hex
-        self.run(["mkdir", "-p", layout])
+        self.run([
+            "sh", "-ec", 'mkdir -p "$1"; chmod 2770 "$1"', "prepare", layout,
+        ], container=self.artifact_container)
         machine = self.run(["uname", "-m"], capture=True).strip()
         platform = "linux/" + {"x86_64": "amd64", "aarch64": "arm64"}[machine]
         self.run(
@@ -1195,7 +1291,7 @@ rm -rf "$incoming"
                 "extract",
                 layout,
             ],
-            container="images",
+            container=self.artifact_container if self.execution_claim != self.claim else "images",
         )
         digest = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
         self._save_layout(name, layout, digest)
@@ -1224,7 +1320,7 @@ rm -rf "$incoming"
 
         Dependency resolution uses metadata_only to inspect a base without exporting its layers.
         """
-        metadata = self.root + "/results/" + uuid.uuid4().hex + ".json"
+        metadata = self.execution_root + "/results/" + uuid.uuid4().hex + ".json"
         args = [
             "buildctl",
             "build",
@@ -1288,24 +1384,26 @@ rm -rf "$incoming"
                 value = alias
             args += ["--opt", f"build-arg:{key}={value}"]
         layout = ""
+        local_output = ""
         if destination:
-            # Prepare traversable parents before BuildKit creates its private export root.
-            self.run(["mkdir", "-p", destination])
+            local_output = self.execution_root + "/exports/" + uuid.uuid4().hex if self.execution_claim != self.claim else destination
+            self.run(["mkdir", "-p", local_output])
             # BuildKit mirrors each owned export directory so retries cannot revive removed files.
-            output = "type=local,mode=delete,dest=" + destination
+            output = "type=local,mode=delete,dest=" + local_output
         elif metadata_only:
             output = f"type=image,name={image},oci-mediatypes=true,store=false,push=false"
         elif self.containerd_socket:
             # An exported layout owns the result independently of BuildKit's cache.
             # Replaying a completed solve for delivery can rebuild evicted dependency layers.
             layout = self.root + "/transfers/" + uuid.uuid4().hex
-            output = f"type=oci,name={image},oci-mediatypes=true,dest={layout},tar=false"
+            local_output = self.execution_root + "/exports/" + uuid.uuid4().hex if self.execution_claim != self.claim else layout
+            output = f"type=oci,name={image},oci-mediatypes=true,dest={local_output},tar=false"
         else:
             output = f"type=image,name={image},push={str(push).lower()}"
         started = time.monotonic()
         self.run([*args, "--output", output], capture=capture)
-        if destination:
-            self._share_output(destination)
+        if local_output:
+            self._deliver_output(local_output, destination or layout)
         result = self.read_json(metadata)
         target_name = target or "default"
         output_name = destination or image or "files"
@@ -1341,8 +1439,8 @@ rm -rf "$incoming"
             # iteration's input. Retain its immutable OCI files without copying
             # layer bytes or invalidating in-flight commands' original paths.
             cached = self.root + "/images/" + uuid.uuid4().hex
-            self.run(["mkdir", "-p", self.root + "/images"])
-            self.run(["cp", "-al", layout["path"], cached])
+            self.run(["mkdir", "-p", self.root + "/images"], container=self.artifact_container)
+            self.run(["cp", "-al", layout["path"], cached], container=self.artifact_container)
             self._save_layout(reference, cached, digest)
             self._used_images.add(reference)
 

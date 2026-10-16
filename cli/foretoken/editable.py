@@ -55,7 +55,7 @@ from foretoken.source import (
     checkout_operation,
     checkout_state_directory,
     engine_source_roots,
-    ensure_build_cache,
+    ensure_build_volumes,
     image_tools_image,
     local_build_nodes,
     pinned_rust_revision,
@@ -489,13 +489,21 @@ class EditableDeployment:
                 (claim for node, _, claim in local_caches if node == origin.node),
                 "foretoken-application-compiler-" + node_uid,
             ) + "-" + build["binding"][:12]
-        identity = ensure_build_cache(
+
+        def record_cache(identity: dict[str, Any]) -> None:
+            """Keep each volume UID recoverable if paired allocation or publication fails."""
+            if identity not in build.setdefault("caches", []):
+                build["caches"].append(identity)
+                _write_json(self.directory / "install.json", self.state)
+
+        _, execution = ensure_build_volumes(
             self.kubectl,
             namespace,
             claim,
             build["configuration"],
             binding=build["binding"],
             timeout=timeout,
+            record_identity=record_cache,
             owner={
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",
@@ -503,9 +511,6 @@ class EditableDeployment:
                 "uid": origin.claim_uid,
             },
         )
-        if identity is not None and identity not in build.setdefault("caches", []):
-            build["caches"].append(identity)
-            _write_json(self.directory / "install.json", self.state)
         build_engine = (
             "model-server" in missing
             and bool(self.state.get("engines"))
@@ -542,6 +547,7 @@ class EditableDeployment:
                 build["arguments"], build.get("registry_mirrors", {})
             ),
             registry_mirrors=build.get("registry_mirrors", {}),
+            execution_claim=execution["name"] if execution is not None else "",
             node=origin.node,
             containerd_socket=socket if build_engine else "",
             credentials=registry_credentials(
@@ -602,7 +608,8 @@ class EditableDeployment:
                             "assemble",
                             staging + "/engine",
                             payload,
-                        ]
+                        ],
+                        container=builder.artifact_container,
                     )
 
             # Each component owns its export directory. Join builds before validating
@@ -663,7 +670,7 @@ class EditableDeployment:
                 f"Application publication completed in {time.monotonic() - published_at:.1f}s",
                 flush=True,
             )
-            builder.run(["rm", "-rf", "--", builder.root + "/output"])
+            builder.run(["rm", "-rf", "--", builder.root + "/output"], container=builder.artifact_container)
 
     def _ready_containers(
         self, namespace: str, component: str, service: str, revision: str
