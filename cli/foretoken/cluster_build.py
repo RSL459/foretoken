@@ -44,7 +44,7 @@ _BUILD_POD_LABEL = SOURCE_BUILD_POD_LABEL
 _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
 _BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
 _BUILD_LAYOUT_ANNOTATION = "inference.foretoken.io/source-build-layout"
-_BUILD_LAYOUT = "local-pvc-v1"
+_BUILD_LAYOUT = "private-snapshots-v2"
 
 
 class BuildCancellation(AbstractContextManager):
@@ -385,6 +385,7 @@ class ClusterBuilder(AbstractContextManager):
         self._used_images: set[str] = set()
         self._built_images: set[str] = set()
         self._resolved_images: dict[str, str] = {}
+        self._image_users: dict[str, str] = {}
 
     def _reuse_or_retire_pods(self) -> dict[str, Any] | None:
         """Select a compatible daemon and retire other builders sharing its compiler cache."""
@@ -560,6 +561,15 @@ esac
 mkdir -p "$persistent" "$state/etc" "$state/home" "$state/runtime" "$state/tmp"
 chown "$uid:1000" "$mount" "$persistent"
 chmod 2775 "$mount" "$persistent"
+# Snapshot ownership must stay inside the rootless UID/GID mapping. The publisher
+# shares exports, not compiler snapshots. Retire legacy state after its daemon stops.
+if test -d "$persistent/buildkit" && test "$(stat -c %g "$persistent/buildkit")" != "$uid"; then
+    printf '%s\\n' 'Recreating compiler snapshots with private rootless ownership; published images and applications are retained.'
+    rm -rf "$persistent/buildkit"
+fi
+mkdir -p "$persistent/buildkit"
+chown "$uid:$uid" "$persistent/buildkit"
+chmod 700 "$persistent/buildkit"
 # Account changes are confined to this Pod, preserving the image's mapping helpers.
 awk -F: -v OFS=: -v uid="$uid" -v home="$state/home" '$3 == 1000 { $3 = uid; $4 = uid; $6 = home } { print }' /etc/passwd > "$state/etc/passwd"
 awk -F: -v OFS=: -v uid="$uid" '$3 == 1000 { $3 = uid } { print }' /etc/group > "$state/etc/group"
@@ -1053,11 +1063,14 @@ rm -rf "$incoming"
             return self._resolved_images[image]
         name = _image_reference(image)
         if name in self._generated_layouts:
-            digest = self._generated_layouts[name]["digest"]
+            layout = self._generated_layouts[name]
+            digest = layout["digest"]
+            manifest = self.read_json(layout["path"] + "/blobs/" + self._context_digest(layout).replace(":", "/", 1))
+            configuration = self.read_json(layout["path"] + "/blobs/" + manifest["config"]["digest"].replace(":", "/", 1))
+            self._image_users[image] = configuration["config"].get("User", "") or "0"
         elif self.containerd_socket:
-            digest = NodeImageStore(
-                self.kubectl, self.namespace, self.name, self.binding
-            ).image_digest(name)
+            store = NodeImageStore(self.kubectl, self.namespace, self.name, self.binding)
+            digest = store.image_digest(name)
         else:
             digest = None
         if digest is None:
@@ -1082,8 +1095,24 @@ rm -rf "$incoming"
                     raise ImageNotFoundError(message) from error
                 raise
             digest = metadata["containerimage.digest"]
+            configuration = json.loads(self.run(
+                ["buildctl", "debug", "get", metadata["containerimage.config.digest"]],
+                capture=True,
+            ))
+            self._image_users[image] = configuration["config"].get("User", "") or "0"
         self._resolved_images[image] = digest
         return digest
+
+    def image_user(self, image: str) -> str:
+        """Preserve the resolved runtime's USER when a dependency stage temporarily runs as root."""
+        digest = self.resolve_image(image)
+        if image not in self._image_users:
+            machine = self.run(["uname", "-m"], capture=True).strip()
+            architecture = {"x86_64": "amd64", "aarch64": "arm64"}[machine]
+            self._image_users[image] = NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding,
+            ).image_user(digest, architecture)
+        return self._image_users[image]
 
     def image_matches(self, image: str, digest: str) -> bool:
         """Verify a retained environment against its producer's OCI descriptor on this node."""

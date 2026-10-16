@@ -7,13 +7,6 @@ ARG UV_IMAGE_REGISTRY=ghcr.io
 ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.12.22
 FROM ${UV_IMAGE} AS uv
 
-FROM ${RUNTIME_IMAGE} AS runtime-user
-RUN mkdir -p /tmp/foretoken-runtime-user \
-    && printf '%s:%s\n' "$(id -u)" "$(id -g)" > /tmp/foretoken-runtime-user/user
-
-FROM scratch AS runtime-user-export
-COPY --from=runtime-user /tmp/foretoken-runtime-user/user /user
-
 # Add build tools to the exact serving environment, leaving torch and vendor libraries intact.
 FROM ${RUNTIME_IMAGE} AS toolchain
 ARG UV_DEFAULT_INDEX

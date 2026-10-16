@@ -163,6 +163,21 @@ class NodeImageStore:
         digest = self.images().get(image)
         return image_manifest_digest(digest, self._descriptor) if digest is not None else None
 
+    def image_user(self, digest: str, architecture: str) -> str:
+        """Read the build node's image USER from manifests and config, without unpacking layers."""
+        manifest = self._descriptor(digest)
+        while "manifests" in manifest:
+            selected = next((
+                entry for entry in manifest["manifests"]
+                if entry.get("platform", {}).get("os") == "linux"
+                and entry["platform"].get("architecture") == architecture
+            ), None)
+            if selected is None:
+                raise DeploymentError(f"image {digest} has no linux/{architecture} manifest")
+            manifest = self._descriptor(selected["digest"])
+        configuration = self._descriptor(manifest["config"]["digest"])
+        return configuration["config"].get("User", "") or "0"
+
     def matches(self, image: str, digest: str) -> bool:
         """Compare BuildKit output with a node reference, including its single-image index."""
         node_digest = self.images().get(image)

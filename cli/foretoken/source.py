@@ -1385,14 +1385,8 @@ def prepare_source_images(
                     engine_arguments["RUNTIME_IMAGE"] = selected["image"]
                     node_arguments = {}
                     for builder in builders:
-                        user_output = builder.root + "/runtime-user"
-                        builder.build(
-                            "deploy/inference-engines/source-build.Dockerfile",
-                            target="runtime-user-export", destination=user_output,
-                            arguments=engine_arguments,
-                        )
                         node_arguments[builder.node] = {
-                            "RUNTIME_USER": builder.run(["cat", user_output + "/user"], capture=True).strip(),
+                            "RUNTIME_USER": builder.image_user(selected["image"]),
                             "CACHE_ID": cache_prefix + "-" + selected["digests"][builder.node],
                         }
                     selected = environments.build(
