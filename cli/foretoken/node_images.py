@@ -250,16 +250,28 @@ class NodeImageStore:
             ]
         )
 
-    def import_layout(self, layout: str, image: str) -> None:
-        """Import and pin every OCI alias; ctr 1.x pins before its long unpack stage."""
-        command = [*self.containerd(), "images", "import"]
+    def _major_version(self) -> int:
+        """Select the supported containerd archive API from the node's client version."""
         version = self.run([_CONTAINERD_CLIENT, "--version"], capture=True)
         match = re.search(r"\bv([12])\.\d+\.\d+", version)
         if match is None:
             raise DeploymentError(
                 f"unsupported containerd client version: {version.strip()}"
             )
-        major = int(match[1])
+        return int(match[1])
+
+    def export_command(self, image: str, archive: str, platform: str) -> list[str]:
+        """Return a synchronous OCI export for the builder's cancellation-aware executor."""
+        command = [*self.containerd(), "images", "export"]
+        if self._major_version() == 2:
+            # The transfer client's asynchronous receiver can close an unfinished archive.
+            command.append("--local")
+        return [*command, "--skip-manifest-json", "--platform", platform, archive, image]
+
+    def import_layout(self, layout: str, image: str) -> None:
+        """Import and pin every OCI alias; ctr 1.x pins before its long unpack stage."""
+        command = [*self.containerd(), "images", "import"]
+        major = self._major_version()
         if major == 2:
             command.append("--local")
         index = json.loads(self.run(["cat", layout + "/index.json"], capture=True))
