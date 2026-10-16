@@ -44,7 +44,11 @@ from foretoken.cluster_build import (
     registry_credentials,
     remove_build_pods,
 )
-from foretoken.engine_environment import engine_build_arguments, resolve_vllm_base_image
+from foretoken.engine_environment import (
+    engine_build_arguments,
+    engine_cache_scope,
+    resolve_vllm_base_image,
+)
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError, ForetokenDeployment
 from foretoken.network_sources import select_build_sources
@@ -1369,6 +1373,24 @@ def prepare_source_images(
         checkout.name if checkout is not None
         else build.get("binding") or previous.get("build", {}).get("binding") or uuid.uuid4().hex
     )
+    # Save compiler identity before any stage can fail. Legacy pending snapshots
+    # identify the old recipe revision even when the current recipe has been fixed.
+    cache_scope = None
+    if engines:
+        pending_build = pending.get("build", {}) if pending.get("root") == str(root) and pending.get("build", {}).get("binding") == binding else {}
+        saved_scope = pending_build.get("engine_cache_scope") or build.get("engine_cache_scope")
+        recipe = "deploy/inference-engines/source-build.Dockerfile"
+        legacy_revision = build.get("versions", {}).get(recipe)
+        if pending_build and pending.get("inputs"):
+            captured = state_directory / pending["inputs"] / recipe
+            committed = state_directory / previous["inputs"] / recipe if previous.get("inputs") else None
+            if captured.is_file() and not (
+                legacy_revision and committed is not None and committed.is_file()
+                and captured.stat().st_mode == committed.stat().st_mode
+                and filecmp.cmp(captured, committed, shallow=False)
+            ):
+                legacy_revision = Path(pending["inputs"]).name.removeprefix("inputs-")
+        cache_scope = engine_cache_scope(binding, engines, saved_scope, legacy_revision)
     environment = os.environ.copy()
     if command.oci_registry:
         environment["FORETOKEN_OCI_REGISTRY"] = command.oci_registry
@@ -1454,6 +1476,7 @@ def prepare_source_images(
             "base_image": inference_engine_image,
             "build": {
                 "binding": binding,
+                **({"engine_cache_scope": cache_scope} if cache_scope is not None else {}),
                 "caches": [
                     *build.get("caches", []),
                     *(cache for cache in pending.get("build", {}).get("caches", [])
@@ -1670,11 +1693,7 @@ def prepare_source_images(
                     cancellation.run_stage, publisher.export_application, component, payload, arguments, parts,
                 )
                 if component == "model-server" and engines:
-                    cache_prefix = "-".join((
-                        binding,
-                        versions["deploy/inference-engines/source-build.Dockerfile"],
-                        *sorted(engines),
-                    ))
+                    cache_prefix = cache_scope["prefix"]
                     engine_arguments = {
                         key: value for key, value in engine_build_arguments(arguments).items()
                         if key not in {"BUILD_JOBS", "TARGET_CUDA_ARCH_LIST"}
@@ -1698,8 +1717,15 @@ def prepare_source_images(
                             "data-plane/patches/vllm/",
                         ),
                     )
+                    prior_environment = build.get("environments", {}).get("engine-source", {})
                     for node, digest in selected["digests"].items():
-                        engine_caches["" if registry else node] = cache_prefix + "-" + digest
+                        key = "" if registry else node
+                        cache_id = cache_prefix + "-" + digest
+                        if build.get("borrowed_images") is not True and prior_environment.get("digests", {}).get(node) == digest:
+                            cache_id = build.get("engine_caches", {}).get(key, cache_id)
+                        engine_caches[key] = cache_id
+                    pending_state["build"]["engine_caches"] = dict(engine_caches)
+                    _write_json(pending_path, pending_state)
                 application.result()
                 if component == "model-server" and engines:
                     engine_output = publisher.root + "/applications/engine"
@@ -1823,6 +1849,7 @@ def prepare_source_images(
                 "registry": registry,
                 "containerd_socket": nodes[0][1],
                 "engine_caches": engine_caches,
+                **({"engine_cache_scope": cache_scope} if cache_scope is not None else {}),
                 "engine_native": engine_native,
                 "runtime_backend": runtime_backend,
                 "build_metax_runtime": build_metax_runtime,
