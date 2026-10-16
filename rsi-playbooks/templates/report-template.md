@@ -8,14 +8,14 @@ Use this for the task's `report.md`. Summarize results first, then briefly expla
 
 Briefly state the final approach and main performance changes. Specify the model, software version, hardware, workload, and concurrency. Use separate tables for different conditions, each starting with its initial reference approach (base).
 
-Select metrics from the task. Give each metric a measured-value column and a change-from-base column, with units and improvement direction in the heading.
+Select task metrics from the [performance comparison](../experiment-records.md#analyze-results) and link the results. Label each metric with its unit and improvement direction.
 
 | Approach | Change | Metric A (unit) | Change from base | Metric B (unit) | Change from base | Retained? |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| base | Initial approach | Measured value | 0% | Measured value | 0% | Initial reference |
-| Approach name | Specific operation | Measured value | Percentage change | Measured value | Percentage change | Actual decision |
+| base | Initial approach | Mean ± stddev (n) | — | Mean ± stddev (n) | — | Initial reference |
+| Approach name | Specific operation | Mean ± stddev (n) | Percentage change | Mean ± stddev (n) | Percentage change | Actual decision |
 
-List results in iteration order, including regressions. Calculate percentage change as `(measured value / base value - 1) × 100%`. Mark unmeasured or undefined values with “—” and a brief explanation.
+Here `n` is the number of measured repeats for that metric; show a single value when only one repeat is available. List iterations in order, including regressions. Preserve missing or undefined values as “—” with their reason. Explain condition differences that affect the conclusion. Report quality scores with their evaluator's sample counts and error estimates.
 
 ## Iterations
 

@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
+use tokio_util::sync::CancellationToken;
 use vllm_engine_core_client::protocol::structured_outputs::StructuredOutputBackend;
 use vllm_llm::{FinishReason, Llm};
 use vllm_metrics::{EngineLabels, METRICS};
@@ -154,6 +155,7 @@ pub trait Backend: Send + Sync {
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
 pub struct VllmBackend {
     llm: RwLock<Option<Llm>>,
+    closing: CancellationToken,
     max_concurrent_requests: Option<u64>,
     engine_labels: Vec<EngineLabels>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
@@ -174,6 +176,7 @@ impl VllmBackend {
             .collect();
         Self {
             llm: RwLock::new(Some(llm)),
+            closing: CancellationToken::new(),
             max_concurrent_requests,
             engine_labels,
             boundary_latency: Arc::new(Mutex::new(BoundaryLatencyMetrics::new())),
@@ -182,6 +185,9 @@ impl VllmBackend {
 
     /// Takes and shuts down the owned vLLM `Llm` facade during model-server teardown.
     pub async fn shutdown(&self) -> Result<(), BackendError> {
+        // Pending submissions and utilities hold read guards. Release them before taking
+        // ownership of the client that broadcasts terminal errors to active streams.
+        self.closing.cancel();
         let Some(llm) = self.llm.write().await.take() else {
             return Ok(());
         };
@@ -199,14 +205,15 @@ impl VllmBackend {
             .as_ref()
             .ok_or("engine is unavailable")?
             .engine_core_client();
-        client
-            .collective_rpc(
+        self.closing
+            .run_until_cancelled(client.collective_rpc(
                 "foretoken_mctracer",
                 None,
                 (start, directory.to_string_lossy()),
                 std::collections::BTreeMap::<String, String>::new(),
-            )
+            ))
             .await
+            .ok_or("engine is shutting down")?
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
@@ -218,11 +225,17 @@ impl VllmBackend {
             .as_ref()
             .ok_or("engine is unavailable")?
             .engine_core_client();
-        let result = if start {
-            client.start_profile(None).await
-        } else {
-            client.stop_profile(None).await
-        };
+        let result = self
+            .closing
+            .run_until_cancelled(async {
+                if start {
+                    client.start_profile(None).await
+                } else {
+                    client.stop_profile(None).await
+                }
+            })
+            .await
+            .ok_or("engine is shutting down")?;
         result.map_err(|error| error.to_string())
     }
 }
@@ -339,9 +352,11 @@ impl Backend for VllmBackend {
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
         let request_id = request.request_id.clone();
-        let stream = llm
-            .generate(request.into())
+        let stream = self
+            .closing
+            .run_until_cancelled(llm.generate(request.into()))
             .await
+            .ok_or(BackendError::Unavailable)?
             .map_err(BackendError::from_llm)?;
         let completion = stream.completion();
         Ok(BackendGeneration {
@@ -363,7 +378,11 @@ impl Backend for VllmBackend {
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError> {
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
-        llm.abort(request_ids).await.map_err(BackendError::from_llm)
+        self.closing
+            .run_until_cancelled(llm.abort(request_ids))
+            .await
+            .ok_or(BackendError::Unavailable)?
+            .map_err(BackendError::from_llm)
     }
 
     async fn local_prefixes(
@@ -376,28 +395,32 @@ impl Backend for VllmBackend {
             .ok_or(BackendError::Unavailable)?
             .engine_core_client();
         // Each scheduler reports its own rank; cache contents are not a consensus value.
-        let observations = client
-            .call_utility::<serde_json::Value, _>(
-                "get_prefix_cache_hit",
-                (
-                    &request.prompt_token_ids,
-                    request.cache_salt.as_deref(),
-                    request.lora_name.as_deref(),
-                    request
-                        .multimodal
-                        .iter()
-                        .map(|feature| {
-                            serde_json::json!({
-                                "identifier": feature.identifier,
-                                "offset": feature.offset,
-                                "length": feature.length,
+        let observations = self
+            .closing
+            .run_until_cancelled(
+                client.call_utility::<serde_json::Value, _>(
+                    "get_prefix_cache_hit",
+                    (
+                        &request.prompt_token_ids,
+                        request.cache_salt.as_deref(),
+                        request.lora_name.as_deref(),
+                        request
+                            .multimodal
+                            .iter()
+                            .map(|feature| {
+                                serde_json::json!({
+                                    "identifier": feature.identifier,
+                                    "offset": feature.offset,
+                                    "length": feature.length,
+                                })
                             })
-                        })
-                        .collect::<Vec<_>>(),
-                    request.lora_path.as_deref(),
+                            .collect::<Vec<_>>(),
+                        request.lora_path.as_deref(),
+                    ),
                 ),
             )
             .await
+            .ok_or(BackendError::Unavailable)?
             .map_err(BackendError::from_engine_client)?;
         // Native dictionaries encode tiers as strings; rmpv's enum decoder expects arrays.
         observations
@@ -436,10 +459,14 @@ impl Backend for VllmBackend {
     async fn scheduler_load(&self) -> Result<Vec<SchedulerLoad>, BackendError> {
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
-        let loads = llm
-            .engine_core_client()
-            .call_utility::<Option<SchedulerLoad>, _>("get_scheduler_load", ())
+        let loads = self
+            .closing
+            .run_until_cancelled(
+                llm.engine_core_client()
+                    .call_utility::<Option<SchedulerLoad>, _>("get_scheduler_load", ()),
+            )
             .await
+            .ok_or(BackendError::Unavailable)?
             .map_err(BackendError::from_engine_client)?;
         loads
             .into_iter()

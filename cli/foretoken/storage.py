@@ -94,13 +94,35 @@ class DirectoryVolumes:
                     flush=True,
                 )
                 continue
+            consumer_nodes = nodes
+            platform = None
+            options = {}
+            if not context.startswith("k3d-"):
+                platforms = self.kubectl.list_all_resources(
+                    ("deployment.apps",),
+                    label_selector="app.kubernetes.io/name=foretoken-control-plane",
+                )
+                if len(platforms) == 1:
+                    platform = platforms[0]
+                    arguments = platform["spec"]["template"]["spec"]["containers"][0]["args"]
+                    options = dict(
+                        argument[2:].split("=", 1)
+                        for argument in arguments
+                        if argument.startswith("--") and "=" in argument
+                    )
+                    # Shared volumes retain their cluster-wide placement across redeployments.
+                    # Only a local RWO directory needs proof of a single consumer node.
+                    if cache.access_mode == "ReadWriteOnce":
+                        consumer_nodes = self._consumer_nodes(deployment, cache, nodes, options)
             resolved, hostnames, directory_owner = _resolve_directory(
-                cache, deployment.path, context, nodes
+                cache, deployment.path, context, consumer_nodes
             )
             if not context.startswith("k3d-"):
                 directory_owner = self.read_directory_owner(matching[0])
                 if directory_owner is None:
-                    directory_owner = self._remote_directory_owner(resolved, nodes, timeout)
+                    directory_owner = self._remote_directory_owner(
+                        resolved, consumer_nodes, timeout, platform, options
+                    )
             if directory_owner is not None:
                 uid, gid = directory_owner
                 annotations[self.directory_owner_annotation] = f"{uid}:{gid}"
@@ -136,23 +158,61 @@ class DirectoryVolumes:
                 )
             self._bind(claim, path, hostnames, timeout)
 
+    def _consumer_nodes(
+        self,
+        deployment: ForetokenDeployment,
+        cache: RuntimeCacheManifest,
+        nodes: tuple[dict[str, Any], ...],
+        options: dict[str, str],
+    ) -> tuple[dict[str, Any], ...]:
+        """Resolve cache placement from installed runtime settings and namespace consumers."""
+        caches = self.kubectl.list_resources(
+            ("runtimecaches.inference.foretoken.io",), cache.namespace
+        )
+        if options.get("cache-claim") or any(
+            current["metadata"]["name"] != cache.name for current in caches
+        ):
+            return nodes
+        key = options.get("gpu-node-selector-key", "")
+        value = options.get("gpu-node-selector-value", "")
+        if bool(key) != bool(value):
+            return nodes
+        services = self.kubectl.list_resources(
+            ("modelservices.inference.foretoken.io",), cache.namespace
+        )
+        # Keep existing intent as well as its replacement: old serving cohorts can
+        # still use the claim while a deployment rolls onto a different node.
+        services += tuple(
+            document for document in deployment.objects
+            if document.get("kind") == "ModelService"
+            and document.get("apiVersion", "").startswith("inference.foretoken.io/")
+            and document["metadata"]["namespace"] == cache.namespace
+        )
+        return _directory_nodes(nodes, services, {key: value} if key else {})
+
     def _remote_directory_owner(
-        self, path: str, nodes: tuple[dict[str, Any], ...], timeout: str
+        self,
+        path: str,
+        nodes: tuple[dict[str, Any], ...],
+        timeout: str,
+        platform: dict[str, Any] | None,
+        options: dict[str, str],
     ) -> tuple[int, int] | None:
-        """Read directory identity on every eligible node before applying cache consumers."""
+        """Read directory identity with the selected platform's tools before applying consumers."""
+        if platform is None:
+            raise DeploymentError(
+                "automatic directory ownership discovery requires exactly one Foretoken control plane"
+            )
+        tools = json.loads(options.get("application-files", "{}"))
+        if not tools.get("image"):
+            raise DeploymentError(
+                "automatic directory ownership discovery requires platform tools; run `foretoken install` first"
+            )
         seconds = timeout_seconds(timeout)
-        configurations = json.loads(self.kubectl.run(
-            ["get", "configmaps", "-A", "-l", "foretoken.io/application-files=configuration", "-o", "json"],
-            timeout=seconds,
-        ).stdout)["items"]
-        if len(configurations) != 1:
-            raise DeploymentError("automatic directory ownership discovery requires a current platform; run `foretoken install` first")
-        configuration = configurations[0]
-        namespace = configuration["metadata"]["namespace"]
-        origin = json.loads(self.kubectl.run(
-            ["get", "deployment", configuration["metadata"]["name"], "-n", namespace, "-o", "json"],
-            timeout=seconds,
-        ).stdout)
+        namespace = platform["metadata"]["namespace"]
+        # The probe runs before a new workload namespace exists. Its credentials
+        # must belong to the platform namespace, just like its tools image.
+        pull_secrets = platform["spec"]["template"]["spec"].get("imagePullSecrets", [])
         owners = set()
         for node in nodes:
             print(f"Reading directory owner on {node['metadata']['name']}: {path}", flush=True)
@@ -168,13 +228,13 @@ class DirectoryVolumes:
                         "nodeName": node["metadata"]["name"],
                         "restartPolicy": "Never",
                         "automountServiceAccountToken": False,
-                        "imagePullSecrets": origin["spec"]["template"]["spec"].get("imagePullSecrets", []),
+                        "imagePullSecrets": pull_secrets,
                         "securityContext": {
                             "runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
                             "seccompProfile": {"type": "RuntimeDefault"},
                         },
                         "containers": [{
-                            "name": "owner", "image": configuration["data"]["clientImage"],
+                            "name": "owner", "image": tools["image"],
                             "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
                             "terminationMessagePolicy": "FallbackToLogsOnError",
                             "command": ["python", "-I", "-B", "-c",
@@ -371,6 +431,37 @@ class DirectoryVolumes:
         """Recognize this lifecycle's persistent marker before checking claim and path."""
         key, owner = self.owner_annotation
         return (volume.get("metadata", {}).get("annotations") or {}).get(key) == owner
+
+
+def _directory_nodes(
+    nodes: tuple[dict[str, Any], ...],
+    services: tuple[dict[str, Any], ...],
+    platform_selector: dict[str, str],
+) -> tuple[dict[str, Any], ...]:
+    """Union every cache consumer's inherited Pool placement without filtering node availability."""
+    if not services:
+        return nodes
+    selected = set()
+    for service in services:
+        spec = service["spec"]
+        for pool in spec.get("modelPools") or (spec,):
+            selector = pool.get("nodeSelector")
+            if selector is None:
+                selector = spec.get("nodeSelector") or {}
+            matches = tuple(
+                node for node in nodes
+                if all(
+                    node["metadata"].get("labels", {}).get(key) == value
+                    for constraint in (selector, platform_selector)
+                    for key, value in constraint.items()
+                )
+            )
+            # Unresolved consumers must not make another Pool appear single-node.
+            # Admission and reconciliation own invalid or unsatisfiable selectors.
+            if not matches:
+                return nodes
+            selected.update(node["metadata"]["name"] for node in matches)
+    return tuple(node for node in nodes if node["metadata"]["name"] in selected)
 
 
 def _resolve_directory(

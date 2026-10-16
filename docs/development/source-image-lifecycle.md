@@ -11,7 +11,7 @@ This guide describes the behavior to preserve when maintaining source deployment
 
 `foretoken install -e .` updates the shared controller, CRDs and runtime defaults. `foretoken deploy` builds from the selected checkout and updates only the submitted services.
 
-Source changes reuse the existing runtime environment; dependency or base-image changes require rebuilding it. The CLI remembers each checkout's engine directories. Engine source must remain compatible with the selected Python, PyTorch and accelerator libraries.
+Source updates reuse compatible runtime environments and rebuild them automatically when dependency or base-image inputs change. The CLI remembers engine directories separately for each Foretoken source directory. Engine source must remain compatible with the selected Python, PyTorch and accelerator libraries.
 
 ## Builds and publication
 
@@ -23,6 +23,6 @@ Deployment succeeds when the selected application and its serving routes are rea
 
 ## Cleanup
 
-Keep applications still needed by workloads or rollback. Remove unused build resources and publications through their owning lifecycle.
+Keep applications still needed by deployments, builds or rollback. Preserve recoverable build inputs before releasing unused resources.
 
-Deleting a candidate removes its deployment, not the shared platform. Uninstall the platform after its services have been deleted; model data is retained.
+`foretoken delete` removes the selected deployment and cleans up build resources no longer in use, preserving source directories, experiment results and source archives. Uninstall the shared platform after its services have been deleted; model data and archived inputs are retained.

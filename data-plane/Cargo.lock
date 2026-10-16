@@ -1343,6 +1343,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
  "vllm-engine-core-client",
@@ -1483,6 +1484,10 @@ dependencies = [
 [[package]]
 name = "foretoken-xtask"
 version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "form_urlencoded"

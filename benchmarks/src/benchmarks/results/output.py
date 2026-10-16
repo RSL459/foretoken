@@ -5,15 +5,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import json
 import logging
 import os
 import shutil
+import subprocess
+import time
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any, Protocol, Self, cast
@@ -35,6 +38,7 @@ from benchmarks.results.console import (
     print_result_location,
 )
 from benchmarks.results.environment import (
+    OBSERVATION_TIMEOUT_SECONDS,
     ApplicationSources,
     client_environment,
     serving_environment,
@@ -46,6 +50,7 @@ from benchmarks.results.records import RequestRecordWriter
 from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.responses import ResponseWriter
 from benchmarks.results.wandb import publish_http_wandb
+from benchmarks.results.wandb_sync import start_sync
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +69,7 @@ class BenchmarkRun:
     measurements: list[RequestMeasurement] | None
     artifacts: dict[str, Path]
     time_origin: float | None = None
-    # Quality evaluations have an execution status independent of the model's score.
+    # Execution outcome is distinct from measured scores and aggregate request counts.
     exit_code: int | None = None
     http_series_published: bool = False
 
@@ -152,7 +157,7 @@ def request_measurement_record(item: RequestMeasurement, *, stream: bool) -> dic
 
 
 class BenchmarkArtifactSink:
-    """Materialize HTTP configuration, metrics, and per-request records in the execution directory."""
+    """Materialize HTTP configuration and per-request records beside the run's shared metrics."""
 
     def __init__(self, benchmark: BenchmarkConfig, output_dir: str) -> None:
         self.benchmark = benchmark
@@ -170,11 +175,6 @@ class BenchmarkArtifactSink:
         if self.config_path is None:
             raise RuntimeError("benchmark artifact sink is not open")
         run.artifacts["config"] = self.config_path
-        run.artifacts["metrics"] = write_json(
-            self.output_dir,
-            "metrics.json",
-            run.metrics,
-        )
         if run.measurements is not None and "raw_output" not in run.artifacts:
             slo = run.metrics.get("slo") or {}
             slo_met = slo.get("request_slo_met")
@@ -236,7 +236,7 @@ class PlotSink:
 
 
 class WandbSink:
-    """Own one W&B SDK run and delegate benchmark-specific content publication."""
+    """Record one native W&B run locally while an independent process synchronizes it."""
 
     def __init__(
         self,
@@ -255,16 +255,19 @@ class WandbSink:
         self.publisher = publisher
         self.run_config = run_config
         self._run: Any | None = None
+        self._sync: subprocess.Popen[bytes] | None = None
         self._progress_fields: set[tuple[str, str]] = set()
 
     def open(self, record: dict[str, Any]) -> None:
-        """Create the SDK run before requests so system metrics cover execution."""
+        """Open native recording before requests, preserving W&B's configured offline/disabled modes."""
+        requested_mode = wandb.setup().settings.mode
         wandb_config = self.benchmark.wandb
         run_config = self.run_config or self.benchmark.to_dict()
         init_kwargs: dict[str, Any] = {
             "project": wandb_config.project,
             "name": self.run_name,
             "reinit": "create_new",
+            "mode": "disabled" if requested_mode == "disabled" else "offline",
             "config": run_config,
             "dir": self.execution_dir,
             "settings": wandb.Settings(
@@ -279,12 +282,18 @@ class WandbSink:
         try:
             self._run = wandb.init(**init_kwargs)
         except wandb.errors.Error:
-            logger.exception("W&B initialization failed")
+            logger.exception("W&B local recording initialization failed")
             raise
         if self._run is None:
             raise RuntimeError("W&B initialization returned no run")
-        if self._run.url:
-            print_result_location(f"W&B results: {self._run.url}")
+        if requested_mode != "disabled":
+            directory = Path(self._run.settings.sync_dir).resolve()
+            print_result_location(f"W&B local run: {directory}")
+            if requested_mode not in {"offline", "dryrun"}:
+                try:
+                    self._sync = start_sync(directory)
+                except OSError as error:
+                    logger.error("W&B live sync could not start: %s; local run retained at %s", error, directory)
 
     def log_progress(self, row: dict[str, Any], *, axis: str) -> None:
         """Bind live fields to their domain axis and queue them through the owned run."""
@@ -314,11 +323,11 @@ class WandbSink:
                 artifact.add_dir(str(directory))
                 self._run.log_artifact(artifact)
         except wandb.errors.Error:
-            logger.exception("W&B publication failed")
+            logger.exception("W&B local recording failed")
             raise
 
     def close(self, *, exit_code: int = 0) -> None:
-        """Finish the owned SDK run once with the benchmark exit status."""
+        """Seal local records with the benchmark status and release sync without waiting for upload."""
         run = self._run
         self._run = None
         if run is None:
@@ -342,8 +351,12 @@ class WandbSink:
             finally:
                 run.finish(exit_code=exit_code)
         except wandb.errors.Error:
-            logger.exception("W&B finalization failed")
+            logger.exception("W&B local recording finalization failed")
             raise
+        finally:
+            if self._sync is not None:
+                self._sync.stdin.close()
+                self._sync = None
 
 
 def result_directory_path(
@@ -368,13 +381,15 @@ def result_directory_path(
 
 
 def write_json(directory: str, filename: str, data: Any, *, compact: bool = False) -> Path:
-    """Write one JSON artifact into a result directory and return its path."""
+    """Atomically replace a JSON artifact so interrupted writes leave the previous record readable."""
     path = Path(directory) / filename
-    with path.open("w", encoding="utf-8") as file:
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("w", encoding="utf-8") as file:
         if compact:
             json.dump(data, file, ensure_ascii=False, separators=(",", ":"))
         else:
             json.dump(data, file, indent=4, ensure_ascii=False)
+    temporary.replace(path)
     return path
 
 
@@ -459,10 +474,9 @@ def build_benchmark_run_record(
 class ResultOutputs:
     """Own preparation logs, measurement observers, publication, and cleanup for one run.
 
-    The execution directory is the local result directory when local output is
-    enabled and a temporary directory otherwise; the engine writes its files
-    there. Temporary files are removed after success and retained when an
-    explicitly selected W&B lifecycle or benchmark execution fails.
+    File outputs and W&B synchronization retain the execution directory.
+    Console-only execution uses a temporary directory, removed after success
+    and retained when local recording or benchmark execution fails.
     """
 
     def __init__(
@@ -490,8 +504,9 @@ class ResultOutputs:
         self._replica_observer: KubernetesReplicaObserver | None = None
         self._prometheus_observer: PrometheusObserver | None = None
         self._environment: dict[str, Any] | None = None
-        self._applications = ApplicationSources()
+        self._applications: ApplicationSources
         self._exit_code = 0
+        self._context: dict[str, Any] = {}
 
     @property
     def execution_dir(self) -> str:
@@ -546,17 +561,41 @@ class ResultOutputs:
         else:
             self._temporary_execution_dir = True
             self._execution_dir = mkdtemp(prefix="foretoken-benchmark-")
+        self._execution_dir = str(Path(self._execution_dir).resolve())
+        self._applications = ApplicationSources(Path(self.execution_dir))
 
         try:
             os.makedirs(self.execution_dir, exist_ok=True)
+            self._context = {
+                "status": "running", "phase": "preparation", "exit_code": None,
+                "measurement_exit_code": None,
+                "started_at": datetime.now(UTC).isoformat(), "finished_at": None,
+            }
+            write_json(self.execution_dir, "context.json", self._context)
             self._resources.enter_context(
                 capture_run_logs(self.execution_dir, quiet=outputs.includes("quiet"))
             )
-        except BaseException:
-            self._release_execution_directory(preserve=outputs.includes("wandb"))
-            self._execution_dir = None
+        except BaseException as error:
+            self.__exit__(type(error), error, error.__traceback__)
             raise
         return self
+
+    def start_measurement(self) -> None:
+        """Record actual execution or checkpoint reuse before the leaf runner begins measurement."""
+        if self._context["phase"] == "preparation":
+            self._context["phase"] = "measurement"
+            write_json(self.execution_dir, "context.json", self._context)
+
+    def finish_measurement(self, exit_code: int) -> None:
+        """Retain the leaf's confirmed outcome before progress, transport, or profile cleanup."""
+        self._context.update(phase="finalization", measurement_exit_code=exit_code)
+        self._exit_code = exit_code
+        write_json(self.execution_dir, "context.json", self._context)
+
+    def save_measurement(self, run: BenchmarkRun) -> None:
+        """Retain actual leaf metrics and its explicit exit code before resource finalization."""
+        self.finish_measurement(cast(int, run.exit_code))
+        run.artifacts["metrics"] = write_json(self.execution_dir, "metrics.json", run.metrics)
 
     def open(self, record: dict[str, Any], *, start_observers: bool = True) -> None:
         """Open result sinks and configuration; callers may defer observation until after warmup."""
@@ -575,7 +614,7 @@ class ResultOutputs:
                     "standard benchmark results require a service"
                 )
             standard_benchmark = cast(BenchmarkConfig, self.benchmark)
-            if outputs.saves_local or outputs.includes("wandb"):
+            if outputs.saves_local:
                 sinks.append(
                     BenchmarkArtifactSink(
                         standard_benchmark,
@@ -621,14 +660,15 @@ class ResultOutputs:
         for sink in sinks:
             self._resources.callback(self._close_sink, sink)
             sink.open(record)
-        if outputs.saves_local or outputs.includes("wandb"):
+        deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        if outputs.saves_local:
             self._environment = {
-                "client": client_environment(),
+                "client": client_environment(deadline=deadline),
             }
             write_json(self.execution_dir, "environment.json", self._environment)
         self._sinks = sinks
         if start_observers:
-            self.start_observers()
+            self.start_observers(deadline=deadline)
 
     def publish_progress(self, row: dict[str, Any], *, axis: str) -> None:
         """Send a measured progress snapshot to each selected live destination."""
@@ -648,20 +688,28 @@ class ResultOutputs:
             return HttpProgress(self.publish_progress, stream=stream, criteria=criteria)
         return None
 
-    def start_observers(self) -> None:
-        """Capture serving state and start resource sampling immediately before measurement."""
+    def capture_source_evidence(self, snapshot: dict[str, Any], *, deadline: float | None = None) -> None:
+        """Retain provenance and local archives from an already-observed service at a run boundary."""
+        if not self.benchmark.outputs.saves_local:
+            return
+        if deadline is None:
+            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        self._applications.capture(snapshot, deadline=deadline)
+        self._applications.save_archives(deadline=deadline)
+
+    def start_observers(self, *, deadline: float | None = None) -> None:
+        """Prepare observations within one budget; deferred starts get a fresh budget after warmup."""
         outputs = self.benchmark.outputs
+        if deadline is None:
+            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         if self._environment is not None and self.service is not None:
-            self._environment["before"] = serving_environment(self.service)
-            self._applications.capture(self._environment["before"])
+            self._environment["before"] = serving_environment(self.service, deadline=deadline)
+            self.capture_source_evidence(self._environment["before"], deadline=deadline)
             write_json(self.execution_dir, "environment.json", self._environment)
         if (
             self.service is not None
             and self.service.model_service_refs
-            and (
-                outputs.saves_local
-                or outputs.includes("wandb")
-            )
+            and outputs.saves_local
         ):
             try:
                 observer = KubernetesReplicaObserver(
@@ -669,7 +717,7 @@ class ResultOutputs:
                     self.service.model,
                     self._applications,
                 )
-                observer.start()
+                observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:
                 logger.warning(
                     "Replica observation unavailable; continuing with benchmark: %s",
@@ -682,7 +730,7 @@ class ResultOutputs:
                 return
             try:
                 prometheus_observer = PrometheusObserver(self.service, self._replica_observer)
-                prometheus_observer.start()
+                prometheus_observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:
                 logger.warning(
                     "Prometheus observation unavailable; continuing with benchmark: %s",
@@ -723,30 +771,54 @@ class ResultOutputs:
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool:
         """Close every sink once without replacing an active benchmark failure."""
-        failed = exc_type is not None or self._exit_code != 0
-        self._exit_code = 1 if failed else 0
-        if exc_value is not None:
-            logger.error("Benchmark failed: %s", exc_value)
+        error = exc_value
+        if isinstance(error, (KeyboardInterrupt, asyncio.CancelledError)):
+            self._exit_code = 130
+        elif isinstance(error, SystemExit):
+            self._exit_code = error.code if isinstance(error.code, int) else int(error.code is not None)
+        elif error is not None:
+            self._exit_code = 1
+        if error is not None:
+            logger.error("Benchmark stopped: %s", error)
         try:
             try:
-                return self._resources.__exit__(
-                    exc_type, exc_value, traceback
-                )
-            except BaseException:
-                failed = True
-                if exc_type is not None:
+                deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+                try:
+                    if self._replica_observer is not None:
+                        self._replica_observer.stop(deadline)
+                    if self._prometheus_observer is not None:
+                        self._prometheus_observer.stop(deadline)
+                finally:
+                    self._resources.__exit__(exc_type, exc_value, traceback)
+            except BaseException as cleanup_error:
+                if error is not None:
                     logger.exception("Result cleanup also failed")
-                    return False
-                raise
+                else:
+                    error = cleanup_error
+                    self._exit_code = 130 if isinstance(error, (KeyboardInterrupt, asyncio.CancelledError)) else 1
+                    raise
         finally:
-            self._release_execution_directory(
-                preserve=failed
+            self._context.update(
+                status="interrupted" if self._exit_code == 130 else "failed" if self._exit_code else "completed",
+                exit_code=self._exit_code, finished_at=datetime.now(UTC).isoformat(),
             )
-            self._sinks = []
-            self._execution_dir = None
-            self._replica_observer = None
-            self._prometheus_observer = None
-            self._exit_code = 0
+            if error is not None:
+                self._context["error_type"] = type(error).__name__
+            try:
+                write_json(self.execution_dir, "context.json", self._context)
+            except OSError:
+                if error is None:
+                    self._exit_code = 1
+                    raise
+                logger.exception("Could not retain final run context")
+            finally:
+                self._release_execution_directory(preserve=self._exit_code != 0)
+                self._sinks = []
+                self._execution_dir = None
+                self._replica_observer = None
+                self._prometheus_observer = None
+                self._exit_code = 0
+        return False
 
     def record_warmup(self, rows: list[dict[str, Any]], metrics: dict[str, Any]) -> None:
         """Persist the completed warmup before measurement or a warmup failure."""
@@ -776,7 +848,17 @@ class ResultOutputs:
         )
 
     def publish(self, run: BenchmarkRun) -> None:
-        """Stop observations, record the run status, and publish every open sink."""
+        """Save completed measurements before bounded observation finalization and presentation."""
+        self._context["phase"] = "finalization"
+        write_json(self.execution_dir, "context.json", self._context)
+        run.artifacts["metrics"] = write_json(self.execution_dir, "metrics.json", run.metrics)
+        deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        # Stop both samplers before joining either. Their in-flight reads and
+        # final snapshots share this deadline rather than starting fresh budgets.
+        if self._replica_observer is not None:
+            self._replica_observer.stop(deadline)
+        if self._prometheus_observer is not None:
+            self._prometheus_observer.stop(deadline)
         for name in ("warmup_raw_output", "warmup_metrics"):
             path = Path(self.execution_dir) / f"{name}.json"
             if path.is_file():
@@ -795,10 +877,10 @@ class ResultOutputs:
         self._replica_observer = None
         if observer is not None:
             if run.time_origin is None:
-                observer.close()
+                observer.close(deadline=deadline)
             else:
                 observations = observer.finish(
-                    run.time_origin, float(run.metrics["benchmark_time"])
+                    run.time_origin, float(run.metrics["benchmark_time"]), deadline=deadline,
                 )
                 if self._environment is not None:
                     self._environment["workloads"] = observer.workload_history(
@@ -825,7 +907,9 @@ class ResultOutputs:
         prometheus_observer = self._prometheus_observer
         self._prometheus_observer = None
         if prometheus_observer is not None:
-            observations = prometheus_observer.finish(run.time_origin, run.metrics.get("benchmark_time"))
+            observations = prometheus_observer.finish(
+                run.time_origin, run.metrics.get("benchmark_time"), deadline=deadline,
+            )
             if observations["resources"] is not None:
                 run.metrics["resources"] = {
                     key: value for key, value in observations["resources"].items()
@@ -844,14 +928,16 @@ class ResultOutputs:
         if self._environment is not None:
             if self.service is not None:
                 self._environment["after"] = serving_environment(
-                    self.service
+                    self.service, deadline=deadline,
                 )
             if "after" in self._environment:
-                self._applications.capture(self._environment["after"])
+                self._applications.capture(self._environment["after"], deadline=deadline)
+            self._applications.save_archives(deadline=deadline)
             if self._applications.records:
                 self._environment["applications"] = self._applications.records
             run.artifacts["environment"] = write_json(
                 self.execution_dir, "environment.json", self._environment,
             )
+        write_json(self.execution_dir, "metrics.json", run.metrics)
         for sink in self._sinks:
             sink.publish(run)
