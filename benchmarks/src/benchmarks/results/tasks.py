@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from benchmarks.config.benchmark import BenchmarkOutputConfig
 from benchmarks.results.output import BenchmarkRun, write_json
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,9 @@ def _completed_measurement(directory: Path) -> dict[str, Any] | None:
     return task if task["status"] == "completed" else None
 
 
-def prepare_task_resume(source: Path, destination: Path, plan: dict[str, Any]) -> None:
+def prepare_task_resume(
+    source: Path, destination: Path, plan: dict[str, Any], *, outputs: BenchmarkOutputConfig,
+) -> None:
     """Import completed task records into a fresh run, leaving original measurements untouched.
 
     The recorded workload plan must match; output destinations and tracking names may
@@ -78,6 +81,10 @@ def prepare_task_resume(source: Path, destination: Path, plan: dict[str, Any]) -
         origin = task_source(path.parent)
         if not origin.is_dir():
             raise ValueError(f"Original task artifacts are missing: {origin}")
+        if (origin / "context.json").is_file():
+            from benchmarks.results.recovery import recover_publication
+
+            recover_publication(origin, outputs.for_child_run())
         target = destination / path.parent.relative_to(source)
         target.mkdir(parents=True, exist_ok=True)
         write_json(str(target), "task.json", {
@@ -95,7 +102,6 @@ def run_task(
     original request records are kept for diagnosis.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "task.json"
     previous = _completed_measurement(directory)
     if previous is not None:
         logger.info("Reusing completed measurement: %s", task_source(directory))

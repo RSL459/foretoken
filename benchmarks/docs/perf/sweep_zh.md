@@ -139,9 +139,9 @@ foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-mode
 
 已经完成的测量结果会保留下来，失败请求也按原结果计入统计；尚未完成的测量则从预热开始重新运行。新的结果会写入新目录，但仍需要读取原始结果，因此请保留原始目录。
 
-如果全部测量结果已经保存，问题只出在绘图等后续步骤，可以在恢复时将输出设为 `--output local,plot`。程序会利用已有记录重新生成汇总和图表，因此即使模型服务已经关闭，也可以完成这一步。
+如果测量已完成，只在绘图或发布时失败，恢复时使用 `--output local,wandb,plot` 即可补齐结果并继续发布到原来的 W&B 运行；只需本地输出时使用 `local,plot`。已完成的测量无需模型服务在线。
 
-如果只需要重新绘图，可以直接使用 [`foretoken plot`](../recipes_zh.md#绘制与对照结果)。如果需要补传已保存的 W&B 记录，则使用 [`wandb sync`](wandb_zh.md#恢复上传)。
+如果只需要重新绘图，可以使用 [`foretoken plot`](../recipes_zh.md#绘制与对照结果)。仅补发结果的命令见 [W&B 恢复上传](wandb_zh.md#恢复上传)。
 
 ## 视频参数
 

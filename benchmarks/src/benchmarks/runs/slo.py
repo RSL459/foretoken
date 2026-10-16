@@ -301,7 +301,10 @@ class SloAutoTuneBenchmark:
         with context as outputs:
             plan = {"mode": "slo_search", "base": self.benchmark.to_dict()}
             if self.benchmark.sweep.resume:
-                prepare_task_resume(Path(self.benchmark.sweep.resume), Path(outputs.execution_dir), plan)
+                prepare_task_resume(
+                    Path(self.benchmark.sweep.resume), Path(outputs.execution_dir), plan,
+                    outputs=self.benchmark.outputs,
+                )
                 plan["resumed_from"] = str(Path(self.benchmark.sweep.resume).resolve())
             write_json(outputs.execution_dir, "config.json", plan)
             outputs.sink_factory = sinks

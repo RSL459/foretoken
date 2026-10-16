@@ -15,6 +15,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from statistics import mean, median, stdev
 from typing import Any, Generic, Protocol, TypeVar
@@ -28,7 +29,6 @@ from benchmarks.results.output import (
     WandbSink,
     write_json,
 )
-
 from benchmarks.results.tasks import prepare_task_resume, run_task, task_source
 
 logger = logging.getLogger(__name__)
@@ -247,7 +247,7 @@ def run_sweep(
         experiment_dir = outputs.execution_dir
         root = Path(experiment_dir)
         if definition.resume:
-            prepare_task_resume(Path(definition.resume), root, plan)
+            prepare_task_resume(Path(definition.resume), root, plan, outputs=config.outputs)
             plan["resumed_from"] = str(Path(definition.resume).resolve())
         artifacts["config"] = write_json(experiment_dir, "config.json", plan)
         outputs.open(plan)
@@ -298,8 +298,8 @@ def run_sweep(
                 checkpoint()
                 logger.info("Sweep %s run=%s/%s", point["combination"], point["run_number"] + 1, definition.num_runs)
                 try:
-                    result = run_task(run_dir, lambda: adapter.execute_point(
-                        point_config, output_dir=str(run_dir), label=point["label"],
+                    result = run_task(run_dir, partial(
+                        adapter.execute_point, point_config, output_dir=str(run_dir), label=point["label"],
                         wandb_group=plan["wandb_group"], dry_run=dry_run,
                     ))
                     point.update(result.metrics, exit_code=result.exit_code,

@@ -139,9 +139,9 @@ After a sweep is interrupted, repeat the original command with `--resume RESULT_
 
 Results from completed measurements are retained, with failed requests still counted in their original outcomes. Unfinished measurements restart from warmup. New results go into a new directory but continue to reference the original records, so keep the original directories.
 
-If all measured results have been saved and a later step such as plotting failed, set `--output local,plot` when resuming. The command rebuilds summaries and figures from the saved records, so this step works even after the model service has shut down.
+If measurement finished and only plotting or publication failed, resume with `--output local,wandb,plot` to complete the saved results and their original W&B runs. Use `local,plot` for local output only. No model service is needed for completed measurements.
 
-To redraw figures without resuming a sweep, use [`foretoken plot`](../recipes.md#plot-saved-results). To upload W&B records that have already been saved, use [`wandb sync`](wandb.md#resume-an-upload).
+To redraw figures without resuming a sweep, use [`foretoken plot`](../recipes.md#plot-saved-results). See [W&B recovery](wandb.md#resume-an-upload) for publication-only recovery.
 
 ## Video settings
 

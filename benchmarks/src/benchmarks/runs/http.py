@@ -505,7 +505,7 @@ class HttpBenchmark:
                             artifacts=artifacts,
                             time_origin=origin,
                             exit_code=0 if metrics["success_num"] else 1,
-                            http_series_published=progress is not None,
+                            http_series_published=False,
                         )
                         outputs.save_measurement(run)
                         if workload.trace_events is not None:
@@ -545,6 +545,8 @@ class HttpBenchmark:
                                 sampler.cancel()
                     if progress is not None:
                         progress.emit(duration, final=True)
+                        run.http_series_published = True
+                        outputs.save_measurement(run)
             outputs.publish(run)
             return run
 

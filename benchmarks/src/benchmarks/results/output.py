@@ -50,7 +50,7 @@ from benchmarks.results.records import RequestRecordWriter
 from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.responses import ResponseWriter
 from benchmarks.results.wandb import publish_http_wandb
-from benchmarks.results.wandb_sync import start_sync
+from benchmarks.results.wandb_sync import publication_lock, start_sync
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +283,16 @@ class WandbSink:
             raise RuntimeError("W&B initialization returned no run")
         if requested_mode != "disabled":
             directory = Path(self._run.settings.sync_dir).resolve()
+            from benchmarks.results.recovery import publisher_name
+
+            identity = {
+                "id": self._run.id, "project": self._run.project,
+                "entity": self._run.entity, "name": self.run_name, "group": self.group,
+                "base_url": self._run.settings.base_url,
+                "directory": os.path.relpath(directory, self.execution_dir),
+                "publisher": publisher_name(self.publisher),
+            }
+            write_json(self.execution_dir, "wandb.json", identity)
             print_result_location(f"W&B local run: {directory}")
             if requested_mode not in {"offline", "dryrun"}:
                 try:
@@ -502,6 +512,7 @@ class ResultOutputs:
         self._applications: ApplicationSources
         self._exit_code = 0
         self._context: dict[str, Any] = {}
+        self._publication_lock = None
 
     @property
     def execution_dir(self) -> str:
@@ -561,6 +572,9 @@ class ResultOutputs:
 
         try:
             os.makedirs(self.execution_dir, exist_ok=True)
+            lock = publication_lock(Path(self.execution_dir))
+            lock.__enter__()
+            self._publication_lock = lock
             self._context = {
                 "status": "running", "phase": "preparation", "exit_code": None,
                 "measurement_exit_code": None,
@@ -590,6 +604,7 @@ class ResultOutputs:
     def save_measurement(self, run: BenchmarkRun) -> None:
         """Save measured metrics before recording completion so results can be recovered offline."""
         run.artifacts["metrics"] = write_json(self.execution_dir, "metrics.json", run.metrics)
+        self._save_publication(run)
         self.finish_measurement(cast(int, run.exit_code))
 
     def open(self, record: dict[str, Any], *, start_observers: bool = True) -> None:
@@ -807,6 +822,9 @@ class ResultOutputs:
                     raise
                 logger.exception("Could not retain final run context")
             finally:
+                if self._publication_lock is not None:
+                    self._publication_lock.__exit__(None, None, None)
+                    self._publication_lock = None
                 self._release_execution_directory(preserve=self._exit_code != 0)
                 self._sinks = []
                 self._execution_dir = None
@@ -841,6 +859,16 @@ class ResultOutputs:
         self.record_warmup(
             [request_measurement_record(item, stream=stream) for item in measurements], metrics,
         )
+
+    def _save_publication(self, run: BenchmarkRun) -> None:
+        """Retain the publication inputs needed to finish outputs without another measurement."""
+        write_json(self.execution_dir, "publication.json", {
+            "record": run.record, "exit_code": run.exit_code if run.exit_code is not None else self._exit_code,
+            "http_series_published": run.http_series_published,
+            "has_measurements": run.measurements is not None,
+            "artifacts": {name: os.path.relpath(path, self.execution_dir) for name, path in run.artifacts.items()},
+            "output": list(self.benchmark.outputs.destinations),
+        })
 
     def publish(self, run: BenchmarkRun) -> None:
         """Save completed measurements before bounded observation finalization and presentation."""
@@ -934,5 +962,7 @@ class ResultOutputs:
                 self.execution_dir, "environment.json", self._environment,
             )
         write_json(self.execution_dir, "metrics.json", run.metrics)
+        self._save_publication(run)
         for sink in self._sinks:
             sink.publish(run)
+            self._save_publication(run)

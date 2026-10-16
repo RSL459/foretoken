@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 import wandb
 
-from benchmarks.config.video import VideoBenchmarkConfig
-
 if TYPE_CHECKING:
     from benchmarks.results.output import BenchmarkRun
 
@@ -80,7 +78,6 @@ def video_metrics_to_wandb(metrics: dict[str, Any]) -> dict[str, float | int]:
 
 
 def publish_video_wandb(
-    config: VideoBenchmarkConfig,
     sdk_run: Any,
     run: BenchmarkRun,
 ) -> None:
@@ -123,7 +120,7 @@ def publish_video_wandb(
         sdk_run.log({"video/generated_videos": videos})
 
     artifact = wandb.Artifact(
-        name=f"{config.name}-{sdk_run.id}",
+        name=f"{run.record['name']}-{sdk_run.id}",
         type="video-generation-benchmark",
     )
     for name in ("config", "raw_results", "metrics"):
