@@ -96,7 +96,7 @@ Add `--gateway-section-name LISTENER` only when more than one listener matches.
 
 ### Current source
 
-The cluster needs a default StorageClass. Run from the Foretoken repository root:
+The cluster needs a default StorageClass for application files. Run from the Foretoken repository root:
 
 ```bash
 foretoken install -e .

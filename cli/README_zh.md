@@ -96,7 +96,7 @@ foretoken install \
 
 ### 当前源码
 
-集群需有默认存储类（StorageClass）。在 Foretoken 仓库根目录运行：
+集群需为应用文件提供默认存储类（StorageClass）。在 Foretoken 仓库根目录运行：
 
 ```bash
 foretoken install -e .

@@ -780,7 +780,7 @@ def _wait_for_object(
     deadline: float,
     description: str,
 ) -> dict[str, Any]:
-    """Poll one endpoint dependency before the command deadline."""
+    """Poll a Kubernetes dependency until its readiness callback succeeds or the deadline passes."""
     while time.monotonic() < deadline:
         value = fetch()
         if ready(value):

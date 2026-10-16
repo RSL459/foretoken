@@ -11,21 +11,26 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, Self
 
 import yaml
 
-from foretoken.kubernetes import Kubectl
+from foretoken.build_storage import SOURCE_BUILD_UID
+from foretoken.kubernetes import Kubectl, _wait_for_object, timeout_seconds
 from foretoken.manifest import DeploymentError
 from foretoken.node_images import (
     SOURCE_BUILD_BINDING_LABEL,
@@ -38,6 +43,125 @@ from foretoken.node_images import (
 _BUILD_POD_LABEL = SOURCE_BUILD_POD_LABEL
 _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
 _BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
+_BUILD_LAYOUT_ANNOTATION = "inference.foretoken.io/source-build-layout"
+_BUILD_LAYOUT = "private-snapshots-v2"
+
+
+class BuildCancellation(AbstractContextManager):
+    """Propagate one source operation's cancellation to its live builders and commands."""
+
+    def __init__(self) -> None:
+        self._cancelled = Event()
+        self._error: BaseException | None = None
+        self._lock = Lock()
+        self._callbacks: set[Callable[[], None]] = set()
+
+    def __enter__(self) -> Self:
+        self.check()
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: BaseException | None, traceback: object) -> None:
+        if exc_value is not None:
+            self.cancel(exc_value)
+            # Cancelling a sibling can also fail its in-flight API call.
+            if self._error is not None and isinstance(exc_value, (CancelledError, DeploymentError, OSError)):
+                raise self._error
+
+    def check(self) -> None:
+        """Prevent subsequent source work once the owning operation has stopped."""
+        if self._cancelled.is_set():
+            if self._error is not None:
+                raise self._error
+            raise CancelledError("source build cancelled")
+
+    def register(self, callback: Callable[[], None]) -> None:
+        """Register live cleanup, also closing a resource created during cancellation."""
+        with self._lock:
+            if not self._cancelled.is_set():
+                self._callbacks.add(callback)
+                return
+        self.cleanup(callback, self._error)
+        self.check()
+
+    def unregister(self, callback: Callable[[], None]) -> None:
+        """Release a resource's cancellation hook after its normal lifetime ends."""
+        with self._lock:
+            self._callbacks.discard(callback)
+
+    def cleanup(
+        self, callback: Callable[[], None], error: BaseException | None = None
+    ) -> None:
+        """Report operational cleanup failures without replacing an existing build failure."""
+        try:
+            callback()
+        except (DeploymentError, OSError) as cleanup_error:
+            print(f"Source cleanup failed: {cleanup_error}", file=sys.stderr, flush=True)
+            if error is None:
+                raise
+
+    def cancel(self, error: BaseException | None = None) -> None:
+        """Stop live resources before joining workers, retaining the first failure as their cause."""
+        with self._lock:
+            if self._cancelled.is_set():
+                return
+            self._error = error
+            self._cancelled.set()
+            callbacks = tuple(self._callbacks)
+        if callbacks:
+            with ThreadPoolExecutor(max_workers=len(callbacks)) as cleanup:
+                futures = [cleanup.submit(self.cleanup, callback, error) for callback in callbacks]
+                for future in futures:
+                    future.result()
+
+    def run_stage(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Cancel sibling work when a submitted stage fails, before its Future completes."""
+        with self:
+            return function(*args, **kwargs)
+
+    def run(
+        self,
+        args: list[str],
+        *,
+        input: str | None = None,
+        stdin: Any = None,
+        text: bool = False,
+        capture_output: bool = False,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[Any]:
+        """Run an owned command in its own process group and reap it on cancellation."""
+        self.check()
+        with subprocess.Popen(
+            args,
+            stdin=subprocess.PIPE if input is not None else stdin,
+            stdout=subprocess.PIPE if capture_output else None,
+            stderr=subprocess.PIPE if capture_output else None,
+            text=text, cwd=cwd, env=env, start_new_session=True,
+        ) as process:
+            def stop() -> None:
+                if process.poll() is not None:
+                    return
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        # Let clients close cooperatively without waiting on an ignored signal.
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                except ProcessLookupError:
+                    process.wait()
+
+            self.register(stop)
+            try:
+                stdout, stderr = process.communicate(input)
+                self.check()
+                return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+            except BaseException as error:
+                self.cancel(error)
+                raise
+            finally:
+                self.unregister(stop)
 
 
 class ImageNotFoundError(DeploymentError):
@@ -118,6 +242,8 @@ def find_build_cache(
     for pod in kubectl.list_resources(("pods",), namespace, label_selector=selector):
         if pod["spec"].get("nodeName") != node:
             continue
+        if pod["metadata"].get("annotations", {}).get(_BUILD_LAYOUT_ANNOTATION) != _BUILD_LAYOUT:
+            continue
         builders = [
             container
             for container in pod["spec"]["containers"]
@@ -177,7 +303,7 @@ def registry_credentials(images: list[str]) -> dict[str, Any]:
 
 
 def _cache_gc_limits(quantity: str) -> tuple[str, str, str]:
-    """Apply the pinned BuildKit defaults to its PVC allocation instead of a shared host disk."""
+    """Apply the pinned BuildKit defaults to the execution-volume budget, not the whole host disk."""
     match = re.fullmatch(
         r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)([KMGTPE]i|[numkKMGTPE])?",
         quantity,
@@ -234,7 +360,9 @@ class ClusterBuilder(AbstractContextManager):
         pull_secrets: tuple[str, ...] = (),
         credentials: dict[str, Any] | None = None,
         registry_mirrors: dict[str, list[str]] | None = None,
+        cancellation: BuildCancellation | None = None,
     ) -> None:
+        self.cancellation = cancellation or BuildCancellation()
         self.kubectl = kubectl
         self.namespace = namespace
         self.claim = claim
@@ -250,13 +378,14 @@ class ClusterBuilder(AbstractContextManager):
         self.registry_mirrors = registry_mirrors or {}
         self.name = "foretoken-build-" + uuid.uuid4().hex[:12]
         self.root = f"{self.mount}/build/{binding}"
+        self.runtime_root = "/run/foretoken-build"
         self.workspace = f"{self.root}/workspace"
-        self._created = False
         self._image_lock = Lock()
         self._generated_layouts: dict[str, dict[str, str]] = {}
         self._used_images: set[str] = set()
         self._built_images: set[str] = set()
         self._resolved_images: dict[str, str] = {}
+        self._image_users: dict[str, str] = {}
 
     def _reuse_or_retire_pods(self) -> dict[str, Any] | None:
         """Select a compatible daemon and retire other builders sharing its compiler cache."""
@@ -266,6 +395,9 @@ class ClusterBuilder(AbstractContextManager):
         for pod in self.kubectl.list_resources(
             ("pods",), self.namespace, label_selector=selector
         ):
+            if pod["metadata"].get("annotations", {}).get(_BUILD_LAYOUT_ANNOTATION) != _BUILD_LAYOUT:
+                occupants.append(pod)
+                continue
             if not any(
                 volume["name"] == "cache"
                 and volume.get("persistentVolumeClaim", {}).get("claimName")
@@ -292,6 +424,8 @@ class ClusterBuilder(AbstractContextManager):
                 None,
             )
             if builder is None or builder.get("image") != self.image:
+                continue
+            if builder.get("securityContext", {}).get("runAsUser") != SOURCE_BUILD_UID:
                 continue
             images = next(
                 (
@@ -352,19 +486,21 @@ class ClusterBuilder(AbstractContextManager):
 
     def __enter__(self) -> Self:
         """Reuse or start the compiler daemon on the cache's node."""
-        reusable = self._reuse_or_retire_pods()
+        self.cancellation.check()
+        self.cancellation.register(self.retire)
+        try:
+            reusable = self._reuse_or_retire_pods()
+        except BaseException:
+            self.cancellation.unregister(self.retire)
+            raise
         if reusable is not None:
             self.name = reusable["metadata"]["name"]
             print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
-            self.run(
-                [
-                    "sh",
-                    "-ec",
-                    'rm -rf -- "$1/transfers" "$1/output" "$1/results"; mkdir -p "$1/results"',
-                    "prepare",
-                    self.root,
-                ]
-            )
+            try:
+                self._prepare_outputs()
+            except BaseException as error:
+                self.__exit__(type(error), error, error.__traceback__)
+                raise
             return self
         image = self.image
         pvc = self.kubectl.get("pvc", self.claim, self.namespace)
@@ -385,6 +521,7 @@ class ClusterBuilder(AbstractContextManager):
             "hostNetwork": True,
             "dnsPolicy": "Default",
             "automountServiceAccountToken": False,
+            "securityContext": {"supplementalGroups": [1000]},
             "tolerations": [
                 {"key": key, "operator": "Exists", "effect": "NoSchedule"}
                 for key in (
@@ -394,51 +531,109 @@ class ClusterBuilder(AbstractContextManager):
             ],
             "imagePullSecrets": [{"name": name} for name in self.pull_secrets],
             "volumes": [
-                {"name": "cache", "persistentVolumeClaim": {"claimName": self.claim}}
+                {"name": "cache", "persistentVolumeClaim": {"claimName": self.claim}},
+                {"name": "runtime", "emptyDir": {}},
             ],
             "initContainers": [
                 {
                     "name": "workspace",
                     "image": image,
+                    "terminationMessagePolicy": "FallbackToLogsOnError",
                     "command": [
                         "sh",
                         "-ec",
-                        """mount="$(dirname "$(dirname "$1")")"
-mkdir -p "$mount" "$1"
-chown 1000:1000 "$mount" "$mount/build" "$(dirname "$1")" "$1"
-chmod 2775 "$mount" "$mount/build" "$(dirname "$1")" "$1"
+                        """persistent=$1; state=$6; uid=$7; mount=$8
+filesystem=$(stat -f -c %t "$mount")
+case "$filesystem" in
+    6969)
+        printf '%s\\n' 'The compiler volume uses NFS; use the managed local build storage or a block-backed StorageClass.' >&2
+        exit 1
+        ;;
+esac
+mkdir -p "$persistent" "$state/etc" "$state/home" "$state/runtime" "$state/tmp"
+chown "$uid:1000" "$mount" "$persistent"
+chmod 2775 "$mount" "$persistent"
+# Snapshot ownership must stay inside the rootless UID/GID mapping. The publisher
+# shares exports, not compiler snapshots. Retire legacy state after its daemon stops.
+if test -d "$persistent/buildkit" && test "$(stat -c %g "$persistent/buildkit")" != "$uid"; then
+    printf '%s\\n' 'Recreating compiler snapshots with private rootless ownership; published images and applications are retained.'
+    rm -rf "$persistent/buildkit"
+fi
+mkdir -p "$persistent/buildkit"
+chown "$uid:$uid" "$persistent/buildkit"
+chmod 700 "$persistent/buildkit"
+# Account changes are confined to this Pod, preserving the image's mapping helpers.
+awk -F: -v OFS=: -v uid="$uid" -v home="$state/home" '$3 == 1000 { $3 = uid; $4 = uid; $6 = home } { print }' /etc/passwd > "$state/etc/passwd"
+awk -F: -v OFS=: -v uid="$uid" '$3 == 1000 { $3 = uid } { print }' /etc/group > "$state/etc/group"
+for file in subuid subgid; do
+    awk -F: -v OFS=: -v uid="$uid" '$1 == 1000 { $1 = uid } { print }' "/etc/$file" > "$state/etc/$file"
+done
+cp -a "$HOME/." "$state/home/"
+chown -R "$uid:$uid" "$state/home" "$state/runtime" "$state/tmp"
+chown "$uid:$uid" "$state"
+chmod 700 "$state/runtime"
+chmod 644 "$state/etc/"*
 configuration="${XDG_CONFIG_HOME:-$HOME/.config}/buildkit/buildkitd.toml"
 if test -f "$configuration"; then
-    cp "$configuration" "$1/buildkit.toml"
+    cp "$configuration" "$state/buildkit.toml"
 else
     printf "[worker.oci]\\nreservedSpace = %s\\nminFreeSpace = %s\\nmaxUsedSpace = %s\\n" \\
-        "$2" "$3" "$4" > "$1/buildkit.toml"
-    printf "%s" "$5" >> "$1/buildkit.toml"
+        "$2" "$3" "$4" > "$state/buildkit.toml"
+    printf "%s" "$5" >> "$state/buildkit.toml"
 fi
-chown 1000:1000 "$1/buildkit.toml"
-chmod 600 "$1/buildkit.toml"
+chown "$uid:$uid" "$state/buildkit.toml"
+chmod 600 "$state/buildkit.toml"
 """,
                         "prepare",
                         self.root,
                         *gc_limits,
                         mirrors,
+                        self.runtime_root,
+                        str(SOURCE_BUILD_UID),
+                        self.mount,
                     ],
                     "securityContext": {"runAsUser": 0},
-                    "volumeMounts": [{"name": "cache", "mountPath": self.mount}],
+                    "volumeMounts": [
+                        {"name": "cache", "mountPath": self.mount},
+                        {"name": "runtime", "mountPath": self.runtime_root},
+                    ],
                 }
             ],
         }
         container: dict[str, Any] = {
             "name": "builder",
             "image": image,
-            "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
+            "terminationMessagePolicy": "FallbackToLogsOnError",
+            "env": [
+                {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
+                {"name": "HOME", "value": self.runtime_root + "/home"},
+                {"name": "TMPDIR", "value": self.runtime_root + "/tmp"},
+                {"name": "XDG_RUNTIME_DIR", "value": self.runtime_root + "/runtime"},
+                {
+                    "name": "BUILDKIT_HOST",
+                    "value": "unix://" + self.runtime_root + "/runtime/buildkit/buildkitd.sock",
+                },
+            ],
+            "workingDir": self.root,
             "args": [
                 "--root",
                 f"{self.root}/buildkit",
                 "--config",
-                f"{self.root}/buildkit.toml",
+                f"{self.runtime_root}/buildkit.toml",
             ],
-            "volumeMounts": [{"name": "cache", "mountPath": self.mount}],
+            "volumeMounts": [
+                {"name": "cache", "mountPath": self.mount},
+                {"name": "runtime", "mountPath": self.runtime_root},
+                *(
+                    {
+                        "name": "runtime",
+                        "mountPath": "/etc/" + name,
+                        "subPath": "etc/" + name,
+                        "readOnly": True,
+                    }
+                    for name in ("passwd", "group", "subuid", "subgid")
+                ),
+            ],
             "readinessProbe": {
                 "exec": {"command": ["buildctl", "debug", "workers"]},
                 "periodSeconds": 2,
@@ -446,8 +641,8 @@ chmod 600 "$1/buildkit.toml"
         }
         container["args"].append("--oci-worker-no-process-sandbox")
         container["securityContext"] = {
-            "runAsUser": 1000,
-            "runAsGroup": 1000,
+            "runAsUser": SOURCE_BUILD_UID,
+            "runAsGroup": SOURCE_BUILD_UID,
             "seccompProfile": {"type": "Unconfined"},
             "appArmorProfile": {"type": "Unconfined"},
         }
@@ -498,6 +693,7 @@ chmod 600 "$1/buildkit.toml"
             images, volumes = images_container_spec(
                 self.tools_image, self.containerd_socket
             )
+            images["securityContext"]["runAsUser"] = SOURCE_BUILD_UID
             images["volumeMounts"].insert(0, {"name": "cache", "mountPath": self.mount})
             spec["volumes"] += volumes
             spec["containers"].append(images)
@@ -508,6 +704,7 @@ chmod 600 "$1/buildkit.toml"
                 "name": self.name,
                 "namespace": self.namespace,
                 "annotations": {
+                    _BUILD_LAYOUT_ANNOTATION: _BUILD_LAYOUT,
                     _BUILD_MIRRORS_ANNOTATION: json.dumps(
                         self.registry_mirrors, sort_keys=True
                     ),
@@ -520,11 +717,35 @@ chmod 600 "$1/buildkit.toml"
             "spec": spec,
         }
         print(f"Preparing cluster builder {self.namespace}/{self.name}", flush=True)
+        deadline = time.monotonic() + timeout_seconds(self.timeout)
+
+        def ready(value: dict[str, Any]) -> bool:
+            """Surface terminal startup failures while their Kubernetes diagnostics still exist."""
+            self.cancellation.check()
+            status = value.get("status", {})
+            for field, initializing in (("initContainerStatuses", True), ("containerStatuses", False)):
+                for container_status in status.get(field, []):
+                    terminated = container_status.get("state", {}).get("terminated")
+                    if terminated is None or initializing and terminated["exitCode"] == 0:
+                        continue
+                    detail = terminated.get("message") or terminated.get("reason") or "container exited"
+                    raise DeploymentError(
+                        f"cluster builder {self.namespace}/{self.name}: "
+                        f"{container_status['name']} exited with {terminated['exitCode']}: {detail}"
+                    )
+            if status.get("phase") in {"Failed", "Succeeded"}:
+                raise DeploymentError(
+                    f"cluster builder {self.namespace}/{self.name} stopped before becoming ready: "
+                    + (status.get("message") or status["phase"])
+                )
+            return _pod_ready(value)
+
         try:
+            self.cancellation.check()
             created = self.kubectl.run(
                 ["create", "-f", "-", "-o", "json"], input_text=yaml.safe_dump(pod)
             )
-            self._created = True
+            self.cancellation.check()
             pod_uid = json.loads(created.stdout)["metadata"]["uid"]
             if self.credentials:
                 self.kubectl.run(
@@ -554,50 +775,57 @@ chmod 600 "$1/buildkit.toml"
                         }
                     ),
                 )
-            self.kubectl.run(
-                [
-                    "wait",
-                    "pod/" + self.name,
-                    "-n",
-                    self.namespace,
-                    "--for=condition=Ready",
-                    "--timeout=" + self.timeout,
-                ]
+            _wait_for_object(
+                lambda: self.kubectl.get(
+                    "pod", self.name, self.namespace,
+                    timeout=max(1.0, deadline - time.monotonic()),
+                ),
+                ready,
+                deadline,
+                f"cluster builder {self.namespace}/{self.name}",
             )
-            self.run(
-                [
-                    "sh",
-                    "-ec",
-                    'rm -rf -- "$1/transfers" "$1/output" "$1/results"; mkdir -p "$1/results"',
-                    "prepare",
-                    self.root,
-                ]
-            )
+            self._prepare_outputs()
         except BaseException as error:
             self.__exit__(type(error), error, error.__traceback__)
             raise
         return self
 
-    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+    def __exit__(self, exc_type: object, exc_value: BaseException | None, traceback: object) -> None:
         """Retain successful builders and clean transient or failed build state."""
-        if exc_type is not None:
-            # A failed daemon may no longer accept exec. Retire a new Pod directly;
-            # the next successful entry removes partial exports from a reused cache.
-            if self._created:
-                self.kubectl.run(
-                    [
-                        "delete",
-                        "pod",
-                        self.name,
-                        "-n",
-                        self.namespace,
-                        "--ignore-not-found",
-                        "--wait=true",
-                        "--timeout=" + self.timeout,
-                    ]
-                )
-                self._created = False
-            return
+        try:
+            if exc_type is not None:
+                # A disconnected buildctl can leave executor children alive in the
+                # rootless worker's shared PID namespace. Retire reused Pods as well.
+                self.cancellation.cleanup(self.retire, exc_value)
+                return
+            try:
+                self._retain_build_cache()
+            except BaseException as error:
+                self.cancellation.cleanup(self.retire, error)
+                raise
+        finally:
+            self.cancellation.unregister(self.retire)
+
+    def _prepare_outputs(self) -> None:
+        """Clear interrupted outputs under the binding lock, retaining only recorded OCI layouts."""
+        layouts = self.read_json(self.root + "/images.json")
+        self.run([
+            "sh", "-ec", '''root=$1; shift
+rm -rf -- "$root/transfers" "$root/output" "$root/results"
+mkdir -p "$root/results"
+for directory in "$root/images/"*; do
+    keep=
+    for retained; do
+        if test "$directory" = "$retained"; then keep=1; break; fi
+    done
+    if test -z "$keep"; then rm -rf -- "$directory"; fi
+done
+''',
+            "prepare", self.root, *sorted({layout["path"] for layout in layouts.values()}),
+        ])
+
+    def _retain_build_cache(self) -> None:
+        """Remove transient outputs and unreferenced OCI layouts after successful execution."""
         self.run(["rm", "-rf", "--", self.root + "/results", self.root + "/transfers"])
         if self._used_images:
             path = self.root + "/images.json"
@@ -625,6 +853,15 @@ chmod 600 "$1/buildkit.toml"
             if stale:
                 self.run(["rm", "-rf", "--", *stale])
 
+    def retire(self) -> None:
+        """Stop this binding's daemon and executors while retaining its last saved artifacts."""
+        self.kubectl.run(
+            [
+                "delete", "pod", self.name, "-n", self.namespace,
+                "--ignore-not-found", "--wait=true", "--timeout=" + self.timeout,
+            ]
+        )
+
     def command(self, args: list[str], *, container: str = "builder") -> list[str]:
         """Address the build Pod for both streamed input and ordinary commands."""
         return self.kubectl.command(
@@ -651,9 +888,8 @@ chmod 600 "$1/buildkit.toml"
     ) -> str:
         """Execute a build stage, preserving live compiler and daemon diagnostics on failure."""
         started = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        result = subprocess.run(
+        result = self.cancellation.run(
             self.command(args, container=container),
-            check=False,
             text=True,
             capture_output=capture,
             input=input_text,
@@ -753,7 +989,7 @@ rm -rf "$incoming"
                 flush=True,
             )
             stream.seek(0)
-            result = subprocess.run(
+            result = self.cancellation.run(
                 self.command(
                     [
                         "sh",
@@ -766,7 +1002,6 @@ rm -rf "$incoming"
                     ]
                 ),
                 stdin=stream,
-                check=False,
             )
         if result.returncode:
             raise DeploymentError("source delta upload failed")
@@ -809,12 +1044,14 @@ rm -rf "$incoming"
             "sh", "-ec", script, "export", destination,
             self.workspace + "/data-plane/model-server/python",
         ])
+        self._share_output(destination)
 
-    def _containerd(self) -> list[str]:
-        """Address the local development node's image store through its own client."""
-        return NodeImageStore(
-            self.kubectl, self.namespace, self.name, self.binding
-        ).containerd()
+    def _share_output(self, path: str) -> None:
+        """Give the existing publisher group access to generated exports, not compiler snapshots."""
+        self.run([
+            "sh", "-ec", 'chgrp -Rh 1000 "$1"; chmod -R g+rX "$1"',
+            "share", path,
+        ])
 
     def resolve_image(self, image: str) -> str:
         """Resolve a build dependency through the same node store or registry used by BuildKit."""
@@ -822,11 +1059,14 @@ rm -rf "$incoming"
             return self._resolved_images[image]
         name = _image_reference(image)
         if name in self._generated_layouts:
-            digest = self._generated_layouts[name]["digest"]
+            layout = self._generated_layouts[name]
+            digest = layout["digest"]
+            manifest = self.read_json(layout["path"] + "/blobs/" + self._context_digest(layout).replace(":", "/", 1))
+            configuration = self.read_json(layout["path"] + "/blobs/" + manifest["config"]["digest"].replace(":", "/", 1))
+            self._image_users[image] = configuration["config"].get("User", "") or "0"
         elif self.containerd_socket:
-            digest = NodeImageStore(
-                self.kubectl, self.namespace, self.name, self.binding
-            ).image_digest(name)
+            store = NodeImageStore(self.kubectl, self.namespace, self.name, self.binding)
+            digest = store.image_digest(name)
         else:
             digest = None
         if digest is None:
@@ -851,8 +1091,24 @@ rm -rf "$incoming"
                     raise ImageNotFoundError(message) from error
                 raise
             digest = metadata["containerimage.digest"]
+            configuration = json.loads(self.run(
+                ["buildctl", "debug", "get", metadata["containerimage.config.digest"]],
+                capture=True,
+            ))
+            self._image_users[image] = configuration["config"].get("User", "") or "0"
         self._resolved_images[image] = digest
         return digest
+
+    def image_user(self, image: str) -> str:
+        """Preserve the resolved runtime's USER when a dependency stage temporarily runs as root."""
+        digest = self.resolve_image(image)
+        if image not in self._image_users:
+            machine = self.run(["uname", "-m"], capture=True).strip()
+            architecture = {"x86_64": "amd64", "aarch64": "arm64"}[machine]
+            self._image_users[image] = NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding,
+            ).image_user(digest, architecture)
+        return self._image_users[image]
 
     def image_matches(self, image: str, digest: str) -> bool:
         """Verify a retained environment against its producer's OCI descriptor on this node."""
@@ -910,21 +1166,15 @@ rm -rf "$incoming"
         cached = self.read_json(self.root + "/images.json").get(name)
         if cached and cached["nodeDigest"] == images[name]:
             return cached
-        layout = self.root + "/images/" + uuid.uuid4().hex
+        identifier = uuid.uuid4().hex
+        # Interrupted exports belong to the existing transient-output cleanup.
+        layout = self.root + "/transfers/" + identifier
         self.run(["mkdir", "-p", layout])
         machine = self.run(["uname", "-m"], capture=True).strip()
         platform = "linux/" + {"x86_64": "amd64", "aarch64": "arm64"}[machine]
+        store = NodeImageStore(self.kubectl, self.namespace, self.name, self.binding)
         self.run(
-            [
-                *self._containerd(),
-                "images",
-                "export",
-                "--skip-manifest-json",
-                "--platform",
-                platform,
-                layout + "/image.tar",
-                name,
-            ],
+            store.export_command(name, layout + "/image.tar", platform),
             container="images",
         )
         self.run(
@@ -938,8 +1188,11 @@ rm -rf "$incoming"
             container="images",
         )
         digest = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
-        self._save_layout(name, layout, digest)
-        return {"path": layout, "digest": digest, "nodeDigest": images[name]}
+        cached_path = self.root + "/images/" + identifier
+        self.run(["mkdir", "-p", self.root + "/images"])
+        self.run(["mv", layout, cached_path])
+        self._save_layout(name, cached_path, digest)
+        return {"path": cached_path, "digest": digest, "nodeDigest": images[name]}
 
     def _context_digest(self, layout: dict[str, str]) -> str:
         """Resolve a single-image index for BuildKit without changing export identities."""
@@ -1029,6 +1282,8 @@ rm -rf "$incoming"
             args += ["--opt", f"build-arg:{key}={value}"]
         layout = ""
         if destination:
+            # Prepare traversable parents before BuildKit creates its private export root.
+            self.run(["mkdir", "-p", destination])
             # BuildKit mirrors each owned export directory so retries cannot revive removed files.
             output = "type=local,mode=delete,dest=" + destination
         elif metadata_only:
@@ -1042,6 +1297,8 @@ rm -rf "$incoming"
             output = f"type=image,name={image},push={str(push).lower()}"
         started = time.monotonic()
         self.run([*args, "--output", output], capture=capture)
+        if destination:
+            self._share_output(destination)
         result = self.read_json(metadata)
         target_name = target or "default"
         output_name = destination or image or "files"

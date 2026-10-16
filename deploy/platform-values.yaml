@@ -17,8 +17,8 @@
 #   imagePullSecrets:
 #     - name: registry-auth
 
-# Source-build storage. The default StorageClass and 100Gi compiler cache apply
-# unless these values are overridden.
+# Source builds use node-local storage and a 100Gi compiler cache by default.
+# Set storageClassName only to select another non-NFS StorageClass.
 # development:
 #   build:
 #     storageClassName: your-storage-class

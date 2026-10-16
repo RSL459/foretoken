@@ -9,7 +9,7 @@
 
 ## 从源码安装
 
-准备 Python 3.11+、Git、kubectl 和 Helm，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并提供默认存储类（StorageClass）。需要使用其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName` 或 `applicationFiles.storageClassName`，通过 `--values` 传入。
+准备 Python 3.11+、Git、kubectl 和 Helm，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并为应用文件提供默认存储类（StorageClass）。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -30,6 +30,8 @@ foretoken install -e .
 ```
 
 这会安装共享的 Foretoken 平台，构建在集群中进行；也可替换已通过 CLI 安装的发布版平台。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。其他 Kubernetes 集群需要构建任务和节点都能访问的镜像仓库，安装命令及仓库认证见[Kubernetes 部署指南](kubernetes-deployment_zh.md#2-从源码安装-foretoken)。
+
+源码构建默认使用节点本地的持久存储，应用文件使用集群默认存储类。需要调整时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName` 或 `applicationFiles.storageClassName`，通过 `--values` 传入。构建存储需使用非 NFS 文件系统，已有卷不会自动更换存储类。
 
 ## 部署模型服务
 
@@ -62,7 +64,7 @@ foretoken delete examples/quickstart
 
 ### 并行运行候选方案
 
-Git worktree 是一个分支的独立代码目录。每个候选使用不同的 worktree 和 Kubernetes 命名空间，即可并行构建、部署不同改动。所有候选可以共用已安装的 CLI 和平台。
+每个候选使用独立的 Foretoken 源码目录和 Kubernetes 命名空间，即可并行构建、部署不同改动。可以分别克隆仓库，也可以用 Git worktree 从同一仓库创建独立工作目录。所有候选可以共用已安装的 CLI 和平台。
 
 从仓库根目录创建候选，并通过 Kustomize 配置复用快速开始示例：
 
@@ -104,9 +106,9 @@ foretoken perf examples/candidate --num-prompts 20 \
 
 候选在一个节点上使用两张 GPU，张量并行度为 2。模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。若要共用已有模型目录，按[模型存储指南](model-storage_zh.md)配置。
 
-其他候选使用不同的 worktree、分支、命名空间和 iteration 名称。八个候选共请求 16 张 GPU，还需为服务和平台预留 CPU 与内存。需要独立物理设备时，使用独占 GPU 资源。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
+其他候选使用独立的源码目录、命名空间和 iteration 名称。八个候选共请求 16 张 GPU，还需为服务和平台预留 CPU 与内存。需要独立物理设备时，使用独占 GPU 资源。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
 
-结果保存在各自 worktree 中。[实验记录手册](../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
+结果保存在各自源码目录中。[实验记录手册](../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
 
 候选结束后删除部署：
 
@@ -126,7 +128,7 @@ foretoken delete examples/candidate
 foretoken deploy examples/quickstart --engine-source ../vllm --timeout 20m
 ```
 
-后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，重新执行 `foretoken deploy`，所需编译会自动完成。其他 worktree 的引擎目录需分别指定。
+后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，重新执行 `foretoken deploy`，所需编译会自动完成。每个 Foretoken 源码目录的引擎目录需分别指定。
 
 修改沐曦原生 kernel 时，还需同时指定插件目录及与其匹配的 vLLM 目录：
 

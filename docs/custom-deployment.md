@@ -9,7 +9,7 @@ Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl and Helm, and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass. To use another storage class, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
+Prepare Python 3.11+, Git, kubectl and Helm, and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass for application files.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -30,6 +30,8 @@ foretoken install -e .
 ```
 
 This installs the shared Foretoken platform; builds run in the cluster. It can also replace a published platform installed through the CLI. For k3d GPU setup, follow [Deploy Foretoken with k3d](k3d-deployment.md). Other Kubernetes clusters need a registry reachable by the builder and nodes; [Deploy Foretoken on Kubernetes](kubernetes-deployment.md#2-install-foretoken-from-source) covers the installation command and registry authentication.
+
+Source builds use persistent node-local storage by default; application files use the cluster's default StorageClass. To override these settings, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`. Build storage must use a non-NFS filesystem; existing volumes keep their StorageClass.
 
 ## Deploy a model service
 
@@ -62,7 +64,7 @@ foretoken delete examples/quickstart
 
 ### Run candidates in parallel
 
-A Git worktree is a separate code directory for a branch. Give each candidate its own worktree and Kubernetes namespace to build and deploy different changes in parallel. All candidates can share the same CLI installation and platform.
+Give each candidate an independent Foretoken source directory and Kubernetes namespace to build and deploy different changes in parallel. Use separate clones or Git worktrees, which provide separate working directories from one repository. All candidates can share the same CLI installation and platform.
 
 From the repository root, create a candidate and a Kustomize configuration based on the Quick Start:
 
@@ -104,9 +106,9 @@ foretoken perf examples/candidate --num-prompts 20 \
 
 The candidate uses two GPUs on one node, with tensor parallelism set to two. It gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To share an existing model directory instead, follow [model storage](model-storage.md).
 
-Repeat with different worktree, branch, namespace and iteration names for other candidates. Eight candidates request 16 GPUs, plus CPU and memory for their services and the platform. Use exclusive GPU resources for separate physical devices. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
+Use separate source directories, namespaces and iteration names for other candidates. Eight candidates request 16 GPUs, plus CPU and memory for their services and the platform. Use exclusive GPU resources for separate physical devices. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
 
-Results are saved in each worktree. The [experiment records guide](../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
+Results are saved in each source directory. The [experiment records guide](../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
 
 Delete the candidate when finished:
 
@@ -126,7 +128,7 @@ To use vLLM code from a local directory, pass that directory on deployment. It m
 foretoken deploy examples/quickstart --engine-source ../vllm --timeout 20m
 ```
 
-Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, rerun `foretoken deploy`; compilation is automatic. Select the engine directory separately for other worktrees.
+Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, rerun `foretoken deploy`; compilation is automatic. Select the engine directory separately for each Foretoken source directory.
 
 For MetaX native kernels, also select the plugin directory alongside its matching vLLM directory:
 

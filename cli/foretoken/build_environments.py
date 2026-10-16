@@ -90,10 +90,10 @@ class BuildEnvironments:
             return previous
 
         image = self.images[name]
-        with ThreadPoolExecutor(max_workers=len(self.builders)) as builds:
+        with ThreadPoolExecutor(max_workers=len(self.builders)) as builds, self.builders[0].cancellation:
             pending = {
                 builder.node: builds.submit(
-                    builder.build,
+                    builder.cancellation.run_stage, builder.build,
                     dockerfile, target=target, image=image, push=self.push,
                     arguments={**arguments, **(node_arguments or {}).get(builder.node, {})},
                 )

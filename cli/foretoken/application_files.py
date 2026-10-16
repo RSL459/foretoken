@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator
@@ -664,6 +665,8 @@ class ApplicationFiles:
             ]
         deadline = time.monotonic() + seconds
         while True:
+            if builder is not None:
+                builder.cancellation.check()
             try:
                 created = self.kubectl.run(
                     ["create", "-f", "-", "-o", "json"], input_text=json.dumps(job)
@@ -679,10 +682,20 @@ class ApplicationFiles:
                     ) from None
                 time.sleep(1)
         metadata = json.loads(created.stdout)["metadata"]
+
+        def stop() -> None:
+            self._delete_owned("jobs", metadata, timeout)
+
         try:
+            if builder is not None:
+                builder.cancellation.register(stop)
             yield metadata
         finally:
-            self._delete_owned("jobs", metadata, timeout)
+            if builder is not None:
+                builder.cancellation.unregister(stop)
+                builder.cancellation.cleanup(stop, sys.exc_info()[1])
+            else:
+                self._delete_owned("jobs", metadata, timeout)
 
     def _delete_owned(
         self, resource: str, metadata: dict[str, Any], timeout: str

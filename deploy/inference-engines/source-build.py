@@ -178,6 +178,21 @@ def compile_native(source: Path, cache: Path, version: str) -> None:
     if getattr(torch.version, "maca", None):
         # The SDK CMake wrapper must preserve failures before its cleanup commands.
         environment["BASH_ERREXIT"] = "1"
+    elif torch.version.cuda:
+        # Runtime wheels can supply CUDA library headers outside CUDA_HOME.
+        # System include paths keep explicit toolkit paths ahead of wheel headers.
+        includes = set()
+        for distribution in importlib.metadata.distributions():
+            if not canonicalize_name(distribution.metadata["Name"]).startswith("nvidia-"):
+                continue
+            for file in distribution.files or ():
+                if "include" in file.parts:
+                    directory = Path(*file.parts[:file.parts.index("include") + 1])
+                    includes.add(str(distribution.locate_file(directory)))
+        if includes:
+            environment["CPLUS_INCLUDE_PATH"] = os.pathsep.join(
+                filter(None, (environment.get("CPLUS_INCLUDE_PATH"), *sorted(includes)))
+            )
     if not environment.get("TORCH_CUDA_ARCH_LIST"):
         # Upstream CMake selects its supported architectures for CPU-only builds.
         environment.pop("TORCH_CUDA_ARCH_LIST", None)

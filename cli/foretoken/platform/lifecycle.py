@@ -20,6 +20,11 @@ from foretoken.accelerators.discovery import ExporterDiscovery
 from foretoken.accelerators.metax import MetaXExporterLifecycle, MetaXMetricsDiscovery
 from foretoken.accelerators.nvidia import NvidiaMetricsDiscovery
 from foretoken.arguments import InstallCommand, UninstallCommand
+from foretoken.build_storage import (
+    managed_build_storage_resources,
+    remove_build_storage,
+)
+from foretoken.cluster_build import BuildCancellation
 from foretoken.kubernetes import (
     Kubectl,
     control_plane_deployments,
@@ -517,6 +522,7 @@ class PlatformLifecycle:
         )
 
         installation_workers = ThreadPoolExecutor(max_workers=2)
+        source_cancellation = BuildCancellation()
         source_future = None
         dependencies: Future[None] = Future()
         # Only the worker enters source contexts. Join it before the outer stack
@@ -543,9 +549,10 @@ class PlatformLifecycle:
                     else "nvidia",
                     saved_arguments=source_build_arguments,
                     before_delivery=dependencies.result,
+                    cancellation=source_cancellation,
                 )
                 source_future = installation_workers.submit(
-                    source_artifacts.enter_context, context
+                    source_cancellation.run_stage, source_artifacts.enter_context, context
                 )
             elif not kubectl.exists("namespace", platform.namespace):
                 kubectl.run(["create", "namespace", platform.namespace])
@@ -641,6 +648,11 @@ class PlatformLifecycle:
         except BaseException as error:
             if not dependencies.done():
                 dependencies.set_exception(error)
+            if source_future is not None:
+                source_future.cancel()
+            source_cancellation.cancel(error)
+            if isinstance(error, (DeploymentError, OSError)):
+                source_cancellation.check()
             raise
         finally:
             # Resolve dependency success or failure before joining: the source
@@ -749,9 +761,10 @@ class PlatformLifecycle:
                 "use its existing Helm lifecycle"
             )
 
+        source_storage = managed_build_storage_resources(kubectl, platform.namespace)
         source_builds = (
             platform_exists and helm.release_install_source(platform) == "source"
-        ) or has_source_state(kubectl)
+        ) or has_source_state(kubectl) or bool(source_storage)
         unadopted_origin = (
             () if platform_exists else helm.application_origin_resources()
         )
@@ -774,6 +787,7 @@ class PlatformLifecycle:
         )
         if (
             platform_exists
+            or source_storage
             or unadopted_origin
             or admission_claims
             or dcgm_managed
@@ -877,4 +891,9 @@ class PlatformLifecycle:
             _print_plan("LoadBalancer", *load_balancer_result)
         if source_builds:
             remove_build_caches(kubectl, command.timeout)
+        if source_storage:
+            _print_plan(
+                "Source build storage",
+                *remove_build_storage(kubectl, platform.namespace, command.timeout),
+            )
         forget_install(kubectl)

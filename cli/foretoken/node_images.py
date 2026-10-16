@@ -163,6 +163,21 @@ class NodeImageStore:
         digest = self.images().get(image)
         return image_manifest_digest(digest, self._descriptor) if digest is not None else None
 
+    def image_user(self, digest: str, architecture: str) -> str:
+        """Read the build node's image USER from manifests and config, without unpacking layers."""
+        manifest = self._descriptor(digest)
+        while "manifests" in manifest:
+            selected = next((
+                entry for entry in manifest["manifests"]
+                if entry.get("platform", {}).get("os") == "linux"
+                and entry["platform"].get("architecture") == architecture
+            ), None)
+            if selected is None:
+                raise DeploymentError(f"image {digest} has no linux/{architecture} manifest")
+            manifest = self._descriptor(selected["digest"])
+        configuration = self._descriptor(manifest["config"]["digest"])
+        return configuration["config"].get("User", "") or "0"
+
     def matches(self, image: str, digest: str) -> bool:
         """Compare BuildKit output with a node reference, including its single-image index."""
         node_digest = self.images().get(image)
@@ -235,16 +250,28 @@ class NodeImageStore:
             ]
         )
 
-    def import_layout(self, layout: str, image: str) -> None:
-        """Import and pin every OCI alias; ctr 1.x pins before its long unpack stage."""
-        command = [*self.containerd(), "images", "import"]
+    def _major_version(self) -> int:
+        """Select the supported containerd archive API from the node's client version."""
         version = self.run([_CONTAINERD_CLIENT, "--version"], capture=True)
         match = re.search(r"\bv([12])\.\d+\.\d+", version)
         if match is None:
             raise DeploymentError(
                 f"unsupported containerd client version: {version.strip()}"
             )
-        major = int(match[1])
+        return int(match[1])
+
+    def export_command(self, image: str, archive: str, platform: str) -> list[str]:
+        """Return a synchronous OCI export for the builder's cancellation-aware executor."""
+        command = [*self.containerd(), "images", "export"]
+        if self._major_version() == 2:
+            # The transfer client's asynchronous receiver can close an unfinished archive.
+            command.append("--local")
+        return [*command, "--skip-manifest-json", "--platform", platform, archive, image]
+
+    def import_layout(self, layout: str, image: str) -> None:
+        """Import and pin every OCI alias; ctr 1.x pins before its long unpack stage."""
+        command = [*self.containerd(), "images", "import"]
+        major = self._major_version()
         if major == 2:
             command.append("--local")
         index = json.loads(self.run(["cat", layout + "/index.json"], capture=True))

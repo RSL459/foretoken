@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import uuid
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 
 def resolve_vllm_base_image(
@@ -22,6 +25,26 @@ def resolve_vllm_base_image(
     if separator and ("." in registry or ":" in registry or registry == "localhost"):
         return image
     return f"{docker_registry.rstrip('/') or 'docker.io'}/{image}"
+
+
+def engine_cache_scope(
+    binding: str,
+    engines: Iterable[str],
+    previous: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Keep a binding's compiler namespace across recipe changes and failed builds.
+
+    Callers separate metadata and native workspaces by engine base and interpreter,
+    not by the digest of a newly built dependency environment.
+    """
+    names = sorted(engines)
+    if previous and previous["binding"] == binding and previous["engines"] == names:
+        return previous
+    return {
+        "binding": binding,
+        "engines": names,
+        "prefix": "-".join((binding, uuid.uuid4().hex, *names)),
+    }
 
 
 def engine_build_arguments(arguments: dict[str, str]) -> dict[str, str]:

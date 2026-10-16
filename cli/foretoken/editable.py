@@ -490,7 +490,7 @@ class EditableDeployment:
             node_uid = self.kubectl.get("node", origin.node)["metadata"]["uid"][:8]
             claim = next(
                 (claim for node, _, claim in local_caches if node == origin.node),
-                "foretoken-application-build-" + node_uid,
+                "foretoken-application-compiler-" + node_uid,
             ) + "-" + build["binding"][:12]
         identity = ensure_build_cache(
             self.kubectl,
@@ -498,6 +498,8 @@ class EditableDeployment:
             claim,
             build["configuration"],
             binding=build["binding"],
+            timeout=timeout,
+            recorded_caches=build.get("caches", []),
             owner={
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",
@@ -609,9 +611,9 @@ class EditableDeployment:
 
             # Each component owns its export directory. Join builds before validating
             # their shared source snapshot or allowing any publisher to consume them.
-            with ThreadPoolExecutor(max_workers=len(missing)) as builds:
+            with ThreadPoolExecutor(max_workers=len(missing)) as builds, builder.cancellation:
                 pending_builds = [
-                    builds.submit(build_application, component)
+                    builds.submit(builder.cancellation.run_stage, build_application, component)
                     for component in sorted(missing)
                 ]
                 for future in pending_builds:
@@ -620,7 +622,7 @@ class EditableDeployment:
             # Join every publisher before committing selections or releasing their exports.
             published_at = time.monotonic()
             previous_revisions = {}
-            with ThreadPoolExecutor(max_workers=len(missing)) as publications:
+            with ThreadPoolExecutor(max_workers=len(missing)) as publications, builder.cancellation:
                 futures = {}
                 for component in sorted(missing):
                     bundle = self.state["bundles"][component]
@@ -628,7 +630,7 @@ class EditableDeployment:
                     previous = bundle.get("previous", "")
                     previous_revisions[component] = previous
                     futures[component] = publications.submit(
-                        origin.publish,
+                        builder.cancellation.run_stage, origin.publish,
                         builder,
                         builder.root + "/output/" + revision + "/payload",
                         component,
