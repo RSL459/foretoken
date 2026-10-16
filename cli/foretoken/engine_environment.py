@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Resolve the vLLM build base shared by source installation and image build tools."""
+"""Resolve inference-engine build inputs for source deployment and repository image tools."""
 
 from __future__ import annotations
 
@@ -22,6 +22,19 @@ def resolve_vllm_base_image(
     if separator and ("." in registry or ":" in registry or registry == "localhost"):
         return image
     return f"{docker_registry.rstrip('/') or 'docker.io'}/{image}"
+
+
+def engine_build_arguments(arguments: dict[str, str]) -> dict[str, str]:
+    """Select the inputs consumed by engine source builds, excluding SDK and Rust-only images."""
+    return {
+        name: arguments[name]
+        for name in (
+            "UV_IMAGE_REGISTRY", "UV_IMAGE", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL",
+            "FORETOKEN_GITHUB_MIRROR", "BUILDKIT_SYNTAX_IMAGE",
+            "BUILD_JOBS", "TARGET_CUDA_ARCH_LIST",
+        )
+        if name in arguments
+    }
 
 
 def _main() -> None:

@@ -114,10 +114,11 @@ def publish(
     sources: dict | None = None,
     image: str | None = None,
     parts: list[str] | None = None,
+    previous_image: str | None = None,
     source_archive: Path | None = None,
     archive_url: str = "",
 ) -> Path:
-    """Publish a complete application, optionally replacing selected outputs of a completed base."""
+    """Publish complete files and source evidence, checking the selected base before partial reuse."""
     prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
     if not release_owned:
         _clear_source_staging(destination.parent, binding)
@@ -140,8 +141,11 @@ def publish(
     if parts is not None:
         if metadata is None:
             raise FileNotFoundError(f"completed application is missing: {previous}")
-        if metadata.get("image") != image:
-            raise ValueError("partial publication requires the previous environment image")
+        # A dependency-stage producer may retain the same native runtime while
+        # replacing engine Python dependencies. It selects the compatible prior
+        # application explicitly; ordinary file updates keep their current image.
+        if metadata.get("image") != (previous_image if previous_image is not None else image):
+            raise ValueError("partial publication requires the selected previous environment image")
         # Exports may include other build outputs. Accept only selected groups,
         # replacing each in full so deleted files cannot survive from the base.
         inputs = {
@@ -322,6 +326,7 @@ if __name__ == "__main__":
             sources=selection["sources"],
             image=selection["image"],
             parts=selection["parts"],
+            previous_image=selection["previous_image"],
             source_archive=Path(selection["source_archive"]),
             archive_url=selection["archive_url"],
         )

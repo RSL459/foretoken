@@ -9,7 +9,7 @@ import json
 import re
 import subprocess
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -24,6 +24,40 @@ SOURCE_BUILD_POD_LABEL = "inference.foretoken.io/source-builder"
 _PIN_LABEL = "io.cri-containerd.pinned"
 _CONTAINERD_CLIENT = "/usr/local/bin/ctr"
 _CONTAINERD_SOCKET = "/run/foretoken-containerd.sock"
+
+
+def image_manifest_digest(
+    digest: str, read: Callable[[str], dict[str, Any]]
+) -> str:
+    """Resolve a single-image index for node and OCI-layout consumers without unwrapping artifacts."""
+    descriptor = read(digest)
+    if descriptor.get("mediaType") not in {
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+    }:
+        return digest
+    manifests = descriptor["manifests"]
+    if len(manifests) != 1:
+        return digest
+    child = manifests[0]
+    if (
+        child["mediaType"] not in {
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+        }
+        or child.get("annotations", {}).get("vnd.docker.reference.type") == "attestation-manifest"
+    ):
+        return digest
+    manifest = read(child["digest"])
+    if (
+        manifest.get("artifactType") or manifest.get("subject")
+        or manifest.get("config", {}).get("mediaType") not in {
+            "application/vnd.oci.image.config.v1+json",
+            "application/vnd.docker.container.image.v1+json",
+        }
+    ):
+        return digest
+    return child["digest"]
 
 
 def images_container_spec(
@@ -120,6 +154,15 @@ class NodeImageStore:
             if len(columns := line.split()) >= 3
         }
 
+    def _descriptor(self, digest: str) -> dict[str, Any]:
+        """Read an OCI descriptor without exporting or unpacking image layers."""
+        return json.loads(self.run([*self.containerd(), "content", "get", digest], capture=True))
+
+    def image_digest(self, image: str) -> str | None:
+        """Resolve a local build dependency from containerd metadata alone."""
+        digest = self.images().get(image)
+        return image_manifest_digest(digest, self._descriptor) if digest is not None else None
+
     def matches(self, image: str, digest: str) -> bool:
         """Compare BuildKit output with a node reference, including its single-image index."""
         node_digest = self.images().get(image)
@@ -127,11 +170,7 @@ class NodeImageStore:
             return False
         if node_digest == digest:
             return True
-        descriptor = json.loads(
-            self.run([*self.containerd(), "content", "get", node_digest], capture=True)
-        )
-        manifests = descriptor.get("manifests", [])
-        return len(manifests) == 1 and manifests[0]["digest"] == digest
+        return image_manifest_digest(node_digest, self._descriptor) == digest
 
     def owned_images(self) -> dict[str, str]:
         """Return owned references and bindings, scoped to this binding when specified."""

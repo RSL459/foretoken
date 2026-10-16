@@ -537,11 +537,6 @@ class PlatformLifecycle:
                     (*stored_values, *values),
                     source_runtime_image,
                     origin=origin,
-                    installed_images=(
-                        helm.platform_image_references(platform)
-                        if install_source == "source"
-                        else None
-                    ),
                     build_metax_runtime=build_metax_runtime,
                     runtime_backend=runtime_selection.backend
                     if runtime_selection

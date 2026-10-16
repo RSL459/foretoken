@@ -547,30 +547,6 @@ class Helm(HelmClient):
             section_name=str(gateway.get("sectionName") or ""),
         )
 
-    def platform_image_references(self, release: ReleaseRef) -> tuple[str, str, str]:
-        """Return the image references currently stored for a source release."""
-        values = self._release_values(release)
-        image = values.get("image") or {}
-        frontend = values.get("frontend") or {}
-        runtime = values.get("runtime") or {}
-        vllm = (runtime.get("vllm") or {}) if isinstance(runtime, dict) else {}
-        if not all(isinstance(value, dict) for value in (image, frontend, vllm)):
-            raise DeploymentError("source release image values are invalid")
-        repository = image.get("repository")
-        tag = image.get("tag")
-        frontend_image = frontend.get("image")
-        model_server_image = vllm.get("image")
-        if not all(
-            isinstance(value, str) and value
-            for value in (repository, tag, frontend_image, model_server_image)
-        ):
-            raise DeploymentError("source release image values are incomplete")
-        return (
-            f"{repository}:{tag}",
-            frontend_image,
-            model_server_image,
-        )
-
     def _upgrade_install_args(
         self,
         release: ReleaseRef,

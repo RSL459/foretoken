@@ -339,8 +339,9 @@ class ApplicationFiles:
         sources: dict[str, Any] | None = None,
         image: str | None = None,
         parts: list[str] | None = None,
+        previous_image: str | None = None,
     ) -> str:
-        """Publish a compiler export with provenance and return the selected immutable revision."""
+        """Publish an export, checking the producer-selected base when reusing application parts."""
         command = [
             "python",
             "-c",
@@ -355,6 +356,7 @@ class ApplicationFiles:
                 "sources": sources,
                 "image": image,
                 "parts": parts,
+                "previous_image": previous_image,
                 "source_archive": _SOURCE_ARCHIVE,
                 "archive_url": f"{self.endpoint}/sources/{component}/{revision}.tar.gz",
             }),

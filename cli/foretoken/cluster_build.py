@@ -17,6 +17,7 @@ import tempfile
 import time
 import uuid
 from contextlib import AbstractContextManager
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from threading import Lock
@@ -30,12 +31,27 @@ from foretoken.node_images import (
     SOURCE_BUILD_BINDING_LABEL,
     SOURCE_BUILD_POD_LABEL,
     NodeImageStore,
+    image_manifest_digest,
     images_container_spec,
 )
 
 _BUILD_POD_LABEL = SOURCE_BUILD_POD_LABEL
 _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
 _BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
+
+
+class ImageNotFoundError(DeploymentError):
+    """Identify a collected registry artifact that its source producer can rebuild."""
+
+
+def _image_reference(image: str) -> str:
+    """Normalize Docker's shorthand references for node-store lookups."""
+    first = image.split("/", 1)[0]
+    if "/" not in image or not ("." in first or ":" in first or first == "localhost"):
+        image = "docker.io/" + ("library/" if "/" not in image else "") + image
+    if ":" not in image.rsplit("/", 1)[-1] and "@" not in image:
+        image += ":latest"
+    return image
 
 
 def _pod_ready(pod: dict[str, Any]) -> bool:
@@ -238,9 +254,9 @@ class ClusterBuilder(AbstractContextManager):
         self._created = False
         self._image_lock = Lock()
         self._generated_layouts: dict[str, dict[str, str]] = {}
-        self._image_builds: dict[str, tuple[list[str], str]] = {}
         self._used_images: set[str] = set()
         self._built_images: set[str] = set()
+        self._resolved_images: dict[str, str] = {}
 
     def _reuse_or_retire_pods(self) -> dict[str, Any] | None:
         """Select a compatible daemon and retire other builders sharing its compiler cache."""
@@ -633,7 +649,8 @@ chmod 600 "$1/buildkit.toml"
         container: str = "builder",
         input_text: str | None = None,
     ) -> str:
-        """Execute a build stage, preserving live compiler diagnostics by default."""
+        """Execute a build stage, preserving live compiler and daemon diagnostics on failure."""
+        started = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         result = subprocess.run(
             self.command(args, container=container),
             check=False,
@@ -643,8 +660,34 @@ chmod 600 "$1/buildkit.toml"
         )
         if result.returncode:
             detail = (result.stderr or result.stdout or "").strip()
+            if container == "builder" and args[0] == "buildctl":
+                # Frontend startup failures can reach buildctl as only an exit code.
+                # Preserve the daemon's cause before the context retires a failed Pod.
+                logs = subprocess.run(
+                    self.kubectl.command([
+                        "logs", "-n", self.namespace, self.name, "-c", "builder",
+                        "--since-time=" + started, "--timestamps",
+                        "--request-timeout=" + self.timeout,
+                    ]),
+                    text=True, capture_output=True, check=False,
+                )
+                if logs.returncode == 0 and logs.stdout.strip():
+                    print(logs.stdout, flush=True)
+                    if any(
+                        "session key" in line and "disk quota exceeded" in line
+                        for line in logs.stdout.splitlines()
+                    ):
+                        detail = (
+                            "the host kernel keyring quota for the builder's UID is exhausted; "
+                            "inspect /proc/key-users and kernel.keys.maxkeys/maxbytes on the host, "
+                            "then identify retained keyring references or adjust host key capacity"
+                        )
+                elif logs.returncode:
+                    print(f"Builder logs unavailable: {logs.stderr.strip()}", flush=True)
             raise DeploymentError(
-                f"cluster build failed in {self.namespace}/{self.name}: {detail or result.returncode}"
+                f"cluster build failed in {self.namespace}/{self.name}"
+                + (f" on node {self.node}" if self.node else "")
+                + f": {detail or result.returncode}"
             )
         return result.stdout if capture else ""
 
@@ -732,11 +775,90 @@ rm -rf "$incoming"
             flush=True,
         )
 
+    def export_application(
+        self,
+        component: str,
+        destination: str,
+        arguments: dict[str, str],
+        parts: list[str] | None = None,
+    ) -> None:
+        """Export selected first-party application parts; callers assemble engine files separately."""
+        if parts is None or "rust" in parts:
+            dockerfile = (
+                "control-plane/Dockerfile" if component == "control-plane"
+                else f"data-plane/{component}/Dockerfile"
+            )
+            # Runtime stages are outside the application export graph. Do not
+            # materialize SDK images merely to supply their unused Dockerfile ARGs.
+            arguments = {
+                key: value for key, value in arguments.items()
+                if not key.endswith("_IMAGE")
+                or key in {"RUST_BUILDER_IMAGE", "GO_BUILDER_IMAGE", "BUILDKIT_SYNTAX_IMAGE"}
+            }
+            if component == "model-server":
+                arguments["INFERENCE_ENGINE_IMAGE"] = "scratch"
+            self.build(dockerfile, target="source-export", destination=destination, arguments=arguments)
+            return
+        script = 'rm -rf "$1"; mkdir -p "$1"'
+        if "python" in parts:
+            script += (
+                '; mkdir "$1/python"; '
+                'if test -d "$2"; then cp -pR "$2/." "$1/python/"; fi'
+            )
+        self.run([
+            "sh", "-ec", script, "export", destination,
+            self.workspace + "/data-plane/model-server/python",
+        ])
+
     def _containerd(self) -> list[str]:
         """Address the local development node's image store through its own client."""
         return NodeImageStore(
             self.kubectl, self.namespace, self.name, self.binding
         ).containerd()
+
+    def resolve_image(self, image: str) -> str:
+        """Resolve a build dependency through the same node store or registry used by BuildKit."""
+        if image in self._resolved_images:
+            return self._resolved_images[image]
+        name = _image_reference(image)
+        if name in self._generated_layouts:
+            digest = self._generated_layouts[name]["digest"]
+        elif self.containerd_socket:
+            digest = NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding
+            ).image_digest(name)
+        else:
+            digest = None
+        if digest is None:
+            # A FROM-only solve uses BuildKit's registry credentials, mirrors and
+            # platform selection without running a container or adding image layers.
+            dockerfile = ".foretoken-resolve/Dockerfile"
+            self.run([
+                "sh", "-ec",
+                'mkdir -p "$1/.foretoken-resolve"; printf \'ARG BASE_IMAGE\\nFROM ${BASE_IMAGE}\\n\' > "$1/.foretoken-resolve/Dockerfile"',
+                "resolve", self.workspace,
+            ])
+            try:
+                metadata = self.build(
+                    dockerfile, image="foretoken-resolve:" + uuid.uuid4().hex,
+                    arguments={"BASE_IMAGE": image}, capture=True, metadata_only=True,
+                )
+            except DeploymentError as error:
+                message = str(error)
+                if "failed to resolve source metadata" in message and (
+                    f"{image}: not found" in message or "404 Not Found" in message
+                ):
+                    raise ImageNotFoundError(message) from error
+                raise
+            digest = metadata["containerimage.digest"]
+        self._resolved_images[image] = digest
+        return digest
+
+    def image_matches(self, image: str, digest: str) -> bool:
+        """Verify a retained environment against its producer's OCI descriptor on this node."""
+        if self.containerd_socket:
+            return self._node_image_matches(image, digest)
+        return self.resolve_image(image) == digest
 
     def _node_images(self) -> dict[str, str]:
         """Read node references for existing local build-context reuse."""
@@ -775,18 +897,12 @@ rm -rf "$incoming"
 
     def _local_image(self, image: str) -> dict[str, str] | None:
         """Expose built OCI outputs or existing node images as registry-free BuildKit contexts."""
-        if not self.containerd_socket:
+        if not self.containerd_socket or image == "scratch":
             return None
-        name = image
-        first = name.split("/", 1)[0]
-        if "/" not in name or not (
-            "." in first or ":" in first or first == "localhost"
-        ):
-            name = "docker.io/" + ("library/" if "/" not in name else "") + name
-        if ":" not in name.rsplit("/", 1)[-1] and "@" not in name:
-            name += ":latest"
-        if name in self._image_builds:
-            return self._export_image(name)
+        name = _image_reference(image)
+        if name in self._generated_layouts:
+            self._used_images.add(name)
+            return self._generated_layouts[name]
         images = self._node_images()
         if name not in images:
             return None
@@ -827,45 +943,10 @@ rm -rf "$incoming"
 
     def _context_digest(self, layout: dict[str, str]) -> str:
         """Resolve a single-image index for BuildKit without changing export identities."""
-        digest = layout["digest"]
-        descriptor = self.read_json(
-            layout["path"] + "/blobs/" + digest.replace(":", "/", 1)
+        return image_manifest_digest(
+            layout["digest"],
+            lambda digest: self.read_json(layout["path"] + "/blobs/" + digest.replace(":", "/", 1)),
         )
-        if descriptor.get("mediaType") not in {
-            "application/vnd.oci.image.index.v1+json",
-            "application/vnd.docker.distribution.manifest.list.v2+json",
-        }:
-            return digest
-        manifests = descriptor["manifests"]
-        if len(manifests) != 1:
-            return digest
-        child = manifests[0]
-        if (
-            child["mediaType"]
-            not in {
-                "application/vnd.oci.image.manifest.v1+json",
-                "application/vnd.docker.distribution.manifest.v2+json",
-            }
-            or child.get("annotations", {}).get("vnd.docker.reference.type")
-            == "attestation-manifest"
-        ):
-            return digest
-        manifest = self.read_json(
-            layout["path"] + "/blobs/" + child["digest"].replace(":", "/", 1)
-        )
-        if (
-            manifest.get("artifactType")
-            or manifest.get("subject")
-            or manifest.get("config", {}).get("mediaType")
-            not in {
-                "application/vnd.oci.image.config.v1+json",
-                "application/vnd.docker.container.image.v1+json",
-            }
-        ):
-            return digest
-        # Node export may wrap the same image produced directly by BuildKit.
-        # Its manifest, rather than that wrapper, identifies the build input.
-        return child["digest"]
 
     def build(
         self,
@@ -876,8 +957,13 @@ rm -rf "$incoming"
         image: str = "",
         push: bool = False,
         arguments: dict[str, str] | None = None,
+        capture: bool = False,
+        metadata_only: bool = False,
     ) -> dict[str, Any]:
-        """Build files or registry images, deferring local OCI export until an output is consumed."""
+        """Build files or complete images, retaining local OCI outputs until delivery.
+
+        Dependency resolution uses metadata_only to inspect a base without exporting its layers.
+        """
         metadata = self.root + "/results/" + uuid.uuid4().hex + ".json"
         args = [
             "buildctl",
@@ -941,17 +1027,21 @@ rm -rf "$incoming"
                 ]
                 value = alias
             args += ["--opt", f"build-arg:{key}={value}"]
+        layout = ""
         if destination:
             # BuildKit mirrors each owned export directory so retries cannot revive removed files.
             output = "type=local,mode=delete,dest=" + destination
+        elif metadata_only:
+            output = f"type=image,name={image},oci-mediatypes=true,store=false,push=false"
         elif self.containerd_socket:
-            output = (
-                f"type=image,name={image},oci-mediatypes=true,store=false,push=false"
-            )
+            # An exported layout owns the result independently of BuildKit's cache.
+            # Replaying a completed solve for delivery can rebuild evicted dependency layers.
+            layout = self.root + "/transfers/" + uuid.uuid4().hex
+            output = f"type=oci,name={image},oci-mediatypes=true,dest={layout},tar=false"
         else:
             output = f"type=image,name={image},push={str(push).lower()}"
         started = time.monotonic()
-        self.run([*args, "--output", output])
+        self.run([*args, "--output", output], capture=capture)
         result = self.read_json(metadata)
         target_name = target or "default"
         output_name = destination or image or "files"
@@ -960,52 +1050,37 @@ rm -rf "$incoming"
             f"in {time.monotonic() - started:.1f}s",
             flush=True,
         )
-        if self.containerd_socket and not destination:
-            self._image_builds[image] = (args, result["containerimage.digest"])
-        return result
-
-    def _export_image(self, image: str) -> dict[str, str]:
-        """Materialize a previewed image only when a local build or node needs its layers."""
-        if image in self._generated_layouts:
-            return self._generated_layouts[image]
-        args, digest = self._image_builds[image]
-        layout = self.root + "/transfers/" + uuid.uuid4().hex
-        self.run(
-            [
-                *args,
-                "--output",
-                f"type=oci,name={image},oci-mediatypes=true,dest={layout},tar=false",
-            ]
-        )
-        exported = self.read_json(args[args.index("--metadata-file") + 1])[
-            "containerimage.digest"
-        ]
-        descriptor = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
-        if exported != digest or descriptor != digest:
-            self.run(["rm", "-rf", "--", layout])
-            raise DeploymentError(
-                f"source image {image} changed between build and OCI export; rerun the source operation"
-            )
-        result = {"path": layout, "digest": digest}
-        self._generated_layouts[image] = result
+        if layout:
+            self._generated_layouts[_image_reference(image)] = {
+                "path": layout, "digest": result["containerimage.digest"],
+            }
         return result
 
     def import_image(self, image: str, reference: str) -> None:
         """Deliver a selected OCI output after source builds, reusing an identical node image."""
-        _, digest = self._image_builds[image]
+        image = _image_reference(image)
+        layout = self._generated_layouts[image]
+        digest = layout["digest"]
         if self._node_image_matches(reference, digest):
             print(f"Reusing unchanged node image {reference}", flush=True)
             NodeImageStore(
                 self.kubectl, self.namespace, self.name, self.binding
             ).pin_owned(reference)
-            return
-        layout = self._export_image(image)
-        NodeImageStore(
-            self.kubectl, self.namespace, self.name, self.binding
-        ).import_layout(layout["path"], reference)
-        # OCI names retain the candidate reference as well as the selected index name.
-        # Retire only references created by this operation after every node is delivered.
-        self._built_images.update((image, reference))
+        else:
+            NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding
+            ).import_layout(layout["path"], reference)
+            # Retire only references created by this operation after delivery.
+            self._built_images.update((image, reference))
+        if image in self._used_images:
+            # A generated environment consumed by this build is also the next
+            # iteration's input. Retain its immutable OCI files without copying
+            # layer bytes or invalidating in-flight commands' original paths.
+            cached = self.root + "/images/" + uuid.uuid4().hex
+            self.run(["mkdir", "-p", self.root + "/images"])
+            self.run(["cp", "-al", layout["path"], cached])
+            self._save_layout(reference, cached, digest)
+            self._used_images.add(reference)
 
     def discard_unselected_images(self, retained: set[str]) -> None:
         """Remove only this build's unselected local references after every node has been compared."""
