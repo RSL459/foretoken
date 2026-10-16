@@ -168,7 +168,7 @@ foretoken deploy examples/multi-model-quickstart --timeout 20m
 
 The command applies the configuration, deploys the selected services, and updates existing services.
 
-While waiting, it shows service status and streams Pod and container logs with source prefixes. It waits for models to report Ready and frontends to become Ready or, when `spec.replicas: 0`, confirm that their replicas have stopped. Selected alerts must also be configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
+While waiting, it shows service status and streams Pod and container logs with source prefixes. The command completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. Without `--timeout`, it waits up to ten minutes. See [service observability](../examples/observability/README.md) for alert configuration.
 
 Rejected model configuration ends the deployment command with the reported error, even if the previous version is still serving. Each model's `spec.timeouts.startup` also bounds how long a created serving workload may remain unready during startup or recovery; model preparation has its own budget. Exceeding this limit ends the command while Kubernetes continues recovery. Container restarts within the limit remain in progress.
 
@@ -198,6 +198,14 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 ```
 
 `--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
+
+### Stop and resume
+
+```bash
+foretoken stop examples/multi-model-quickstart
+```
+
+The command waits for frontend and model execution to stop, preserving configuration and storage. Run the deployment command again to resume.
 
 ## Measure serving performance
 
