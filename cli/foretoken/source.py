@@ -1054,6 +1054,21 @@ def ensure_build_volumes(
         binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
     )
     if artifact is not None:
+        if artifact.get("legacy") and configuration["storageClassName"] not in ("", SOURCE_BUILD_STORAGE_CLASS):
+            current = kubectl.get("pvc", name, namespace)
+            metadata = current["metadata"]
+            labels = metadata.get("labels", {})
+            if metadata["uid"] != artifact["uid"] or labels.get(_BUILD_CACHE_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) not in (None, binding):
+                raise DeploymentError(f"artifact PVC {namespace}/{name} changed during ownership transfer")
+            updated = json.loads(kubectl.run([
+                "patch", "pvc", name, "-n", namespace, "--type=json", "-o", "json", "-p", json.dumps([
+                    {"op": "test", "path": "/metadata/uid", "value": artifact["uid"]},
+                    {"op": "test", "path": "/metadata/resourceVersion", "value": metadata["resourceVersion"]},
+                    {"op": "add", "path": "/metadata/labels/" + SOURCE_BUILD_BINDING_LABEL.replace("/", "~1"), "value": binding},
+                ]),
+            ]).stdout)["metadata"]
+            artifact = {key: updated[key] for key in ("namespace", "name", "uid")}
+            artifact["binding"] = updated["labels"][SOURCE_BUILD_BINDING_LABEL]
         record_identity(artifact)
     if configuration["storageClassName"] in ("", SOURCE_BUILD_STORAGE_CLASS):
         return artifact, None

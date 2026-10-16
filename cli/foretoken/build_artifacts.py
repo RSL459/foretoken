@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,7 @@ def _bind_artifact_claim(
     metadata = claim["metadata"]
     spec: dict[str, Any] = {
         "restartPolicy": "Never",
+        "activeDeadlineSeconds": max(1, math.ceil(deadline - time.monotonic())),
         "automountServiceAccountToken": False,
         "terminationGracePeriodSeconds": 0,
         "imagePullSecrets": [{"name": secret} for secret in pull_secrets],
