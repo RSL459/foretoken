@@ -19,7 +19,7 @@ Rebuild the application parts affected by a change and preserve source deletions
 
 Installation automatically prepares persistent node-local compiler storage. Builder replacement preserves its caches, while application and model storage keep their existing configuration and permissions.
 
-Separate worktrees can build concurrently. Serialize source preparation and submission within one checkout, and keep platform installation and removal exclusive. Waiting for service readiness must not prevent deletion from releasing occupied devices.
+Independent source directories can build concurrently. Serialize source preparation and submission within one source directory, and keep platform installation and removal exclusive. Waiting for service readiness must not prevent deletion from releasing occupied devices.
 
 Deployment succeeds when the selected application and its serving routes are ready. Controllers manage rollout and request draining.
 
