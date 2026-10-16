@@ -504,6 +504,7 @@ class EditableDeployment:
             binding=build["binding"],
             timeout=timeout,
             record_identity=record_cache,
+            recorded_caches=build.get("caches", []),
             owner={
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",

@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import uuid
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 
 def resolve_vllm_base_image(
@@ -22,6 +25,27 @@ def resolve_vllm_base_image(
     if separator and ("." in registry or ":" in registry or registry == "localhost"):
         return image
     return f"{docker_registry.rstrip('/') or 'docker.io'}/{image}"
+
+
+def engine_cache_scope(
+    binding: str,
+    engines: Iterable[str],
+    previous: dict[str, Any] | None,
+    legacy_revision: str | None = None,
+) -> dict[str, Any]:
+    """Select a persistent compiler namespace; callers append the resolved runtime digest.
+
+    Build recipes may change without discarding CMake and ccache state. A saved
+    legacy source revision preserves the namespace used before scopes were recorded.
+    """
+    names = sorted(engines)
+    if previous and previous["binding"] == binding and previous["engines"] == names:
+        return previous
+    return {
+        "binding": binding,
+        "engines": names,
+        "prefix": "-".join((binding, legacy_revision or uuid.uuid4().hex, *names)),
+    }
 
 
 def engine_build_arguments(arguments: dict[str, str]) -> dict[str, str]:

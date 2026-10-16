@@ -44,7 +44,11 @@ from foretoken.cluster_build import (
     registry_credentials,
     remove_build_pods,
 )
-from foretoken.engine_environment import engine_build_arguments, resolve_vllm_base_image
+from foretoken.engine_environment import (
+    engine_build_arguments,
+    engine_cache_scope,
+    resolve_vllm_base_image,
+)
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError, ForetokenDeployment
 from foretoken.network_sources import select_build_sources
@@ -904,12 +908,13 @@ def ensure_build_cache(
     *,
     binding: str,
     timeout: str,
+    recorded_caches: Sequence[dict[str, Any]] = (),
     owner: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
-    """Prepare the binding's compiler volume and return its proven UID for retirement.
+    """Prepare this binding's compiler volume and return its proven identity for retirement.
 
-    Superseded local storage is reclaimed before rebuilding. Legacy claims require
-    a live binding-owned builder as evidence before retirement.
+    Superseded managed storage is reclaimed before rebuilding; legacy ownership
+    requires a binding-owned builder or its previously recorded claim UID.
     """
     if not kubectl.exists("namespace", namespace):
         kubectl.run(["create", "namespace", namespace])
@@ -939,11 +944,22 @@ def ensure_build_cache(
                 labels = pod["metadata"].get("labels", {})
                 if labels.get(SOURCE_BUILD_POD_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) != binding:
                     raise DeploymentError(f"compiler cache {namespace}/{name} is still used by {pod['metadata']['name']}; finish that operation before updating storage")
+            recorded_legacy = any(
+                identity.get("legacy") is True and identity.get("binding") == binding
+                and all(identity.get(key) == existing["metadata"][key] for key in ("namespace", "name", "uid"))
+                for identity in recorded_caches
+            )
+            if claim_binding is None and not consumers and not recorded_legacy:
+                raise DeploymentError(f"cannot replace legacy compiler cache {namespace}/{name}: its source binding is unknown")
             print(f"Replacing compiler cache {namespace}/{name} on the selected local storage; published applications are retained", flush=True)
-            for pod in consumers:
-                kubectl.delete(json.dumps(pod), timeout)
             owners = existing["metadata"].get("ownerReferences", owners)
-            kubectl.delete(json.dumps(existing), timeout)
+            for resource, obj in [*(("pods", pod) for pod in consumers), ("persistentvolumeclaims", existing)]:
+                metadata = obj["metadata"]
+                kubectl.run(
+                    ["delete", "--raw", f"/api/v1/namespaces/{namespace}/{resource}/{metadata['name']}", "-f", "-"],
+                    input_text=json.dumps({"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {"uid": metadata["uid"]}}),
+                )
+                kubectl.wait_deleted(resource, metadata, timeout)
             kubectl.wait_deleted("persistentvolume", {**volume["metadata"], "namespace": ""}, timeout)
             existing = None
     if (
@@ -1024,6 +1040,7 @@ def ensure_build_volumes(
     binding: str,
     timeout: str,
     record_identity: Callable[[dict[str, Any]], None],
+    recorded_caches: Sequence[dict[str, Any]] = (),
     owner: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Prepare artifact and optional local execution PVCs for source build callers.
@@ -1034,7 +1051,7 @@ def ensure_build_volumes(
     """
     artifact = ensure_build_cache(
         kubectl, namespace, name, configuration,
-        binding=binding, timeout=timeout, owner=owner,
+        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
     )
     if artifact is not None:
         record_identity(artifact)
@@ -1048,7 +1065,7 @@ def ensure_build_volumes(
     execution = ensure_build_cache(
         kubectl, namespace, execution_name,
         {**configuration, "storageClassName": SOURCE_BUILD_STORAGE_CLASS},
-        binding=binding, timeout=timeout, owner=owner,
+        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
     )
     if execution is None:
         raise DeploymentError(
@@ -1397,6 +1414,24 @@ def prepare_source_images(
         checkout.name if checkout is not None
         else build.get("binding") or previous.get("build", {}).get("binding") or uuid.uuid4().hex
     )
+    # Save compiler identity before any stage can fail. Legacy pending snapshots
+    # identify the old recipe revision even when the current recipe has been fixed.
+    cache_scope = None
+    if engines:
+        pending_build = pending.get("build", {}) if pending.get("root") == str(root) and pending.get("build", {}).get("binding") == binding else {}
+        saved_scope = pending_build.get("engine_cache_scope") or build.get("engine_cache_scope")
+        recipe = "deploy/inference-engines/source-build.Dockerfile"
+        legacy_revision = build.get("versions", {}).get(recipe)
+        if pending_build and pending.get("inputs"):
+            captured = state_directory / pending["inputs"] / recipe
+            committed = state_directory / previous["inputs"] / recipe if previous.get("inputs") else None
+            if captured.is_file() and not (
+                legacy_revision and committed is not None and committed.is_file()
+                and captured.stat().st_mode == committed.stat().st_mode
+                and filecmp.cmp(captured, committed, shallow=False)
+            ):
+                legacy_revision = Path(pending["inputs"]).name.removeprefix("inputs-")
+        cache_scope = engine_cache_scope(binding, engines, saved_scope, legacy_revision)
     environment = os.environ.copy()
     if command.oci_registry:
         environment["FORETOKEN_OCI_REGISTRY"] = command.oci_registry
@@ -1482,6 +1517,7 @@ def prepare_source_images(
             "base_image": inference_engine_image,
             "build": {
                 "binding": binding,
+                **({"engine_cache_scope": cache_scope} if cache_scope is not None else {}),
                 "caches": [
                     *build.get("caches", []),
                     *(cache for cache in pending.get("build", {}).get("caches", [])
@@ -1517,6 +1553,7 @@ def prepare_source_images(
         _, execution = ensure_build_volumes(
             kubectl, namespace, claim, configuration,
             binding=binding, timeout=command.timeout, record_identity=record_cache,
+            recorded_caches=caches,
             owner={
                 "apiVersion": "v1", "kind": "PersistentVolumeClaim",
                 "name": origin.claim, "uid": origin.claim_uid,
@@ -1710,11 +1747,7 @@ def prepare_source_images(
                     cancellation.run_stage, publisher.export_application, component, payload, arguments, parts,
                 )
                 if component == "model-server" and engines:
-                    cache_prefix = "-".join((
-                        binding,
-                        versions["deploy/inference-engines/source-build.Dockerfile"],
-                        *sorted(engines),
-                    ))
+                    cache_prefix = cache_scope["prefix"]
                     engine_arguments = {
                         key: value for key, value in engine_build_arguments(arguments).items()
                         if key not in {"BUILD_JOBS", "TARGET_CUDA_ARCH_LIST"}
@@ -1738,8 +1771,15 @@ def prepare_source_images(
                             "data-plane/patches/vllm/",
                         ),
                     )
+                    prior_environment = build.get("environments", {}).get("engine-source", {})
                     for node, digest in selected["digests"].items():
-                        engine_caches["" if registry else node] = cache_prefix + "-" + digest
+                        key = "" if registry else node
+                        cache_id = cache_prefix + "-" + digest
+                        if build.get("borrowed_images") is not True and prior_environment.get("digests", {}).get(node) == digest:
+                            cache_id = build.get("engine_caches", {}).get(key, cache_id)
+                        engine_caches[key] = cache_id
+                    pending_state["build"]["engine_caches"] = dict(engine_caches)
+                    _write_json(pending_path, pending_state)
                 application.result()
                 if component == "model-server" and engines:
                     engine_output = publisher.root + "/applications/engine"
@@ -1863,6 +1903,7 @@ def prepare_source_images(
                 "registry": registry,
                 "containerd_socket": nodes[0][1],
                 "engine_caches": engine_caches,
+                **({"engine_cache_scope": cache_scope} if cache_scope is not None else {}),
                 "engine_native": engine_native,
                 "runtime_backend": runtime_backend,
                 "build_metax_runtime": build_metax_runtime,
