@@ -8,10 +8,10 @@ Results include aggregate metrics and per-request records.
 
 | Metric | Meaning |
 | --- | --- |
-| Recorded requests (`request_num`) | Requests with a completed client observation, including failures; interrupted in-flight requests may have no record |
-| Prepared requests (`planned_num`) | Actual HTTP turns prepared before a finite run, not the configured `num_prompts` budget; unavailable for an unbounded duration-based source |
-| Admitted requests (`admitted_num`) | Turns belonging to conversations or independent requests admitted by the scheduler |
-| Not executed (`not_executed_num`) | Prepared turns without a request observation; for an unbounded source, counts only turns in admitted conversations |
+| Recorded requests (`request_num`) | Requests with a recorded success or failure; requests still in flight when a run is interrupted may have no record |
+| Prepared requests (`planned_num`) | HTTP requests prepared before measurement, counting each conversation turn separately; this may differ from `num_prompts`. Unavailable when the run is limited only by duration |
+| Admitted requests (`admitted_num`) | Independent requests admitted by the scheduler, or the total turns in admitted conversations |
+| Not executed (`not_executed_num`) | Prepared requests without a result record; when the total request count is unbounded, counts only remaining turns in admitted conversations |
 | Success rate | `success_num / request_num`; skipped turns are not failed HTTP requests |
 | Concurrency limit (`max_concurrency`) | Configured limit: requests for single-turn and trace workloads, conversations for multi-turn workloads |
 | Observed request concurrency (`request_concurrency`) | `peak`: highest simultaneous active request count; `mean`: total request duration divided by measured run duration, including failed requests |
@@ -27,9 +27,9 @@ Results include aggregate metrics and per-request records.
 | Mean reported cached input tokens | Mean `usage.prompt_tokens_details.cached_tokens` among successful requests that report it |
 | Benchmark duration (s) | Duration of the whole benchmark run |
 
-For example, 128 prepared conversation turns may produce 89 request records: 82 successful, 7 failed, and 39 later turns skipped after their predecessors failed. `not_executed_reasons` distinguishes these skips (`failed_predecessor`) from requests excluded by the time limit (`duration`); no replacement turns are sent. `failure_reasons` groups recorded failures by HTTP status and error. A dataset that cannot supply the requested budget fails during preparation, before measurement.
+A failed conversation turn skips the remaining turns without replacement. `not_executed_reasons` distinguishes these skips (`failed_predecessor`) from requests excluded by the time limit (`duration`). `failure_reasons` groups recorded failures by HTTP status and error message.
 
-Conversation workloads also report attempted and completed conversations, HTTP turns, average turns per conversation, and conversation start throughput. A failed turn stops that conversation; successful turns are not successful conversations.
+Conversation workloads also report attempted and completed conversations, HTTP turns, average turns per conversation, and conversation starts per second. Successful requests and successfully completed conversations are counted separately.
 
 Request latency distributions use successful requests. `--no-stream` retains latency and throughput but omits TTFT, TPOT, and ITL. Usage-only chunks do not advance streaming timing.
 

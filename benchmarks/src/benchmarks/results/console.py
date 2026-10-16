@@ -342,7 +342,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
         )
     if "planned_num" in metrics:
         planned = metrics["planned_num"]
-        lines.append(f"  Prepared requests: {planned if planned is not None else 'duration-bounded source'}")
+        lines.append(f"  Prepared requests: {planned if planned is not None else 'not fixed (duration-limited run)'}")
         lines.append(f"  Failed requests: {metrics['failed_num']}")
         lines.append(f"  Not executed: {metrics['not_executed_num']}")
         for reason, count in metrics["not_executed_reasons"].items():

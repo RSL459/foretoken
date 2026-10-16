@@ -135,11 +135,11 @@ Every invocation creates a separate result directory; `--experiment-name` suppli
 
 ## Continue a saved sweep
 
-After an interruption, repeat the original command with `--resume RESULT_DIR`, using the result directory it printed. Keep the same workload and measurement settings.
+After an interruption, repeat the original command with `--resume RESULT_DIR`, replacing `RESULT_DIR` with the result directory printed by the previous run. Keep the same workload and measurement settings.
 
-The command reuses completed measurements, including failed request outcomes, and runs only unfinished measurements. A later plotting or result-finalization failure does not require inference again; `--output local,plot` can rebuild summaries and figures from saved metrics and request records without the service when all measurements are complete. Interrupted measurements restart in full, including warmup, rather than mixing requests from different attempts. A completed measurement whose required artifacts are missing reports an error instead of being silently remeasured.
+Completed measurements are reused, including their failed requests. Unfinished measurements restart from warmup. If all measurements finished but plotting or saving results failed, add `--output local,plot` to rebuild summaries and figures without connecting to the model service. Missing files required to reuse a completed measurement produce an error.
 
-Results are saved in a new directory; keep the original result directories, which are still used. To redraw a single run without a sweep, use [`foretoken plot`](../recipes.md#plot-saved-results); it also reads the request journal when final result publication did not finish. W&B upload recovery uses [`wandb sync`](wandb.md#resume-an-upload), which uploads recorded data but does not generate summaries or artifacts that were never written.
+New results are saved in a new directory but still reference the original results, so keep the original directories. To redraw figures only, use [`foretoken plot`](../recipes.md#plot-saved-results). To upload saved W&B records, see [`wandb sync`](wandb.md#resume-an-upload).
 
 ## Video settings
 

@@ -27,7 +27,7 @@ def task_source(directory: Path) -> Path:
 
 
 def _completed_measurement(directory: Path) -> dict[str, Any] | None:
-    """Recover a task's measured outcome even when its later result finalization failed."""
+    """Read a completed measurement for reuse, even if saving its outputs failed."""
     path = directory / "task.json"
     if not path.is_file():
         return None
@@ -40,7 +40,7 @@ def _completed_measurement(directory: Path) -> dict[str, Any] | None:
             metrics_path = origin / "metrics.json"
             config_path = origin / "config.json"
             if not metrics_path.is_file() or not config_path.is_file():
-                raise ValueError(f"Completed measurement has insufficient recoverable artifacts: {origin}")
+                raise ValueError(f"Cannot resume completed measurement: metrics.json or config.json is missing in {origin}")
             return {
                 **task, "status": "completed", "source": ".",
                 "exit_code": context["measurement_exit_code"],
@@ -89,10 +89,10 @@ def run_task(
     directory: Path,
     execute: Callable[[], BenchmarkRun],
 ) -> BenchmarkRun:
-    """Reuse completed measurements, including negative outcomes, or execute a fresh task.
+    """Reuse a completed task's result, including failures, or execute it from the start.
 
-    Interrupted measurements restart in full in the new invocation's directory;
-    original request journals remain diagnostic evidence, not continuation inputs.
+    Interrupted measurements restart in the new result directory;
+    original request records are kept for diagnosis.
     """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "task.json"

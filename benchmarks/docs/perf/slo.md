@@ -62,7 +62,7 @@ Supported search metrics are:
 
 ## Read results
 
-The console and `slo_results.json` report each criterion group's highest passing request peak, its configured limit, the last measured peak and limit, and the stopping reason. Each probe retains per-repetition request counts and failure reasons in `repeat_request_counts`, including negative probes.
+The console and `slo_results.json` report each criterion group's highest passing request peak, its configured limit, the last measured peak and limit, and the stopping reason. In `slo_results.json`, `repeat_request_counts` lists request counts and failure reasons for each repetition, including probes that did not meet the SLO.
 
 Use [`--resume`](sweep.md#continue-a-saved-sweep) to continue an interrupted search.
 

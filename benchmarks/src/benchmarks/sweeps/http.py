@@ -184,7 +184,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
         selection = (config.service, bool(config.trace.trace_selector or config.is_multi_turn))
 
         def prepare_service() -> ModelService:
-            """Reuse contiguous serving resources, but never acquire them for a saved probe."""
+            """Reuse the service across adjacent sweep points with the same selection."""
             if selection != self.selection:
                 self.resources.close()
                 self.service = self.resources.enter_context(resolve_benchmark_service(point_config))

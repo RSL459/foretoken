@@ -588,7 +588,7 @@ class ResultOutputs:
         write_json(self.execution_dir, "context.json", self._context)
 
     def save_measurement(self, run: BenchmarkRun) -> None:
-        """Persist leaf metrics before marking measurement complete for offline recovery."""
+        """Save measured metrics before recording completion so results can be recovered offline."""
         run.artifacts["metrics"] = write_json(self.execution_dir, "metrics.json", run.metrics)
         self.finish_measurement(cast(int, run.exit_code))
 

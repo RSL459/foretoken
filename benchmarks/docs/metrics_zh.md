@@ -8,10 +8,10 @@
 
 | 指标 | 含义 |
 | --- | --- |
-| 已记录请求（`request_num`） | 已完成客户端观测的请求数，包含失败；中断时仍在途的请求可能没有记录 |
-| 实际准备请求（`planned_num`） | 有限测量在开始前准备好的 HTTP 轮次数，不等同于配置的 `num_prompts` 预算；按时长持续产生的无限请求源不提供该值 |
-| 已接纳请求（`admitted_num`） | 调度器接纳的对话所含轮次或独立请求数 |
-| 未执行请求（`not_executed_num`） | 已准备但没有请求观测的轮次；无限请求源只统计已接纳对话中的未执行轮次 |
+| 已记录请求（`request_num`） | 已记录成功或失败结果的请求数；运行中断时，尚未结束的请求可能没有记录 |
+| 已准备请求（`planned_num`） | 测量前准备好的 HTTP 请求总数，按对话轮次计数，可能与 `num_prompts` 不同；仅按时长运行、未限定请求总数时不提供 |
+| 已接纳请求（`admitted_num`） | 调度器已接纳的独立请求数，或已接纳对话中的总轮次数 |
+| 未执行请求（`not_executed_num`） | 已准备但没有结果记录的请求数；未限定请求总数时，只统计已接纳对话中的剩余轮次 |
 | Success rate | `success_num / request_num`；跳过的轮次不算 HTTP 请求失败 |
 | 并发限额（`max_concurrency`） | 配置的上限：单轮和 trace 负载约束请求数，多轮负载约束对话数 |
 | 实测请求并发（`request_concurrency`） | `peak` 为同时进行的请求数峰值；`mean` 为请求耗时总和除以测量时长，包含失败请求 |
@@ -27,9 +27,9 @@
 | Mean reported cached input tokens | 成功请求中已报告的 `usage.prompt_tokens_details.cached_tokens` 平均值 |
 | Benchmark duration (s) | 整次评测的持续时间 |
 
-例如，准备 128 轮对话后可能只有 89 条请求记录：82 次成功、7 次失败，另有 39 轮因前序失败未执行。`not_executed_reasons` 区分这些跳过的轮次（`failed_predecessor`）和因时长限制未执行的请求（`duration`），不会额外补发。`failure_reasons` 按 HTTP 状态和错误归类已记录的失败。数据集无法提供所需预算时，在准备阶段报错，不进入测量。
+多轮对话中，某轮失败后会跳过剩余轮次，不再补发。`not_executed_reasons` 区分前序请求失败（`failed_predecessor`）和达到时长限制（`duration`）；`failure_reasons` 按 HTTP 状态和错误信息汇总已记录的失败请求。
 
-对话负载还报告已开始和已完成的对话数、HTTP 轮次数、每段对话的平均轮次，以及对话启动吞吐量。某轮失败会终止当前对话，成功轮次数不等于成功对话数。
+对话负载还报告已开始和已完成的对话数、HTTP 请求轮次数、每段对话的平均轮次，以及每秒启动的对话数。成功请求数与成功完成的对话数分别统计。
 
 请求延迟分布只统计成功请求。`--no-stream` 保留延迟和吞吐量，不报告 TTFT、TPOT 和 ITL。仅含用量统计的分片不计入流式计时。
 
