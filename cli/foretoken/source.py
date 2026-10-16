@@ -934,6 +934,11 @@ def ensure_build_cache(
                 "an existing compiler volume cannot change its storage class"
             )
         storage_class = actual_class
+        recorded_legacy = any(
+            identity.get("legacy") is True and identity.get("binding") == binding
+            and all(identity.get(key) == existing["metadata"][key] for key in ("namespace", "name", "uid"))
+            for identity in recorded_caches
+        )
         volume = superseded_build_volume(kubectl, existing)
         if volume is not None:
             consumers = [
@@ -944,11 +949,6 @@ def ensure_build_cache(
                 labels = pod["metadata"].get("labels", {})
                 if labels.get(SOURCE_BUILD_POD_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) != binding:
                     raise DeploymentError(f"compiler cache {namespace}/{name} is still used by {pod['metadata']['name']}; finish that operation before updating storage")
-            recorded_legacy = any(
-                identity.get("legacy") is True and identity.get("binding") == binding
-                and all(identity.get(key) == existing["metadata"][key] for key in ("namespace", "name", "uid"))
-                for identity in recorded_caches
-            )
             if claim_binding is None and not consumers and not recorded_legacy:
                 raise DeploymentError(f"cannot replace legacy compiler cache {namespace}/{name}: its source binding is unknown")
             print(f"Replacing compiler cache {namespace}/{name} on the selected local storage; published applications are retained", flush=True)
@@ -986,7 +986,7 @@ def ensure_build_cache(
                     json.dumps({"spec": spec}),
                 ]
             )
-        if claim_binding is None:
+        if claim_binding is None and not recorded_legacy:
             builders = kubectl.list_resources(
                 ("pods",), namespace,
                 label_selector=f"{SOURCE_BUILD_POD_LABEL}=true,{SOURCE_BUILD_BINDING_LABEL}={binding}",
