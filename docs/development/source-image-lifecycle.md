@@ -17,7 +17,7 @@ Source changes reuse the existing runtime environment; dependency or base-image 
 
 Rebuild the application parts affected by a change and preserve source deletions. Publish a complete application before updating its services; running services must not depend on writable compiler caches.
 
-Separate worktrees can build concurrently. Serialize source preparation and submission within one checkout, and keep platform installation and removal exclusive. Waiting for service readiness must not prevent deletion from releasing occupied devices.
+Independent source directories can build concurrently. Serialize source preparation and submission within one source directory, and keep platform installation and removal exclusive. Waiting for service readiness must not prevent deletion from releasing occupied devices.
 
 Deployment succeeds when the selected application and its serving routes are ready. Controllers manage rollout and request draining.
 
