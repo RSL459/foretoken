@@ -28,4 +28,10 @@ foretoken perf examples/quickstart \
 
 预热不计入性能指标，也不占用面板，记录保存在 `benchmark-warmup` 附件中。在 `--output local,wandb` 中加上 `plot`，即可将导出的图表保存在本地和 `benchmark-plots` 附件中。
 
-W&B 发布失败时，命令会报告错误，并保留本地执行文件供排查。
+## 恢复上传
+
+同步中断后，将 `WANDB_RUN_DIR` 换成终端打印的 W&B 本地运行目录：
+
+```bash
+wandb sync --include-synced WANDB_RUN_DIR
+```

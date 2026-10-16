@@ -31,7 +31,7 @@ foretoken install -e .
 
 这会安装共享的 Foretoken 平台，构建在集群中进行；也可替换已通过 CLI 安装的发布版平台。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。其他 Kubernetes 集群需要构建任务和节点都能访问的镜像仓库，安装命令及仓库认证见[Kubernetes 部署指南](kubernetes-deployment_zh.md#2-从源码安装-foretoken)。
 
-安装会自动准备节点本地的持久化构建存储。后续构建继续复用编译缓存，构建器重建后也能沿用。应用文件仍使用集群默认存储类。需要自定义时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName` 或 `applicationFiles.storageClassName`，通过 `--values` 传入；自定义构建存储类需提供非 NFS 文件系统。
+源码构建默认使用节点本地的持久存储，应用文件使用集群默认存储类。需要调整时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName` 或 `applicationFiles.storageClassName`，通过 `--values` 传入。构建存储需使用非 NFS 文件系统，已有卷不会自动更换存储类。
 
 ## 部署模型服务
 
@@ -110,11 +110,13 @@ foretoken perf examples/candidate --num-prompts 20 \
 
 结果保存在各自源码目录中。[实验记录手册](../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
 
-候选结束后，只删除自己的部署：
+候选结束后删除部署：
 
 ```bash
 foretoken delete examples/candidate
 ```
+
+删除部署时，会一并清理不再使用的构建资源，保留源码目录、实验结果和源码归档。
 
 所有候选结束后，再统一卸载平台。
 

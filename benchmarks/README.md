@@ -58,7 +58,7 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | --- | --- |
 | Omit `--output` or use `local,wandb` | Print results, save local files, and upload to W&B |
 | `local` | Print results and save local files |
-| `wandb` | Print results and upload to W&B |
+| `wandb` | Print results, retain local files, and publish to W&B in the background |
 | `plot` | Retain results and export PDF, SVG, PNG, and CSV |
 | `experiment` | Organize the run under an experiment iteration and capture its source and command context |
 | `raw` | Also retain actual request and response content for HTTP performance runs, with local results |
@@ -66,16 +66,18 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
 
-Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. With W&B selected, open the printed run link to follow progress and download records from Artifacts. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs.
+Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. With W&B selected, open the printed run link to follow progress and view results. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs. See [W&B output](docs/perf/wandb.md) to view results or resume an upload.
 
 | Record | Use |
 | --- | --- |
-| `metrics.json` | Read the final aggregate results |
+| `metrics.json` | Read the measured aggregate results |
+| `context.json` | Check the run outcome and phase separately from the measurement exit status |
 | `run.log` | Inspect preparation, execution, and errors |
+| `environment.json`, `sources/` | Inspect the service configuration and available source archives, saved locally |
 | `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect requests as they complete, including records retained after interruption |
 | `responses.jsonl`, with `--output local,raw` | Inspect HTTP inputs and response content, including reasoning and tool calls |
 
-Logs are recorded in both normal and quiet modes. `quiet` suppresses terminal progress and summaries while keeping errors visible. Warmup records use the `warmup_` filename prefix. Quality scores, framework reports, and profiling captures are described in the linked guides below.
+Logs are recorded in both normal and quiet modes. `quiet` suppresses benchmark progress and summaries; errors and W&B synchronization messages remain visible. Warmup records use the `warmup_` filename prefix. Quality scores, framework reports, and profiling captures are described in the linked guides below.
 
 Use `experiment` to group measurements under a named iteration. Run from the checkout containing the code changes:
 
