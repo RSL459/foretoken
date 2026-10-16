@@ -31,12 +31,11 @@ def engine_cache_scope(
     binding: str,
     engines: Iterable[str],
     previous: dict[str, Any] | None,
-    legacy_revision: str | None = None,
 ) -> dict[str, Any]:
-    """Select a persistent compiler namespace; callers append the resolved runtime digest.
+    """Keep a binding's compiler namespace across recipe changes and failed builds.
 
-    Build recipes may change without discarding CMake and ccache state. A saved
-    legacy source revision preserves the namespace used before scopes were recorded.
+    Callers separate metadata and native workspaces by the resolved engine base image,
+    not by the digest of a newly built dependency environment.
     """
     names = sorted(engines)
     if previous and previous["binding"] == binding and previous["engines"] == names:
@@ -44,7 +43,7 @@ def engine_cache_scope(
     return {
         "binding": binding,
         "engines": names,
-        "prefix": "-".join((binding, legacy_revision or uuid.uuid4().hex, *names)),
+        "prefix": "-".join((binding, uuid.uuid4().hex, *names)),
     }
 
 
