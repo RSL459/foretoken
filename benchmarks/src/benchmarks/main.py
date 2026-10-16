@@ -8,7 +8,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from contextlib import ExitStack
 
 import wandb
 from foretoken.manifest import DeploymentError
@@ -35,14 +36,14 @@ logger = logging.getLogger(__name__)
 
 def run_benchmark(
     benchmark: BenchmarkConfig,
-    service: ModelService,
+    prepare_service: Callable[[], ModelService],
     *,
     outputs: ResultOutputs | None = None,
 ) -> BenchmarkRun:
-    """Execute an SLO search or measurement on a prepared service."""
+    """Execute a measurement or search, acquiring the service only for new measurements."""
     if benchmark.slo.search:
-        return SloAutoTuneBenchmark(benchmark, service, outputs=outputs).run()
-    return HttpBenchmark(benchmark, service, outputs=outputs).run()
+        return SloAutoTuneBenchmark(benchmark, prepare_service, outputs=outputs).run()
+    return HttpBenchmark(benchmark, prepare_service(), outputs=outputs).run()
 
 
 def _run_video(arguments: Sequence[str], *, command_name: str) -> None:
@@ -79,14 +80,16 @@ def main(argv: Sequence[str] | None = None) -> None:
                 run = ParameterSweepBenchmark(benchmark).run()
             else:
                 benchmark.validate()
-                with (
-                    ResultOutputs(benchmark, None) as outputs,
-                    resolve_benchmark_service(benchmark) as service,
-                ):
-                    if benchmark.service.kustomize_path and not quiet:
-                        print_model_service(service)
-                    logger.info("%s", format_benchmark_config(benchmark, service))
-                    run = run_benchmark(benchmark, service, outputs=outputs)
+                with ResultOutputs(benchmark, None) as outputs, ExitStack() as services:
+                    def prepare_service() -> ModelService:
+                        """Keep serving resources in the command scope, including deferred SLO probes."""
+                        service = services.enter_context(resolve_benchmark_service(benchmark))
+                        if benchmark.service.kustomize_path and not quiet:
+                            print_model_service(service)
+                        logger.info("%s", format_benchmark_config(benchmark, service))
+                        return service
+
+                    run = run_benchmark(benchmark, prepare_service, outputs=outputs)
             if run.exit_code:
                 raise SystemExit(run.exit_code)
     except (DeploymentError, OSError, ValueError, wandb.errors.Error) as exc:

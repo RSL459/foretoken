@@ -258,8 +258,9 @@ def run_sweep(
             task_path = task_dir / "task.json"
             if task_path.is_file():
                 saved = json.loads(task_path.read_text(encoding="utf-8"))
-                if saved["status"] == "completed" and saved["exit_code"] == 0:
-                    point.update(saved["metrics"], status="completed", exit_code=0, reused=True)
+                if saved["status"] == "completed":
+                    point.update(saved["metrics"], status="failed" if saved["exit_code"] else "completed",
+                                 exit_code=saved["exit_code"], reused=True)
                     point["result"] = os.path.relpath(task_source(task_dir), root)
 
         def checkpoint(*, finished: bool = False) -> dict[str, Any]:
@@ -287,7 +288,7 @@ def run_sweep(
         checkpoint()
         try:
             for point in all_points:
-                if point["status"] == "completed":
+                if point.get("reused"):
                     logger.info("Reusing completed sweep task: %s/run=%s", point["combination"], point["run_number"])
                     continue
                 point_config = prepared[point["combination"]][1]

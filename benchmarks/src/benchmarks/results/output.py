@@ -101,11 +101,6 @@ def wandb_run_timestamp() -> str:
     return datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
 
 
-def wandb_group_name(config: BenchmarkConfig, service: ModelService) -> str:
-    """Resolve the explicit group or generate one for a multi-run composition."""
-    return config.wandb.group.strip() or f"{service.model}_{wandb_run_timestamp()}"
-
-
 class ConsoleSink:
     """Print the run summary to the console log."""
 
@@ -593,9 +588,9 @@ class ResultOutputs:
         write_json(self.execution_dir, "context.json", self._context)
 
     def save_measurement(self, run: BenchmarkRun) -> None:
-        """Retain actual leaf metrics and its explicit exit code before resource finalization."""
-        self.finish_measurement(cast(int, run.exit_code))
+        """Persist leaf metrics before marking measurement complete for offline recovery."""
         run.artifacts["metrics"] = write_json(self.execution_dir, "metrics.json", run.metrics)
+        self.finish_measurement(cast(int, run.exit_code))
 
     def open(self, record: dict[str, Any], *, start_observers: bool = True) -> None:
         """Open result sinks and configuration; callers may defer observation until after warmup."""

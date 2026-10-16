@@ -52,7 +52,7 @@ def _conditions(config: dict[str, Any]) -> dict[str, Any]:
     if config.get("mode") == "slo_search" and "base" in config:
         return {**_conditions(config["base"]), "mode": "slo_search"}
     conditions = {key: value for key, value in config.items() if key not in {
-        "service", "services", "service_choices", "output", "wandb", "sweep", "resolved", "url",
+        "service", "services", "service_choices", "output", "wandb", "sweep", "resolved", "url", "planned_num",
     }}
     if "endpoint" in conditions:
         endpoint = conditions.pop("endpoint")
@@ -454,7 +454,10 @@ def read_saved_results(
                          "environment": next((str(path) for name in ("environment.json", "serving_environments.json")
                                               if (path := saved.directory / name).is_file()), None),
                          "environment_settings": _environment_settings(saved.directory),
-                         **{key: measured.get(key) for key in ("request_num", "success_num", "failed_num")}})
+                         **{key: measured.get(key) for key in (
+                             "planned_num", "admitted_num", "request_num", "success_num", "failed_num",
+                             "not_executed_num", "not_executed_reasons", "failure_reasons",
+                         )}})
             if charts:
                 for chart in charts:
                     series = []

@@ -45,6 +45,8 @@ class EpisodeResult:
     """Responses and conversation completion produced by one admitted episode."""
 
     records: list[dict[str, Any]]
+    planned_num: int
+    skipped_dependency_num: int = 0
     conversation_attempted: bool = False
     conversation_completed: bool = False
 
@@ -122,7 +124,7 @@ class HttpBenchmark:
         progress: HttpProgress | None = None,
     ) -> EpisodeResult:
         """Advance one conversation, retaining recorded or generated history and request failures."""
-        result = EpisodeResult([])
+        result = EpisodeResult([], planned_num=len(episode.turns))
         context: list[dict[str, Any]] = []
         generated_history = workload.dataset.conversation_history == "generated"
         for turn_index, turn in enumerate(episode.turns):
@@ -227,6 +229,7 @@ class HttpBenchmark:
             if progress is not None:
                 progress.observe(request_measurement(response, progress.origin))
             if not response["success"]:
+                result.skipped_dependency_num = len(episode.turns) - turn_index - 1
                 break
             if episode.conversation:
                 context.extend(turn.request.body["messages"])
@@ -286,7 +289,12 @@ class HttpBenchmark:
             measured_episodes = workload.episodes()
             if workload.request_count is not None:
                 measured_episodes = list(measured_episodes)
+            planned_num = (
+                sum(len(episode.turns) for episode in measured_episodes)
+                if isinstance(measured_episodes, list) else None
+            )
             record = self._record(workload)
+            record["planned_num"] = planned_num
             outputs.open(record, start_observers=False)
             async with OpenAILoadClient(
                 benchmark,
@@ -441,6 +449,20 @@ class HttpBenchmark:
                                     for dimension, groups in measured_groups.items()
                                 },
                             )
+                        )
+                        # Duration-only sources have no finite plan; their skipped
+                        # turns are counted only within admitted episodes.
+                        admitted_num = sum(item.planned_num for item in episodes)
+                        skipped_dependency = sum(item.skipped_dependency_num for item in episodes)
+                        not_executed_num = (planned_num if planned_num is not None else admitted_num) - len(measurements)
+                        metrics.update(
+                            planned_num=planned_num,
+                            admitted_num=admitted_num,
+                            not_executed_num=not_executed_num,
+                            not_executed_reasons={
+                                "failed_predecessor": skipped_dependency,
+                                "duration": not_executed_num - skipped_dependency,
+                            },
                         )
                         attempted = sum(item.conversation_attempted for item in episodes)
                         if attempted:

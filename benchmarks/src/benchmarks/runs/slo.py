@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -21,7 +22,7 @@ from benchmarks.results.output import (
     ResultOutputs,
     ResultSink,
     WandbSink,
-    wandb_group_name,
+    wandb_run_timestamp,
     write_json,
 )
 from benchmarks.results.tasks import prepare_task_resume, run_task
@@ -101,14 +102,16 @@ class SloAutoTuneBenchmark:
     def __init__(
         self,
         benchmark: BenchmarkConfig,
-        service: ModelService,
+        prepare_service: Callable[[], ModelService],
         *,
         label: str = "",
         output_dir: str | None = None,
         outputs: ResultOutputs | None = None,
     ) -> None:
         self.benchmark = benchmark
-        self.service = service
+        self.prepare_service = prepare_service
+        self.service: ModelService | None = None
+        self.model = benchmark.service.model
         self.label = label
         self.output_dir = output_dir
         self.outputs = outputs
@@ -138,14 +141,18 @@ class SloAutoTuneBenchmark:
         probe_benchmark = replace(
             probe_config, load=replace(probe_config.load, max_concurrency=value)
         )
-        # Completed negative probes are search evidence, including all-request failures.
-        return run_task(Path(probe_dir), lambda: HttpBenchmark(
-            probe_benchmark,
-            self.service,
-            label=label,
-            output_dir=probe_dir,
-            wandb_group=wandb_group,
-        ).run(), reuse_failed_measurements=True)
+        def execute() -> BenchmarkRun:
+            """Acquire serving resources only after saved probe reuse has been ruled out."""
+            if self.service is None:
+                self.service = self.prepare_service()
+            return HttpBenchmark(
+                probe_benchmark, self.service, label=label,
+                output_dir=probe_dir, wandb_group=wandb_group,
+            ).run()
+
+        run = run_task(Path(probe_dir), execute)
+        self.model = run.record["model"]
+        return run
 
     def _search_group(
         self,
@@ -192,6 +199,12 @@ class SloAutoTuneBenchmark:
                 "max_concurrency": value,
                 "peak_request_concurrency": peak,
                 "repeat_peak_request_concurrency": peaks,
+                "repeat_request_counts": [{
+                    key: item[key] for key in (
+                        "planned_num", "admitted_num", "request_num", "success_num", "failed_num",
+                        "not_executed_num", "not_executed_reasons", "failure_reasons",
+                    ) if key in item
+                } for item in metrics],
                 "request_rate": self.benchmark.load.arrival_rate,
                 "request_budget": self.benchmark.load.request_count,
                 "criteria": criteria,
@@ -257,10 +270,11 @@ class SloAutoTuneBenchmark:
         """Publish search decisions separately from the request measurements owned by each probe."""
         if not self.benchmark.slo.params:
             raise ValueError("--slo-params is required for SLO auto-tune")
-        wandb_group = wandb_group_name(self.benchmark, self.service)
+        model = self.model or "service"
+        wandb_group = self.benchmark.wandb.group.strip() or f"{model}_{wandb_run_timestamp()}"
         record = {
             "mode": "slo_search",
-            "model": self.service.model,
+            "model": model,
             "label": self.label,
         }
 
@@ -273,7 +287,7 @@ class SloAutoTuneBenchmark:
                 selected.append(WandbSink(
                     self.benchmark,
                     execution_dir=directory,
-                    run_name=f"{self.benchmark.wandb.run_name or self.service.model}_slo_{self.label or Path(directory).name}",
+                    run_name=f"{self.benchmark.wandb.run_name or model}_slo_{self.label or Path(directory).name}",
                     group=wandb_group,
                     publisher=publish_slo_wandb,
                     run_config={**self.benchmark.to_dict(), **record},
@@ -303,6 +317,7 @@ class SloAutoTuneBenchmark:
                 groups.append(summary)
                 if best_run is not None:
                     winning_run = best_run
+            record["model"] = self.model
             record["concurrency_limit_unit"] = (
                 "conversations" if any(group["concurrency_limit_unit"] == "conversations" for group in groups)
                 else "requests"

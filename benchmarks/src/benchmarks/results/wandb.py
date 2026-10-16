@@ -91,6 +91,15 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         _SUCCESS_RATE: round(float(metrics["success_rate"]) * 100.0, 4),
         _REQUESTS_PER_SECOND: round(float(throughput["requests_per_second"]), 4),
     }
+    for source, label in (
+        ("planned_num", "Prepared requests"),
+        ("admitted_num", "Admitted requests"),
+        ("not_executed_num", "Not executed requests"),
+    ):
+        if metrics.get(source) is not None:
+            message[label] = metrics[source]
+    for reason, count in metrics.get("not_executed_reasons", {}).items():
+        message[f"Not executed/{reason}"] = count
     throughput_fields = (
         ("prompt_tokens_per_second", _INPUT_TOKENS_PER_SECOND),
         ("generation_tokens_per_second", _GENERATION_TOKENS_PER_SECOND),
@@ -231,6 +240,12 @@ def _trace_bucket_rows(
 
 def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     """Publish one completed HTTP benchmark to an already-open W&B SDK run."""
+    if run.metrics.get("failure_reasons"):
+        sdk_run.log({"Request failure reasons": wandb.Table(
+            columns=["HTTP status", "Error", "Requests"],
+            data=[[row["status_code"], row["error"], row["request_num"]]
+                  for row in run.metrics["failure_reasons"]],
+        )})
     replica_observations = None
     replica_path = run.artifacts.get("replica_observations")
     if replica_path is not None:
