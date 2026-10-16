@@ -888,15 +888,12 @@ def build_arguments(environment: dict[str, str]) -> dict[str, str]:
 def prepare_build_storage(
     kubectl: Kubectl,
     namespace: str,
-    configuration: dict[str, str],
     arguments: dict[str, str],
     registry_mirrors: dict[str, list[str]],
     pull_secrets: tuple[str, ...],
     timeout: str,
 ) -> None:
-    """Prepare the managed compiler StorageClass using this build's image sources and credentials."""
-    if configuration["storageClassName"] not in ("", SOURCE_BUILD_STORAGE_CLASS):
-        return
+    """Prepare node-local execution storage for installation, preserving artifact storage intent."""
     automatic = registry_mirrors.get("docker.io", ["docker.io"])[0]
     registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
     image = registry + "/" + SOURCE_BUILD_PROVISIONER_IMAGE.split("/", 1)[1]
@@ -1035,6 +1032,67 @@ def ensure_build_cache(
     )
     metadata = json.loads(created.stdout)["metadata"]
     return {"namespace": namespace, "name": name, "uid": metadata["uid"], "binding": binding}
+
+
+def ensure_build_volumes(
+    kubectl: Kubectl,
+    namespace: str,
+    name: str,
+    configuration: dict[str, str],
+    *,
+    binding: str,
+    timeout: str,
+    record_identity: Callable[[dict[str, Any]], None],
+    recorded_caches: Sequence[dict[str, Any]] = (),
+    owner: dict[str, str] | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Prepare artifact and optional local execution PVCs for source build callers.
+
+    The source state owner records each UID before another PVC is created, so a
+    failed pair remains recoverable. Default local storage uses a single volume;
+    explicitly selected artifact storage receives a separate local execution PVC.
+    """
+    artifact = ensure_build_cache(
+        kubectl, namespace, name, configuration,
+        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
+    )
+    if artifact is not None:
+        record_identity(artifact)
+    # An omitted override preserves an existing volume's class, including NFS.
+    current = kubectl.get("pvc", name, namespace)
+    if current["spec"].get("storageClassName", "") in ("", SOURCE_BUILD_STORAGE_CLASS):
+        return artifact, None
+    if artifact is None:
+        raise DeploymentError(
+            f"cannot prepare execution storage: artifact PVC {namespace}/{name} has no proven source binding"
+        )
+    if artifact.get("legacy"):
+        metadata = current["metadata"]
+        labels = metadata.get("labels", {})
+        if metadata["uid"] != artifact["uid"] or labels.get(_BUILD_CACHE_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) not in (None, binding):
+            raise DeploymentError(f"artifact PVC {namespace}/{name} changed during ownership transfer")
+        updated = json.loads(kubectl.run([
+            "patch", "pvc", name, "-n", namespace, "--type=json", "-o", "json", "-p", json.dumps([
+                {"op": "test", "path": "/metadata/uid", "value": artifact["uid"]},
+                {"op": "test", "path": "/metadata/resourceVersion", "value": metadata["resourceVersion"]},
+                {"op": "add", "path": "/metadata/labels/" + SOURCE_BUILD_BINDING_LABEL.replace("/", "~1"), "value": binding},
+            ]),
+        ]).stdout)["metadata"]
+        artifact = {key: updated[key] for key in ("namespace", "name", "uid")}
+        artifact["binding"] = updated["labels"][SOURCE_BUILD_BINDING_LABEL]
+        record_identity(artifact)
+    execution_name = "foretoken-execution-" + artifact["uid"][:20]
+    execution = ensure_build_cache(
+        kubectl, namespace, execution_name,
+        {**configuration, "storageClassName": SOURCE_BUILD_STORAGE_CLASS},
+        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
+    )
+    if execution is None:
+        raise DeploymentError(
+            f"execution PVC {namespace}/{execution_name} has no proven source binding"
+        )
+    record_identity(execution)
+    return artifact, execution
 
 
 def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
@@ -1484,20 +1542,32 @@ def prepare_source_images(
     cancellation.check()
     if checkout is None:
         prepare_build_storage(
-            kubectl, namespace, configuration, arguments,
+            kubectl, namespace, arguments,
             registry_mirrors, secret_names, command.timeout,
         )
     pending_state = json.loads(pending_path.read_text())
     caches = pending_state["build"]["caches"]
-    for _, _, claim in nodes:
-        cancellation.check()
-        identity = ensure_build_cache(
-            kubectl, namespace, claim, configuration, binding=binding, timeout=command.timeout,
-            recorded_caches=caches,
-        )
-        if identity is not None and identity not in caches:
+
+    def record_cache(identity: dict[str, Any]) -> None:
+        """Persist each created volume before cancellation or another allocation can fail."""
+        if identity not in caches:
             caches.append(identity)
             _write_json(pending_path, pending_state)
+        cancellation.check()
+
+    execution_claims = {}
+    for _, _, claim in nodes:
+        cancellation.check()
+        _, execution = ensure_build_volumes(
+            kubectl, namespace, claim, configuration,
+            binding=binding, timeout=command.timeout, record_identity=record_cache,
+            recorded_caches=caches,
+            owner={
+                "apiVersion": "v1", "kind": "PersistentVolumeClaim",
+                "name": origin.claim, "uid": origin.claim_uid,
+            },
+        )
+        execution_claims[claim] = execution["name"] if execution is not None else ""
     with capture_build_inputs(root, engines) as snapshot, ExitStack() as build_contexts:
         # Pending inputs survive a failed build: compiler storage is never their only copy.
         with _local_candidates(state_directory):
@@ -1560,6 +1630,7 @@ def prepare_source_images(
                     binding,
                     command.timeout,
                     tools_image=image_tools_image(arguments, registry_mirrors),
+                    execution_claim=execution_claims[claim],
                     node=node,
                     containerd_socket=socket,
                     pull_secrets=secret_names,
@@ -1732,7 +1803,7 @@ def prepare_source_images(
                     )
                     publisher.run([
                         "sh", "-ec", 'cp -R "$1/." "$2/"', "assemble", engine_output, payload,
-                    ])
+                    ], container=publisher.artifact_container)
                 return selected
 
         with ThreadPoolExecutor(max_workers=len(references)) as builds, cancellation:
@@ -1797,7 +1868,7 @@ def prepare_source_images(
             application_revisions = {
                 component: future.result() for component, future in pending.items()
             }
-        publisher.run(["rm", "-rf", "--", publisher.root + "/applications"])
+        publisher.run(["rm", "-rf", "--", publisher.root + "/applications"], container=publisher.artifact_container)
         applications = {
             component: origin.reference(component, revision)
             for component, revision in application_revisions.items()

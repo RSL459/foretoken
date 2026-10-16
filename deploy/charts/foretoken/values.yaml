@@ -32,8 +32,8 @@ development:
   # Used by the CLI for source builds; compiler caches remain in the cluster.
   build:
     image: docker.io/moby/buildkit:v0.33.1-rootless
-    storageClassName: "" # Uses CLI-managed node-local build storage.
-    storageSize: 100Gi
+    storageClassName: "" # Optional artifact storage; execution caches remain node-local.
+    storageSize: 100Gi # Requested capacity per build volume.
 
 # Persistent application file delivery, independent of model caches.
 applicationFiles:
