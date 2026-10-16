@@ -67,6 +67,8 @@ foretoken install -e .
 # foretoken install
 ```
 
+Installation prepares the shared cluster APIs and dependencies. The deployment command creates a controller for each service namespace.
+
 The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and Helm, and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
 
 ### 3. Deploy the Quick Start
@@ -138,10 +140,10 @@ spec:
 Then run:
 
 ```bash
-# Install the platform in Gateway mode
-foretoken install --frontend-mode gateway
-# For a source-installed platform:
-# foretoken install -e . --frontend-mode gateway
+# Enable Gateway mode for the source installation above.
+foretoken install -e . --frontend-mode gateway
+# For a published platform installation:
+# foretoken install --frontend-mode gateway
 
 # Deploy the Quick Start
 foretoken deploy examples/quickstart --timeout 20m

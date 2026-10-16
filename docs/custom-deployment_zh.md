@@ -50,7 +50,7 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-`foretoken deploy` 部署前端和模型服务；共享控制器和 CRD 通过 `foretoken install -e .` 更新。服务更新时会重启相应进程，并可能重新加载模型权重。
+修改控制器、前端或模型服务代码后，重新执行 `foretoken deploy`，即可构建改动并更新该部署命名空间。共享 CRD 或平台配置的变更仍通过 `foretoken install -e .` 应用。服务代码更新时会重启相应进程，并可能重新加载模型权重。
 
 从其他目录执行时，可用 `-e` 指定 Foretoken 目录。例如，在仓库的父目录中执行 `foretoken deploy foretoken/examples/quickstart -e foretoken --timeout 20m`。部署配置的路径始终相对于执行命令的目录。
 
@@ -64,7 +64,7 @@ foretoken delete examples/quickstart
 
 ### 并行运行候选方案
 
-每个候选使用独立的 Foretoken 源码目录和 Kubernetes 命名空间，即可并行构建、部署不同改动。可以分别克隆仓库，也可以用 Git worktree 从同一仓库创建独立工作目录。所有候选可以共用已安装的 CLI 和平台。
+每个候选使用独立的 Foretoken 源码目录和 Kubernetes 命名空间，即可并行构建、部署不同改动。可以分别克隆仓库，也可以用 Git worktree 从同一仓库创建独立工作目录。候选共用已安装的 CLI 和集群平台，各命名空间独立运行自己的控制器和服务代码。
 
 从仓库根目录创建候选，并通过 Kustomize 配置复用快速开始示例：
 
@@ -79,15 +79,6 @@ namespace: candidate-a
 resources:
   - ../quickstart
 patches:
-  - target:
-      kind: ModelService
-    patch: |-
-      - op: replace
-        path: /spec/resources/requests/gpu/count
-        value: 2
-      - op: replace
-        path: /spec/engineArgs/tensor-parallel-size
-        value: 2
   - target:
       kind: RuntimeCache
     patch: |-
@@ -104,9 +95,9 @@ foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-候选在一个节点上使用两张 GPU，张量并行度为 2。模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。若要共用已有模型目录，按[模型存储指南](model-storage_zh.md)配置。
+候选沿用快速开始的单卡配置，模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。若要共用已有模型目录，按[模型存储指南](model-storage_zh.md)配置。
 
-其他候选使用独立的源码目录、命名空间和 iteration 名称。八个候选共请求 16 张 GPU，还需为服务和平台预留 CPU 与内存。需要独立物理设备时，使用独占 GPU 资源。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
+其他候选使用独立的源码目录、命名空间和 iteration 名称，并分别预留 GPU、CPU 和内存。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
 
 结果保存在各自源码目录中。[实验记录手册](../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
 
@@ -116,7 +107,7 @@ foretoken perf examples/candidate --num-prompts 20 \
 foretoken delete examples/candidate
 ```
 
-删除部署时，会一并清理不再使用的构建资源，保留源码目录、实验结果和源码归档。
+删除命令先等待候选服务完成清理，再移除其控制器和命名空间，同时回收不再使用的构建资源。源码目录、实验结果和源码归档会保留。
 
 所有候选结束后，再统一卸载平台。
 

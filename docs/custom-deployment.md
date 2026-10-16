@@ -50,7 +50,7 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-Use `foretoken deploy` for frontend and model-server changes, and `foretoken install -e .` for the shared controller and CRDs. Updating a service restarts its processes and may reload model weights.
+After changing controller, frontend or model-server code, rerun `foretoken deploy`; it builds the changes and updates the deployment namespace. Use `foretoken install -e .` for shared CRD or platform configuration changes. Updating serving code restarts the affected processes and may reload model weights.
 
 To deploy from another directory, add `-e` with the path to the Foretoken checkout, for example `foretoken deploy foretoken/examples/quickstart -e foretoken --timeout 20m` from its parent directory. The deployment path remains relative to the directory where the command runs.
 
@@ -64,7 +64,7 @@ foretoken delete examples/quickstart
 
 ### Run candidates in parallel
 
-Give each candidate an independent Foretoken source directory and Kubernetes namespace to build and deploy different changes in parallel. Use separate clones or Git worktrees, which provide separate working directories from one repository. All candidates can share the same CLI installation and platform.
+Give each candidate an independent Foretoken source directory and Kubernetes namespace to build and deploy different changes in parallel. Use separate clones or Git worktrees, which provide separate working directories from one repository. Candidates share the CLI installation and cluster platform, while each namespace has its own controller and serving code.
 
 From the repository root, create a candidate and a Kustomize configuration based on the Quick Start:
 
@@ -79,15 +79,6 @@ namespace: candidate-a
 resources:
   - ../quickstart
 patches:
-  - target:
-      kind: ModelService
-    patch: |-
-      - op: replace
-        path: /spec/resources/requests/gpu/count
-        value: 2
-      - op: replace
-        path: /spec/engineArgs/tensor-parallel-size
-        value: 2
   - target:
       kind: RuntimeCache
     patch: |-
@@ -104,9 +95,9 @@ foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-The candidate uses two GPUs on one node, with tensor parallelism set to two. It gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To share an existing model directory instead, follow [model storage](model-storage.md).
+The candidate keeps the Quick Start's single-GPU configuration and gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To share an existing model directory instead, follow [model storage](model-storage.md).
 
-Use separate source directories, namespaces and iteration names for other candidates. Eight candidates request 16 GPUs, plus CPU and memory for their services and the platform. Use exclusive GPU resources for separate physical devices. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
+Use separate source directories, namespaces and iteration names for other candidates. Each needs its own GPU allocation, CPU and memory. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
 
 Results are saved in each source directory. The [experiment records guide](../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
 
@@ -116,7 +107,7 @@ Delete the candidate when finished:
 foretoken delete examples/candidate
 ```
 
-Deletion also cleans up build resources no longer in use, while preserving source directories, experiment results and source archives.
+Deletion waits for the candidate's services to finish cleanup, then removes its namespace controller and namespace. It also cleans up build resources no longer in use, while preserving source directories, experiment results and source archives.
 
 Uninstall the platform only after all candidates have finished.
 
