@@ -54,6 +54,12 @@ def _bind_artifact_claim(
             "imagePullPolicy": "IfNotPresent",
             "command": ["sleep", "infinity"],
             "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
+            "securityContext": {
+                "runAsUser": 1000, "runAsGroup": 1000,
+                "allowPrivilegeEscalation": False,
+                "readOnlyRootFilesystem": True,
+                "capabilities": {"drop": ["ALL"]},
+            },
         }],
     }
     if node:
