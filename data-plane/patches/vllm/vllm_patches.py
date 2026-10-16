@@ -15,7 +15,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import yaml
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
@@ -23,49 +22,39 @@ from packaging.version import Version
 
 
 def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
-    """Select one source-compatible patch series for an installed or source vLLM tree."""
+    """Select Python engine patches in catalog order for image and source builds."""
     version_value = Version(version)
-    version_map = yaml.safe_load((patches / "version-map.yaml").read_text())
-    series_name = version_map["default_series"]
-    for profile in version_map["profiles"]:
+    catalog = json.loads((patches / "catalog.json").read_text())
+    profile_name = catalog["default_profile"]
+    for profile in catalog["profiles"]:
         if SpecifierSet(profile["versions"]).contains(version_value, prereleases=True):
-            series_name = profile["series"]
+            profile_name = profile["name"]
             break
 
-    legacy_ready_backport = False
+    # Some legacy packages backport the modern Ready interface and use its patch family.
     ready_source = directory / "vllm/v1/engine/__init__.py"
-    if series_name == "compatibility/v1-legacy/series" and ready_source.is_file():
+    if profile_name == "v1-legacy" and ready_source.is_file():
         source = ready_source.read_text()
-        legacy_ready_backport = (
+        if (
             "tensor_parallel_size: int" in source
             and "decode_context_parallel_size: int" in source
-        )
-        if legacy_ready_backport:
-            series_name = "compatibility/v1-default/series"
+        ):
+            profile_name = "v1-legacy-backport"
 
     selected = []
-    for line in (patches / series_name).read_text().splitlines():
-        name = line.split("#", 1)[0].strip()
-        if not name:
+    for entry in catalog["patches"]:
+        rule = entry.get("python")
+        if rule is None:
             continue
-        if legacy_ready_backport and name == "common/ready-logprobs.patch":
-            name = "compatibility/v1-modern-ready-logprobs.patch"
-        optional = version_map["optional_patches"].get(name)
-        if optional is not None and (
-            not SpecifierSet(optional["versions"]).contains(
-                version_value, prereleases=True
-            )
-            or not (directory / optional["requires"]).is_file()
+        if "profiles" in rule and profile_name not in rule["profiles"]:
+            continue
+        if "versions" in rule and not SpecifierSet(rule["versions"]).contains(
+            version_value, prereleases=True
         ):
             continue
-        selected.append(patches / name)
-
-    profiler_result = (
-        "vllm-0.26-profiler-result.patch"
-        if version_value < Version("0.30.0.dev0")
-        else "vllm-0.30-profiler-result.patch"
-    )
-    selected.append(patches / profiler_result)
+        if "requires" in rule and not (directory / rule["requires"]).is_file():
+            continue
+        selected.append(patches / entry["path"])
     return selected
 
 

@@ -75,7 +75,7 @@ The table below lists common experiment files. Paths start at `results/decode/pa
 | 4 | `raw_output.json`; `responses.jsonl` with `raw` enabled | Find anomalous requests and use `request_id` to match measurements, stop reasons, and actual answers; for quality evaluations, inspect native reports and saved per-sample records under `native/` |
 | 5 | `generated/run.log` and the result directory's `run.log` with `quiet` enabled; `evaluator.log` for quality evaluations | Locate errors in client preparation and execution. Use existing resource observations and profiles to explain performance differences and decide what to measure next. Check the corresponding server logs for model-loading or engine errors. |
 
-See [plotting examples](../benchmarks/docs/recipes.md#plot-saved-results) to redraw or compare saved results.
+Compare saved performance runs with an explicit base using the [plotting examples](../benchmarks/docs/recipes.md#plot-saved-results). Use the generated values, repeat statistics, and condition differences alongside the records above to assess the hypothesis and identify any needed follow-up measurements.
 
 ## Complete the experiment notes
 
@@ -89,7 +89,7 @@ Keep execution evidence, the history of judgments, and the current summary disti
 
 For example, a reviewer may recommend another comparison, the lead may authorize it, and a later result may justify discarding the candidate. Keep those as separate attributed entries rather than replacing the recommendation with the final decision. Each decision states the action and its scope; a changed decision or correction identifies the earlier entry it supersedes and the new evidence. The Recorder records the decision-maker's actual conclusion, not its own interpretation as a lead decision.
 
-After each run, append its directory or W&B link, the hypothesis tested, differences from the reference, and the supported conclusion. Record failures and interruptions as well. Use the existing [iteration template](templates/iteration-template.md) for the history; there is no need to add mutable decision fields to independent review artifacts. Send contributions to the assigned writer so parallel agents do not overwrite one another's entries.
+After each run, append its directory or W&B link, the hypothesis tested, the comparison artifact when available, and the supported conclusion. Record failures and interruptions as well. Use the existing [iteration template](templates/iteration-template.md) for the history; there is no need to add mutable decision fields to independent review artifacts. Send contributions to the assigned writer so parallel agents do not overwrite one another's entries.
 
 The overview is a current reading aid, not a second decision history. Refresh it as decisions change and link to the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
 
