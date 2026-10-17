@@ -14,7 +14,7 @@ Install the platform from source as described in the [MetaX platform guide](../.
 Set the environment-specific inputs before deploying:
 
 - Set `directory` in `cache.yaml` to a shared data root visible from both nodes. Place the complete `zai-org/GLM-5.3-Flash-BF16` checkpoint under `models/zai-org/GLM-5.3-Flash-BF16/` within that root. BF16 weights occupy approximately 599 GiB. See [model storage](../../../../docs/model-storage.md) for permissions and other sources.
-- Build and distribute the Store image as described in the [shared KV example](../../../shared-kv-store/README.md). Set both `image` fields in `kvservice.yaml` to its actual reference.
+- Build and distribute the Store image as described in the [shared KV example](../../../feature/shared-kv-store/README.md). Set both `image` fields in `kvservice.yaml` to its actual reference.
 - The example uses the platform-managed `rdma/foretoken_rdma` resource. When the platform reuses an external RDMA allocation, set `rdmaResourceName` in `kvservice.yaml` to that resource instead.
 
 The configuration requests 16 GPUs, 76 CPU cores and 3208 GiB of host memory in total. Each model member requests eight GPUs and 512 GiB of memory. Adjust resource requests and limits to the available nodes.
