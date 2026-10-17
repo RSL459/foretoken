@@ -47,9 +47,11 @@ The lead coordinates the task, choosing research directions and allocating resou
 
 Advisors continually investigate mechanisms and optimization methods, uncover new questions and reassess the current direction. Their research can deepen an existing investigation or explore ideas beyond the current candidate list.
 
-Workers turn specific questions into code or configuration changes that can be evaluated, then improve them using the results. Experimenters build and evaluate those approaches while observing resource use, recording results and cleaning up afterward.
+Workers turn specific questions into code or configuration changes that can be evaluated, then improve them using the results.
 
-Preparing the next candidate can overlap evaluation of the current one. The team adjusts concurrency in each stage from available resources and observed durations. Small tasks may combine roles, while important conclusions selected for retention are checked by someone who did not implement or run the corresponding candidate.
+Experimenters build and evaluate those approaches while observing resource use, recording results and cleaning up afterward.
+
+Preparing the next candidate can overlap evaluation of the current one. The team adjusts concurrency in each stage from available resources and observed durations.
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 
@@ -72,6 +74,6 @@ Inspect options with `foretoken perf --help` and `foretoken eval --help`.
 
 ## Read results
 
-Benchmark commands save configurations, metrics and original results, which the team uses to maintain an experiment overview and final report. The task file specifies delivery locations, and the [experiment records guide](experiment-records.md) explains how to organize them. Experiments using W&B also retain links to the corresponding runs.
+The experiment report (`report.md`) compares performance across approaches, explains the findings and identifies the currently selected approach. It is updated as the experiment progresses, with links to detailed experiment records and original data.
 
 See [optimization tasks](tasks/README.md) for more tasks and the [knowledge library](guidance/knowledge/README.md) for reusable technical findings.
