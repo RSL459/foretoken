@@ -219,6 +219,8 @@ foretoken stop examples/quickstart/multi-model
 
 评测时用 `--output plot` 导出图表，已有结果用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照。指标、图宽和输出位置见[绘图示例](../benchmarks/docs/recipes_zh.md#绘制与对照结果)。
 
+添加 [`--sync_wandb`](../benchmarks/docs/perf/wandb_zh.md#恢复上传) 可将已有结果上传到 W&B。
+
 ## 性能剖析：执行瓶颈
 
 在 `foretoken deploy` 或 `foretoken perf` 后加 `--profile`，记录 CPU/GPU 执行过程，再用 `foretoken profile view` 浏览结果。环境准备与采集命令见[性能剖析](../benchmarks/docs/profile/README_zh.md)。

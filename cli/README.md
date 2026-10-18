@@ -219,6 +219,8 @@ Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalSc
 
 Use `--output plot` to export figures during a benchmark, or `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](../benchmarks/docs/recipes.md#plot-saved-results) for metrics, layout and output locations.
 
+Add [`--sync_wandb`](../benchmarks/docs/perf/wandb.md#resume-an-upload) to upload saved results to W&B.
+
 ## Find execution bottlenecks
 
 Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU execution, then browse captures with `foretoken profile view`. Setup and commands are in [Profiling](../benchmarks/docs/profile/README.md).
