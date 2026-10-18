@@ -166,11 +166,13 @@ See the [multi-model example](../examples/quickstart/multi-model/README.md) for 
 foretoken deploy examples/quickstart/multi-model --timeout 20m
 ```
 
-The command installs or updates the controller for the deployment namespace and applies the selected services. Services in the same namespace share that controller; use separate namespaces to run independent code versions.
+The command installs or updates the controller for the deployment namespace and applies the selected services. An unchanged deployment reuses its controller and running applications. Services in the same namespace share that controller; use separate namespaces to run independent code versions.
 
-While waiting, it shows service status and streams Pod and container logs with source prefixes. The command completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. Without `--timeout`, it waits up to ten minutes. See [service observability](../examples/feature/observability/README.md) for alert configuration.
+While waiting, the command shows service status and Pod/container logs. It completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. See [service observability](../examples/feature/observability/README.md) for alert configuration.
 
-Rejected model configuration ends the deployment command with the reported error, even if the previous version is still serving. Each model's `spec.timeouts.startup` also bounds how long a created serving workload may remain unready during startup or recovery; model preparation has its own budget. Exceeding this limit ends the command while Kubernetes continues recovery. Container restarts within the limit remain in progress.
+`--timeout` limits the CLI's waits for cluster operations and service readiness; the default is ten minutes. Source compilation runs separately. Each model's `spec.timeouts.startup` sets its own preparation and startup limits.
+
+If preparation fails or readiness times out, the command reports the cause and leaves the deployed services in Kubernetes. Recovery continues in the cluster; use `status` below to follow progress and inspect logs. For configuration errors, update the Kustomize files and rerun `deploy`.
 
 Inspect the same deployment without applying it:
 
