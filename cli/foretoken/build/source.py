@@ -139,7 +139,7 @@ def prepare_source_images(
     cancellation = cancellation or CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout))
     cancellation.check()
     root = source_checkout(command.editable)
-    kubectl = Kubectl()
+    kubectl = origin.kubectl
     engines = engine_source_roots(command.engine_sources)
 
     # Record source and volume ownership before any compiler can start.
@@ -443,13 +443,17 @@ def _prepare_workspaces(
         None if build_metax_runtime
         else resolve_vllm_base_image(snapshot, inference_engine_image, settings["arguments"].get("BASE_IMAGE_REGISTRY", ""))
     )
-    prefix = prepared.registry if prepared.registry else _LOCAL_IMAGE_PREFIX
-    credentials = registry_credentials([
-        prepared.compiler_configuration["image"], prefix, base_image or "",
-        "docker.io", "gcr.io", "ghcr.io",
-        *(endpoint for endpoints in settings["registry_mirrors"].values() for endpoint in endpoints),
-        *(value for key, value in settings["arguments"].items() if key.endswith(("REGISTRY", "_IMAGE"))),
-    ])
+    credentials = registry_credentials(
+        [
+            prepared.compiler_configuration["image"], base_image or "",
+            *(value for key, value in settings["arguments"].items() if key.endswith("_IMAGE")),
+        ],
+        registries=[
+            prepared.registry, "docker.io", "gcr.io", "ghcr.io",
+            *(endpoint for endpoints in settings["registry_mirrors"].values() for endpoint in endpoints),
+            *(value for key, value in settings["arguments"].items() if key.endswith("REGISTRY")),
+        ],
+    )
     versions = snapshot_versions(snapshot, prepared.previous_inputs, prepared.previous_build.get("versions", {}))
     files = {str(path.relative_to(snapshot)): path for path in snapshot.rglob("*") if path.is_file()}
     builders = []
@@ -616,7 +620,7 @@ def _publish_applications(
         from foretoken.platform.config import default_platform_config
         from foretoken.platform.helm import Helm
 
-        retained = origin.references(Helm(default_platform_config(oci_registry)).application_history())
+        retained = origin.references(Helm(default_platform_config(oci_registry), origin.kubectl).application_history())
         if retained is not None:
             retained.add(prepared.revision)
             retained.update(
