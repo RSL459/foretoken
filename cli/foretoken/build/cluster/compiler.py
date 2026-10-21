@@ -8,11 +8,14 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
 import time
 import uuid
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Self
+
+from loguru import logger
 
 from foretoken.build.cluster.artifacts import prepare_artifact_volume
 from foretoken.build.cluster.images import (
@@ -138,7 +141,9 @@ class CompilerWorkspace(AbstractContextManager):
         if not selected:
             self.run(["mkdir", "-p", output])
         else:
+            logger.info("Compiling {} ({}) on {}", component, ", ".join(selected), self.node)
             self.run([*command, "--parts", *selected], container=component)
+            logger.info("Compilation completed: {}", component)
         self._deliver_output(output, destination)
 
     def export_engine(self, destination: str, arguments: dict[str, str], *, cache_id: str, build_native: bool) -> None:
@@ -173,7 +178,11 @@ exec "${FORETOKEN_VLLM_PYTHON:-python3}" /opt/foretoken-engine-build/source-buil
 
     def run(self, args: list[str], *, container: str = "builder", capture: bool = False, input_text: str | None = None) -> str:
         """Run a compiler stage under the caller's cancellation scope with live diagnostics."""
-        result = self.cancellation.run(self.command(args, container=container), text=True, capture_output=capture, input=input_text)
+        result = self.cancellation.run(
+            self.command(args, container=container), text=True, capture_output=capture,
+            input=input_text, stdout=None if capture else sys.stderr,
+            stderr=None if capture else sys.stderr,
+        )
         if result.returncode:
             self.cancellation.check()
             detail = (result.stderr or result.stdout or "").strip()
