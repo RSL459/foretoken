@@ -249,10 +249,17 @@ from pathlib import Path
 import sys
 import tarfile
 
+def release_member(member: tarfile.TarInfo) -> tarfile.TarInfo:
+    """Package application files without the publisher's local ownership metadata."""
+    member.uid = member.gid = 0
+    member.uname = member.gname = ""
+    return member
+
+
 payload, output = map(Path, sys.argv[1:])
 with tarfile.open(output, "w:gz") as archive:
     for component in ("control-plane", "frontend", "model-server"):
-        archive.add(payload / component, arcname=component)
+        archive.add(payload / component, arcname=component, filter=release_member)
 print(f"Application release asset: {output}")
 PY
   fi
