@@ -24,6 +24,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -258,21 +259,18 @@ func (reconciler *GroupReconciler) preparationNodeAffinity(ctx context.Context, 
 	if err := reconciler.List(ctx, &nodes, client.MatchingLabels(group.Spec.Accelerator.NodeSelector)); err != nil {
 		return nil, fmt.Errorf("list accelerator nodes for model preparation: %w", err)
 	}
-	resourceName := corev1.ResourceName(group.Spec.Accelerator.DeviceResourceName)
+	requests := modelResourceRequirements(group.Spec.Resources, group.Spec.Accelerator.DeviceResourceName, group.Spec.RDMA).Requests
+	var placement *nodeaffinity.NodeSelector
+	if rdma := group.Spec.RDMA; rdma != nil && rdma.RequiredNodeAffinity != nil {
+		var err error
+		placement, err = nodeaffinity.NewNodeSelector(rdma.RequiredNodeAffinity)
+		if err != nil {
+			return nil, fmt.Errorf("resolve model preparation placement: %w", err)
+		}
+	}
 	var terms []corev1.NodeSelectorTerm
 	for _, node := range nodes.Items {
-		allocatable := node.Status.Allocatable[resourceName]
-		if node.Spec.Unschedulable || allocatable.Value() < int64(group.Spec.Resources.Requests.GPU.Count) {
-			continue
-		}
-		ready := false
-		for _, condition := range node.Status.Conditions {
-			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
-				ready = true
-				break
-			}
-		}
-		if !ready || !preparationNodeTaintsSupported(node.Spec.Taints, string(resourceName)) {
+		if !modelNodeFitsRequests(node, group.Spec.Accelerator.DeviceResourceName, requests, placement) {
 			continue
 		}
 		// Node field selectors accept one value; separate terms express eligible alternatives.
@@ -286,17 +284,4 @@ func (reconciler *GroupReconciler) preparationNodeAffinity(ctx context.Context, 
 	return &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
 		NodeSelectorTerms: terms,
 	}}, nil
-}
-
-// preparationNodeTaintsSupported excludes nodes neither Pod can use.
-func preparationNodeTaintsSupported(taints []corev1.Taint, accelerator string) bool {
-	for _, taint := range taints {
-		if taint.Effect != corev1.TaintEffectNoSchedule && taint.Effect != corev1.TaintEffectNoExecute {
-			continue
-		}
-		if taint.Key != accelerator || taint.Effect != corev1.TaintEffectNoSchedule {
-			return false
-		}
-	}
-	return true
 }

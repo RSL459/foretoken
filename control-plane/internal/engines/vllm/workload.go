@@ -12,20 +12,33 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// PDEnvironment renders the selected native transport; the workload owner publishes its bootstrap port.
+// PDEnvironment renders the selected native transport; the workload owner publishes its listener ports.
 func PDEnvironment(runtime *api.ModelGroupPDRuntimeConfig) []corev1.EnvVar {
 	if runtime == nil {
 		return nil
 	}
-	// Explicit RDMA requires an allocated HCA; TCP selects the connector's host staging path.
-	transport := corev1.EnvVar{Name: "MC_FORCE_HCA", Value: "1"}
-	if runtime.Protocol == "tcp" {
-		transport = corev1.EnvVar{Name: "MC_FORCE_TCP", Value: "1"}
-	}
-	return []corev1.EnvVar{
-		transport,
-		{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(runtime.BootstrapPort))},
-		{Name: "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT", Value: strconv.Itoa(int(runtime.AbortRequestTimeoutSeconds))},
+	switch runtime.Connector {
+	case api.MooncakeConnector:
+		// Explicit RDMA requires an allocated HCA; TCP selects the connector's host staging path.
+		transport := corev1.EnvVar{Name: "MC_FORCE_HCA", Value: "1"}
+		if runtime.Protocol == "tcp" {
+			transport = corev1.EnvVar{Name: "MC_FORCE_TCP", Value: "1"}
+		}
+		env := []corev1.EnvVar{
+			transport,
+			{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(runtime.BootstrapPort))},
+		}
+		if runtime.AbortRequestTimeoutSeconds > 0 {
+			env = append(env, corev1.EnvVar{Name: "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT", Value: strconv.Itoa(int(runtime.AbortRequestTimeoutSeconds))})
+		}
+		return env
+	case api.NixlConnector:
+		return []corev1.EnvVar{
+			{Name: "VLLM_NIXL_SIDE_CHANNEL_HOST", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
+			{Name: "VLLM_NIXL_SIDE_CHANNEL_PORT", Value: strconv.Itoa(int(runtime.BootstrapPort))},
+		}
+	default:
+		return nil
 	}
 }
 
@@ -60,7 +73,11 @@ func ManagesEnvironment(spec api.ModelGroupSpec, name string) bool {
 	case "VLLM_HOST_IP":
 		return spec.NodeCount > 1
 	case "MC_FORCE_HCA", "MC_FORCE_TCP":
-		return spec.PDRuntime != nil
+		return spec.PDRuntime != nil && spec.PDRuntime.Connector == api.MooncakeConnector
+	case "UCX_TLS":
+		return spec.PDRuntime != nil && spec.PDRuntime.Connector == api.NixlConnector
+	case "UCX_NET_DEVICES":
+		return spec.PDRuntime != nil && spec.PDRuntime.Connector == api.NixlConnector && spec.PDRuntime.Protocol == "rdma" && spec.PDRuntime.RDMADeviceName != ""
 	case "VLLM_WORKER_MULTIPROC_METHOD":
 		return spec.Runtime.Profiling != nil && spec.Runtime.Profiling.Engine == "nsight"
 	case "MODELSCOPE_CACHE":

@@ -5,8 +5,9 @@
 
 use foretoken_kv_indexer::{KvEventSourceConfig, KvRouteBinding, KvRuntimeConfig};
 use foretoken_llm_facade::HttpFacade;
-use foretoken_model_protocol::ModelServerRole;
-use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier};
+use foretoken_model_protocol::{
+    KvCacheLocality, KvConnector, KvPlacement, KvStorageTier, ModelServerRole,
+};
 use foretoken_router::{
     ModelRouteTable, RouteTarget, RouteTargetId, RouteTargetSet, ScalingTarget, ScalingTargetKind,
 };
@@ -74,7 +75,7 @@ pub(crate) fn project_registry(
     Ok((ModelRouteTable::new(routes), components))
 }
 
-/// Projects prompt-side KV event sources and route bindings from a serving snapshot.
+/// Projects KV event sources and route bindings from a serving snapshot.
 ///
 /// `BackendRegistryBuild` consumes this derived runtime configuration while the snapshot remains controller-owned.
 pub(crate) fn project_kv_runtime(
@@ -83,8 +84,6 @@ pub(crate) fn project_kv_runtime(
     let mut sources = BTreeMap::new();
     let mut bindings = BTreeMap::new();
 
-    // Aggregate and prefill runtimes are the only components that publish prompt-side
-    // KV events. Each data-parallel rank gets an independent source and route binding.
     let mut add_route = |route_target_id: &RouteTargetId,
                          endpoint: &str,
                          model_revision: &str,
@@ -143,7 +142,10 @@ pub(crate) fn project_kv_runtime(
         );
     }
     for component in &snapshot.pd_components {
-        if component.role == ModelServerRole::Prefill {
+        if matches!(
+            component.role,
+            ModelServerRole::Prefill | ModelServerRole::Decode
+        ) {
             add_route(
                 &component.route_target_id,
                 &component.endpoint,
@@ -265,17 +267,14 @@ fn project_pd(
             || component.route_target_id.as_str().is_empty()
             || component.pipeline_scope_id.is_empty()
             || component.endpoint.is_empty()
-            || component.profile_name.is_empty()
-            || component.profile_revision.is_empty()
             || component.kv_scope_id.is_empty()
         {
             return Err(SnapshotError::IncompletePdComponent(
                 component.route_target_id,
             ));
         }
-        if component.connector != "MooncakeConnector"
-            || !matches!(component.protocol.as_str(), "rdma" | "tcp")
-        {
+        let connector = component.connector;
+        if !matches!(component.protocol.as_str(), "rdma" | "tcp") {
             return Err(SnapshotError::UnsupportedPdTransport(
                 component.route_target_id,
             ));
@@ -287,6 +286,7 @@ fn project_pd(
         }
         pd_models.insert(component.model.clone());
         if component.role == ModelServerRole::Prefill
+            && connector == KvConnector::Mooncake
             && component.prefill_bootstrap_endpoint.is_none()
         {
             return Err(SnapshotError::IncompletePdComponent(
@@ -328,12 +328,12 @@ fn project_pd(
         let component = match route.role {
             ModelServerRole::Prefill => Component::Prefill {
                 endpoint: component.endpoint,
-                bootstrap: component
-                    .prefill_bootstrap_endpoint
-                    .expect("validated prefill bootstrap endpoint"),
+                bootstrap: component.prefill_bootstrap_endpoint,
+                connector,
             },
             ModelServerRole::Decode => Component::Decode {
                 endpoint: component.endpoint,
+                connector,
             },
             ModelServerRole::Aggregate | ModelServerRole::Encoder => {
                 return Err(SnapshotError::InvalidPdPipelineScope(
@@ -478,12 +478,14 @@ fn project_epd(
             },
             ModelServerRole::Prefill => Component::Prefill {
                 endpoint: component.endpoint,
-                bootstrap: component.prefill_bootstrap_endpoint.ok_or_else(|| {
+                bootstrap: Some(component.prefill_bootstrap_endpoint.ok_or_else(|| {
                     SnapshotError::IncompleteEpdComponent(route.route_target_id.clone())
-                })?,
+                })?),
+                connector: KvConnector::Mooncake,
             },
             ModelServerRole::Decode => Component::Decode {
                 endpoint: component.endpoint,
+                connector: KvConnector::Mooncake,
             },
             ModelServerRole::Aggregate => unreachable!("aggregate E/P/D component was rejected"),
         };

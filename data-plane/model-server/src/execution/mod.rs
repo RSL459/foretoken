@@ -5,12 +5,14 @@
 
 mod admission;
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
-use tokio_util::sync::CancellationToken;
 
-use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent, TokenStream};
+use crate::backend::{
+    Backend, BackendError, ExecutionControl, GenerateInput, TokenEvent, TokenStream,
+};
 pub use admission::{
     AdmissionPermit, AdmissionRejection, InstanceAdmissionConfig, InstanceAdmissionStatus,
     InstanceAdmissionWatcher, RuntimeHealth,
@@ -31,6 +33,21 @@ pub(crate) struct ExecutionStore {
     pub(crate) epoch: u64,
 }
 
+/// Owns external request identities until their accepted execution has terminated.
+#[derive(Clone, Default)]
+pub(crate) struct ExecutionRegistry {
+    requests: Arc<Mutex<BTreeMap<String, Arc<ExecutionControl>>>>,
+}
+
+/// Signals output-consumer cancellation to the independent execution task.
+struct CancelExecution(Arc<ExecutionControl>);
+
+/// Keeps the external request ID cancellable through preparation and native termination.
+struct ExecutionRegistration {
+    request_id: String,
+    registry: ExecutionRegistry,
+}
+
 /// Submission or termination evidence used to settle one stage's ledger reservation.
 #[derive(Clone, Copy)]
 enum ReservationEnd {
@@ -39,18 +56,57 @@ enum ReservationEnd {
     RequestTerminated,
 }
 
+impl ExecutionRegistry {
+    /// Signals registered work without treating cancellation as native termination.
+    pub(crate) fn cancel(&self, request_ids: &[String]) {
+        let requests = self
+            .requests
+            .lock()
+            .expect("execution registry lock poisoned");
+        for request_id in request_ids {
+            if let Some(execution) = requests.get(request_id) {
+                execution.cancel();
+            }
+        }
+    }
+
+    /// Reserves one request identity and returns the execution-owned removal guard.
+    fn register(
+        &self,
+        request_id: String,
+        execution: Arc<ExecutionControl>,
+    ) -> Result<ExecutionRegistration, ExecutionError> {
+        let mut requests = self
+            .requests
+            .lock()
+            .expect("execution registry lock poisoned");
+        if requests.contains_key(&request_id) {
+            return Err(ExecutionError::Backend(BackendError::Rejected));
+        }
+        requests.insert(request_id.clone(), execution);
+        Ok(ExecutionRegistration {
+            request_id,
+            registry: self.clone(),
+        })
+    }
+}
+
 /// Transfers accepted work to execution tasks and returns output to the transport adapter.
 /// Dropping the caller cannot drop submission; permits remain held until termination is established.
 pub(crate) async fn start_execution(
     backend: Arc<dyn Backend>,
     health: Arc<RuntimeHealth>,
     ledger: Option<ExecutionStore>,
+    executions: ExecutionRegistry,
     mut input: GenerateInput,
     permit: AdmissionPermit,
 ) -> Result<TokenStream, ExecutionError> {
-    let (reply, received) = tokio::sync::oneshot::channel();
+    let request_id = input.request_id.clone();
+    let execution = Arc::new(ExecutionControl::default());
+    let registration = executions.register(request_id.clone(), execution.clone())?;
+    let (mut reply, received) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
-        let owner = uuid::Uuid::new_v4().to_string();
+        let owner = execution.owner.clone();
         let shared = match input.reservation.take() {
             Some(reference) => match ledger {
                 Some(store) => Some((store, reference)),
@@ -80,7 +136,8 @@ pub(crate) async fn start_execution(
                             reply.send(Err(ExecutionError::Backend(BackendError::InvalidRequest)));
                         return;
                     }
-                    Err(_) if reply.is_closed() => {
+                    Err(_) if reply.is_closed() || execution.is_cancelled() => {
+                        let _ = reply.send(Err(ExecutionError::Backend(BackendError::Rejected)));
                         drop(permit);
                         finish_shared(&shared, &owner, ReservationEnd::NotSubmitted).await;
                         return;
@@ -89,22 +146,42 @@ pub(crate) async fn start_execution(
                 }
             }
         }
-        if reply.is_closed() {
+        if reply.is_closed() || execution.is_cancelled() {
+            let _ = reply.send(Err(ExecutionError::Backend(BackendError::Rejected)));
             drop(permit);
             finish_shared(&shared, &owner, ReservationEnd::NotSubmitted).await;
             return;
         }
-        let request_id = input.request_id.clone();
-        let submission = tokio::select! {
-            biased;
-            () = health.wait_stopped() => Err(BackendError::Unavailable),
-            result = backend.generate(input) => result,
+        // Cancellation can stop preparation, but a started submission retains its completion owner.
+        let submission = {
+            let generation = backend.generate(input, execution.clone());
+            tokio::pin!(generation);
+            let cancellation = async {
+                tokio::select! {
+                    () = execution_cancelled(&execution, &shared) => {},
+                    () = reply.closed() => {},
+                }
+            };
+            tokio::pin!(cancellation);
+            tokio::select! {
+                biased;
+                () = health.wait_stopped() => Err(BackendError::Unavailable),
+                () = &mut cancellation => {
+                    execution.cancel();
+                    tokio::select! {
+                        result = &mut generation => result,
+                        () = health.wait_stopped() => Err(BackendError::Unavailable),
+                    }
+                },
+                result = &mut generation => result,
+            }
         };
         let generation = match submission {
             Ok(generation) => generation,
             Err(error) => {
                 let _ = reply.send(Err(ExecutionError::Backend(error)));
-                let end = if matches!(error, BackendError::InvalidRequest | BackendError::Rejected)
+                let end = if !execution.is_submitted()
+                    || matches!(error, BackendError::InvalidRequest | BackendError::Rejected)
                 {
                     ReservationEnd::NotSubmitted
                 } else {
@@ -116,35 +193,19 @@ pub(crate) async fn start_execution(
                 return;
             }
         };
-        let cancel = CancellationToken::new();
-        let cancellation = cancel.clone();
+        let cancellation = execution.clone();
         let (completed, mut completion) = tokio::sync::watch::channel(false);
         let crate::backend::BackendGeneration {
             mut stream,
             completion: mut engine_completion,
         } = generation;
         tokio::spawn(async move {
-            let remote_cancellation = async {
-                if let Some((store, reference)) = &shared {
-                    loop {
-                        match store.ledger.wait_cancelled(reference).await {
-                            Ok(()) => return,
-                            Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
-                        }
-                    }
-                }
-                std::future::pending::<()>().await;
-            };
-            let cancellation_requested = async {
-                tokio::select! {
-                    () = cancellation.cancelled() => {},
-                    () = remote_cancellation => {},
-                }
-            };
+            let _registration = registration;
             let result = tokio::select! {
                 result = &mut engine_completion => result,
                 () = health.wait_stopped() => Err(BackendError::Unavailable),
-                () = cancellation_requested => {
+                () = execution_cancelled(&cancellation, &shared) => {
+                    cancellation.cancel();
                     let ids = [request_id];
                     let abort = tokio::select! {
                         result = backend.abort(&ids) => result,
@@ -152,11 +213,13 @@ pub(crate) async fn start_execution(
                     };
                     if abort.is_err() { health.fail_execution(); }
                     tokio::select! {
-                        result = engine_completion => result,
+                        result = &mut engine_completion => result,
                         () = health.wait_stopped() => Err(BackendError::Unavailable),
                     }
                 },
             };
+            // Register remote cleanup before releasing the permit so drain cannot miss the handoff.
+            drop(engine_completion);
             if result.is_err() {
                 stop_uncertain_execution(&health).await;
             }
@@ -180,7 +243,7 @@ pub(crate) async fn start_execution(
                 completed.send_replace(true);
             }
         });
-        let cleanup = cancel.drop_guard();
+        let cleanup = CancelExecution(execution);
         let output: crate::backend::TokenStream = Box::pin(async_stream::stream! {
             let _cleanup = cleanup;
             while let Some(item) = stream.next().await {
@@ -201,6 +264,44 @@ pub(crate) async fn start_execution(
     received
         .await
         .map_err(|_| ExecutionError::Backend(BackendError::RequestFailed))?
+}
+
+/// Observe local and shared-ledger cancellation throughout preparation and execution.
+async fn execution_cancelled(
+    execution: &ExecutionControl,
+    shared: &Option<(ExecutionStore, foretoken_request_ledger::ReservationRef)>,
+) {
+    let remote_cancellation = async {
+        if let Some((store, reference)) = shared {
+            loop {
+                match store.ledger.wait_cancelled(reference).await {
+                    Ok(()) => return,
+                    Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                }
+            }
+        }
+        std::future::pending::<()>().await;
+    };
+    tokio::select! {
+        () = execution.cancelled() => {},
+        () = remote_cancellation => {},
+    }
+}
+
+impl Drop for ExecutionRegistration {
+    fn drop(&mut self) {
+        self.registry
+            .requests
+            .lock()
+            .expect("execution registry lock poisoned")
+            .remove(&self.request_id);
+    }
+}
+
+impl Drop for CancelExecution {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
 }
 
 /// Resolve unknown native completion through supervisor-confirmed process termination.

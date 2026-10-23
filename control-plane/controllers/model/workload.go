@@ -67,6 +67,8 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	var annotations map[string]string
 	if group.Spec.Network != "" {
 		annotations = map[string]string{multusNetworksAnnotation: group.Spec.Network}
+	} else if group.Spec.RDMA != nil && len(group.Spec.RDMA.Networks) != 0 {
+		annotations = map[string]string{multusNetworksAnnotation: strings.Join(group.Spec.RDMA.Networks, ",")}
 	}
 	if group.Spec.Runtime.SourceRevision != "" {
 		if annotations == nil {
@@ -100,7 +102,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if group.Spec.Runtime.InstanceAdmissionProtocol == 0 && group.Spec.Runtime.InstanceAdmission != nil {
 		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MAX_ACCEPTED_REQUESTS", Value: strconv.FormatUint(uint64(group.Spec.Runtime.InstanceAdmission.MaxConcurrentRequests), 10)})
 	}
-	if group.Spec.NodeCount > 1 {
+	if group.Spec.NodeCount > 1 || group.Spec.PDRuntime != nil {
 		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MEMBER_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}})
 	}
 	if group.Spec.Runtime.Backend == "vllm" {
@@ -118,33 +120,20 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Labels[inferencev1alpha1.DeploymentUIDLabel], group.Spec.Runtime.TritonCacheDirectory, group.Spec.Runtime.PreparationVersion)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	env = append(env, vllmconfig.PDEnvironment(group.Spec.PDRuntime)...)
-	if group.Spec.PDRuntime != nil && group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
-		ports = append(ports, corev1.ContainerPort{Name: "mc-bootstrap", ContainerPort: group.Spec.PDRuntime.BootstrapPort, Protocol: corev1.ProtocolTCP})
+	if pd := group.Spec.PDRuntime; pd != nil {
+		switch pd.Connector {
+		case inferencev1alpha1.MooncakeConnector:
+			if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+				ports = append(ports, corev1.ContainerPort{Name: "mc-bootstrap", ContainerPort: pd.BootstrapPort, Protocol: corev1.ProtocolTCP})
+			}
+		case inferencev1alpha1.NixlConnector:
+			// Each DP scheduler serves the native TP handshake at base + DP rank.
+			for rank := int32(0); rank < group.Spec.Parallelism.DP; rank++ {
+				ports = append(ports, corev1.ContainerPort{Name: fmt.Sprintf("nixl-%d", rank), ContainerPort: pd.BootstrapPort + rank, Protocol: corev1.ProtocolTCP})
+			}
+		}
 	}
 
-	requests := corev1.ResourceList{
-		corev1.ResourceCPU:    resource.MustParse(string(group.Spec.Resources.Requests.CPU)),
-		corev1.ResourceMemory: resource.MustParse(string(group.Spec.Resources.Requests.Memory)),
-	}
-	limits := corev1.ResourceList{}
-	if group.Spec.Resources.Limits != nil {
-		if group.Spec.Resources.Limits.CPU != nil {
-			limits[corev1.ResourceCPU] = resource.MustParse(string(*group.Spec.Resources.Limits.CPU))
-		}
-		if group.Spec.Resources.Limits.Memory != nil {
-			limits[corev1.ResourceMemory] = resource.MustParse(string(*group.Spec.Resources.Limits.Memory))
-		}
-	}
-	deviceResource := corev1.ResourceName(group.Spec.Accelerator.DeviceResourceName)
-	deviceCount := *resource.NewQuantity(int64(group.Spec.Resources.Requests.GPU.Count), resource.DecimalSI)
-	requests[deviceResource] = deviceCount
-	limits[deviceResource] = deviceCount
-	if rdma := group.Spec.RDMA; rdma != nil {
-		rdmaResource := corev1.ResourceName(rdma.ResourceName)
-		rdmaCount := *resource.NewQuantity(int64(rdma.ResourceCount), resource.DecimalSI)
-		requests[rdmaResource] = rdmaCount
-		limits[rdmaResource] = rdmaCount
-	}
 	volumes := []corev1.Volume{
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}},
@@ -234,11 +223,16 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 						ReadinessProbe:           modelServerProbe(readinessPath, 5, 3),
 						TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 						TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-						Resources:                corev1.ResourceRequirements{Requests: requests, Limits: limits},
+						Resources:                modelResourceRequirements(group.Spec.Resources, group.Spec.Accelerator.DeviceResourceName, group.Spec.RDMA),
 					}},
 				},
 			},
 		},
+	}
+	if rdma := group.Spec.RDMA; rdma != nil && rdma.RequiredNodeAffinity != nil {
+		deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: rdma.RequiredNodeAffinity.DeepCopy(),
+		}}
 	}
 	files.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), command)
 	mountPreparationSource(group, &deployment.Spec.Template)
@@ -263,6 +257,35 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	}
 	runtimeconfig.ConfigurePodStorage(&deployment.Spec.Template.Spec, files.Image, access.Identity, accesses...)
 	return deployment, nil
+}
+
+// modelResourceRequirements projects validated model resources into the Pod contract
+// shared by workload construction, transport selection, and cache preparation placement.
+func modelResourceRequirements(resources inferencev1alpha1.ModelResources, accelerator string, rdma *inferencev1alpha1.RDMAAllocation) corev1.ResourceRequirements {
+	requests := corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse(string(resources.Requests.CPU)),
+		corev1.ResourceMemory: resource.MustParse(string(resources.Requests.Memory)),
+	}
+	limits := corev1.ResourceList{}
+	if resources.Limits != nil {
+		if resources.Limits.CPU != nil {
+			limits[corev1.ResourceCPU] = resource.MustParse(string(*resources.Limits.CPU))
+		}
+		if resources.Limits.Memory != nil {
+			limits[corev1.ResourceMemory] = resource.MustParse(string(*resources.Limits.Memory))
+		}
+	}
+	deviceResource := corev1.ResourceName(accelerator)
+	deviceCount := *resource.NewQuantity(int64(resources.Requests.GPU.Count), resource.DecimalSI)
+	requests[deviceResource] = deviceCount
+	limits[deviceResource] = deviceCount
+	if rdma != nil {
+		for name, quantity := range rdma.Canonical().Resources {
+			requests[name] = quantity
+			limits[name] = quantity
+		}
+	}
+	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
 }
 
 // groupApplicationURL reads the immutable selection, including pre-selection source cohorts.
@@ -353,13 +376,24 @@ func (reconciler *GroupReconciler) reconcileService(ctx context.Context, group *
 			}},
 		},
 	}
-	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && group.Spec.PDRuntime != nil {
-		desired.Spec.Ports = append(desired.Spec.Ports, corev1.ServicePort{
-			Name:       "mc-bootstrap",
-			Port:       group.Spec.PDRuntime.BootstrapPort,
-			TargetPort: intstr.FromString("mc-bootstrap"),
-			Protocol:   corev1.ProtocolTCP,
-		})
+	if pd := group.Spec.PDRuntime; pd != nil {
+		if pd.Connector == inferencev1alpha1.MooncakeConnector && group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+			desired.Spec.Ports = append(desired.Spec.Ports, corev1.ServicePort{
+				Name:       "mc-bootstrap",
+				Port:       pd.BootstrapPort,
+				TargetPort: intstr.FromString("mc-bootstrap"),
+				Protocol:   corev1.ProtocolTCP,
+			})
+		}
+		if pd.Connector == inferencev1alpha1.NixlConnector {
+			for rank := int32(0); rank < group.Spec.Parallelism.DP; rank++ {
+				name := fmt.Sprintf("nixl-%d", rank)
+				desired.Spec.Ports = append(desired.Spec.Ports, corev1.ServicePort{
+					Name: name, Port: pd.BootstrapPort + rank,
+					TargetPort: intstr.FromString(name), Protocol: corev1.ProtocolTCP,
+				})
+			}
+		}
 	}
 	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
 		return fmt.Errorf("set Service owner: %w", err)
@@ -446,14 +480,14 @@ func (reconciler *GroupReconciler) reconcileNetworkPolicy(ctx context.Context, g
 		}},
 	})
 	if group.Spec.PDRuntime != nil {
-		// Mooncake opens bidirectional runtime side channels on dynamic ports
-		// after bootstrap. Restrict them to the same controller-owned P/D linked processing unit.
+		// Native connectors use bidirectional side channels, including dynamic transport ports.
+		// The service-local scope also permits P to claim retained KV through D's model-server.
 		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{
 			PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
 				workload.ModelGroupPDPipelineScopeLabel: group.Spec.PDRuntime.ServiceUID,
 			}},
 		}}})
-		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+		if group.Spec.PDRuntime.Connector == inferencev1alpha1.MooncakeConnector && group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
 			bootstrapPort := intstr.FromInt32(group.Spec.PDRuntime.BootstrapPort)
 			ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
 				From:  []networkingv1.NetworkPolicyPeer{{PodSelector: frontendSelector}},

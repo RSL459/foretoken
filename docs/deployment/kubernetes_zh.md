@@ -85,6 +85,10 @@ loadBalancer:
 foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
 ```
 
+### RDMA 网络
+
+RDMA 用于加速模型实例之间的数据传输。安装时会发现可用设备、复用集群已有的兼容配置，并自动准备受支持的设备分配和网络。常规部署无需在模型配置中指定网卡或端口，主机驱动和物理网络需已可用。
+
 ## 3. 部署与更新代码
 
 平台已准备默认模型存储时，直接部署即可。平台尚未准备存储，或需要独立卷时，先[配置动态存储](../features/model-storage_zh.md#使用动态存储)；需要其他共享目录时，按[选择目录](../features/model-storage_zh.md#选择目录)使用管理员已授权的路径。

@@ -53,11 +53,10 @@ func equalRoutingPDComponent(left, right PDComponent) bool {
 		left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision &&
 		reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation) &&
 		ptr.Equal(left.MaxInputTokens, right.MaxInputTokens) &&
-		left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision &&
 		left.Connector == right.Connector && left.Protocol == right.Protocol &&
 		left.Endpoint == right.Endpoint && left.PrefillBootstrapEndpoint == right.PrefillBootstrapEndpoint &&
 		left.KVScopeID == right.KVScopeID && left.KVLookupScope == right.KVLookupScope &&
-		left.DataParallelSize == right.DataParallelSize && slices.Equal(left.Capabilities, right.Capabilities)
+		left.DataParallelSize == right.DataParallelSize && left.Parallelism == right.Parallelism && slices.Equal(left.Capabilities, right.Capabilities)
 }
 
 func equalRoutingPDPipelineScope(left, right PDPipelineScope) bool {
@@ -75,7 +74,7 @@ func equalRoutingEPDComponent(left, right EPDComponent) bool {
 		ptr.Equal(left.MaxInputTokens, right.MaxInputTokens) && slices.Equal(left.Capabilities, right.Capabilities) &&
 		left.Endpoint == right.Endpoint && left.PrefillBootstrapEndpoint == right.PrefillBootstrapEndpoint &&
 		left.KVScopeID == right.KVScopeID && left.KVLookupScope == right.KVLookupScope &&
-		left.DataParallelSize == right.DataParallelSize
+		left.DataParallelSize == right.DataParallelSize && left.Parallelism == right.Parallelism
 }
 
 func equalRoutingEPDPipelineScope(left, right EPDPipelineScope) bool {

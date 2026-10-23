@@ -26,10 +26,18 @@ type RuntimeProfile struct {
 	RuntimeClassName       string
 	NodeSelectorKey        string
 	NodeSelectorValue      string
-	MooncakePD             *vllmconfig.PDProfile
-	RDMA                   *inferencev1alpha1.RDMAAllocation
+	RDMABindings           []RDMANetworkBinding
 	EC                     *vllmconfig.ECProfile
 	MooncakeStore          *vllmconfig.MooncakeStoreProfile
+}
+
+// RDMANetworkBinding is an installer-selected allocation and its CNI namespace scope.
+// Namespace is empty only when the installed CNI allows the attachments to be shared.
+type RDMANetworkBinding struct {
+	Allocation inferencev1alpha1.RDMAAllocation `json:"allocation"`
+	Namespace  string                           `json:"namespace,omitempty"`
+	// AllowExplicitNetwork preserves overrides authorized by retained startup flags only.
+	AllowExplicitNetwork bool `json:"-"`
 }
 
 // ModelGroupTemplate is a resolved Group contract without Pool identity or ordinal.
@@ -95,7 +103,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if template.ModelRevision == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM --revision is required before ModelGroup creation")
 	}
-	pdRuntime, err := vllmconfig.ResolvePDRuntime(template, profile.MooncakePD)
+	pdRuntime, err := vllmconfig.ResolvePDRuntime(template, effective.Parallelism, profile.ModelServerPort)
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
@@ -108,26 +116,27 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		return ModelGroupTemplate{}, err
 	}
 	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
-		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
+		return ModelGroupTemplate{}, fmt.Errorf("P/D does not support local KV offload")
 	}
 	image, err = vllmconfig.ResolveProfilingImage(template, image, profile.NsightImage, profile.DeviceResourceName)
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
 	rdmaRequired := effective.RequiresRDMA()
-	if rdmaRequired && profile.RDMA == nil {
+	if rdmaRequired && template.RDMA == nil {
 		return ModelGroupTemplate{}, fmt.Errorf("engineArgs.all2all-backend=%q requires a platform RDMA allocation", effective.Parallelism.EP.Backend)
 	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || effective.RequestsWeightSharing(template, profile.DeviceResourceName) {
-		rdma = profile.RDMA.DeepCopy()
+	if effective.RequestsRDMA(template, profile.DeviceResourceName) {
+		rdma = template.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
-		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D with RDMA transport requires a platform RDMA allocation")
+		return ModelGroupTemplate{}, fmt.Errorf("P/D with RDMA transport requires a platform RDMA allocation")
 	}
-	if rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
-		return ModelGroupTemplate{}, fmt.Errorf("platform RDMA allocation is incomplete")
+	if err := runtimeconfig.ValidateRDMAAllocation(rdma, profile.DeviceResourceName); err != nil {
+		return ModelGroupTemplate{}, err
 	}
+	rdma = rdma.Canonical()
 	effective.ConfigureWeightSharing(template, profile.DeviceResourceName, rdma, profile.ModelServerPort, pdRuntime)
 	nodeSelector, err := mergeNodeSelectors(template.NodeSelector, profile)
 	if err != nil {
@@ -271,6 +280,12 @@ func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordin
 	if ecRuntime != nil {
 		ecRuntime.ServiceUID = pool.Spec.ModelServiceRef.UID
 	}
+	rdma := template.RDMA.Canonical()
+	network := template.Network
+	if rdma != nil {
+		rdma.Networks = runtimeconfig.RDMANetworks(pool.Namespace, rdma, network)
+		network = ""
+	}
 	return inferencev1alpha1.ModelGroupSpec{
 		ModelPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
 		Revision:     template.Revision,
@@ -279,7 +294,7 @@ func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordin
 		Artifacts:    template.Artifacts,
 		Runtime:      template.Runtime,
 		PDRuntime:    pdRuntime,
-		RDMA:         template.RDMA,
+		RDMA:         rdma,
 		ECRuntime:    ecRuntime,
 		KVRuntime:    template.KVRuntime,
 		Resources:    template.Resources,
@@ -289,6 +304,6 @@ func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordin
 		Parallelism:  template.Parallelism,
 		Features:     *template.Features.DeepCopy(),
 		Accelerator:  template.Accelerator,
-		Network:      template.Network,
+		Network:      network,
 	}
 }

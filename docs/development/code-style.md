@@ -113,6 +113,8 @@ Do not comment getters, field forwarding, constant mappings, obvious loops, or e
 
 ## Language and repository tools
 
+Prefer English for source-code comments, documentation comments, docstrings, and comments in scripts and configuration files. Use English where practical for identifiers, CLI help, error messages, commit messages, and PR or issue titles and descriptions. Apply the same preference to Foretoken additions in upstream patches.
+
 Follow the surrounding code and the executable checks for each subtree.
 
 CLI and benchmark modules use `from loguru import logger` for diagnostics. Application entry points configure sinks and bridge third-party `logging` records; inference-engine adapters retain their native logging, and standalone image scripts use the logging facilities available in their runtime. Send progress and diagnostics to stderr, and keep explicit command results such as endpoint URLs, JSON and status tables on stdout. Preserve exception causes for recorded logs, disable diagnostic local-variable dumps, and report each failure at the boundary that can act on it.
@@ -173,7 +175,9 @@ Documentation review is iterative. Read the complete user path as a first-time u
 
 Before finalizing, perform a separate deletion pass for duplicated commands, meta-commentary about the document, misplaced alternatives, implementation details, and headings without an independent responsibility. Formatting and tests do not replace this reading review.
 
-Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations, but write each version independently for its readers. Use natural technical English and natural Chinese rather than translating sentence by sentence. Preserve exact commands, field names, type names, and Kubernetes resource kinds when readers need to recognize or enter them; explain uncommon terms in the surrounding language on first use.
+Maintain separate English and Simplified Chinese files for first-party READMEs and other project documentation. Use `README.md` and `README_zh.md`, or `name.md` and `name_zh.md`, in the same directory, with reciprocal language links near the top. Update both files in the same change rather than combining both languages on one page.
+
+Keep the two versions aligned in capability, prerequisites, commands, defaults, and limitations, but write each independently for its readers. Use natural technical English and natural Chinese rather than translating sentence by sentence. Preserve exact commands, field names, type names, and Kubernetes resource kinds when readers need to recognize or enter them; explain uncommon terms in the surrounding language on first use.
 
 ## Change and PR discipline
 

@@ -120,8 +120,8 @@ struct VllmCacheGroup {
 pub struct KvEventAdapter {
     inner: Mutex<Inner>,
     key: [u8; 32],
-    scope_id: String,
-    model_group_id: String,
+    pub(crate) scope_id: String,
+    pub(crate) model_group_id: String,
     model_revision: String,
     data_parallel_size: u32,
 }

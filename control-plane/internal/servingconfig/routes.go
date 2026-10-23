@@ -443,6 +443,7 @@ func routingPool(pools []*inferencev1alpha1.ModelPool, group *inferencev1alpha1.
 
 func compatibleEncoderPrefill(encoder, prefill *inferencev1alpha1.ModelGroup) bool {
 	return MatchingRoutingIdentity(routingGroup(encoder), routingGroup(prefill)) &&
+		vllmconfig.CompletePDRuntime(prefill.Spec.PDRuntime) && prefill.Spec.PDRuntime.Connector == inferencev1alpha1.MooncakeConnector &&
 		vllmconfig.CompleteECRuntime(encoder.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleProducer) && vllmconfig.CompleteECRuntime(prefill.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleConsumer) &&
 		matchingECRuntime(encoder.Spec.ECRuntime, prefill.Spec.ECRuntime)
 }
@@ -472,9 +473,7 @@ func compatiblePDGroups(prefill, decode *inferencev1alpha1.ModelGroup) bool {
 
 func matchingPDRuntime(left, right *inferencev1alpha1.ModelGroupPDRuntimeConfig) bool {
 	return vllmconfig.CompletePDRuntime(left) && vllmconfig.CompletePDRuntime(right) &&
-		left.ServiceUID == right.ServiceUID && left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision &&
-		left.Connector == right.Connector && left.Protocol == right.Protocol && left.BootstrapPort == right.BootstrapPort &&
-		left.AbortRequestTimeoutSeconds == right.AbortRequestTimeoutSeconds && left.RDMADeviceName == right.RDMADeviceName
+		left.ServiceUID == right.ServiceUID && left.Connector == right.Connector && left.Protocol == right.Protocol
 }
 
 func routingParallelism(group *inferencev1alpha1.ModelGroup) Parallelism {
@@ -508,8 +507,7 @@ func routingGroup(group *inferencev1alpha1.ModelGroup) Group {
 func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, pipelineScopeID string) PDComponent {
 	pd := group.Spec.PDRuntime
 	features := group.Spec.Features
-	// No P/D runtime profile currently verifies multimodal support. Never publish
-	// it from P/D routes, including objects created before API validation existed.
+	// Standalone P/D routes advertise text input; encoder scopes own multimodal input.
 	features.Multimodal = nil
 	component := PDComponent{
 		RouteTargetID:        string(group.UID),
@@ -525,8 +523,6 @@ func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferenc
 		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
 		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
 		MaxInputTokens:       copyOptionalInt32(pool.Spec.MaxInputTokens),
-		ProfileName:          pd.ProfileName,
-		ProfileRevision:      pd.ProfileRevision,
 		Connector:            pd.Connector,
 		Protocol:             pd.Protocol,
 		Capabilities:         RoutingCapabilities(features),
@@ -536,7 +532,7 @@ func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferenc
 		DataParallelSize:     group.Spec.Parallelism.DP,
 		Parallelism:          routingParallelism(group),
 	}
-	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && pd.Connector == inferencev1alpha1.MooncakeConnector {
 		component.PrefillBootstrapEndpoint = workload.ModelGroupEndpoint(group, pd.BootstrapPort)
 	}
 	return component

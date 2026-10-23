@@ -238,7 +238,7 @@ func (reconciler *Reconciler) reconcileFrontend(ctx context.Context, frontend *i
 		if errors.As(projectionErr, &backendRequired) {
 			configuration.Reason = "BackendDeploymentRequired"
 		}
-		if errors.Is(projectionErr, errFrontendCacheIsolationUnsupported) {
+		if errors.Is(projectionErr, errFrontendCacheIsolationUnsupported) || errors.Is(projectionErr, errFrontendNixlUnsupported) {
 			configuration.Reason = "FrontendDeploymentRequired"
 		}
 	}

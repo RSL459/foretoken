@@ -57,8 +57,10 @@ type LaunchExpertPlan struct {
 
 // LaunchKVPlan uses a closed kind discriminator rather than an untyped vLLM
 // config map. KV events are collected independently for every DP rank.
+// Mooncake omits its connector field to preserve the original v1 launch wire.
 type LaunchKVPlan struct {
 	Kind        string `json:"kind"`
+	Connector   string `json:"connector,omitempty"`
 	Role        string `json:"role,omitempty"`
 	Protocol    string `json:"protocol,omitempty"`
 	DeviceName  string `json:"deviceName,omitempty"`
@@ -132,6 +134,14 @@ func (config EffectiveConfig) RequiresRDMA() bool {
 	}
 }
 
+// RequestsRDMA identifies consumers before transport discovery and after protocol resolution.
+// An omitted P/D protocol permits automatic RDMA; explicit TCP keeps optional NICs unallocated.
+func (config EffectiveConfig) RequestsRDMA(template inferencev1alpha1.NormalizedPoolTemplate, deviceResource string) bool {
+	return template.NodeCount > 1 || config.RequiresRDMA() ||
+		(template.KVTransfer != nil && template.KVTransfer.Protocol != "tcp") ||
+		config.RequestsWeightSharing(template, deviceResource)
+}
+
 // BuildLaunchPlan projects a verified ModelGroupSpec into the private launch wire contract.
 func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, error) {
 	if group.NodeCount < 1 {
@@ -146,6 +156,14 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	}
 	if err := validateParallelism(group.Parallelism); err != nil {
 		return LaunchPlanV1{}, err
+	}
+	if group.PDRuntime != nil && group.PDRuntime.Connector == inferencev1alpha1.NixlConnector {
+		if !supportsNixlTopology(group) {
+			return LaunchPlanV1{}, fmt.Errorf("NIXL P/D requires single-node Groups with PP, PCP, and DCP equal to one")
+		}
+		if group.KVRuntime != nil || group.ECRuntime != nil {
+			return LaunchPlanV1{}, fmt.Errorf("NIXL P/D does not support Mooncake Store or encoder transfer")
+		}
 	}
 	if group.Runtime.InternalGenerateRequestBodyLimitBytes < inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes || group.Runtime.InternalGenerateRequestBodyLimitBytes > inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes {
 		return LaunchPlanV1{}, fmt.Errorf("vLLM internal generate request body limit must be between %d and %d", inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes, inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes)
@@ -181,7 +199,11 @@ func buildKVPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchKVPlan, error) {
 	}
 	plan := LaunchKVPlan{Kind: kvNone, Events: true}
 	if group.PDRuntime != nil && group.KVRuntime == nil {
-		return LaunchKVPlan{Kind: kvPD, Role: role, Protocol: group.PDRuntime.Protocol, DeviceName: group.PDRuntime.RDMADeviceName, Events: plan.Events}, nil
+		connector := ""
+		if group.PDRuntime.Connector == inferencev1alpha1.NixlConnector {
+			connector = group.PDRuntime.Connector
+		}
+		return LaunchKVPlan{Kind: kvPD, Connector: connector, Role: role, Protocol: group.PDRuntime.Protocol, DeviceName: group.PDRuntime.RDMADeviceName, Events: plan.Events}, nil
 	}
 	if group.KVRuntime == nil {
 		return plan, nil
@@ -283,15 +305,23 @@ func extractParallelism(args inferencev1alpha1.EngineArguments) (inferencev1alph
 	return p, nil
 }
 
-// CompatibleKVTransfer reports whether controller-selected Groups can exchange Mooncake KV.
+// CompatibleKVTransfer reports whether controller-selected Groups can exchange native KV.
 // Worker and scheduler sizing may differ; model interpretation and cache representation may not.
 func CompatibleKVTransfer(left, right inferencev1alpha1.ModelGroupSpec) bool {
+	if !CompletePDRuntime(left.PDRuntime) || !CompletePDRuntime(right.PDRuntime) || left.PDRuntime.Connector != right.PDRuntime.Connector {
+		return false
+	}
 	if left.Runtime.Backend != right.Runtime.Backend || left.Runtime.Image != right.Runtime.Image {
 		return false
 	}
 	leftTP, rightTP := left.Parallelism.TP, right.Parallelism.TP
 	if leftTP < 1 || rightTP < 1 || (leftTP%rightTP != 0 && rightTP%leftTP != 0) {
 		return false
+	}
+	if left.PDRuntime.Connector == inferencev1alpha1.NixlConnector {
+		if leftTP != rightTP || !supportsNixlTopology(left) || !supportsNixlTopology(right) {
+			return false
+		}
 	}
 	names := make(map[string]struct{}, len(left.Runtime.EngineArgs)+len(right.Runtime.EngineArgs))
 	for name := range left.Runtime.EngineArgs {
@@ -316,11 +346,28 @@ func CompatibleKVTransfer(left, right inferencev1alpha1.ModelGroupSpec) bool {
 				return false
 			}
 		}
+		if name == "load-format" {
+			// ModelExpress changes weight transport, not the checkpoint used to compute KV.
+			if leftValue == "auto" || leftValue == "modelexpress" {
+				leftValue = nil
+			}
+			if rightValue == "auto" || rightValue == "modelexpress" {
+				rightValue = nil
+			}
+		}
 		if !reflect.DeepEqual(leftValue, rightValue) {
 			return false
 		}
 	}
 	return true
+}
+
+// supportsNixlTopology keeps launch validation and peer matching on the same worker layout.
+func supportsNixlTopology(group inferencev1alpha1.ModelGroupSpec) bool {
+	return group.NodeCount == 1 &&
+		group.Parallelism.PP == 1 &&
+		group.Parallelism.PCP == 1 &&
+		group.Parallelism.DCP == 1
 }
 
 func validateParallelism(parallelism inferencev1alpha1.CompiledParallelism) error {
@@ -366,7 +413,7 @@ func compileEngineArgs(template inferencev1alpha1.NormalizedPoolTemplate) (infer
 		"nnodes":                               "select the node count with nodes",
 		"node-rank":                            "member discovery assigns each node rank",
 		"kv-events-config":                     "the model-server owns the publisher and subscriber configuration",
-		"kv-transfer-config":                   "select KV transfer through kvCache or split modelPools so routing and storage share the same configuration",
+		"kv-transfer-config":                   "select P/D transport through kvTransfer and cache storage through kvCache",
 		"ec-transfer-config":                   "select encoder transfer through ecProfile and E/P/D modelPools",
 	}
 	if template.RuntimeCache != nil {

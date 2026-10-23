@@ -51,18 +51,26 @@ func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
 	if group.Spec.Runtime.Backend != "vllm" {
 		return fmt.Errorf("inference backend %q is not supported", group.Spec.Runtime.Backend)
 	}
-	if rdma := group.Spec.RDMA; rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
-		return fmt.Errorf("RDMA allocation requires a resource name and positive count")
+	if err := runtimeconfig.ValidateRDMAAllocation(group.Spec.RDMA, group.Spec.Accelerator.DeviceResourceName); err != nil {
+		return err
 	}
 	if group.Spec.PDRuntime != nil && group.Spec.PDRuntime.Protocol == "rdma" && group.Spec.RDMA == nil {
 		return fmt.Errorf("P/D Groups with RDMA transport require an RDMA allocation")
 	}
-	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && group.Spec.PDRuntime != nil {
-		if group.Spec.PDRuntime.BootstrapPort == group.Spec.Runtime.Port {
-			return fmt.Errorf("Mooncake bootstrap port conflicts with the model-server port")
+	if pd := group.Spec.PDRuntime; pd != nil && (group.Spec.Role == inferencev1alpha1.ModelRolePrefill || pd.Connector == inferencev1alpha1.NixlConnector) {
+		lastPort := int64(pd.BootstrapPort)
+		if pd.Connector == inferencev1alpha1.NixlConnector {
+			lastPort += int64(group.Spec.Parallelism.DP) - 1
 		}
-		if group.Spec.Artifacts.Cache != nil && group.Spec.PDRuntime.BootstrapPort == runtimeconfig.CacheObservationPort(group.Spec.Runtime.Port) {
-			return fmt.Errorf("Mooncake bootstrap port conflicts with the runtime cache observation port")
+		if lastPort > 65535 {
+			return fmt.Errorf("P/D side-channel ports exceed the TCP port range")
+		}
+		if int64(group.Spec.Runtime.Port) >= int64(pd.BootstrapPort) && int64(group.Spec.Runtime.Port) <= lastPort {
+			return fmt.Errorf("P/D side-channel ports conflict with the model-server port")
+		}
+		cachePort := int64(runtimeconfig.CacheObservationPort(group.Spec.Runtime.Port))
+		if group.Spec.Artifacts.Cache != nil && cachePort >= int64(pd.BootstrapPort) && cachePort <= lastPort {
+			return fmt.Errorf("P/D side-channel ports conflict with the runtime cache observation port")
 		}
 	}
 	return nil
@@ -161,8 +169,8 @@ func validatePDRuntime(group *inferencev1alpha1.ModelGroup) error {
 		return fmt.Errorf("P/D Groups do not support local KV offload")
 	}
 	runtime := group.Spec.PDRuntime
-	if !vllm.CompletePDRuntime(runtime) || runtime.BootstrapPort > 65535 {
-		return fmt.Errorf("P/D Groups require a complete Mooncake runtime config")
+	if !vllm.CompletePDRuntime(runtime) {
+		return fmt.Errorf("P/D Groups require a complete connector runtime config")
 	}
 	return nil
 }

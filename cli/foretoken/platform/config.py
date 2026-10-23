@@ -44,6 +44,7 @@ class PlatformConfig:
     envoy_gateway: ManagedChart
     metallb: ManagedChart
     leader_worker: ManagedChart
+    multus: ManagedChart
     dragonfly: ManagedChart
     envoy_gateway_default_controller: str
     envoy_gateway_controller: str
@@ -137,6 +138,16 @@ def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
             source=_chart_source(registry, "oci://registry.k8s.io/lws/charts/lws"),
             version="0.10.0",
         ),
+        multus=ManagedChart(
+            release_name="foretoken-multus",
+            source=_chart_source(
+                registry,
+                "https://github.com/rancher/rke2-charts/raw/refs/heads/main/"
+                "assets/rke2-multus/rke2-multus-v4.3.114.tgz",
+                "rke2-charts.rancher.io/rke2-multus",
+            ),
+            version="v4.3.114" if registry else None,
+        ),
         dragonfly=ManagedChart(
             release_name="foretoken-dragonfly",
             source=_chart_source(
@@ -168,9 +179,10 @@ DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
 
 
 def migrate_stored_platform_values(values: dict[str, Any]) -> dict[str, Any]:
-    """Update saved Foretoken release values while retaining their runtime and image selections."""
+    """Migrate saved Helm values to the current platform configuration."""
     migrated = deepcopy(values)
-    pd = migrated.get("runtime", {}).get("vllm", {}).get("pd", {})
+    vllm = migrated.get("runtime", {}).get("vllm", {})
+    pd = vllm.get("pd", {})
     for old, new in (
         ("rdmaResourceName", "resourceName"),
         ("rdmaResourceCount", "resourceCount"),
@@ -178,6 +190,7 @@ def migrate_stored_platform_values(values: dict[str, Any]) -> dict[str, Any]:
         if old in pd:
             value = pd.pop(old)
             migrated.setdefault("rdma", {}).setdefault(new, value)
+    vllm.pop("pd", None)
     distribution = migrated.get("modelDistribution", {})
     distribution.pop("modelexpress", None)
     distribution.pop("dragonfly", None)

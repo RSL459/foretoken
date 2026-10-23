@@ -91,7 +91,7 @@ foretoken cluster create k3d --name "$CLUSTER" --gpus "$GPU_INDICES"
 kubectl get nodes
 ```
 
-命令会挂载 NVIDIA 运行时和仓库中的 `data/` 目录，安装 NVIDIA 设备插件，并切换到新建集群的 kubeconfig context。
+命令会让集群使用选定的 GPU 和仓库中的 `data/` 目录，安装 NVIDIA 设备插件，并切换到新集群的 kubeconfig context。创建集群和安装平台时，还会检测主机的 RDMA 能力，自动准备受支持的设备与网络，供模型通信使用。
 
 ## 4. 安装并访问 Foretoken
 

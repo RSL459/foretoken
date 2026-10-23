@@ -85,6 +85,10 @@ Apply it with the same installation settings:
 foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
 ```
 
+### RDMA networking
+
+RDMA accelerates data transfer between model instances. Installation discovers available devices, reuses compatible cluster configuration, and prepares supported device allocation and networking. Ordinary deployments need no NIC or port settings in the model configuration. Host drivers and the physical network must already be operational.
+
 ## 3. Deploy and update code
 
 Use the platform's default model storage when it is configured. If none is prepared, or you want a separate volume, [request dynamic storage](../features/model-storage.md#use-dynamic-storage). To use a different shared directory, [select an administrator-authorized path](../features/model-storage.md#choose-a-directory).

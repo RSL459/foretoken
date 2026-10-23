@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -30,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -77,6 +79,10 @@ type servingOptions struct {
 	profiles                              vllmconfig.RuntimeProfiles
 	rdmaResourceName                      string
 	rdmaResourceCount                     int
+	rdmaNetworks                          []string
+	rdmaBindings                          []resolver.RDMANetworkBinding
+	rdmaBindingsSet                       bool
+	legacyRDMASet                         bool
 	autoscalingTelemetryConfigurationPath string
 	workloadImagePullSecretNames          []string
 	cacheClaimName                        string
@@ -218,14 +224,25 @@ func parseServingOptions() servingOptions {
 	flag.StringVar(&options.profiles.EC.Connector, "vllm-ec-connector", "", "Fixed EC connector identity for the configured vLLM adapter.")
 	flag.StringVar(&options.profiles.EC.SharedStorageClaim, "vllm-ec-shared-storage-claim", "", "ReadWriteMany PVC used by the configured EC connector.")
 	flag.StringVar(&options.profiles.EC.SharedStoragePath, "vllm-ec-shared-storage-path", "", "In-container shared EC storage path supplied by the platform.")
-	flag.StringVar(&options.profiles.PD.Name, "vllm-pd-profile-name", "", "Opaque platform-owned Mooncake P/D profile name; empty disables P/D.")
-	flag.StringVar(&options.profiles.PD.Revision, "vllm-pd-profile-revision", "", "Opaque platform-owned Mooncake P/D profile revision.")
-	flag.StringVar(&options.profiles.PD.Protocol, "vllm-pd-protocol", "", "Mooncake P/D transport: rdma or tcp.")
-	flag.IntVar(&options.profiles.PD.BootstrapPort, "vllm-pd-bootstrap-port", 0, "Mooncake bootstrap port.")
-	flag.IntVar(&options.profiles.PD.AbortRequestTimeoutSeconds, "vllm-pd-abort-request-timeout-seconds", 0, "Mooncake abort request timeout in seconds.")
-	flag.StringVar(&options.profiles.PD.RDMADeviceName, "vllm-pd-rdma-device-name", "", "Optional comma-separated HCA filter; empty lets Mooncake select allocated devices by topology.")
-	flag.StringVar(&options.rdmaResourceName, "rdma-resource-name", "", "Kubernetes extended resource that injects runtime RDMA devices.")
+	flag.Func("rdma-bindings", "JSON array of native RDMA allocations and their permitted CNI namespaces.", func(value string) error {
+		if err := json.Unmarshal([]byte(value), &options.rdmaBindings); err != nil {
+			return err
+		}
+		if options.rdmaBindings == nil {
+			return errors.New("rdma-bindings must be a JSON array")
+		}
+		options.rdmaBindingsSet = true
+		return nil
+	})
+	flag.StringVar(&options.rdmaResourceName, "rdma-resource-name", "", "Retained single-resource controller template; new templates use rdma-bindings.")
 	flag.IntVar(&options.rdmaResourceCount, "rdma-resource-count", 0, "RDMA device-plugin allocation units requested by each distributed runtime Pod.")
+	flag.Func("rdma-network", "Platform-prepared Multus network attachment; repeat for multiple RoCE interfaces.", func(value string) error {
+		if value == "" {
+			return errors.New("RDMA network attachment must be nonempty")
+		}
+		options.rdmaNetworks = append(options.rdmaNetworks, value)
+		return nil
+	})
 	flag.StringVar(&options.profiles.MooncakeStore.Name, "vllm-mooncake-store-profile-name", "", "Opaque platform-owned Mooncake Store profile name; empty disables external Store.")
 	flag.StringVar(&options.profiles.MooncakeStore.Revision, "vllm-mooncake-store-profile-revision", "", "Opaque platform-owned Mooncake Store profile revision.")
 	flag.StringVar(&options.profiles.MooncakeStore.ConfigMapName, "vllm-mooncake-store-config-map-name", "", "Mooncake Store ConfigMap name.")
@@ -235,6 +252,12 @@ func parseServingOptions() servingOptions {
 	options.logOptions = zap.Options{Development: false}
 	options.logOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
+	flag.Visit(func(value *flag.Flag) {
+		switch value.Name {
+		case "rdma-resource-name", "rdma-resource-count", "rdma-network":
+			options.legacyRDMASet = true
+		}
+	})
 	return options
 }
 
@@ -312,19 +335,50 @@ func resolveServingConfiguration(options servingOptions) servingConfiguration {
 		ctrl.Log.Error(errors.New("frontend-mode must be local or gateway"), "invalid frontend profile")
 		os.Exit(1)
 	}
-	var rdma *inferencev1alpha1.RDMAAllocation
-	if options.rdmaResourceName != "" {
-		if options.rdmaResourceCount < 1 || int64(options.rdmaResourceCount) > math.MaxInt32 {
-			ctrl.Log.Error(errors.New("RDMA resource count must be a positive int32"), "invalid RDMA allocation")
+	if options.rdmaBindingsSet && options.legacyRDMASet {
+		ctrl.Log.Error(errors.New("rdma-bindings cannot be combined with retained single-resource flags"), "invalid RDMA bindings")
+		os.Exit(1)
+	}
+	rdmaBindings := options.rdmaBindings
+	if options.legacyRDMASet {
+		if options.rdmaResourceName == "" || options.rdmaResourceCount < 1 || int64(options.rdmaResourceCount) > math.MaxInt32 {
+			ctrl.Log.Error(errors.New("retained RDMA flags require a resource name and positive int32 count"), "invalid RDMA allocation")
 			os.Exit(1)
 		}
-		rdma = &inferencev1alpha1.RDMAAllocation{ResourceName: options.rdmaResourceName, ResourceCount: int32(options.rdmaResourceCount)}
+		allocation := &inferencev1alpha1.RDMAAllocation{
+			ResourceName: options.rdmaResourceName, ResourceCount: int32(options.rdmaResourceCount), Networks: options.rdmaNetworks,
+		}
+		rdmaBindings = []resolver.RDMANetworkBinding{{Allocation: *allocation.Canonical(), AllowExplicitNetwork: true}}
 	}
-	if err := options.profiles.Validate(rdma); err != nil {
+	for index := range rdmaBindings {
+		binding := &rdmaBindings[index]
+		if binding.Namespace != "" && len(validation.IsDNS1123Label(binding.Namespace)) != 0 {
+			ctrl.Log.Error(errors.New("RDMA binding namespace must be a Kubernetes namespace name"), "invalid RDMA binding", "index", index)
+			os.Exit(1)
+		}
+		if !binding.AllowExplicitNetwork {
+			for _, reference := range binding.Allocation.Networks {
+				namespace, name, qualified := strings.Cut(reference, "/")
+				if !qualified || len(validation.IsDNS1123Label(namespace)) != 0 || len(validation.IsDNS1123Subdomain(name)) != 0 {
+					ctrl.Log.Error(errors.New("RDMA binding networks must be namespace/name attachment references"), "invalid RDMA binding", "index", index)
+					os.Exit(1)
+				}
+			}
+		}
+		if binding.Allocation.ResourceName != "" || binding.Allocation.ResourceCount != 0 {
+			ctrl.Log.Error(errors.New("rdma-bindings requires native resources, not resourceName/resourceCount"), "invalid RDMA binding", "index", index)
+			os.Exit(1)
+		}
+		if err := runtimeconfig.ValidateRDMAAllocation(&binding.Allocation, options.gpuResourceName); err != nil {
+			ctrl.Log.Error(err, "invalid RDMA binding", "index", index)
+			os.Exit(1)
+		}
+		binding.Allocation = *binding.Allocation.Canonical()
+	}
+	if err := options.profiles.Validate(); err != nil {
 		ctrl.Log.Error(err, "invalid vLLM runtime profile")
 		os.Exit(1)
 	}
-	var mooncakePD *vllmconfig.PDProfile
 	var ec *vllmconfig.ECProfile
 	var mooncakeStore *vllmconfig.MooncakeStoreProfile
 	if options.profiles.EC.Name != "" {
@@ -332,9 +386,6 @@ func resolveServingConfiguration(options servingOptions) servingConfiguration {
 	}
 	if options.profiles.MooncakeStore.Name != "" {
 		mooncakeStore = &options.profiles.MooncakeStore
-	}
-	if options.profiles.PD.Name != "" {
-		mooncakePD = &options.profiles.PD
 	}
 	return servingConfiguration{
 		deploymentUID:                         options.deploymentUID,
@@ -374,8 +425,7 @@ func resolveServingConfiguration(options servingOptions) servingConfiguration {
 			RuntimeClassName:       options.runtimeClassName,
 			NodeSelectorKey:        options.gpuNodeSelectorKey,
 			NodeSelectorValue:      options.gpuNodeSelectorValue,
-			MooncakePD:             mooncakePD,
-			RDMA:                   rdma,
+			RDMABindings:           rdmaBindings,
 			EC:                     ec,
 			MooncakeStore:          mooncakeStore,
 		},

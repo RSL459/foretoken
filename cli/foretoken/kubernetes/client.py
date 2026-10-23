@@ -217,7 +217,11 @@ class Kubectl:
             timeout=timeout_seconds(timeout),
         )
         if wait:
-            self.wait_deleted(value["kind"], metadata, timeout)
+            # A CRD's resource name can differ from its Kind, including punctuation.
+            name = resource["name"]
+            if "/" in version:
+                name += "." + version.split("/", 1)[0]
+            self.wait_deleted(name, metadata, timeout)
 
     def wait_deleted(
         self, resource: str, metadata: dict[str, Any], timeout: str

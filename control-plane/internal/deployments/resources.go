@@ -239,6 +239,10 @@ func (r *Reconciler) materializeController(ctx context.Context, deployment *api.
 	if err := r.apply(ctx, deployment, controller); err != nil {
 		return nil, fmt.Errorf("apply instance controller: %w", err)
 	}
+	// The instance controller must be running to select or create a dynamic cache claim.
+	if err := r.publishRuntimeCacheTopology(ctx, deployment, container, bindings); err != nil {
+		return nil, err
+	}
 	return controller, nil
 }
 

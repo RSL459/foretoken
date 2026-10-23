@@ -40,11 +40,15 @@ impl RuntimePorts {
         if let Some(port) = cache_port {
             ports.reserve(port, 1)?;
         }
-        if matches!(
-            &launch.kv,
-            KvPlan::Pd { .. } | KvPlan::MultiConnector { .. }
-        ) {
-            ports.reserve_environment("VLLM_MOONCAKE_BOOTSTRAP_PORT", 1)?;
+        match &launch.kv {
+            KvPlan::Pd {
+                connector: foretoken_model_protocol::KvConnector::Nixl,
+                ..
+            } => ports.reserve_environment("VLLM_NIXL_SIDE_CHANNEL_PORT", launch.parallelism.dp)?,
+            KvPlan::Pd { .. } | KvPlan::MultiConnector { .. } => {
+                ports.reserve_environment("VLLM_MOONCAKE_BOOTSTRAP_PORT", 1)?;
+            }
+            _ => {}
         }
         if launch
             .engine_args

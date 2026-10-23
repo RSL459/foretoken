@@ -158,7 +158,7 @@ class HelmClient:
         images = {}
         for path in paths:
             owner = path.split(".", 1)[0]
-            if overrides.get("global", {}).get("imageRegistry"):
+            if any(overrides.get("global", {}).get(key) for key in ("imageRegistry", "systemDefaultRegistry")):
                 continue
             try:
                 explicit = value_at(overrides, path)
@@ -168,6 +168,12 @@ class HelmClient:
                 continue
             image = merge_values(value_at(values, path), explicit)
             repository = image["repository"]
+            if not image.get("registry"):
+                host, separator, _ = repository.partition("/")
+                if not separator:
+                    repository = "docker.io/library/" + repository
+                elif "." not in host and ":" not in host and host != "localhost":
+                    repository = "docker.io/" + repository
             version = versions.get(owner, versions[""])
             tag = image.get("tag") or (f"v{version}" if path in version_prefixes else version)
             if path in distroless_paths and image.get("distroless"):

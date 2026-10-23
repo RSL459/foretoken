@@ -280,6 +280,7 @@ impl RadixTreeIndex {
                 matches.push(KvPrefixMatch {
                     placement: *placement,
                     matched_tokens,
+                    kv_source: None,
                 });
             }
         }

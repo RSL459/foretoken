@@ -13,7 +13,8 @@ use vllm_managed_engine::ManagedEngineConfig;
 
 use foretoken_artifacts::{ModelArtifacts, ModelSource};
 use foretoken_model_protocol::{
-    KvCacheLocality, KvPlacement, KvStorageTier, RuntimeEcTransferMetadata,
+    KvCacheLocality, KvConnector, KvPlacement, KvStorageTier, RuntimeEcTransferMetadata,
+    RuntimeKvTransferMetadata,
 };
 
 use crate::backend::vllm::transport::{KV_EVENT_TOPIC, LOOPBACK_HOST, RuntimePorts};
@@ -66,8 +67,10 @@ pub enum KvPlan {
     None { events: bool },
     #[serde(rename = "pd")]
     Pd {
+        #[serde(default = "KvPlan::legacy_connector")]
+        connector: KvConnector,
         role: KvRole,
-        protocol: MooncakeProtocol,
+        protocol: PdProtocol,
         #[serde(default, rename = "deviceName")]
         device_name: String,
         events: bool,
@@ -91,8 +94,10 @@ pub enum KvPlan {
     MooncakeStore { role: KvRole, events: bool },
     #[serde(rename = "multiConnector")]
     MultiConnector {
+        #[serde(default = "KvPlan::legacy_connector")]
+        connector: KvConnector,
         role: KvRole,
-        protocol: MooncakeProtocol,
+        protocol: PdProtocol,
         #[serde(default, rename = "deviceName")]
         device_name: String,
         events: bool,
@@ -108,7 +113,7 @@ pub enum KvRole {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub enum MooncakeProtocol {
+pub enum PdProtocol {
     #[serde(rename = "rdma")]
     Rdma,
     #[serde(rename = "tcp")]
@@ -224,23 +229,25 @@ impl LaunchPlanV1 {
         Duration::from_secs(self.lifecycle.drain_seconds)
     }
 
-    /// Builds the owned managed-engine configuration consumed by model-server startup.
-    ///
-    /// The model-server image selects Python through `FORETOKEN_VLLM_PYTHON`; the process handle
-    /// takes the resulting configuration, while the plan contributes validated vLLM flags.
+    /// Builds engine startup and version-derived KV settings for the runtime supervisor.
+    /// The connector's effective settings are observed after engine readiness.
     pub fn managed_engine(
         &self,
         handshake_port: u16,
         member: Option<&crate::backend::vllm::config::MemberContext>,
+        retained_prefixes: bool,
         ports: &RuntimePorts,
-    ) -> Result<ManagedEngineConfig, String> {
+    ) -> Result<(ManagedEngineConfig, Option<RuntimeKvTransferMetadata>), String> {
+        let kv_transfer =
+            self.kv
+                .runtime_metadata(retained_prefixes, self.node_count, &self.parallelism);
         let mut config = ManagedEngineConfig {
             python: python_executable(),
             model: self.artifacts.model.clone(),
             handshake_host: LOOPBACK_HOST.into(),
             handshake_port,
             data_parallel_size: self.parallelism.dp,
-            python_args: self.render_vllm_args(member, ports)?,
+            python_args: self.render_vllm_args(member, kv_transfer.as_ref(), ports)?,
         };
         if let Some(member) = member {
             config.handshake_host = member.leader_address.clone();
@@ -257,7 +264,7 @@ impl LaunchPlanV1 {
                 ),
             ]);
         }
-        Ok(config)
+        Ok((config, kv_transfer))
     }
 
     /// Builds the startup command, including network calibration for distributed members.
@@ -271,36 +278,84 @@ impl LaunchPlanV1 {
         startup_remaining: Duration,
     ) -> Command {
         let command = engine.to_command();
-        let Some(member) = member else {
-            return command;
+        let mut command = if let Some(member) = member {
+            let distributed = ports
+                .distributed
+                .expect("distributed launcher requires transport ports");
+            let mut launcher = Command::new(command.get_program());
+            launcher
+                .args(["-m", "mccl", "launch"])
+                .arg(
+                    json!({
+                        "member_index": member.index,
+                        "member_count": self.node_count,
+                        "leader": member.leader_address,
+                        "port": distributed.calibration,
+                        "probe_port": distributed.calibration_probe,
+                        "startup_seconds": startup_remaining.as_secs_f64(),
+                    })
+                    .to_string(),
+                )
+                .args(command.get_args());
+            launcher
+        } else {
+            command
         };
-        let distributed = ports
-            .distributed
-            .expect("distributed launcher requires transport ports");
-        let mut launcher = Command::new(command.get_program());
-        launcher
-            .args(["-m", "foretoken_mccl", "launch"])
-            .arg(
-                json!({
-                    "member_index": member.index,
-                    "member_count": self.node_count,
-                    "leader": member.leader_address,
-                    "port": distributed.calibration,
-                    "probe_port": distributed.calibration_probe,
-                    "startup_seconds": startup_remaining.as_secs_f64(),
-                })
-                .to_string(),
-            )
-            .args(command.get_args());
-        launcher
+        match &self.kv {
+            KvPlan::Pd {
+                connector: KvConnector::Mooncake,
+                protocol,
+                ..
+            }
+            | KvPlan::MultiConnector {
+                connector: KvConnector::Mooncake,
+                protocol,
+                ..
+            } => {
+                // Mooncake tests presence, so an inherited opposite flag must be removed.
+                command
+                    .env_remove("MC_FORCE_HCA")
+                    .env_remove("MC_FORCE_TCP");
+                command.env(
+                    match protocol {
+                        PdProtocol::Rdma => "MC_FORCE_HCA",
+                        PdProtocol::Tcp => "MC_FORCE_TCP",
+                    },
+                    "1",
+                );
+            }
+            KvPlan::Pd {
+                connector: KvConnector::Nixl,
+                protocol,
+                device_name,
+                ..
+            } => {
+                // Protocol v2 preserves device memory types through software RMA.
+                command.env("UCX_PROTO_ENABLE", "y");
+                // Exclude the other network family without filtering native memory transports.
+                command.env(
+                    "UCX_TLS",
+                    match protocol {
+                        PdProtocol::Tcp => "^ib",
+                        PdProtocol::Rdma => "^tcp",
+                    },
+                );
+                if *protocol == PdProtocol::Rdma && !device_name.is_empty() {
+                    command.env("UCX_NET_DEVICES", device_name);
+                }
+            }
+            _ => {}
+        }
+        command
     }
 
     /// Renders the owned vLLM arguments consumed by the managed-engine child process.
     ///
     /// Validation runs before rendering; the returned vector does not borrow the launch plan.
-    pub fn render_vllm_args(
+    fn render_vllm_args(
         &self,
         member: Option<&crate::backend::vllm::config::MemberContext>,
+        kv_transfer: Option<&RuntimeKvTransferMetadata>,
         ports: &RuntimePorts,
     ) -> Result<Vec<String>, String> {
         self.validate()?;
@@ -342,6 +397,7 @@ impl LaunchPlanV1 {
         if let Some(config) = self.kv.transfer_config(
             self.shared_prefix_lookup(),
             member.map(|member| member.model_group_uid.as_str()),
+            kv_transfer,
         ) {
             args.push(format!("--kv-transfer-config={config}"));
         }
@@ -378,7 +434,7 @@ impl KvRole {
     }
 }
 
-impl MooncakeProtocol {
+impl PdProtocol {
     fn as_str(self) -> &'static str {
         match self {
             Self::Rdma => "rdma",
@@ -443,7 +499,7 @@ impl EcTransferPlan {
         let role = self.role?;
         Some(json!({
             "ec_connector": "SharedStorageConnector",
-            "ec_connector_module_path": "foretoken_ec",
+            "ec_connector_module_path": "connectors.ec",
             "ec_role": role.as_str(),
             "ec_connector_extra_config": {
                 "shared_storage_path": self.shared_storage_path,
@@ -453,6 +509,11 @@ impl EcTransferPlan {
 }
 
 impl KvPlan {
+    // A v1 P/D plan without a connector field denotes Mooncake.
+    fn legacy_connector() -> KvConnector {
+        KvConnector::Mooncake
+    }
+
     fn events(&self) -> bool {
         match self {
             Self::None { events }
@@ -463,19 +524,67 @@ impl KvPlan {
             | Self::MultiConnector { events, .. } => *events,
         }
     }
-    // Map each validated KV plan to the vLLM child-process contract. The rendered value is owned
-    // by argv construction, keeping controller plan fields separate from backend-specific JSON.
+
+    // Resolve version-sensitive choices once; argv and runtime metadata consume this result.
+    fn runtime_metadata(
+        &self,
+        retained_prefixes: bool,
+        node_count: usize,
+        parallelism: &Parallelism,
+    ) -> Option<RuntimeKvTransferMetadata> {
+        let connector = match self {
+            Self::Pd { connector, .. } | Self::MultiConnector { connector, .. } => *connector,
+            _ => return None,
+        };
+        Some(RuntimeKvTransferMetadata {
+            connector,
+            bidirectional_kv_xfer: matches!(self, Self::Pd { .. })
+                && retained_prefixes
+                && node_count == 1
+                && parallelism.pp == 1
+                && parallelism.pcp == 1
+                && parallelism.dcp == 1,
+        })
+    }
+
+    // Map the controller plan and resolved engine settings to native connector arguments.
     fn transfer_config(
         &self,
         shared_prefix_lookup: bool,
         model_group_uid: Option<&str>,
+        kv_transfer: Option<&RuntimeKvTransferMetadata>,
     ) -> Option<serde_json::Value> {
-        let pd = |role: KvRole, protocol: MooncakeProtocol, device_name: &str| json!({"kv_connector":"MooncakeConnector","kv_role":role.as_str(),"kv_connector_extra_config":{"mooncake_protocol":protocol.as_str(),"device_name":device_name}});
+        let pd = |role: KvRole, protocol: PdProtocol, device_name: &str| {
+            let settings = kv_transfer.expect("P/D settings are resolved before argv rendering");
+            let module = match settings.connector {
+                KvConnector::Mooncake => "connectors.mooncake.connector",
+                KvConnector::Nixl => "connectors.nixl.connector",
+            };
+            let mut config = json!({
+                "kv_connector": settings.connector.as_str(),
+                "kv_role": role.as_str(),
+                "kv_connector_extra_config": {},
+            });
+            if settings.connector == KvConnector::Mooncake {
+                config["kv_connector_extra_config"] = json!({
+                    "mooncake_protocol": protocol.as_str(),
+                    "device_name": device_name,
+                });
+            }
+            if settings.bidirectional_kv_xfer {
+                config["kv_connector_module_path"] = json!(module);
+                config["kv_connector_extra_config"]["bidirectional_kv_xfer"] = json!(true);
+                if role == KvRole::KvProducer {
+                    config["kv_load_failure_policy"] = json!("recompute");
+                }
+            }
+            config
+        };
         let store = |role: KvRole| {
             let mut config = json!({"kv_connector":"MooncakeStoreConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute"});
             if shared_prefix_lookup {
                 config["kv_connector_module_path"] =
-                    json!(crate::backend::vllm::prefix_lookup::MOONCAKE_CONNECTOR_MODULE);
+                    json!(crate::backend::vllm::prefix_lookup::MOONCAKE_STORE_CONNECTOR_MODULE);
             }
             config
         };
@@ -516,9 +625,12 @@ impl KvPlan {
                 )
             }
         }?;
-        // MultiConnector children inherit this identity after vLLM adds DP suffixes.
-        // Independently launched nodes must not generate unrelated engine UUIDs.
-        if let Some(uid) = model_group_uid {
+        // NIXL peers and retained Mooncake sources need per-launch identities.
+        // Preserve Group identity for older distributed Mooncake.
+        if !kv_transfer.is_some_and(|transfer| {
+            transfer.connector == KvConnector::Nixl || transfer.bidirectional_kv_xfer
+        }) && let Some(uid) = model_group_uid
+        {
             config["engine_id"] = json!(uid);
         }
         Some(config)

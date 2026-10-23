@@ -3,16 +3,19 @@
 
 //! Engine-neutral operations, output ownership, and failures consumed by internal HTTP handlers.
 
+mod kv_reuse;
 pub mod vllm;
 pub mod vllmomni;
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use foretoken_model_protocol::SchedulerLoad;
 use futures::Stream;
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 pub use foretoken_model_protocol::{
     CumulativeHistogram, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
@@ -27,6 +30,21 @@ pub type TokenStream = Pin<Box<dyn Stream<Item = Result<TokenEvent, BackendError
 pub struct BackendGeneration {
     pub stream: TokenStream,
     pub completion: Pin<Box<dyn Future<Output = Result<(), BackendError>> + Send>>,
+}
+
+/// Serializes cancellation and native submission for one API-owned execution.
+pub struct ExecutionControl {
+    pub(crate) owner: String,
+    phase: Mutex<ExecutionPhase>,
+    cancellation: CancellationToken,
+}
+
+#[derive(Default)]
+enum ExecutionPhase {
+    #[default]
+    Preparing,
+    Submitted,
+    Cancelled,
 }
 
 /// Cumulative backend observations included in a telemetry snapshot.
@@ -71,7 +89,11 @@ pub enum KvDeltaError {
 #[async_trait]
 pub trait Backend: Send + Sync {
     /// Submits one request and returns separate output and engine-completion ownership to the API task.
-    async fn generate(&self, request: GenerateInput) -> Result<BackendGeneration, BackendError>;
+    async fn generate(
+        &self,
+        request: GenerateInput,
+        execution: Arc<ExecutionControl>,
+    ) -> Result<BackendGeneration, BackendError>;
 
     /// Cancels request IDs supplied by the abort handler; backend ownership remains unchanged.
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError>;
@@ -98,6 +120,27 @@ pub trait Backend: Send + Sync {
         limit: usize,
     ) -> Result<foretoken_model_protocol::KvDeltaResponse, KvDeltaError>;
 
+    /// Observes retained Decode prefixes with their physical source identity without acquiring blocks.
+    async fn retained_prefixes(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<foretoken_model_protocol::KvRetainedPrefixResponse, BackendError>;
+
+    /// Claims a source prefix, returning Granted only after its native workers retain the blocks.
+    async fn claim_kv_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixClaim,
+    ) -> Result<foretoken_model_protocol::KvPrefixClaimResult, BackendError>;
+
+    /// Cancels an unstarted read; InUse leaves release to native transfer completion.
+    async fn cancel_kv_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixCancel,
+    ) -> Result<foretoken_model_protocol::KvPrefixCancelResult, BackendError>;
+
+    /// Closes source acquisition and reports pending native transfers to the shutdown supervisor.
+    async fn drain_kv_transfers(&self) -> Result<u64, BackendError>;
+
     /// Returns a snapshot published by telemetry handlers without transferring backend ownership.
     fn telemetry(&self) -> BackendTelemetry;
 
@@ -107,6 +150,55 @@ pub trait Backend: Send + Sync {
 
     /// Appends engine metrics to the scrape body; the HTTP handler owns the document's EOF marker.
     fn encode_metrics(&self, output: &mut String) -> Result<(), std::fmt::Error>;
+}
+
+impl Default for ExecutionControl {
+    fn default() -> Self {
+        Self {
+            owner: uuid::Uuid::new_v4().to_string(),
+            phase: Mutex::default(),
+            cancellation: CancellationToken::new(),
+        }
+    }
+}
+
+impl ExecutionControl {
+    /// Signals cancellation from abort or disconnect, preventing submission while preparing.
+    pub fn cancel(&self) {
+        let mut phase = self.phase.lock().expect("execution phase lock poisoned");
+        if matches!(*phase, ExecutionPhase::Preparing) {
+            *phase = ExecutionPhase::Cancelled;
+        }
+        self.cancellation.cancel();
+    }
+
+    /// Waits for cancellation; submitted work still requires engine-origin completion.
+    pub async fn cancelled(&self) {
+        self.cancellation.cancelled().await;
+    }
+
+    /// Reports cancellation to pre-submission waiters.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+
+    /// Lets API cleanup distinguish unsubmitted work from an uncertain native execution.
+    pub fn is_submitted(&self) -> bool {
+        matches!(
+            *self.phase.lock().expect("execution phase lock poisoned"),
+            ExecutionPhase::Submitted
+        )
+    }
+
+    /// Enters native submission atomically with respect to preparation cancellation.
+    fn begin_submission(&self) -> bool {
+        let mut phase = self.phase.lock().expect("execution phase lock poisoned");
+        if !matches!(*phase, ExecutionPhase::Preparing) {
+            return false;
+        }
+        *phase = ExecutionPhase::Submitted;
+        true
+    }
 }
 
 impl BackendError {

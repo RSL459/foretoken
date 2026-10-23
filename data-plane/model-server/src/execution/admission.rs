@@ -156,6 +156,11 @@ impl RuntimeHealth {
         }
     }
 
+    /// Reports native-process liveness to source-cancellation handlers while admission is closed.
+    pub(crate) fn process_alive(&self) -> bool {
+        self.process_alive.load(Ordering::Acquire)
+    }
+
     /// Waits for the supervisor's confirmation that the managed engine has stopped.
     pub async fn wait_stopped(&self) {
         loop {

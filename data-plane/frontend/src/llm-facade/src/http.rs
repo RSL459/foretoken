@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use foretoken_model_protocol::{
-    AbortInput, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
+    AbortInput, GenerateInput, KvReuseSource, TokenErrorCode, TokenEvent, TokenOutput,
 };
 use foretoken_request_ledger::ReservationRef;
 use futures::StreamExt;
@@ -31,6 +31,7 @@ pub(crate) static MODEL_SERVER_CLIENT: LazyLock<reqwest::Client> =
 pub struct HttpFacade {
     endpoint: String,
     client: reqwest::Client,
+    kv_reuse: Option<KvReuseSource>,
 }
 impl HttpFacade {
     /// Creates the transport resolved by the backend registry for one model-server endpoint.
@@ -41,8 +42,17 @@ impl HttpFacade {
         Ok(Self {
             endpoint: validate_endpoint(endpoint)?,
             client: MODEL_SERVER_CLIENT.clone(),
+            kv_reuse: None,
         })
     }
+
+    /// Attaches the selected Decode source to this request's Prefill transport.
+    /// The receiving model server owns acquisition and native transfer cleanup.
+    pub fn with_kv_reuse(mut self, source: KvReuseSource) -> Self {
+        self.kv_reuse = Some(source);
+        self
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.endpoint)
     }
@@ -66,6 +76,7 @@ impl HttpFacade {
         }
         let mut input = GenerateInput::from(request);
         input.reservation = reservation;
+        input.kv_reuse = self.kv_reuse.clone();
         let request_id = input.request_id.clone();
         let body = rmp_serde::to_vec_named(&input).map_err(|error| {
             tracing::error!(generation_id = %request_id, %error, "could not encode model-server request");

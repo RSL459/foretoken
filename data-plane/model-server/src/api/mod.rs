@@ -3,13 +3,15 @@
 
 //! Restricted internal HTTP routes for already-tokenized EngineCore requests.
 
+mod kv;
+
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -20,14 +22,14 @@ use prometheus_client::encoding::text::{encode_eof, encode_registry};
 use prometheus_client::registry::Registry;
 use serde::Serialize;
 
-use crate::backend::{Backend, BackendError, GenerateInput, KvDeltaError, TokenEvent};
+use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::execution::{
-    AdmissionRejection, ExecutionError, ExecutionStore, InstanceAdmissionStatus, RuntimeHealth,
-    start_execution,
+    AdmissionRejection, ExecutionError, ExecutionRegistry, ExecutionStore, InstanceAdmissionStatus,
+    RuntimeHealth, start_execution,
 };
 use crate::runtime_cache;
 use foretoken_model_protocol::{
-    AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, SchedulerLoadResponse,
+    AbortInput, KV_INDEX_DELTA_PATH, RuntimeMetadataResponse, SchedulerLoadResponse,
     TelemetryResponse,
 };
 
@@ -42,6 +44,7 @@ pub struct AppState {
     runtime_cache: Option<runtime_cache::Config>,
     profiling: Option<crate::profiling::Handle>,
     ledger: Option<ExecutionStore>,
+    executions: ExecutionRegistry,
 }
 
 /// Fixed, wire-safe errors for the internal API.
@@ -67,7 +70,7 @@ struct ErrorBody {
     error: ErrorDetail,
 }
 
-/// Constructs the group-local API consumed by the Pod-local frontend, not an OpenAI router.
+/// Builds the internal ModelGroup API used by frontends and lifecycle controllers.
 ///
 /// Server bootstrap moves `state` into the returned router, which owns it for all handler lifetimes.
 pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
@@ -87,14 +90,26 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route("/v1/internal/admission/close", post(close_admission))
         .route("/v1/internal/generate", post(generate))
         .route("/v1/internal/abort", post(abort))
-        .route(KV_INDEX_DELTA_PATH, get(kv_index_delta))
+        .route(KV_INDEX_DELTA_PATH, get(kv::kv_index_delta))
         .route(
             foretoken_model_protocol::KV_LOCAL_PREFIX_PATH,
-            post(local_kv_prefix),
+            post(kv::local_kv_prefix),
         )
         .route(
             foretoken_model_protocol::KV_SHARED_PREFIX_PATH,
-            post(shared_kv_prefix),
+            post(kv::shared_kv_prefix),
+        )
+        .route(
+            foretoken_model_protocol::KV_RETAINED_PREFIX_PATH,
+            post(kv::retained_kv_prefix),
+        )
+        .route(
+            foretoken_model_protocol::KV_PREFIX_CLAIM_PATH,
+            post(kv::claim_kv_prefix),
+        )
+        .route(
+            foretoken_model_protocol::KV_PREFIX_CANCEL_PATH,
+            post(kv::cancel_kv_prefix),
         )
         .with_state(state)
         .merge(profiling)
@@ -117,6 +132,7 @@ impl AppState {
             runtime_cache: None,
             profiling: None,
             ledger: None,
+            executions: ExecutionRegistry::default(),
         }
     }
 
@@ -175,12 +191,19 @@ async fn generate(
         AdmissionRejection::Busy => ApiError::Busy,
     })?;
     let request_id = input.request_id.clone();
-    let stream = start_execution(state.backend, state.health, state.ledger, input, permit)
-        .await
-        .map_err(|error| match error {
-            ExecutionError::AdmissionUnavailable => ApiError::AdmissionUnavailable,
-            ExecutionError::Backend(error) => ApiError::backend(error),
-        })?;
+    let stream = start_execution(
+        state.backend,
+        state.health,
+        state.ledger,
+        state.executions,
+        input,
+        permit,
+    )
+    .await
+    .map_err(|error| match error {
+        ExecutionError::AdmissionUnavailable => ApiError::AdmissionUnavailable,
+        ExecutionError::Backend(error) => ApiError::backend(error),
+    })?;
     // Once headers are sent, backend failures become typed terminal events rather than a new HTTP status.
     let body_stream = stream.map(move |item| {
         let event = match item {
@@ -220,44 +243,6 @@ async fn instance_admission_ready(State(state): State<AppState>) -> StatusCode {
 /// Publishes applied limits and occupancy to the controller on the execution listener.
 async fn instance_admission_status(State(state): State<AppState>) -> Json<InstanceAdmissionStatus> {
     Json(state.health.instance_admission_status())
-}
-
-/// Queries schedulers through their existing utility transport without admitting a generation.
-async fn local_kv_prefix(
-    State(state): State<AppState>,
-    Json(request): Json<foretoken_model_protocol::KvPrefixRequest>,
-) -> Response {
-    if !state.health.ready() || !state.health.accepting() {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-    match tokio::time::timeout(
-        foretoken_model_protocol::KV_OBSERVATION_TIMEOUT,
-        state.backend.local_prefixes(&request),
-    )
-    .await
-    {
-        Ok(Ok(response)) => Json(response).into_response(),
-        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    }
-}
-
-/// Observes shared prefixes only while engine health and admission permit reads.
-async fn shared_kv_prefix(
-    State(state): State<AppState>,
-    Json(request): Json<foretoken_model_protocol::KvPrefixRequest>,
-) -> Response {
-    if !state.health.ready() || !state.health.accepting() {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-    match tokio::time::timeout(
-        foretoken_model_protocol::KV_OBSERVATION_TIMEOUT,
-        state.backend.shared_prefix(&request),
-    )
-    .await
-    {
-        Ok(Ok(response)) => Json(response).into_response(),
-        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    }
 }
 
 async fn healthz(State(state): State<AppState>) -> StatusCode {
@@ -359,7 +344,7 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
     }
 }
 
-/// Decodes explicit frontend cancellation and asks the backend to abort its request IDs.
+/// Signals accepted executions, including those still preparing a native submission.
 /// The execution task, not this acknowledgement, retains termination ownership.
 async fn abort(
     State(state): State<AppState>,
@@ -372,33 +357,10 @@ async fn abort(
     if input.request_ids.is_empty() {
         return Err(ApiError::InvalidRequest);
     }
-    state
-        .backend
-        .abort(&input.request_ids)
-        .await
-        .map_err(ApiError::backend)?;
+    state.executions.cancel(&input.request_ids);
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Translates a frontend cursor into a bounded rank-local delta or its reset signal.
-/// The adapter retains cursor history; the handler only publishes the wire response.
-async fn kv_index_delta(
-    State(state): State<AppState>,
-    Query(query): Query<KvDeltaQuery>,
-) -> Response {
-    match state.backend.kv_delta(
-        query.dp_rank,
-        query.epoch.as_deref(),
-        query.after,
-        query.limit.unwrap_or(256),
-    ) {
-        Ok(delta) => (StatusCode::OK, Json(delta)).into_response(),
-        Err(KvDeltaError::Unavailable) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
-        Err(KvDeltaError::CursorReset(clear)) => {
-            (StatusCode::CONFLICT, Json(clear)).into_response()
-        }
-    }
-}
 fn content_type_is(headers: &HeaderMap, expected: &str) -> bool {
     headers
         .get(header::CONTENT_TYPE)

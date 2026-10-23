@@ -8,14 +8,18 @@ use std::io;
 use std::sync::Arc;
 use std::time::Instant;
 
-use foretoken_model_protocol::{PreparedTokenizer, RuntimeMetadataResponse, RuntimeModelIdentity};
+use foretoken_model_protocol::{
+    KV_PREFIX_REUSE_CAPABILITY, PreparedTokenizer, RuntimeKvTransferMetadata,
+    RuntimeMetadataResponse, RuntimeModelIdentity,
+};
 use foretoken_model_server::api::{AppState, router};
-use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::backend::vllm::config::{MODEL_GROUP_UID_ENV, RuntimeConfig};
 use foretoken_model_server::backend::vllm::kv_events::KvEventAdapter;
+use foretoken_model_server::backend::vllm::launch::KvPlan;
 use foretoken_model_server::backend::vllm::prefix_lookup;
 use foretoken_model_server::backend::vllm::startup::{self, ConnectedEngine};
 use foretoken_model_server::backend::vllm::transport::LOOPBACK_HOST;
+use foretoken_model_server::backend::{Backend, BackendError, VllmBackend};
 use foretoken_model_server::engine::ManagedEngine;
 use foretoken_model_server::execution::{InstanceAdmissionWatcher, RuntimeHealth};
 use foretoken_model_server::{profiling, runtime_cache, shutdown_signal};
@@ -76,6 +80,15 @@ impl Leader {
 
         // Bind before ledger recovery so a second process cannot retire a live ingress's reservations.
         let listener = TcpListener::bind(config.listen_address).await?;
+        let kv_source_endpoint = if matches!(config.launch.kv, KvPlan::Pd { .. }) {
+            let host = super::required_env("FORETOKEN_MEMBER_IP")?.parse::<std::net::IpAddr>()?;
+            Some(format!(
+                "http://{}",
+                std::net::SocketAddr::new(host, listener.local_addr()?.port())
+            ))
+        } else {
+            None
+        };
         let execution_store = if let Some(ledger) = request_ledger {
             let pod_uid = super::required_env("FORETOKEN_POD_UID")?;
             let epoch = ledger.register_backend(&pod_uid).await?;
@@ -98,6 +111,8 @@ impl Leader {
             client,
             cache_mode,
             prepared_tokenizer,
+            kv_transfer,
+            kv_connector_utility,
         } = startup::start(
             &config,
             cache_config.as_ref(),
@@ -109,7 +124,7 @@ impl Leader {
         health.set_process_alive(true);
         let client_health = client.subscribe_health();
         let (max_concurrent_requests, metadata) =
-            runtime_metadata(&config, &client, prepared_tokenizer)?;
+            runtime_metadata(&config, &client, prepared_tokenizer, kv_transfer.as_ref())?;
         let kv_events =
             start_kv_events(kv_events, &config, &client, startup_deadline, background).await;
         if !*client_health.borrow() {
@@ -146,6 +161,9 @@ impl Leader {
             max_concurrent_requests,
             kv_events,
             shared_kv,
+            kv_transfer.is_some_and(|kv| kv.bidirectional_kv_xfer),
+            kv_connector_utility,
+            kv_source_endpoint,
         ));
         let profiling = if cache_mode == runtime_cache::Mode::Persistent {
             profiling_config
@@ -255,15 +273,15 @@ impl Leader {
         }
     }
 
-    /// Close admission and drain accepted executions while continuing to observe native process failure.
-    async fn drain(&mut self, stop: &mut Stop) -> io::Result<()> {
+    /// Retire executions and KV reads while keeping control HTTP available through engine shutdown.
+    async fn drain(mut self, stop: &mut Stop) -> io::Result<()> {
         if let Some(profiler) = &self.profiler {
             profiler.handle().close();
         }
         self.health.set_accepting(false);
-        self.health.set_client_healthy(false);
-        self.shutdown.cancel();
         self.cache_shutdown.cancel();
+        // Control requests must keep progressing even while native process termination is awaited.
+        let mut server = (!matches!(stop, Stop::Server(_))).then(|| tokio::spawn(self.server));
         let deadline = Instant::now() + self.config.launch.drain_timeout();
         // Preparing diagnostics alone must not force-stop requests; only an active native capture does.
         let mut engine_stopped = matches!(stop, Stop::Engine(_))
@@ -277,35 +295,93 @@ impl Leader {
                 profiler.engine_stopped("runtime terminated").await;
             }
         }
-        let server_stopped = matches!(stop, Stop::Server(_));
-        let server = &mut self.server;
-        let health = &self.health;
-        let drain = async {
-            if !server_stopped && let Err(error) = server.as_mut().await {
-                error!(%error, "HTTP server failed while draining");
-            }
-            health.wait_drained().await;
-        };
-        tokio::pin!(drain);
-        loop {
-            tokio::select! {
-                biased;
-                reason = engine_failure(&self.engine, &self.health, &mut self.client_health), if !engine_stopped => {
-                    warn!(%reason, "engine failed while draining");
-                    if matches!(stop, Stop::Signal) {
-                        *stop = Stop::Engine(reason);
+        // Separate utility polling lets client shutdown wake queries and release their read guards.
+        let kv_drain = tokio::spawn({
+            let backend = self.backend.clone();
+            let health = self.health.clone();
+            async move {
+                health.wait_drained().await;
+                loop {
+                    tokio::select! {
+                        biased;
+                        () = health.wait_stopped() => return Ok::<(), BackendError>(()),
+                        result = backend.drain_kv_transfers() => match result {
+                            Ok(0) => return Ok(()),
+                            Ok(_) => {},
+                            Err(error) => {
+                                health.fail_execution();
+                                health.wait_stopped().await;
+                                return Err(error);
+                            }
+                        },
                     }
-                    stop_failed_engine(&self.engine, &self.backend, &self.health, deadline).await?;
-                    engine_stopped = true;
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 }
-                result = tokio::time::timeout_at(deadline.into(), &mut drain) => {
-                    if result.is_err() {
-                        warn!("accepted requests did not finish before the drain deadline");
+            }
+        });
+        {
+            let drain = async {
+                let executions = async {
+                    match kv_drain.await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            warn!(%error, "KV transfer draining ended after engine retirement")
+                        }
+                        Err(error) => {
+                            error!(%error, "KV transfer drain task failed");
+                            self.health.fail_execution();
+                            self.health.wait_stopped().await;
+                        }
+                    }
+                    self.health.wait_drained().await;
+                    self.backend.wait_for_kv_cleanup().await;
+                    self.shutdown.cancel();
+                };
+                let http = async {
+                    if let Some(server) = &mut server {
+                        match server.await {
+                            Ok(Ok(())) => {}
+                            result => {
+                                error!(?result, "HTTP server failed while draining");
+                                self.health.fail_execution();
+                            }
+                        }
+                    }
+                };
+                tokio::join!(executions, http);
+            };
+            tokio::pin!(drain);
+            loop {
+                tokio::select! {
+                    biased;
+                    reason = engine_failure(&self.engine, &self.health, &mut self.client_health), if !engine_stopped => {
+                        warn!(%reason, "engine failed while draining");
+                        if matches!(stop, Stop::Signal) {
+                            *stop = Stop::Engine(reason);
+                        }
                         stop_failed_engine(&self.engine, &self.backend, &self.health, deadline).await?;
+                        engine_stopped = true;
                     }
-                    break;
+                    result = tokio::time::timeout_at(deadline.into(), &mut drain) => {
+                        if result.is_err() {
+                            if matches!(stop, Stop::Signal) {
+                                *stop = Stop::Engine("model-server drain deadline elapsed".into());
+                            }
+                            stop_failed_engine(&self.engine, &self.backend, &self.health, deadline).await?;
+                            error!(
+                                accepted_requests = self.health.running_requests(),
+                                pending_kv_cleanup = self.backend.pending_kv_cleanup(),
+                                "execution and KV drain did not complete before the shutdown deadline"
+                            );
+                        }
+                        break;
+                    }
                 }
             }
+        }
+        self.shutdown.cancel();
+        if let Some(server) = server.filter(|server| !server.is_finished()) {
+            server.abort();
         }
         if let Err(error) = self.backend.shutdown().await {
             warn!(%error, "could not shut down EngineCore client cleanly");
@@ -328,6 +404,7 @@ fn runtime_metadata(
     config: &RuntimeConfig,
     client: &EngineCoreClient,
     prepared_tokenizer: Option<PreparedTokenizer>,
+    kv_transfer: Option<&RuntimeKvTransferMetadata>,
 ) -> io::Result<(Option<u64>, RuntimeMetadataResponse)> {
     let max_concurrent_requests =
         client
@@ -342,6 +419,17 @@ fn runtime_metadata(
                     .map(Some)
                     .ok_or_else(|| io::Error::other("EngineCore max_num_seqs sum overflowed"))
             })?;
+    // Capabilities preserve the metadata shape understood by older frontends.
+    let mut capabilities = std::collections::BTreeSet::new();
+    if config.launch.ec.enabled() {
+        capabilities.insert("ec_transfer".into());
+    }
+    if let Some(transfer) = kv_transfer {
+        capabilities.insert(transfer.connector.as_str().into());
+        if transfer.bidirectional_kv_xfer {
+            capabilities.insert(KV_PREFIX_REUSE_CAPABILITY.into());
+        }
+    }
     let metadata = RuntimeMetadataResponse {
         version: 1,
         model: RuntimeModelIdentity {
@@ -356,11 +444,7 @@ fn runtime_metadata(
             .and_then(|ready| ready.max_logprobs),
         ec_transfer: config.launch.ec.runtime_metadata(),
         prepared_tokenizer,
-        capabilities: if config.launch.ec.enabled() {
-            ["ec_transfer".into()].into_iter().collect()
-        } else {
-            Default::default()
-        },
+        capabilities,
     };
     Ok((max_concurrent_requests, metadata))
 }

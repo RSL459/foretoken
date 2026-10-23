@@ -57,6 +57,8 @@ from foretoken.platform.networking.load_balancer import (
     LoadBalancerLifecycle,
     LoadBalancerPlan,
 )
+from foretoken.platform.networking.multus import MultusLifecycle
+from foretoken.platform.networking.rdma import RDMANetworkLifecycle
 from foretoken.platform.observability.logs import (
     LogCollectionLifecycle,
     LogConfig,
@@ -147,6 +149,8 @@ class PlatformLifecycle:
         self._gateway = GatewayControllerLifecycle(self._helm, self._kubectl)
         self._leader_worker = LeaderWorkerLifecycle(self._helm, self._kubectl)
         self._load_balancer = LoadBalancerLifecycle(self._helm, self._kubectl)
+        self._multus = MultusLifecycle(self._helm, self._kubectl)
+        self._rdma_networks = RDMANetworkLifecycle(self._kubectl, self._multus)
         self._logs = LogCollectionLifecycle(self._helm)
         self._monitoring = MonitoringLifecycle(self._helm, self._kubectl)
         self._model_distribution = ModelDistributionLifecycle(self._helm, self._kubectl)
@@ -203,9 +207,11 @@ class PlatformLifecycle:
             log_endpoint=prepared.log_endpoint,
             log_storage_statefulset=prepared.log_storage_statefulset,
             gpu_resource_name=plan.runtime.gpu_resource_override,
-            rdma_resource_name=plan.rdma.resource_name,
+            rdma_resource_names=plan.rdma.resource_names,
             rdma_managed=plan.rdma.managed,
             rdma_node_names=plan.rdma.node_names,
+            rdma_networks=self._rdma_networks,
+            gpu_nodes=plan.runtime.selection.nodes if plan.runtime.selection is not None else (),
             download_proxy_url=download_proxy,
             stored_values=plan.stored_values,
             kubectl=self._kubectl,
@@ -242,11 +248,12 @@ class PlatformLifecycle:
         managed_logs = self._logs.managed_releases()
         gateway = self._gateway.resolve_uninstall(platform, platform_exists=platform_exists)
         deployments = self._retire_deployments(command.timeout)
+        network_definitions = self._rdma_networks.prepare_uninstall(platform)
         dragonfly_managed = helm.is_cli_managed(self._model_distribution.release)
         if (
             platform_exists or source_storage or unadopted_origin or admission_claims
             or monitoring.dcgm_managed or monitoring.prometheus_managed or monitoring.metax_managed
-            or managed_logs or dragonfly_managed or gateway.managed or deployments
+            or managed_logs or dragonfly_managed or gateway.managed or deployments or network_definitions
         ):
             resources = _platform_service_resources(kubectl)
             controllers = tuple(
@@ -311,6 +318,10 @@ class PlatformLifecycle:
         result = self._gateway.finish_uninstall(gateway, command.timeout)
         if result is not None:
             _report_plan("Gateway Controller", *result)
+        # Helm keeps shared NADs across updates and rollback; the platform retires them after its instances.
+        for network in network_definitions:
+            kubectl.delete_object(network, command.timeout)
+        _report_plan("RDMA networking", *self._multus.finish_uninstall(command.timeout))
         _report_plan("LeaderWorkerSet", *self._leader_worker.finish_uninstall(command.timeout))
         _report_plan("Model file distribution", *self._model_distribution.finish_uninstall(command.timeout))
         result = self._load_balancer.finish_uninstall(command.timeout)

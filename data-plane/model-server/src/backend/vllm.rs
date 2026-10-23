@@ -29,8 +29,8 @@ use self::kv_events::KvEventAdapter;
 use self::prefix_lookup::SharedKvLookup;
 use self::telemetry::{BoundaryLatencyMetrics, read_vllm_metrics};
 use super::{
-    Backend, BackendError, BackendGeneration, BackendTelemetry, GenerateInput, KvDeltaError,
-    TokenErrorCode, TokenEvent, TokenStream,
+    Backend, BackendError, BackendGeneration, BackendTelemetry, ExecutionControl, GenerateInput,
+    KvDeltaError, TokenErrorCode, TokenEvent, TokenStream,
 };
 
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
@@ -40,17 +40,25 @@ pub struct VllmBackend {
     max_concurrent_requests: Option<u64>,
     engine_labels: Vec<EngineLabels>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
+    bidirectional_kv_xfer: bool,
+    kv_connector_utility: bool,
+    kv_client: reqwest::Client,
+    kv_cleanup: tokio_util::task::TaskTracker,
     kv_events: Option<Arc<KvEventAdapter>>,
     shared_kv: Option<SharedKvLookup>,
+    kv_source_endpoint: Option<String>,
 }
 
 impl VllmBackend {
-    /// Retains the native facade and optional KV observations for the model-server lifetime.
+    /// Retains the native facade, KV observations and physical source endpoint for the model-server lifetime.
     pub fn new(
         llm: Llm,
         max_concurrent_requests: Option<u64>,
         kv_events: Option<Arc<KvEventAdapter>>,
         shared_kv: Option<SharedKvLookup>,
+        bidirectional_kv_xfer: bool,
+        kv_connector_utility: bool,
+        kv_source_endpoint: Option<String>,
     ) -> Self {
         let client = llm.engine_core_client();
         let model_name = client.model_name().to_string();
@@ -68,8 +76,17 @@ impl VllmBackend {
             max_concurrent_requests,
             engine_labels,
             boundary_latency: Arc::new(Mutex::new(BoundaryLatencyMetrics::new())),
+            bidirectional_kv_xfer,
+            kv_connector_utility,
+            kv_client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(foretoken_model_protocol::KV_OBSERVATION_TIMEOUT)
+                .build()
+                .expect("static KV client configuration"),
+            kv_cleanup: tokio_util::task::TaskTracker::new(),
             kv_events,
             shared_kv,
+            kv_source_endpoint,
         }
     }
 
@@ -83,6 +100,43 @@ impl VllmBackend {
         };
         llm.shutdown().await.map_err(BackendError::from_llm)
     }
+
+    /// Waits for remote claim cleanup after executions drain, including after local engine exit.
+    pub async fn wait_for_kv_cleanup(&self) {
+        self.kv_cleanup.close();
+        self.kv_cleanup.wait().await;
+    }
+
+    /// Counts unconfirmed remote claims for the supervisor's drain-timeout diagnostics.
+    pub fn pending_kv_cleanup(&self) -> usize {
+        self.kv_cleanup.len()
+    }
+
+    /// Calls the active connector through EngineCore and decodes each rank's utility response.
+    async fn kv_utility<T: serde::de::DeserializeOwned>(
+        &self,
+        operation: &str,
+        payload: serde_json::Value,
+    ) -> Result<Vec<T>, BackendError> {
+        let guard = self.llm.read().await;
+        let client = guard
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?
+            .engine_core_client();
+        let results =
+            self.closing
+                .run_until_cancelled(client.call_utility::<serde_json::Value, _>(
+                    "kv_connector_utility",
+                    (operation, payload),
+                ))
+                .await
+                .ok_or(BackendError::Unavailable)?
+                .map_err(BackendError::from_engine_client)?;
+        results
+            .into_iter()
+            .map(|value| serde_json::from_value(value).map_err(|_| BackendError::Protocol))
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -90,6 +144,7 @@ impl Backend for VllmBackend {
     async fn generate(
         &self,
         mut request: GenerateInput,
+        execution: Arc<ExecutionControl>,
     ) -> Result<BackendGeneration, BackendError> {
         // HTTP decoding discards backend hints; headless EngineCore skips frontend
         // validation and retains its first grammar backend. Use Xgrammar consistently
@@ -98,8 +153,36 @@ impl Backend for VllmBackend {
             outputs.backend = StructuredOutputBackend::Xgrammar;
         }
         let started_at = Instant::now();
+        // A stale reuse hint must not prevent ordinary Prefill on a replacement instance.
+        let source_read = if let Some(source) = request
+            .kv_reuse
+            .take()
+            .filter(|_| self.bidirectional_kv_xfer)
+        {
+            let mut read = super::kv_reuse::RemoteKvRead::new(
+                source,
+                execution.owner.clone(),
+                self.kv_client.clone(),
+                self.kv_cleanup.clone(),
+            );
+            if self
+                .closing
+                .run_until_cancelled(read.prepare(&mut request, &execution))
+                .await
+                .ok_or(BackendError::Unavailable)??
+            {
+                Some(read)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
+        if !execution.begin_submission() {
+            return Err(BackendError::Rejected);
+        }
         let request_id = request.request_id.clone();
         let stream = self
             .closing
@@ -116,6 +199,7 @@ impl Backend for VllmBackend {
                 self.boundary_latency.clone(),
             ),
             completion: Box::pin(async move {
+                let _source_read = source_read;
                 completion
                     .wait()
                     .await
@@ -203,6 +287,135 @@ impl Backend for VllmBackend {
             .as_ref()
             .ok_or(KvDeltaError::Unavailable)?
             .delta(dp_rank, epoch, after, limit)
+    }
+
+    async fn retained_prefixes(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<foretoken_model_protocol::KvRetainedPrefixResponse, BackendError> {
+        let adapter = self.kv_events.as_ref().ok_or(BackendError::Unavailable)?;
+        let endpoint = self
+            .kv_source_endpoint
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?;
+        let ranks = if !self.bidirectional_kv_xfer
+            || request.lora_name.is_some()
+            || !request.multimodal.is_empty()
+        {
+            Vec::new()
+        } else {
+            self.kv_utility(
+                "retained_prefix",
+                serde_json::json!({
+                    "prompt_token_ids": request.prompt_token_ids,
+                    "cache_salt": request.cache_salt,
+                }),
+            )
+            .await?
+        };
+        Ok(foretoken_model_protocol::KvRetainedPrefixResponse {
+            model_group_id: adapter.model_group_id.clone(),
+            scope_id: adapter.scope_id.clone(),
+            model_server_endpoint: endpoint.clone(),
+            ranks,
+        })
+    }
+
+    async fn claim_kv_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixClaim,
+    ) -> Result<foretoken_model_protocol::KvPrefixClaimResult, BackendError> {
+        use foretoken_model_protocol::KvPrefixClaimResult;
+        if !self.bidirectional_kv_xfer
+            || !self
+                .kv_events
+                .as_ref()
+                .is_some_and(|source| source.model_group_id == request.source.route_target_id)
+            || request.prefix.lora_name.is_some()
+            || !request.prefix.multimodal.is_empty()
+        {
+            return Ok(KvPrefixClaimResult::Miss);
+        }
+        #[derive(serde::Deserialize)]
+        struct Reply {
+            dp_rank: u32,
+            instance_id: String,
+            #[serde(flatten)]
+            result: KvPrefixClaimResult,
+        }
+        let results: Vec<Reply> = self
+            .kv_utility(
+                "claim",
+                serde_json::json!({
+                    "dp_rank": request.source.dp_rank,
+                    "instance_id": request.source.instance_id,
+                    "offer_id": request.source.offer_id,
+                    "consumer_id": request.consumer_id,
+                    "prompt_token_ids": request.prefix.prompt_token_ids,
+                    "cache_salt": request.prefix.cache_salt,
+                }),
+            )
+            .await?;
+        // A replaced instance or DP rank invalidates the hint and falls back to ordinary Prefill.
+        Ok(results
+            .into_iter()
+            .find(|result| {
+                result.dp_rank == request.source.dp_rank
+                    && result.instance_id == request.source.instance_id
+            })
+            .map_or(KvPrefixClaimResult::Miss, |result| result.result))
+    }
+
+    async fn cancel_kv_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixCancel,
+    ) -> Result<foretoken_model_protocol::KvPrefixCancelResult, BackendError> {
+        use foretoken_model_protocol::KvPrefixCancelResult;
+        if !self.bidirectional_kv_xfer
+            || !self
+                .kv_events
+                .as_ref()
+                .is_some_and(|source| source.model_group_id == request.source.route_target_id)
+        {
+            return Ok(KvPrefixCancelResult::Miss);
+        }
+        #[derive(serde::Deserialize)]
+        struct Reply {
+            dp_rank: u32,
+            instance_id: String,
+            #[serde(flatten)]
+            result: KvPrefixCancelResult,
+        }
+        let results: Vec<Reply> = self
+            .kv_utility(
+                "cancel",
+                serde_json::json!({
+                    "dp_rank": request.source.dp_rank,
+                    "instance_id": request.source.instance_id,
+                    "offer_id": request.source.offer_id,
+                    "consumer_id": request.consumer_id,
+                }),
+            )
+            .await?;
+        Ok(results
+            .into_iter()
+            .find(|result| {
+                result.dp_rank == request.source.dp_rank
+                    && result.instance_id == request.source.instance_id
+            })
+            .map_or(KvPrefixCancelResult::Miss, |result| result.result))
+    }
+
+    async fn drain_kv_transfers(&self) -> Result<u64, BackendError> {
+        if !self.kv_connector_utility {
+            return Ok(0);
+        }
+        #[derive(serde::Deserialize)]
+        struct Reply {
+            active_leases: u64,
+        }
+        let results: Vec<Reply> = self.kv_utility("drain", serde_json::json!({})).await?;
+        Ok(results.into_iter().map(|result| result.active_leases).sum())
     }
 
     fn telemetry(&self) -> BackendTelemetry {

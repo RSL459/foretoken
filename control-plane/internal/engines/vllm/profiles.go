@@ -8,16 +8,12 @@ package vllm
 import (
 	"errors"
 	"fmt"
-	"math"
 
 	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 )
 
-const (
-	ecConnector = "ECExampleConnector"
-	pdConnector = "MooncakeConnector"
-)
+const ecConnector = "ECExampleConnector"
 
 // ECProfile binds encoder and prefill processes to one platform-selected shared cache.
 type ECProfile struct {
@@ -26,16 +22,6 @@ type ECProfile struct {
 	Connector          string
 	SharedStorageClaim string
 	SharedStoragePath  string
-}
-
-// PDProfile supplies the native Mooncake transport configuration for split serving.
-type PDProfile struct {
-	Name                       string
-	Revision                   string
-	Protocol                   string
-	BootstrapPort              int
-	AbortRequestTimeoutSeconds int
-	RDMADeviceName             string
 }
 
 // MooncakeStoreProfile identifies an externally managed Store configuration.
@@ -50,19 +36,12 @@ type MooncakeStoreProfile struct {
 // RuntimeProfiles holds the optional native profiles validated before controller startup.
 type RuntimeProfiles struct {
 	EC            ECProfile
-	PD            PDProfile
 	MooncakeStore MooncakeStoreProfile
 }
 
-// Validate checks native settings against the platform's resolved RDMA allocation.
-func (profiles RuntimeProfiles) Validate(rdma *api.RDMAAllocation) error {
-	if profiles.PD.Name != "" && profiles.PD.Protocol == "rdma" && rdma == nil {
-		return errors.New("vLLM P/D with RDMA transport requires an RDMA allocation")
-	}
+// Validate checks optional native profiles before the controller resolves model intent.
+func (profiles RuntimeProfiles) Validate() error {
 	if err := profiles.EC.Validate(); err != nil {
-		return err
-	}
-	if err := profiles.PD.Validate(); err != nil {
 		return err
 	}
 	return profiles.MooncakeStore.Validate()
@@ -142,32 +121,6 @@ func ResolveECRuntime(template api.NormalizedPoolTemplate, profile *ECProfile) (
 	}, nil
 }
 
-// ResolvePDRuntime selects native transport settings for a prefill or decode execution group.
-func ResolvePDRuntime(template api.NormalizedPoolTemplate, profile *PDProfile) (*api.ModelGroupPDRuntimeConfig, error) {
-	if template.Role == api.ModelRoleAggregate || template.Role == api.ModelRoleEncoder {
-		return nil, nil
-	}
-	if profile == nil || profile.Name == "" {
-		return nil, fmt.Errorf("Mooncake P/D runtime profile is incomplete")
-	}
-	if err := profile.Validate(); err != nil {
-		return nil, err
-	}
-	rdmaDeviceName := profile.RDMADeviceName
-	if profile.Protocol == "tcp" {
-		rdmaDeviceName = ""
-	}
-	return &api.ModelGroupPDRuntimeConfig{
-		ProfileName:                profile.Name,
-		ProfileRevision:            profile.Revision,
-		Connector:                  pdConnector,
-		Protocol:                   profile.Protocol,
-		BootstrapPort:              int32(profile.BootstrapPort),
-		AbortRequestTimeoutSeconds: int32(profile.AbortRequestTimeoutSeconds),
-		RDMADeviceName:             rdmaDeviceName,
-	}, nil
-}
-
 // ResolveProfilingImage selects the native profiler image and checks its device and storage needs.
 // An explicit application image remains authoritative; the resolver owns the resulting workload.
 func ResolveProfilingImage(template api.NormalizedPoolTemplate, image, nsightImage, deviceResourceName string) (string, error) {
@@ -209,20 +162,6 @@ func (profile ECProfile) Validate() error {
 	}
 	if profile.Revision == "" || profile.Connector != ecConnector || profile.SharedStorageClaim == "" || profile.SharedStoragePath == "" {
 		return errors.New("vLLM EC profile is incomplete")
-	}
-	return nil
-}
-
-// Validate checks transport settings before narrowing them to the Group's runtime fields.
-func (profile PDProfile) Validate() error {
-	if profile.Name == "" {
-		if profile.Revision != "" || profile.Protocol != "" || profile.BootstrapPort != 0 || profile.AbortRequestTimeoutSeconds != 0 || profile.RDMADeviceName != "" {
-			return errors.New("vLLM P/D settings require vllm-pd-profile-name")
-		}
-		return nil
-	}
-	if profile.Revision == "" || (profile.Protocol != "rdma" && profile.Protocol != "tcp") || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || int64(profile.AbortRequestTimeoutSeconds) > math.MaxInt32 {
-		return errors.New("vLLM P/D profile is incomplete or unsupported")
 	}
 	return nil
 }

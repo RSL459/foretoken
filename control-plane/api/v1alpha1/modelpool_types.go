@@ -247,6 +247,15 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	KVCache *NormalizedKVCache `json:"kvCache,omitempty"`
 
+	// KVTransfer carries the service's transport selection for prefill and decode Pools.
+	// +optional
+	KVTransfer *KVTransfer `json:"kvTransfer,omitempty"`
+
+	// RDMA is the advertised allocation selected for this Pool's nodes.
+	// Runtime resolution requests it only when the engine or transfer needs it.
+	// +optional
+	RDMA *RDMAAllocation `json:"rdma,omitempty"`
+
 	// Features is the normalized explicit capabilities for this Pool.
 	Features ModelFeatures `json:"features"`
 

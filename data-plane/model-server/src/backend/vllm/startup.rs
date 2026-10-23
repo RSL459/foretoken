@@ -8,13 +8,14 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::backend::vllm::config::RuntimeConfig;
+use crate::backend::vllm::launch::{KvPlan, PdProtocol};
 use crate::backend::vllm::prefix_lookup;
 use crate::backend::vllm::transport::LOOPBACK_HOST;
 use crate::engine::{ManagedEngine, PYTHON_MODULE_PATH};
 use crate::model_cache::preparation;
 use crate::{profiling, runtime_cache};
 use foretoken_artifacts::ModelSource;
-use foretoken_model_protocol::PreparedTokenizer;
+use foretoken_model_protocol::{KvConnector, PreparedTokenizer, RuntimeKvTransferMetadata};
 use tracing::{info, warn};
 use vllm_engine_core_client::{
     EngineCoreClient, EngineCoreClientConfig, EngineCoreProtocol, TransportMode,
@@ -27,6 +28,9 @@ pub struct ConnectedEngine {
     pub client: EngineCoreClient,
     pub cache_mode: runtime_cache::Mode,
     pub prepared_tokenizer: Option<PreparedTokenizer>,
+    pub kv_transfer: Option<RuntimeKvTransferMetadata>,
+    // The adapter still drains ordinary P/D transfers when the active layout disables reuse.
+    pub kv_connector_utility: bool,
 }
 
 /// A spawned member before the leader establishes request transport.
@@ -35,6 +39,15 @@ pub struct SpawnedEngine {
     protocol: EngineCoreProtocol,
     handshake_port: u16,
     prepared_tokenizer: Option<PreparedTokenizer>,
+    kv_transfer: Option<RuntimeKvTransferMetadata>,
+}
+
+/// Package and device facts consumed before one engine process loads its native libraries.
+struct VllmInspection {
+    protocol: EngineCoreProtocol,
+    retained_prefixes: bool,
+    model_express_available: bool,
+    mooncake_dma_buf: bool,
 }
 
 /// Startup error that distinguishes a retryable persistent-cache failure from other failures.
@@ -125,10 +138,58 @@ pub async fn spawn_engine_attempt(
     startup_deadline: Instant,
 ) -> Result<SpawnedEngine, EngineStartupFailure> {
     let mut environment = prepare_environment(config, cache, profiling, mode)?;
+    // Native connector options and wire protocol come from the same installed-package inspection.
+    let package_timeout = startup_deadline.saturating_duration_since(Instant::now());
+    if package_timeout.is_zero() {
+        return Err(EngineStartupFailure::Other(io::Error::other(
+            "EngineCore startup deadline elapsed before package inspection",
+        )));
+    }
+    let mooncake_rdma = matches!(
+        config.launch.kv,
+        KvPlan::Pd {
+            connector: KvConnector::Mooncake,
+            protocol: PdProtocol::Rdma,
+            ..
+        } | KvPlan::MultiConnector {
+            connector: KvConnector::Mooncake,
+            protocol: PdProtocol::Rdma,
+            ..
+        }
+    );
+    let VllmInspection {
+        protocol: engine_protocol,
+        retained_prefixes,
+        model_express_available,
+        mooncake_dma_buf,
+    } = tokio::time::timeout(
+        package_timeout,
+        inspect_engine_environment(
+            &crate::engine::python_executable(),
+            &environment,
+            mooncake_rdma,
+        ),
+    )
+    .await
+    .map_err(|_| {
+        EngineStartupFailure::Other(io::Error::other(
+            "EngineCore startup deadline elapsed during package inspection",
+        ))
+    })?
+    .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
+    if mooncake_dma_buf {
+        // Mooncake reads this choice when its library initializes in the engine process.
+        environment.push(("WITH_NVIDIA_PEERMEM".into(), "0".into()));
+    }
     let handshake_port = config.ports.handshake;
-    let mut managed_engine = config
+    let (mut managed_engine, kv_transfer) = config
         .launch
-        .managed_engine(handshake_port, config.member.as_ref(), &config.ports)
+        .managed_engine(
+            handshake_port,
+            config.member.as_ref(),
+            retained_prefixes,
+            &config.ports,
+        )
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
     if let Some(member) = &config.member {
         environment.push(("VLLM_HOST_IP".into(), member.address.to_string()));
@@ -155,24 +216,6 @@ pub async fn spawn_engine_attempt(
         }
     }
 
-    // Inspect the actual interpreter once before selecting wire and optional-loader behavior.
-    let protocol_timeout = startup_deadline.saturating_duration_since(Instant::now());
-    if protocol_timeout.is_zero() {
-        return Err(EngineStartupFailure::Other(io::Error::other(
-            "EngineCore startup deadline elapsed before package inspection",
-        )));
-    }
-    let (engine_protocol, model_express_available) = tokio::time::timeout(
-        protocol_timeout,
-        inspect_engine_packages(&managed_engine.python, &environment),
-    )
-    .await
-    .map_err(|_| {
-        EngineStartupFailure::Other(io::Error::other(
-            "EngineCore startup deadline elapsed during package inspection",
-        ))
-    })?
-    .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
     if !model_express_available {
         managed_engine
             .python_args
@@ -209,6 +252,7 @@ pub async fn spawn_engine_attempt(
         protocol: engine_protocol,
         handshake_port,
         prepared_tokenizer,
+        kv_transfer,
     })
 }
 
@@ -237,6 +281,7 @@ fn prepare_environment(
     }
     if config.member.is_some()
         || config.launch.shared_prefix_lookup()
+        || matches!(config.launch.kv, KvPlan::Pd { .. })
         || config.launch.ec.enabled()
         || config.launch.profiling.engine == profiling::Engine::Mctracer
     {
@@ -381,6 +426,7 @@ async fn start_engine_attempt(
         protocol,
         handshake_port,
         prepared_tokenizer,
+        kv_transfer,
     } = spawn_engine_attempt(config, cache, profiling, mode, startup_deadline).await?;
     // vLLM keeps its single EngineCore handshake local even when TP/PP spans nodes.
     let advertised_host = config
@@ -424,12 +470,34 @@ async fn start_engine_attempt(
         }
     };
     match client {
-        Ok(client) => Ok(ConnectedEngine {
-            engine,
-            client,
-            cache_mode: mode,
-            prepared_tokenizer,
-        }),
+        Ok(client) => {
+            let kv_connector_utility = kv_transfer
+                .as_ref()
+                .is_some_and(|kv| kv.bidirectional_kv_xfer);
+            match observe_kv_transfer(&client, kv_transfer, startup_deadline).await {
+                Ok(kv_transfer) => Ok(ConnectedEngine {
+                    engine,
+                    client,
+                    cache_mode: mode,
+                    prepared_tokenizer,
+                    kv_transfer,
+                    kv_connector_utility,
+                }),
+                Err(error) => {
+                    let error = error.into_error();
+                    warn!(%error, "EngineCore KV configuration observation failed; stopping the attempt");
+                    if let Err(reason) = client.shutdown().await {
+                        warn!(error = %reason, "could not shut down EngineCore client cleanly");
+                    }
+                    if let Err(reason) = engine.shutdown(config.launch.drain_timeout()).await {
+                        return Err(EngineStartupFailure::Other(io::Error::other(format!(
+                            "{error}; engine cleanup also failed: {reason}"
+                        ))));
+                    }
+                    Err(EngineStartupFailure::Other(error))
+                }
+            }
+        }
         Err(error) => {
             match &error {
                 EngineStartupFailure::PersistentCache { context, source } => {
@@ -449,6 +517,60 @@ async fn start_engine_attempt(
             Err(error)
         }
     }
+}
+
+/// Read effective connector settings after cache layout is finalized, before publishing readiness.
+async fn observe_kv_transfer(
+    client: &EngineCoreClient,
+    configured: Option<RuntimeKvTransferMetadata>,
+    startup_deadline: Instant,
+) -> Result<Option<RuntimeKvTransferMetadata>, EngineStartupFailure> {
+    let Some(configured) = configured else {
+        return Ok(None);
+    };
+    if !configured.bidirectional_kv_xfer {
+        return Ok(Some(configured));
+    }
+    let values = tokio::time::timeout_at(
+        startup_deadline.into(),
+        client.call_utility::<serde_json::Value, _>(
+            "kv_connector_utility",
+            ("configuration", serde_json::json!({})),
+        ),
+    )
+    .await
+    .map_err(|_| {
+        EngineStartupFailure::Other(io::Error::other(
+            "KV configuration observation exceeded startup deadline",
+        ))
+    })?
+    .map_err(|error| EngineStartupFailure::Other(io::Error::other(error.to_string())))?;
+    let mut settings = values
+        .into_iter()
+        .map(serde_json::from_value::<RuntimeKvTransferMetadata>);
+    let first = settings
+        .next()
+        .ok_or_else(|| {
+            EngineStartupFailure::Other(io::Error::other(
+                "no KV connector configuration was reported",
+            ))
+        })?
+        .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+    for setting in settings {
+        let setting =
+            setting.map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+        if setting != first {
+            return Err(EngineStartupFailure::Other(io::Error::other(
+                "engines reported different KV connector configurations",
+            )));
+        }
+    }
+    if first.connector != configured.connector {
+        return Err(EngineStartupFailure::Other(io::Error::other(
+            "engine KV connector differs from its launch configuration",
+        )));
+    }
+    Ok(Some(first))
 }
 
 fn cache_mode_failure(
@@ -495,17 +617,19 @@ pub async fn wait_cache_write_failure(
     cache.wait_until_unwritable(mode).await
 }
 
-/// Inspect wire protocol and optional weight-loader support without importing engine plugins.
-async fn inspect_engine_packages(
+/// Inspect installed packages and optional CUDA registration without importing engine plugins.
+async fn inspect_engine_environment(
     python: &str,
     environment: &[(String, String)],
-) -> Result<(EngineCoreProtocol, bool), Box<dyn std::error::Error>> {
+    mooncake_rdma: bool,
+) -> Result<VllmInspection, Box<dyn std::error::Error>> {
     let output = tokio::process::Command::new(python)
         .kill_on_drop(true)
         .envs(environment.iter().cloned())
         .args([
             "-c",
             r#"import json
+import sys
 from importlib.metadata import version, PackageNotFoundError
 
 vllm_version = version("vllm")
@@ -515,30 +639,48 @@ except PackageNotFoundError:
     model_express = False
 else:
     model_express = True
-print(json.dumps([vllm_version, model_express]))
+dma_buf = False
+if sys.argv[1] == "1":
+    from connectors.mooncake.environment import prefer_dma_buf
+    dma_buf = prefer_dma_buf()
+print(json.dumps([vllm_version, model_express, dma_buf]))
 "#,
         ])
+        .arg(if mooncake_rdma { "1" } else { "0" })
         .output()
         .await?;
     if !output.status.success() {
-        return Err(format!("could not inspect engine packages using {python}").into());
+        return Err(format!(
+            "could not inspect engine environment using {python}: {}",
+            String::from_utf8_lossy(&output.stderr).trim(),
+        )
+        .into());
     }
-    let (version, model_express_available): (String, bool) =
+    let (version, model_express_available, mooncake_dma_buf): (String, bool, bool) =
         serde_json::from_slice(&output.stdout)?;
     let mut parts = version.split('.');
     let major = parts.next().and_then(|part| part.parse::<u64>().ok());
     let minor = parts.next().and_then(|part| part.parse::<u64>().ok());
-    let protocol = match (major, minor) {
-        (Some(0), Some(20)) => EngineCoreProtocol::V0_20,
-        (Some(0), Some(21..=25)) => EngineCoreProtocol::V0_21ToV0_25,
-        (Some(0), Some(26..=27)) => EngineCoreProtocol::V0_26ToV0_27,
-        (Some(0), Some(28..=31)) => EngineCoreProtocol::V0_28ToV0_31,
-        _ => {
-            return Err(format!(
-                "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.31"
-            )
-            .into());
+    match (major, minor) {
+        (Some(0), Some(minor @ 20..=31)) => {
+            let protocol = match minor {
+                20 => EngineCoreProtocol::V0_20,
+                21..=25 => EngineCoreProtocol::V0_21ToV0_25,
+                26..=27 => EngineCoreProtocol::V0_26ToV0_27,
+                _ => EngineCoreProtocol::V0_28ToV0_31,
+            };
+            // Match the native lifecycle profiles installed by the vLLM patch catalog.
+            let retained_prefixes = minor == 31 || version.split('+').next() == Some("0.30.0.dev0");
+            Ok(VllmInspection {
+                protocol,
+                retained_prefixes,
+                model_express_available,
+                mooncake_dma_buf,
+            })
         }
-    };
-    Ok((protocol, model_express_available))
+        _ => Err(format!(
+            "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.31"
+        )
+        .into()),
+    }
 }
