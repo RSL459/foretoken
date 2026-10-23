@@ -19,7 +19,9 @@ The Experimenter takes evaluations in the agreed priority order and keeps the de
 
 The Experimenter uses existing tools to synchronize, build, deploy, diagnose and measure each candidate. Fixed workload groups and repetitions can run through sweeps without a new instruction for each point. Each run retains its commands, code version, service configuration, logs and results, including failures and interruptions, so later analysis and recovery have the necessary evidence.
 
-For source candidates, use the first real iteration to follow a small intended change through deployment and a request. Compare the observed update with its declared scope: changing only frontend code should leave model Pod UIDs unchanged. Record environment preparation, compilation, publication and service readiness separately in the iteration notes. Report unexpected rebuilds or restarts, with the deployment plan and stage timings, to the Worker and lead so later iterations do not repeat an unnecessarily expensive path.
+Follow the [iteration workflow](../../../../rsi-playbooks/README.md#reuse-the-environment-across-iterations) for source candidates. In the first iteration, deploy a small intended change with `-e`, confirm a successful request, then benchmark it. Check that the update matches its intended scope: for example, a frontend-only edit should leave model Pod UIDs unchanged.
+
+Record initial environment preparation separately from each iteration's compilation, application publication, startup, first response and measurement. If a routine edit triggers an unexpected environment rebuild or full-image transfer, share the command and timings with the Worker and lead so they can correct the next iteration's deployment path.
 
 Result analysis distinguishes measurement completion, request success and acceptance against the task requirements. A command's exit alone does not establish all three, so the Experimenter also checks request records and aggregate metrics.
 

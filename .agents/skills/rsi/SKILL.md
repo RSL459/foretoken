@@ -42,7 +42,9 @@ During execution, the lead maintains the task's required number of working membe
 
 Give each Worker a separate checkout, task branch and stable instance name, and reuse them across iterations. Keep the delivered version unchanged through build and evaluation, following the [candidate handoff](roles/common.md#prepare-candidates-while-evaluations-run).
 
-Prepare the shared platform once. Resolve dependency and download access during the initial builds and model/dataset preparation, then reuse the workspaces and build caches. Follow [parallel source deployment](../../../docs/deployment/source.md#run-candidates-in-parallel), using the same candidate name for deployment and evaluation.
+Follow the [iteration workflow](../../../rsi-playbooks/README.md#reuse-the-environment-across-iterations). Parameter-only experiments can reuse installed applications. For code changes, prepare the source platform once, coordinating any update to a shared platform with its administrator. Resolve dependencies and model/dataset access during preparation, then reuse the platform and build caches.
+
+Deploy Go, Rust and Python edits incrementally with `-e` pointing to the candidate's source directory. Foretoken selects the applications and environments that need rebuilding. Follow [parallel source deployment](../../../docs/deployment/source.md#run-candidates-in-parallel), keeping the same candidate name for deployment and evaluation.
 
 Candidates select the same shared [data directory](../../../docs/features/model-storage.md) for model downloads; runtime caches and results remain separate. Keep the baseline instance while its model files are needed: use `foretoken stop` when idle, then `foretoken delete` when the task ends.
 

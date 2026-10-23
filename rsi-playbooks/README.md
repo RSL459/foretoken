@@ -55,13 +55,23 @@ Preparing the next candidate can overlap evaluation of the current one. The team
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 
-## Steps
+## Reuse the environment across iterations
 
-The team reads the task, code and previous results, chooses a useful question, and investigates it through implementation and experiments. A question may take several iterations or lead to a finding that an approach is unsuitable. The lead uses the results to continue, change direction or combine approaches, then validates and delivers the outcome when the task ends.
+Keep each candidate's source directory and instance name across iterations. For code experiments, [install the source platform](../docs/deployment/source.md#install-from-source) once; the same command can update an existing published platform. Parameter-only experiments can use the applications already installed.
 
-Use [source deployments](../docs/deployment/source.md#run-candidates-in-parallel) to build code changes and give each parallel candidate its own instance name. Use the same `--name` with deployment and evaluation commands, and select that instance by name for `status`, `stop`, `delete` and `endpoint`.
+| What changed? | How to update |
+| --- | --- |
+| Go, Rust or Python application code | Run `foretoken deploy` with `-e` pointing to the candidate's source directory. Unchanged environments and compatible build caches are reused. |
+| Runtime dependencies or the base image | Redeploy with `-e` from the updated source directory to rebuild the affected environment. |
+| Shared CRDs or platform configuration | Run `foretoken install -e .` from the source directory. |
 
-Once workload groups are defined, the team can compare them through existing sweeps and assess performance and answer quality against the task's requirements. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments, interpreting results, and continuing the research.
+After each change, deploy the candidate, confirm a successful request, then measure performance and answer quality. Use the same `--name` for deployment and evaluation: `perf` and `eval` measure the deployed service without updating its code. Use the results to decide what to retain or try next.
+
+Environment and cache reuse usually make later code updates faster than initial setup. Record setup time separately from each iteration's build, publication, startup and measurement time.
+
+For [parallel candidates](../docs/deployment/source.md#run-candidates-in-parallel), share model downloads through the configured storage and keep runtime caches and results separate. Use `foretoken stop` to release GPUs between iterations while retaining the instance; delete it when no longer needed.
+
+Use existing sweeps for fixed workload groups, and validate combined changes before delivery. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments and interpreting results.
 
 ## Choose evaluations
 
