@@ -156,17 +156,20 @@ class MonitoringLifecycle:
             ),
         )
 
-    def apply(self, plan: MonitoringPlan, timeout: str) -> PrometheusRef:
-        """Install selected components and verify that Prometheus can select and scrape every exporter."""
-        selected = plan.reused_prometheus
-        if selected is None:
-            self._install_prometheus(plan, timeout)
-            mark_managed_metrics_scraper_namespace(self._kubectl, self.prometheus.namespace)
-            resource = self._helm.chart_resource(
-                self.prometheus, api_version="monitoring.coreos.com/v1", kind="Prometheus",
-                chart_description="managed monitoring chart",
-            )
-            selected = PrometheusRef(resource.name, resource.namespace, ())
+    def prepare_prometheus(self, plan: MonitoringPlan, timeout: str) -> PrometheusRef:
+        """Return ready Prometheus and its APIs before dependent charts install monitoring resources."""
+        if plan.reused_prometheus is not None:
+            return plan.reused_prometheus
+        self._install_prometheus(plan, timeout)
+        mark_managed_metrics_scraper_namespace(self._kubectl, self.prometheus.namespace)
+        resource = self._helm.chart_resource(
+            self.prometheus, api_version="monitoring.coreos.com/v1", kind="Prometheus",
+            chart_description="managed monitoring chart",
+        )
+        return PrometheusRef(resource.name, resource.namespace, ())
+
+    def apply_exporters(self, plan: MonitoringPlan, selected: PrometheusRef, timeout: str) -> None:
+        """Prepare selected GPU exporters and verify their coverage and Prometheus targets."""
         if plan.managed_nvidia is not None:
             self._install_dcgm(plan.managed_nvidia, plan.labels, plan.dcgm_exists, timeout)
             # Helm permits one unavailable Pod; discovery requires Ready coverage on every GPU node.
@@ -186,7 +189,6 @@ class MonitoringLifecycle:
             )
             discovery.require_prometheus_selection(selected, exporters)
             discovery.require_prometheus_targets(selected, exporters, timeout_seconds=timeout_seconds(timeout))
-        return selected
 
     def resolve_uninstall(self) -> MonitoringRetirement:
         """Observe cleanup ownership before the platform begins deleting managed releases."""

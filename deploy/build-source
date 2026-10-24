@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import uuid
 from pathlib import Path
 
 
@@ -28,18 +29,33 @@ def main() -> None:
     parser.add_argument("--parts", nargs="+", choices=("go", "rust", "python"))
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--versions", type=Path)
+    parser.add_argument("--cache-export", type=Path, help="export native compiler state for subsequent workspaces")
+    parser.add_argument("--cache-seed", type=Path, help="initialize a new workspace from an exported compiler cache")
     arguments = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
-    if arguments.workspace is not None:
-        if arguments.versions is None:
-            parser.error("--workspace requires --versions")
-        root = prepare_workspace(root, arguments.workspace.resolve(), arguments.versions, arguments.component)
     output = arguments.output.resolve()
     cache = arguments.cache.resolve()
+    environment = os.environ.copy()
+    if arguments.cache_seed is not None and arguments.workspace is None:
+        parser.error("--cache-seed requires --workspace")
+    if arguments.workspace is not None and arguments.versions is None:
+        parser.error("--workspace requires --versions")
+    # Capture supplied inputs before preparation materializes or patches dependencies.
+    inputs = (
+        application_inputs(json.loads(arguments.versions.read_text()), arguments.component)
+        if arguments.versions is not None
+        else source_inventory(root, arguments.component)
+    ) if arguments.cache_export is not None else {}
+    if arguments.workspace is not None:
+        workspace = arguments.workspace.resolve()
+        restore_cache(
+            arguments.cache_seed.resolve() if arguments.cache_seed is not None else None,
+            workspace, cache, environment, arguments.component,
+        )
+        root = prepare_workspace(root, workspace, arguments.versions, arguments.component)
     parts = set(arguments.parts or ({"go"} if arguments.component == "control-plane" else {"rust", "python"}))
     output.mkdir(parents=True, exist_ok=True)
     cache.mkdir(parents=True, exist_ok=True)
-    environment = os.environ.copy()
 
     if "go" in parts:
         compile_controller(root, output, cache, environment)
@@ -52,16 +68,47 @@ def main() -> None:
         shutil.copytree(root / "data-plane/model-server/python", destination)
     if arguments.component in {"control-plane", "model-server"}:
         shutil.copyfile(root / "LICENSE", output / "LICENSE")
+    if arguments.cache_export is not None:
+        export_cache(root, arguments.cache_export.resolve(), cache, environment, arguments.component, inputs)
     (output / "complete.json").write_text(json.dumps({"component": arguments.component}) + "\n")
+
+
+def application_inputs(versions: dict[str, str], component: str) -> dict[str, str]:
+    """Select the input inventory owned by one native application build."""
+    prefix = "control-plane/" if component == "control-plane" else "data-plane/"
+    return {
+        name: version for name, version in versions.items()
+        if name.startswith(prefix) or name in {"LICENSE", "deploy/build-source"}
+    }
+
+
+def source_exclusions(directory: str, names: list[str]) -> set[str]:
+    """Keep source exports free of working-directory caches and version-control credentials."""
+    return {
+        name for name in names
+        if name in {".git", ".venv", ".gpu_cache", ".cache", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "target", ".env"}
+        or name.startswith(".env.") or name.endswith((".pyc", ".pyo", ".egg-info", ".dist-info"))
+    }
+
+
+def source_inventory(root: Path, component: str) -> dict[str, str]:
+    """Capture image-build inputs before upstream preparation generates additional source files."""
+    revision = uuid.uuid4().hex
+    versions = {name: revision for name in ("LICENSE", "deploy/build-source") if (root / name).is_file()}
+    prefix = "control-plane" if component == "control-plane" else "data-plane"
+    for directory, directories, files in os.walk(root / prefix):
+        excluded = source_exclusions(directory, [*directories, *files])
+        directories[:] = [name for name in directories if name not in excluded]
+        for name in files:
+            path = Path(directory) / name
+            if name not in excluded and path.is_file():
+                versions[str(path.relative_to(root))] = revision
+    return versions
 
 
 def prepare_workspace(source: Path, workspace: Path, versions: Path, component: str) -> Path:
     """Update a compiler's mutable source tree while preserving unchanged files and incremental outputs."""
-    prefix = "control-plane/" if component == "control-plane" else "data-plane/"
-    selected = {
-        name: version for name, version in json.loads(versions.read_text()).items()
-        if name.startswith(prefix) or name in {"LICENSE", "deploy/build-source"}
-    }
+    selected = application_inputs(json.loads(versions.read_text()), component)
     receipt = workspace.with_suffix(".json")
     previous = json.loads(receipt.read_text()) if receipt.is_file() else {}
     if previous == selected:
@@ -92,19 +139,119 @@ def prepare_workspace(source: Path, workspace: Path, versions: Path, component: 
         while parent != workspace and parent.is_dir() and not any(parent.iterdir()):
             parent.rmdir()
             parent = parent.parent
+    filecmp.clear_cache()
     for name, version in selected.items():
         if previous.get(name) == version:
             continue
+        original = source / name
         target = workspace / name
+        if (
+            target.is_file()
+            and (target.stat().st_mode & 0o111) == (original.stat().st_mode & 0o111)
+            and filecmp.cmp(original, target, shallow=False)
+        ):
+            continue
         if target.is_dir():
             shutil.rmtree(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source / name, target)
+        shutil.copy2(original, target)
         target.touch()
     pending = receipt.with_suffix(".next")
     pending.write_text(json.dumps(selected) + "\n")
     pending.replace(receipt)
     return workspace
+
+
+def export_cache(
+    root: Path, destination: Path, cache: Path, environment: dict[str, str],
+    component: str, inputs: dict[str, str],
+) -> None:
+    """Export one component's prepared source and native caches as a filesystem image payload."""
+    destination.mkdir(parents=True)
+    upstream = None
+    if component != "control-plane":
+        metadata = tomllib.loads((root / "data-plane/Cargo.toml").read_text())["workspace"]["metadata"]["foretoken"]
+        upstream = Path("data-plane") / metadata["vllm_source"]
+    for name in inputs:
+        relative = Path(name)
+        if upstream is not None and relative.is_relative_to(upstream):
+            continue
+        original = root / relative
+        if original.is_file():
+            target = destination / "source" / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(original, target)
+    if upstream is not None:
+        # Include the prepared source and patch receipt, not just the supplied inventory.
+        shutil.copytree(root / upstream, destination / "source" / upstream, symlinks=True, ignore=source_exclusions)
+        target = (root / "data-plane" / environment.get("CARGO_TARGET_DIR", "target")).resolve()
+        shutil.copytree(target, destination / "target", symlinks=True)
+    else:
+        shutil.copytree(Path(environment.get("GOCACHE", cache / "go-build")), destination / "go-build")
+        modules = Path(environment.get("GOMODCACHE", cache / "go-modules"))
+        # VCS transport checkouts may retain authentication settings. Compilers
+        # reuse the extracted modules and normal download cache instead.
+        shutil.copytree(
+            modules, destination / "go-modules",
+            ignore=lambda directory, names: {"vcs"} if Path(directory) == modules / "cache" else set(),
+        )
+    (destination / "source.json").write_text(json.dumps(inputs) + "\n")
+
+
+def restore_cache(
+    seed: Path | None, workspace: Path, cache: Path, environment: dict[str, str], component: str,
+) -> None:
+    """Retire interrupted restoration and optionally seed a new workspace before publishing its input receipt."""
+    receipt = workspace.with_suffix(".json")
+    target = (
+        (workspace / "data-plane" / environment.get("CARGO_TARGET_DIR", "target")).resolve()
+        if component != "control-plane" else None
+    )
+    # The component workspace is serialized; remove a previous writer's interrupted restore.
+    staging = workspace.with_name(".compiler-cache")
+    if staging.exists():
+        shutil.rmtree(staging)
+    if seed is None or receipt.exists() or workspace.exists() or target is not None and target.exists():
+        return
+    staging.mkdir(parents=True)
+    try:
+        source = staging / "source"
+        shutil.copyfile(seed / "source.json", staging / "source.json")
+        shutil.copytree(seed / "source", source, symlinks=True)
+        if target is not None:
+            staged_target = source / target.relative_to(workspace) if target.is_relative_to(workspace) else staging / "target"
+            shutil.copytree(seed / "target", staged_target, symlinks=True)
+            if not target.is_relative_to(workspace):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                staged_target.rename(target)
+        else:
+            for name, variable in (("go-build", "GOCACHE"), ("go-modules", "GOMODCACHE")):
+                restore_shared_cache(seed / name, Path(environment.get(variable, cache / name)))
+        source.rename(workspace)
+        (staging / "source.json").replace(receipt)
+    finally:
+        shutil.rmtree(staging)
+
+
+def restore_shared_cache(source: Path, destination: Path) -> None:
+    """Atomically add missing Go cache entries without replacing another compiler's files."""
+    destination.mkdir(parents=True, exist_ok=True)
+    for original in source.iterdir():
+        target = destination / original.name
+        if original.is_dir():
+            restore_shared_cache(original, target)
+        elif not target.exists():
+            # A temporary file on the destination filesystem allows an atomic
+            # create-if-absent even when another compiler populates the same entry.
+            with tempfile.NamedTemporaryFile(prefix=".compiler-cache-", dir=destination) as temporary:
+                with original.open("rb") as contents:
+                    shutil.copyfileobj(contents, temporary)
+                temporary.flush()
+                os.chmod(temporary.name, stat.S_IMODE(original.stat().st_mode))
+                try:
+                    os.link(temporary.name, target)
+                except FileExistsError:
+                    pass
 
 
 def compile_controller(root: Path, output: Path, cache: Path, environment: dict[str, str]) -> None:

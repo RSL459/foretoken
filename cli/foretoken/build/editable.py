@@ -14,7 +14,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -28,7 +28,7 @@ from foretoken.applications.files import (
     ApplicationPublication,
 )
 from foretoken.arguments import InstallCommand
-from foretoken.build.cluster.builder import registry_credentials
+from foretoken.build.cluster.builder import ClusterBuilder, registry_credentials
 from foretoken.build.cluster.compiler import APPLICATION_PARTS, CompilerWorkspace
 from foretoken.build.cluster.images import image_tools_image, node_image_store
 from foretoken.build.cluster.storage import ensure_build_volumes, local_build_nodes
@@ -625,7 +625,31 @@ class EditableDeployment:
         logger.info("Preparing application files: {}", ", ".join(sorted(missing)))
         with self._application_workspace(
             origin, snapshot, compilers, helm, timeout,
-        ) as (builder, references):
+        ) as (builder, references), ExitStack() as cache_resources:
+            cache_images = {
+                component: image for component in missing
+                if (image := build["images"].get("compiler-cache-" + component))
+                and set(self.state["bundles"][component].get("parts", APPLICATION_PARTS[component])).intersection({"go", "rust"})
+                and not builder.has_source_state(component)
+            }
+            cache_seeds = {}
+            cache_builder = None
+            if cache_images:
+                tools = image_tools_image(build["arguments"], build.get("registry_mirrors", {}))
+                cache_builder = cache_resources.enter_context(ClusterBuilder(
+                    self.kubectl, namespace, builder.claim, builder.mount, build["configuration"]["image"],
+                    build["binding"], timeout, tools_image=tools, execution_claim=builder.execution_claim,
+                    node=origin.node, pull_secrets=origin.pull_secrets,
+                    registry_mirrors=build.get("registry_mirrors", {}), cancellation=builder.cancellation,
+                    credentials=registry_credentials(
+                        [tools, build["configuration"]["image"], *cache_images.values()],
+                        registries=[build["arguments"].get("UV_IMAGE_REGISTRY", "")],
+                    ),
+                ))
+                for component, image in cache_images.items():
+                    cache = builder.prepare_cache_seed(cache_builder, component, build["arguments"], reference=image)
+                    if cache is not None:
+                        cache_seeds[component] = cache.directory
 
             def build_application(component: str) -> None:
                 """Build a component's files and assemble its engine overlay before publication."""
@@ -637,7 +661,7 @@ class EditableDeployment:
                 arguments = dict(build["arguments"])
                 if component == "model-server":
                     arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"]["model_image"]
-                builder.compile_application(component, arguments, list(parts))
+                builder.compile_application(component, arguments, list(parts), cache_seed=cache_seeds.get(component))
                 if component == "model-server" and build_engine:
                     builder.compile_engine(
                         compilers["engine"], build["arguments"],
@@ -655,6 +679,8 @@ class EditableDeployment:
                 ]
                 for future in pending_builds:
                     future.result()
+            if cache_builder is not None:
+                cache_builder.run(["rm", "-rf", "--", cache_builder.execution_root + "/compiler-caches"])
             BuildInputs.select(
                 self.root, self.state.get("engines", {}), mooncake_version=self.mooncake_version,
             ).validate(snapshot)

@@ -66,7 +66,7 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-The command builds the runtime images and saves `foretoken-applications-<version>-linux-amd64.tar.gz`, the matching Helm Chart and exported build caches in `/tmp/foretoken-release`. All outputs stay local until publication. MetaX image tags use the `-metax` suffix. To use a different compatible NVIDIA base, set `INFERENCE_ENGINE_IMAGE` before building.
+The command builds the runtime images and compiler-cache images used by new source workspaces. It saves `foretoken-applications-<version>-linux-amd64.tar.gz`, the matching Helm Chart and exported build graphs in `/tmp/foretoken-release`. All outputs stay local until publication. MetaX image tags use the `-metax` suffix. To use a different compatible NVIDIA base, set `INFERENCE_ENGINE_IMAGE` before building.
 
 For an NVIDIA-only release, select the shared components and NVIDIA runtime:
 
@@ -83,9 +83,9 @@ To export the application archive without rebuilding environments:
 deploy/release-artifacts export --output-dir /tmp/foretoken-release
 ```
 
-Upload the validated archive as a GitHub Release asset. The `push` command below publishes the environment images, exported build caches and Helm Chart, not the archive.
+Upload the validated archive as a GitHub Release asset. The `push` command below publishes the environment and compiler-cache images, exported build graphs and Helm Chart, not the archive.
 
-With the Docker driver, cache metadata travels inside the environment images. For Docker 27.0 or 27.1, upgrade to 27.2 or later to avoid the [upstream inline-cache regression](https://github.com/moby/buildkit/issues/5242). Other Buildx drivers export separate cache layouts; publishing those requires [ORAS](https://oras.land/docs/installation/), which uses the Docker registry credentials.
+The Docker driver keeps images in Docker's local store, with build metadata inside environment images. For Docker 27.0 or 27.1, upgrade to 27.2 or later to avoid the [upstream inline-cache regression](https://github.com/moby/buildkit/issues/5242). Other Buildx drivers save zstd-compressed OCI images under `images/` and build graphs under `cache/` in the output directory. Publishing these layouts requires [ORAS](https://oras.land/docs/installation/), which uses the Docker registry credentials and preserves the compressed layers.
 
 After validating the artifacts, log in to the registry and push them. If the build used `--output-dir`, pass the same option to `push`:
 

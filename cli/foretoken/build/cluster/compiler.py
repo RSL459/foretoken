@@ -12,18 +12,22 @@ import sys
 import time
 import uuid
 from contextlib import AbstractContextManager, ExitStack
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
 
 from loguru import logger
 
+from foretoken import DEFAULT_PLATFORM_REGISTRY, compiler_cache_reference, platform_version
 from foretoken.build.cluster.artifacts import prepare_artifact_volume
+from foretoken.build.cluster.builder import ClusterBuilder, ImageNotFoundError
 from foretoken.build.cluster.images import (
     SOURCE_BUILD_BINDING_LABEL,
     SOURCE_BUILD_POD_LABEL,
 )
 from foretoken.build.cluster.storage import SOURCE_BUILD_UID, ensure_shared_build_cache
 from foretoken.build.cluster.transfer import synchronize_inputs
+from foretoken.downloads.sources import platform_image_reference
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 from foretoken.processes.execution import CommandExecution
@@ -33,6 +37,14 @@ APPLICATION_PARTS = {
     "frontend": ("rust",),
     "model-server": ("rust", "python", "engine"),
 }
+
+
+@dataclass(frozen=True)
+class CompilerCache:
+    """Select a release cache image and any files staged for the current compiler operation."""
+
+    image: str
+    directory: str
 
 
 class CompilerWorkspace(AbstractContextManager):
@@ -104,7 +116,35 @@ class CompilerWorkspace(AbstractContextManager):
         """Capture a complete input tree separately from all mutable compiler workspaces."""
         synchronize_inputs(self.command, self.cancellation, self.workspace, self.execution_root + "/inputs.json", files, versions)
 
-    def compile_application(self, component: str, arguments: dict[str, str], parts: list[str] | None = None) -> None:
+    def has_source_state(self, component: str) -> bool:
+        """Report whether a component already owns an incremental source tree in this workspace."""
+        receipt = self.execution_root + "/work/" + component + "/source.json"
+        return bool(self.run(["sh", "-ec", 'if test -f "$1"; then printf ready; fi', "cache", receipt], capture=True))
+
+    def prepare_cache_seed(
+        self, builder: ClusterBuilder, component: str, arguments: dict[str, str],
+        *, reference: str | None = None,
+    ) -> CompilerCache | None:
+        """Resolve optional release state, extracting it only for a new private compiler workspace."""
+        if self.has_source_state(component):
+            return None
+        reference = reference or compiler_cache_reference(DEFAULT_PLATFORM_REGISTRY, platform_version(), component)
+        image = reference
+        if mirror := arguments.get("UV_IMAGE_REGISTRY"):
+            image = platform_image_reference(reference, mirror)
+        try:
+            builder.resolve_image(image)
+        except ImageNotFoundError:
+            return None
+        destination = builder.execution_root + "/compiler-caches/" + component
+        builder.run(["rm", "-rf", "--", destination])
+        builder.extract_image(image, destination)
+        return CompilerCache(reference, destination)
+
+    def compile_application(
+        self, component: str, arguments: dict[str, str], parts: list[str] | None = None,
+        *, cache_seed: str | None = None,
+    ) -> None:
         """Compile first-party parts into this operation's private export, retaining other completed parts."""
         output = self.execution_root + "/exports/" + component
         environment = {key: value for key, value in arguments.items() if key in {
@@ -112,7 +152,7 @@ class CompilerWorkspace(AbstractContextManager):
             "CARGO_NET_GIT_FETCH_WITH_CLI", "FORETOKEN_MODEL_SERVER_BINARY",
         }}
         environment.update(
-            CARGO_TARGET_DIR=self.execution_root + "/work/" + component + "/target",
+            CARGO_TARGET_DIR="/workspace/target",
             CARGO_HOME=self.shared_mount + "/cargo-home",
             GOMODCACHE=self.shared_mount + "/go-modules",
             GOCACHE=self.shared_mount + "/go-build",
@@ -123,9 +163,11 @@ class CompilerWorkspace(AbstractContextManager):
             "env", *(key + "=" + value for key, value in environment.items()),
             "python3", "-I", self.workspace + "/deploy/build-source", component, output,
             "--cache", self.shared_mount,
-            "--workspace", self.execution_root + "/work/" + component + "/source",
+            "--workspace", "/workspace/source",
             "--versions", self.execution_root + "/inputs.json",
         ]
+        if cache_seed is not None:
+            command += ["--cache-seed", cache_seed]
         selected = [part for part in (parts if parts is not None else APPLICATION_PARTS[component]) if part != "engine"]
         if not selected:
             self.run(["mkdir", "-p", output])
@@ -282,14 +324,26 @@ exec "${FORETOKEN_VLLM_PYTHON:-python3}" /opt/foretoken-engine-build/source-buil
             "runAsUser": SOURCE_BUILD_UID, "runAsGroup": 1000,
             "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]},
         }
+        workspaces = {
+            name: self.execution_root + "/work/" + name
+            for name in images if name in APPLICATION_PARTS
+        }
         containers = [{
             "name": name, "image": image, "imagePullPolicy": "IfNotPresent",
             "command": ["sh", "-c", "trap 'exit 0' TERM INT; sleep infinity & wait"],
             "workingDir": "/home/foretoken",
             "env": [{"name": "HOME", "value": "/home/foretoken"}, {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
-            "securityContext": security, "volumeMounts": mounts,
+            "securityContext": security, "volumeMounts": list(mounts),
             "terminationMessagePolicy": "FallbackToLogsOnError",
         } for name, image in {"builder": self.tools_image, **images}.items()]
+        # Stable compiler paths keep reusable build outputs independent of the
+        # checkout's physical volume. Each subPath still selects its private tree.
+        for container in containers:
+            if directory := workspaces.get(container["name"]):
+                container["volumeMounts"].append({
+                    "name": execution_volume, "mountPath": "/workspace",
+                    "subPath": directory.removeprefix(self.execution_mount + "/"),
+                })
         if execution_volume == "execution":
             containers.append({
                 "name": "artifacts", "image": self.tools_image, "imagePullPolicy": "IfNotPresent",
@@ -310,7 +364,7 @@ done
 '''
         init = [{
             "name": "workspace", "image": self.tools_image,
-            "command": ["sh", "-ec", prepare, "prepare", str(SOURCE_BUILD_UID), self.execution_root, self.shared_mount, "/home/foretoken"],
+            "command": ["sh", "-ec", prepare, "prepare", str(SOURCE_BUILD_UID), self.execution_root, self.shared_mount, "/home/foretoken", *workspaces.values()],
             "securityContext": {"runAsUser": 0}, "volumeMounts": mounts,
         }]
         if execution_volume == "execution":

@@ -95,19 +95,14 @@ The command makes the selected GPUs and repository `data/` directory available t
 
 ## 4. Install and access Foretoken
 
-### 4.1 Choose a deployment method
-
-Build and install the cluster platform from this checkout:
+### 4.1 Install the platform
 
 ```bash
-foretoken install -e .
-```
-
-To use published packages and images instead, get the examples from the chosen [release](https://github.com/shiweijiezero/foretoken/releases) and install:
-
-```bash
-uv pip install foretoken  # Or: pip install foretoken
+# Install the published platform:
 foretoken install
+
+# Build from the current source checkout instead:
+# foretoken install -e .
 ```
 
 ### 4.2 Deploy the Quick Start

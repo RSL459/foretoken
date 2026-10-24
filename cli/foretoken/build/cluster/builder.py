@@ -127,10 +127,12 @@ class ClusterBuilder(AbstractContextManager):
         capture: bool = False,
         metadata_only: bool = False,
         cache_imports: tuple[str, ...] = (),
+        output_directory: str | None = None,
     ) -> dict[str, Any]:
-        """Build an image or inspect dependency metadata, retaining native content until delivery.
+        """Build an image or export files into this workspace, retaining image content until delivery.
 
         Dependency resolution uses metadata_only to inspect a base without exporting its layers.
+        File exports run as the unprivileged builder and remain owned by the caller's workspace.
         """
         started = time.monotonic()
         # Concurrency belongs to this invocation, not a saved environment recipe.
@@ -169,19 +171,21 @@ class ClusterBuilder(AbstractContextManager):
             frontend["filename"] = dockerfile
         inputs = {}
         for key, value in arguments.items():
-            local = self._native_input(value) if key.endswith("_IMAGE") else None
+            local = self._native_input(value) if key.endswith("_IMAGE") and output_directory is None else None
             if local is not None:
                 alias = "foretoken-local-" + key.lower().replace("_", "-")
                 inputs[alias] = local["descriptor"]
                 value = alias
             frontend[f"build-arg:{key}"] = value
-        if metadata_only:
+        if output_directory is not None:
+            output = {"type": "local", "attrs": {"dest": output_directory}}
+        elif metadata_only:
             output = {"type": "image", "attrs": {"name": image, "oci-mediatypes": "true", "store": "false", "push": "false"}}
         elif self.containerd_socket:
             output = {"type": "oci", "attrs": {"name": image, "oci-mediatypes": "true", "tar": "false"}}
         else:
             output = {"type": "image", "attrs": {"name": image, "push": str(push).lower()}}
-        if self.containerd_socket:
+        if self.containerd_socket and output_directory is None:
             request = {
                 **self.image_store.client_request(self.lease, self.platform),
                 "buildkit_address": "unix://" + self.runtime_root + "/runtime/buildkit/buildkitd.sock",
@@ -212,14 +216,30 @@ class ClusterBuilder(AbstractContextManager):
         result = self.read_json(metadata)
         logger.info(
             "Build completed: {} target={} output={} in {:.1f}s",
-            dockerfile, target or "default", image, time.monotonic() - started,
+            dockerfile, target or "default", output_directory or image, time.monotonic() - started,
         )
-        if self.containerd_socket and not metadata_only:
+        if self.containerd_socket and not metadata_only and output_directory is None:
             with self._image_lock:
                 name = _image_reference(image)
                 self._generated_images[name] = result
                 self._node_inputs.pop(name, None)
         return result
+
+    def extract_image(self, image: str, destination: str) -> None:
+        """Export a registry image's files for compiler-cache initialization in this workspace."""
+        self.build(
+            self._image_dockerfile(), arguments={"BASE_IMAGE": image},
+            output_directory=destination,
+        )
+
+    def _image_dockerfile(self) -> str:
+        """Create an independent FROM-only projection for metadata or filesystem exports."""
+        name = ".foretoken-resolve/" + uuid.uuid4().hex + "/Dockerfile"
+        self.run([
+            "sh", "-ec", 'mkdir -p "$(dirname "$1")"; printf \'ARG BASE_IMAGE\\nFROM ${BASE_IMAGE}\\n\' > "$1"',
+            "resolve", self.workspace + "/" + name,
+        ])
+        return name
 
     def resolve_image(self, image: str) -> str:
         """Resolve a build dependency through the same node store or registry used by BuildKit."""
@@ -232,12 +252,7 @@ class ClusterBuilder(AbstractContextManager):
         if digest is None:
             # A FROM-only solve uses BuildKit's registry credentials, mirrors and
             # platform selection without running a container or adding image layers.
-            dockerfile = ".foretoken-resolve/Dockerfile"
-            self.run([
-                "sh", "-ec",
-                'mkdir -p "$1/.foretoken-resolve"; printf \'ARG BASE_IMAGE\\nFROM ${BASE_IMAGE}\\n\' > "$1/.foretoken-resolve/Dockerfile"',
-                "resolve", self.workspace,
-            ])
+            dockerfile = self._image_dockerfile()
             try:
                 metadata = self.build(
                     dockerfile, image="foretoken-resolve:" + uuid.uuid4().hex,

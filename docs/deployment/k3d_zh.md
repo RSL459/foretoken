@@ -95,19 +95,14 @@ kubectl get nodes
 
 ## 4. 安装并访问 Foretoken
 
-### 4.1 选择部署方式
-
-从当前源码构建并安装集群平台：
+### 4.1 安装平台
 
 ```bash
-foretoken install -e .
-```
-
-使用发布包和镜像时，从所选[发布页面](https://github.com/shiweijiezero/foretoken/releases)取得示例，再安装：
-
-```bash
-uv pip install foretoken  # 或 pip install foretoken
+# 安装已发布的平台：
 foretoken install
+
+# 若需从当前源码构建：
+# foretoken install -e .
 ```
 
 ### 4.2 部署快速开始示例

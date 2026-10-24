@@ -21,7 +21,7 @@ RUN mirror="${FORETOKEN_GITHUB_MIRROR:-https://github.com}"; \
     UV_PYTHON_INSTALL_MIRROR="${mirror%/}/astral-sh/python-build-standalone/releases/download" \
       uv venv /opt/foretoken-compiler --python 3.12
 ENV PATH=/opt/foretoken-compiler/bin:${PATH}
-WORKDIR /workspace
+WORKDIR /workspace/source
 
 FROM compiler AS builder
 ARG GOPROXY
@@ -30,9 +30,13 @@ COPY control-plane/ ./control-plane/
 COPY deploy/build-source ./deploy/build-source
 COPY LICENSE ./LICENSE
 RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
-    --mount=type=cache,id=foretoken-go-modules,target=/var/cache/foretoken/go-modules \
-    --mount=type=cache,id=foretoken-go-build,target=/var/cache/foretoken/go-build \
-    python3 -I deploy/build-source control-plane /out --cache /var/cache/foretoken
+    --mount=type=cache,id=foretoken-go-modules,target=/var/lib/foretoken/dependencies/go-modules,sharing=locked \
+    --mount=type=cache,id=foretoken-go-build,target=/var/lib/foretoken/dependencies/go-build,sharing=locked \
+    python3 -I deploy/build-source control-plane /out --cache /var/lib/foretoken/dependencies \
+      --cache-export /compiler-cache
+
+FROM scratch AS compiler-cache
+COPY --from=builder /compiler-cache/ /
 
 FROM scratch AS source-export
 COPY --from=builder /out/ /
