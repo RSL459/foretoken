@@ -61,13 +61,14 @@ type modelGroupConditionState struct {
 type schedulingCapacityState = modelGroupConditionState
 
 type modelGroupStatusState struct {
-	phase            inferencev1alpha1.ModelGroupPhase
-	preparation      modelGroupConditionState
-	materialized     modelGroupConditionState
-	available        bool
-	unavailableSince metav1.Time
-	target           metav1.Condition
-	scheduling       schedulingCapacityState
+	phase               inferencev1alpha1.ModelGroupPhase
+	observedWorkloadUID string
+	preparation         modelGroupConditionState
+	materialized        modelGroupConditionState
+	available           bool
+	unavailableSince    metav1.Time
+	target              metav1.Condition
+	scheduling          schedulingCapacityState
 }
 
 // Reconcile materializes the workload and derives readiness from the model server.
@@ -130,7 +131,7 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 	executionWorkload, err := reconciler.reconcileWorkload(ctx, group, deployment)
 	if err != nil {
 		// Retain previously admitted execution while repair waits; reject an unallocated target.
-		if errors.Is(err, errKueueAdmissionInactive) && executionWorkload.createdAt.IsZero() {
+		if errors.Is(err, errKueueAdmissionInactive) && executionWorkload.uid == "" {
 			state := modelGroupMaterializedState(false, schedulingNotEvaluated())
 			state.phase = inferencev1alpha1.ModelGroupPhaseFailed
 			state.materialized = modelGroupConditionState{status: metav1.ConditionFalse, reason: "QueueAdmissionUnavailable", message: err.Error()}
@@ -142,13 +143,24 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 	if err := reconciler.reconcileService(ctx, group, pool); err != nil {
 		return ctrl.Result{}, err
 	}
-	var pods corev1.PodList
-	if err := reconciler.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels(workload.ModelGroupLabels(group))); err != nil {
-		return ctrl.Result{}, fmt.Errorf("observe Group Pods: %w", err)
+	pods, err := reconciler.currentWorkloadPods(ctx, group, executionWorkload.uid)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
-	state := modelGroupMaterializedState(executionWorkload.available, schedulingCapacity(group, pods.Items))
+	// Pod events can arrive before the multi-node controller withdraws availability.
+	if group.Spec.NodeCount > 1 && executionWorkload.available {
+		executionWorkload.available = len(pods) == int(group.Spec.MemberCount)
+		for index := range pods {
+			if !pods[index].DeletionTimestamp.IsZero() || !workload.PodReady(&pods[index]) {
+				executionWorkload.available = false
+				break
+			}
+		}
+	}
+	state := modelGroupMaterializedState(executionWorkload.available, schedulingCapacity(group, pods))
+	state.observedWorkloadUID = string(executionWorkload.uid)
 	var remaining time.Duration
-	if executionWorkload.createdAt.IsZero() {
+	if executionWorkload.uid == "" {
 		state.materialized = modelGroupConditionState{status: metav1.ConditionFalse, reason: "ReplacingWorkload", message: "The serving workload waits for its previous workload to be retired"}
 	} else if !executionWorkload.available {
 		startup, err := time.ParseDuration(string(group.Spec.Timeouts.Startup))
@@ -156,16 +168,19 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 			return ctrl.Result{}, fmt.Errorf("parse ModelGroup startup timeout: %w", err)
 		}
 		now := time.Now()
-		started := firstContainerStart(pods.Items, deployment.Spec.Template.Spec.Containers[0].Name)
+		started := firstContainerStart(pods, deployment.Spec.Template.Spec.Containers[0].Name)
 		// Once execution starts, retain one unavailable interval across restarts
 		// and member replacement. Cold scheduling and image pulls precede that clock.
 		if previous := meta.FindStatusCondition(group.Status.Conditions, conditionWorkloadAvailable); previous != nil {
-			switch previous.Status {
-			case metav1.ConditionFalse:
-				if !previous.LastTransitionTime.Time.Before(executionWorkload.createdAt) {
+			if group.Status.ObservedWorkloadUID == state.observedWorkloadUID {
+				switch previous.Status {
+				case metav1.ConditionFalse:
 					started = previous.LastTransitionTime.Time
+				case metav1.ConditionTrue:
+					started = now
 				}
-			case metav1.ConditionTrue:
+			} else if group.Status.ObservedWorkloadUID == "" && previous.Status != metav1.ConditionUnknown && !started.IsZero() {
+				// Older status has no workload identity; adopt one execution window when observing it.
 				started = now
 			}
 		}
@@ -331,6 +346,10 @@ func modelGroupDeploymentAvailable(deployment *appsv1.Deployment) bool {
 // updateStatus projects workload availability and scheduler capacity into ModelGroup status.
 func (reconciler *GroupReconciler) updateStatus(ctx context.Context, group *inferencev1alpha1.ModelGroup, state modelGroupStatusState) error {
 	base := group.DeepCopy()
+	if group.Status.ObservedWorkloadUID != state.observedWorkloadUID {
+		meta.RemoveStatusCondition(&group.Status.Conditions, conditionWorkloadAvailable)
+		group.Status.ObservedWorkloadUID = state.observedWorkloadUID
+	}
 	// Keep a terminal preparation result visible through retries. Only a successful
 	// preparation or a replacement Group can supersede that failed attempt.
 	if state.preparation.status == metav1.ConditionFalse && state.target.Status == "" {
