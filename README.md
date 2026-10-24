@@ -50,10 +50,10 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 uv venv --python 3.12 --seed  # With pip: python3 -m venv .venv (Python 3.11+)
 source .venv/bin/activate
-uv pip install foretoken  # Or: pip install foretoken
+uv pip install -e .  # Or: pip install -e .
 
-# For CLI development:
-# uv pip install -e .  # Or: pip install -e .
+# Use the published CLI instead:
+# uv pip install foretoken  # Or: pip install foretoken
 ```
 
 Keep this environment active for the commands below.

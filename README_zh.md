@@ -50,10 +50,10 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 uv venv --python 3.12 --seed  # 使用 pip 时：python3 -m venv .venv（Python 3.11+）
 source .venv/bin/activate
-uv pip install foretoken  # 或 pip install foretoken
+uv pip install -e .  # 或 pip install -e .
 
-# 开发 CLI 时：
-# uv pip install -e .  # 或 pip install -e .
+# 使用发布的 CLI：
+# uv pip install foretoken  # 或 pip install foretoken
 ```
 
 后续命令在已激活的环境中执行。
