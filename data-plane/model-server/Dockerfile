@@ -142,12 +142,20 @@ USER root
 COPY --from=uv /uv /usr/local/bin/uv
 COPY --from=mooncake-go /usr/local/go /usr/local/go
 ARG UV_DEFAULT_INDEX
-ARG FORETOKEN_GITHUB_MIRROR
-ARG GOPROXY
 ARG GOSUMDB
+# Session download settings leave native cache inputs unchanged; absent overrides
+# preserve the base image's environment.
 RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
+    --mount=type=secret,id=FORETOKEN_GITHUB_MIRROR \
+    --mount=type=secret,id=GOPROXY \
     --mount=type=bind,from=mooncake-inputs,target=/input \
     --mount=type=cache,id=foretoken-mooncake-source,target=/var/cache/foretoken/mooncake \
+    set -eu; \
+    for name in FORETOKEN_GITHUB_MIRROR GOPROXY; do \
+      if [ -f "/run/secrets/$name" ]; then \
+        value=$(cat "/run/secrets/$name"); export "$name=$value"; \
+      fi; \
+    done; \
     "${FORETOKEN_VLLM_PYTHON:-python3}" -I /input/deploy/mooncake/build-cuda-wheel \
       --output /out --cache /var/cache/foretoken/mooncake --jobs "${BUILD_JOBS:-2}"
 
