@@ -33,7 +33,7 @@ Independent checkouts can build concurrently. Serialize source updates within on
 
 Deployment succeeds when the selected application and its serving routes are ready. Controllers manage rollout and request draining. Start the frontend with its selected runtime cache. Service status and code-activation checks share one readiness deadline; source compilation runs separately.
 
-Each model's `spec.timeouts.startup` supplies separate preparation and serving-startup limits, beginning when the first model container in that stage starts. Scheduling, image pulls and init-container setup precede these budgets. A preparation Job retains its deadline across Pod retries; a serving workload's unavailable interval spans container restarts and member replacement. Keep a preparation failure visible until preparation succeeds, and report rejected configuration as a failed target.
+Each model's `spec.timeouts.startup` supplies separate preparation and serving-startup limits, beginning when the first model container in that stage starts. Scheduling, image pulls and init-container setup precede these budgets. A preparation Job retains its deadline across Pod retries; a serving workload's unavailable interval spans container restarts and member replacement. Replacing the entire serving workload starts a new interval from its first model container execution. Keep a preparation failure visible until preparation succeeds, and report rejected configuration as a failed target.
 
 ## Cleanup
 
