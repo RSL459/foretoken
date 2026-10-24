@@ -142,11 +142,11 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 	if err := reconciler.reconcileService(ctx, group, pool); err != nil {
 		return ctrl.Result{}, err
 	}
-	scheduling, err := reconciler.schedulingCapacity(ctx, group)
-	if err != nil {
-		return ctrl.Result{}, err
+	var pods corev1.PodList
+	if err := reconciler.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels(workload.ModelGroupLabels(group))); err != nil {
+		return ctrl.Result{}, fmt.Errorf("observe Group Pods: %w", err)
 	}
-	state := modelGroupMaterializedState(executionWorkload.available, scheduling)
+	state := modelGroupMaterializedState(executionWorkload.available, schedulingCapacity(group, pods.Items))
 	var remaining time.Duration
 	if executionWorkload.createdAt.IsZero() {
 		state.materialized = modelGroupConditionState{status: metav1.ConditionFalse, reason: "ReplacingWorkload", message: "The serving workload waits for its previous workload to be retired"}
@@ -156,26 +156,28 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 			return ctrl.Result{}, fmt.Errorf("parse ModelGroup startup timeout: %w", err)
 		}
 		now := time.Now()
-		started := executionWorkload.createdAt
-		// Preparation does not spend the serving budget. Keep one continuous
-		// unavailable interval across container restarts and LWS member replacement.
+		started := firstContainerStart(pods.Items, deployment.Spec.Template.Spec.Containers[0].Name)
+		// Once execution starts, retain one unavailable interval across restarts
+		// and member replacement. Cold scheduling and image pulls precede that clock.
 		if previous := meta.FindStatusCondition(group.Status.Conditions, conditionWorkloadAvailable); previous != nil {
 			switch previous.Status {
 			case metav1.ConditionFalse:
-				if previous.LastTransitionTime.Time.After(started) {
+				if !previous.LastTransitionTime.Time.Before(executionWorkload.createdAt) {
 					started = previous.LastTransitionTime.Time
 				}
 			case metav1.ConditionTrue:
 				started = now
 			}
 		}
-		state.unavailableSince = metav1.NewTime(started)
-		remaining = started.Add(startup).Sub(now)
 		state.target = metav1.Condition{Status: metav1.ConditionUnknown, Reason: "Starting", Message: "Waiting for the serving workload to become ready"}
-		if remaining <= 0 {
-			state.phase = inferencev1alpha1.ModelGroupPhaseFailed
-			state.target = metav1.Condition{Status: metav1.ConditionFalse, Reason: "StartupDeadlineExceeded", Message: fmt.Sprintf("The serving workload did not become ready within %s; Kubernetes recovery continues", group.Spec.Timeouts.Startup)}
-			remaining = 0
+		if !started.IsZero() {
+			state.unavailableSince = metav1.NewTime(started)
+			remaining = started.Add(startup).Sub(now)
+			if remaining <= 0 {
+				state.phase = inferencev1alpha1.ModelGroupPhaseFailed
+				state.target = metav1.Condition{Status: metav1.ConditionFalse, Reason: "StartupDeadlineExceeded", Message: fmt.Sprintf("The serving workload did not become ready within %s; Kubernetes recovery continues", group.Spec.Timeouts.Startup)}
+				remaining = 0
+			}
 		}
 	}
 	if err := reconciler.updateStatus(ctx, group, state); err != nil {
@@ -269,19 +271,15 @@ func modelGroupMaterializedState(available bool, scheduling schedulingCapacitySt
 
 // schedulingCapacity reports insufficient capacity only from the scheduler's
 // explicit Unschedulable signal; image pulls and slow startup remain unknown.
-func (reconciler *GroupReconciler) schedulingCapacity(ctx context.Context, group *inferencev1alpha1.ModelGroup) (schedulingCapacityState, error) {
-	var pods corev1.PodList
-	if err := reconciler.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels(workload.ModelGroupLabels(group))); err != nil {
-		return schedulingCapacityState{}, fmt.Errorf("list Group Pods: %w", err)
-	}
+func schedulingCapacity(group *inferencev1alpha1.ModelGroup, pods []corev1.Pod) schedulingCapacityState {
 	scheduled := int32(0)
-	for index := range pods.Items {
-		for _, condition := range pods.Items[index].Status.Conditions {
+	for index := range pods {
+		for _, condition := range pods[index].Status.Conditions {
 			if condition.Type != corev1.PodScheduled {
 				continue
 			}
 			if condition.Status == corev1.ConditionFalse && condition.Reason == corev1.PodReasonUnschedulable {
-				return schedulingCapacityState{status: metav1.ConditionFalse, reason: "InsufficientCapacity", message: "The Kubernetes scheduler reported the Group Pod as Unschedulable"}, nil
+				return schedulingCapacityState{status: metav1.ConditionFalse, reason: "InsufficientCapacity", message: "The Kubernetes scheduler reported the Group Pod as Unschedulable"}
 			}
 			if condition.Status == corev1.ConditionTrue {
 				scheduled++
@@ -289,9 +287,33 @@ func (reconciler *GroupReconciler) schedulingCapacity(ctx context.Context, group
 		}
 	}
 	if scheduled == group.Spec.MemberCount {
-		return schedulingCapacityState{status: metav1.ConditionTrue, reason: "Scheduled", message: "The Group Pod was scheduled"}, nil
+		return schedulingCapacityState{status: metav1.ConditionTrue, reason: "Scheduled", message: "The Group Pod was scheduled"}
 	}
-	return schedulingCapacityState{status: metav1.ConditionUnknown, reason: "WaitingForScheduling", message: "The Group Pod has not reported a scheduling result"}, nil
+	return schedulingCapacityState{status: metav1.ConditionUnknown, reason: "WaitingForScheduling", message: "The Group Pod has not reported a scheduling result"}
+}
+
+// firstContainerStart observes execution rather than Pod creation, including failures between reconciliations.
+func firstContainerStart(pods []corev1.Pod, name string) time.Time {
+	var first time.Time
+	for index := range pods {
+		for _, status := range pods[index].Status.ContainerStatuses {
+			if status.Name != name {
+				continue
+			}
+			for _, state := range []corev1.ContainerState{status.State, status.LastTerminationState} {
+				var started time.Time
+				if state.Running != nil {
+					started = state.Running.StartedAt.Time
+				} else if state.Terminated != nil {
+					started = state.Terminated.StartedAt.Time
+				}
+				if !started.IsZero() && (first.IsZero() || started.Before(first)) {
+					first = started
+				}
+			}
+		}
+	}
+	return first
 }
 
 func modelGroupDeploymentAvailable(deployment *appsv1.Deployment) bool {
@@ -338,7 +360,13 @@ func (reconciler *GroupReconciler) updateStatus(ctx context.Context, group *infe
 		availability.Reason = "NotMaterialized"
 		availability.Message = state.materialized.message
 	} else if !state.available {
-		availability.LastTransitionTime = state.unavailableSince
+		if state.unavailableSince.IsZero() {
+			availability.Status = metav1.ConditionUnknown
+			availability.Reason = "WaitingForContainer"
+			availability.Message = "The serving container has not started"
+		} else {
+			availability.LastTransitionTime = state.unavailableSince
+		}
 	}
 	meta.SetStatusCondition(&group.Status.Conditions, availability)
 	if state.target.Status == "" {
