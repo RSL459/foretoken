@@ -19,37 +19,49 @@ With that shared understanding, each member studies the source, configuration an
 
 ## Assign complete questions
 
-The lead begins an assignment by explaining the question, the findings already available and the decision the work should inform. It provides the relevant code, reference configuration and experiment records so the member can read the sources and understand their conditions and unresolved questions.
+The lead gives each research question an owner, explains what is already known and what needs to be learned, and provides the relevant code, references, configuration and experiment records. That owner follows the question through investigation, implementation and analysis. Advisors and Workers begin reading papers, comparing methods and inspecting source while the environment is being prepared.
 
-Members also need to know what may change, which workloads and generation settings must remain comparable, and how much time and resource they can use. Every experiment has a named executor, checkout, deployment environment and result location. With those arrangements in place, members can continue without approval for each command. They return to the lead when the next step needs additional resources, a shared environment change or different comparison conditions.
+Each assignment explains what may change, which workloads and generation settings must stay the same, and how much time and compute are available. Research tests uncertain benefits; a speedup need not be proven before implementation begins. Also name who will run the experiment, which checkout and environment to use, and where to save results. Members work independently within these agreements and ask the lead to coordinate changes to priorities, resource budgets, shared environments or comparison conditions.
 
-Write the complete proposal in `<output-dir>/iterations/<name>/notes/`, where `<output-dir>` is the assigned experiment result directory. The first exchange includes a summary and the full document paths; relevant members read the proposal, code and evidence, discuss the approach and validation plan, and record decisions and open questions. See the [document collaboration guide](../../../../rsi-playbooks/experiment-records.md#share-documents-and-code) for the layout.
+Keep the complete proposal in `<output-dir>/iterations/<name>/notes/`, where `<output-dir>` is the experiment result directory. The [document collaboration guide](../../../../rsi-playbooks/experiment-records.md#share-documents-and-code) explains where to keep shared files and who writes them.
+
+## Share findings and keep working
+
+For example, an Advisor who finds a potentially faster method can send the findings and sources directly to the Worker studying that question. When the code is ready, the Worker asks the assigned Experimenter to test it. Reviewers also send specific issues to the person who can fix the code or run the missing comparison, without routing every exchange through the lead.
+
+Messages explain a finding, a version ready to test, a difficulty or a decision needed, with links to the relevant records. Give the background once, then describe what changed; keep the full evidence in shared files. Send related questions or review findings together to the people who need to act. Notify everyone when a change affects the whole team, and alert the executor immediately if an ongoing experiment will produce invalid results.
+
+While waiting for a reply, continue work that does not need that answer. If progress really is blocked, explain what is missing and who can provide it. Routine updates do not need replies, and completion notifications remove the need to keep asking for status. Transfers of GPUs or running jobs still need someone to accept them. The lead follows the shared records and steps in when direction, scope or resources need to change. If members spend most of their time handing off work and relearning context, use fewer, larger assignments with continuing owners.
 
 ## Prepare candidates while evaluations run
 
-When different members develop and evaluate an approach, record them as two tasks with a dependency between them. The Worker provides a reproducible version, explains the change and expected effect, and supplies the reference results, workload and execution requirements. The handoff identifies which components should rebuild or restart and which model processes and caches should remain in use. These inputs let the Experimenter determine how to deploy and evaluate the candidate.
+The Worker prepares the version to test, and the Experimenter runs it; record that dependency in the tasks. With the code, supply the question to answer, reference results, commands, workload, GPU count and node placement. Explain which components need rebuilding or restarting and which processes and caches should remain in use, so the Experimenter can arrange the run directly.
 
 The delivered checkout and execution environment stay unchanged while the candidate waits, builds or runs. Reuse the checkout after evaluation; create a separate development or evaluation copy only when further implementation needs to overlap those stages.
 
-The lead uses one set of task records to track candidates being prepared, waiting for evaluation and executing. Preparation and evaluation concurrency can be adjusted separately. When preparation is slow and evaluation resources often sit idle, Workers can prepare a small set of useful, independent candidates ahead. When the queue is already long, they can spend more time interpreting results or improving work not yet delivered. The lead also accounts for the time needed to evaluate and analyze candidates before the budget ends.
+Keep the same Experimenter with a research direction where possible. In the team's shared task records, that Experimenter shows which approaches are still being prepared, which are ready to test and which are running, with links to completed results. The lead uses these records to arrange priorities and resources. If too many candidates are waiting, drop redundant comparisons while Workers continue research and analysis.
 
-Use native task owners, dependencies and completion states when available. Members may self-claim when the tools prevent duplicate claims and the lead has assigned the necessary resources. Otherwise, the lead assigns an owner explicitly. Without task tools, keep these arrangements in the relevant iteration notes.
+For example, five Workers can prepare approaches even when only two GPUs are available. The Experimenter runs two one-GPU experiments or one two-GPU experiment according to priority and available resources, while the other Workers continue. Record what is missing for work that cannot run yet. Arrange a measurement window for higher-priority multi-GPU work as devices become free. When GPUs are idle, check the records before asking Workers for missing versions or delivery estimates; involve the lead when the research schedule needs to change.
+
+Give each candidate to one Experimenter so it is not run twice. If experiments need the same GPUs, or one needs GPUs from several groups, have one Experimenter arrange the order of use for those devices. Other groups continue independently. Agree who takes over before changing the executor. Keep this information in existing task tools, or in the iteration notes when no task tools are available.
 
 ## Coordinate resources and environments
 
-The lead records each deployment's owner, nodes, resource budget and usage window in the task records. On shared hosts, the administrator confirms GPU availability against both host processes and Kubernetes workloads. Coordinate changes to shared platforms and drivers with the administrator.
+With six suitable GPUs free, three two-GPU experiments can each use their own pair instead of taking turns. Prefer this arrangement within the task's budget. One Experimenter manages each group and may manage several groups. Across consecutive runs, keep the same devices and executor where possible so each group can deploy, measure and clean up independently. Queue experiments when there are not enough GPUs.
+
+Before using GPUs, the Experimenter checks host processes and Kubernetes workloads, confirms that the task may use the devices and that no one else is using them, and records the devices used. Release GPUs when no experiment is ready to follow, and check availability again before reuse; do not reserve them for work that is still being prepared. Coordinate shared-platform and driver changes with the administrator.
 
 Budget serving, builds, model/data preparation and benchmark clients against current node capacity and existing Pod requests. Adjust [native build concurrency](../../../../docs/deployment/source.md#edit-an-inference-engine) when needed.
 
 Preparation and evaluation can overlap when resources allow. For final comparisons, agree on a measurement window with the owners of workloads sharing the nodes, storage or network. Finish or stop this task's competing workloads, then measure the reference and retained approaches under the same conditions.
 
-Release resources after their processes and services exit, or hand the running jobs and collectors to an owner who accepts them. After an SSH disconnect, inspect the original job before restarting it.
+When a measurement finishes, continue ready work or stop unused serving processes and release their GPU allocation; analysis and review can continue from saved results. Retain reusable images, build caches and model references. Running jobs and collectors may instead be handed to an owner who accepts them. After an SSH disconnect, inspect the original job before restarting it.
 
 ## Return results as work finishes
 
 Existing sweeps can run fixed workload groups and repetitions continuously. Task-owned remote sessions or an existing job manager preserve logs and exit status so jobs can be checked after a disconnect. When reading results, distinguish whether measurement finished, whether requests succeeded and whether the task's requirements were met.
 
-After each group of measurements, the Experimenter sends the results directly to the members who need them, along with their location, resource state and proposed next action. If the lead needs to decide something, explain why. The lead handles resulting scheduling changes before returning to its own research, while members continue unaffected work when part of an assignment is blocked.
+After each group of measurements, the Experimenter updates the records and resource state, sends the outcome and result links directly to the Worker and assigned reviewer, and continues already authorized work. The Worker interprets the measurements and advances the same research question. If priorities, budgets or comparison conditions need to change, the lead resolves that decision while unaffected work continues.
 
 Experimenters maintain their iteration notes, and the lead assigns one writer to update the report. Summaries link to the original data so conclusions can be traced. Reviewed results remain useful while their inputs and conditions still apply. See the [experiment records guide](../../../../rsi-playbooks/experiment-records.md) for the record layout.
 

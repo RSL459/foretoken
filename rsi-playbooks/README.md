@@ -49,11 +49,15 @@ Advisors continually investigate mechanisms and optimization methods, uncover ne
 
 Workers turn specific questions into code or configuration changes that can be evaluated, then improve them using the results.
 
-Experimenters build and evaluate those approaches while observing resource use, recording results and cleaning up afterward.
+Experimenters schedule experiments, build and deploy approaches, run evaluations and save results. They release unused resources afterward. When GPUs are available, they check which approaches are ready and ask Workers for missing versions or information.
 
 Set Advisor, Worker and Experimenter counts separately in the task file; these counts exclude the lead. Leave a count blank when the lead should choose it. The team schedules within the harness's actual concurrency limit and reports any difference from the requested staffing.
 
-Preparing the next candidate can overlap evaluation of the current one. The team adjusts concurrency in each stage from available resources and observed durations.
+While the environment is being prepared, Advisors and Workers begin reading relevant work and source code to find methods worth trying. Some ideas need an implementation before their benefits can be judged; allow time to test them too. While one version is being evaluated, Workers can continue research or prepare the next version, then revise it as results return.
+
+The lead sets research priorities and budgets, and Experimenters arrange the runs. When enough GPUs are available, give each experiment its own group. Arrange an order only when experiments need the same devices. One Experimenter can test approaches from several Workers and manage several GPU groups; available resources determine how many experiments can run at once.
+
+Keep research findings and experiment progress in shared records. Send new results, ready code or questions directly to the person who needs to act, with links to those records. Continue other work while waiting for a reply, and ask the lead to decide changes in direction or resources. Keep members who know a question working together to avoid repeated handoffs.
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 
