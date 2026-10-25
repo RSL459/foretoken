@@ -43,7 +43,7 @@ RUN mirror="${FORETOKEN_GITHUB_MIRROR:-https://github.com}"; \
     UV_PYTHON_INSTALL_MIRROR="${mirror%/}/astral-sh/python-build-standalone/releases/download" \
       uv venv /opt/foretoken-compiler --python 3.12
 ENV PATH=/opt/foretoken-compiler/bin:${PATH}
-WORKDIR /workspace
+WORKDIR /workspace/source
 
 FROM compiler AS builder
 ARG FORETOKEN_GITHUB_MIRROR
@@ -53,13 +53,18 @@ ARG FORETOKEN_MODEL_SERVER_BINARY=foretoken-model-server
 COPY --exclude=model-server/python data-plane/ ./data-plane/
 COPY deploy/build-source ./deploy/build-source
 COPY LICENSE ./LICENSE
-ENV CARGO_HOME=/var/cache/foretoken/cargo-home
+ENV CARGO_HOME=/var/lib/foretoken/dependencies/cargo-home \
+    CARGO_TARGET_DIR=/workspace/target
 # Keep this target separate from the frontend's newer glibc toolchain.
 RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
-    --mount=type=cache,id=foretoken-vllm-source,target=/var/cache/foretoken/vllm \
-    --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken/cargo-home \
-    --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/data-plane/target,sharing=locked \
-    python3 -I deploy/build-source model-server /out --cache /var/cache/foretoken --parts rust
+    --mount=type=cache,id=foretoken-vllm-source,target=/var/lib/foretoken/dependencies/vllm \
+    --mount=type=cache,id=foretoken-cargo-home,target=/var/lib/foretoken/dependencies/cargo-home \
+    --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/target,sharing=locked \
+    python3 -I deploy/build-source model-server /out --cache /var/lib/foretoken/dependencies --parts rust \
+      --cache-export /compiler-cache
+
+FROM scratch AS compiler-cache
+COPY --from=builder /compiler-cache/ /
 
 FROM scratch AS source-export
 COPY --from=builder /out/ /

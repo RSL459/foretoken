@@ -766,12 +766,25 @@ def _build_applications(
                 cancellation=cancellation,
             ))
             compiler.sync(workspaces.files, workspaces.versions)
+            compiler_caches = {
+                name: image for name, image in prepared.previous_build.get("images", {}).items()
+                if name.startswith("compiler-cache-")
+            }
 
             def compile_application(component: str) -> None:
                 """Compile source-required parts first, then fill any runtime-invalidated parts."""
                 parts = early_parts[component]
                 compiled = set(APPLICATION_PARTS[component] if parts is None else parts) - {"engine"}
-                compiler.compile_application(component, settings["arguments"], sorted(compiled))
+                cache_seed = (
+                    compiler.prepare_cache_seed(builder, component, settings["arguments"])
+                    if compiled.intersection({"go", "rust"}) else None
+                )
+                if cache_seed is not None:
+                    compiler_caches["compiler-cache-" + component] = cache_seed.image
+                compiler.compile_application(
+                    component, settings["arguments"], sorted(compiled),
+                    cache_seed=cache_seed.directory if cache_seed is not None else None,
+                )
                 parts = runtime.result().application_parts[component]
                 required = set(APPLICATION_PARTS[component] if parts is None else parts) - {"engine"}
                 if remaining := required - compiled:
@@ -806,6 +819,9 @@ def _build_applications(
             for future in pending:
                 future.result()
 
+        settings["images"].update(compiler_caches)
+        write_source_state(prepared.pending_path, prepared.pending_state)
+        builder.run(["rm", "-rf", "--", builder.execution_root + "/compiler-caches"])
         for component in components:
             compiler.export_application(
                 component, compiler.root + "/applications/" + component,

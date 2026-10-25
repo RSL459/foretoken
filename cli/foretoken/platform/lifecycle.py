@@ -137,6 +137,7 @@ class _PreparedInstallation:
     prometheus: PrometheusRef
     log_endpoint: str
     log_storage_statefulset: str
+    download_proxy: str
 
 
 class PlatformLifecycle:
@@ -184,17 +185,8 @@ class PlatformLifecycle:
         """Apply a resolved installation while retaining shared source publication and cleanup order."""
         plan = self._resolve_install(command, source_base_image)
         self._report_install(command, plan)
-        self._load_balancer.apply(plan.load_balancer, command.timeout)
-        self._gateway.apply_before_platform(plan.gateway, command.timeout)
-        self._leader_worker.apply(plan.leader_worker, command.timeout)
-        _report_plan("LeaderWorkerSet", "Ready", plan.leader_worker.detail)
-        download_proxy = self._model_distribution.apply(
-            plan.model_distribution,
-            plan.runtime.selection.resource_name if plan.runtime.selection is not None else "",
-            command.timeout,
-        )
-        prepared = self._prepare_dependencies_and_source(
-            command, plan, artifacts, execution, download_proxy, source_build_arguments,
+        prepared = self._prepare_installation(
+            command, plan, artifacts, execution, source_build_arguments,
         )
         self._helm.install_platform(
             release=plan.platform,
@@ -212,13 +204,13 @@ class PlatformLifecycle:
             rdma_node_names=plan.rdma.node_names,
             rdma_networks=self._rdma_networks,
             gpu_nodes=plan.runtime.selection.nodes if plan.runtime.selection is not None else (),
-            download_proxy_url=download_proxy,
+            download_proxy_url=prepared.download_proxy,
             stored_values=plan.stored_values,
             kubectl=self._kubectl,
             application_files=self._application_files,
             timeout=command.timeout,
         )
-        self._finish_install(command, plan, prepared, download_proxy)
+        self._finish_install(command, plan, prepared)
 
     def _uninstall(self, command: UninstallCommand) -> None:
         """Fence new instances before draining existing ones and removing their platform dependencies."""
@@ -453,71 +445,92 @@ class PlatformLifecycle:
             decision = "Configured" if configured else "Auto-select", f"{selection.backend} via {selection.resource_name}"
         return _RuntimePlan(selection, scope, source_image, build_metax, resource_name, decision)
 
-    def _prepare_dependencies_and_source(
+    def _prepare_installation(
         self, command: InstallCommand, plan: _InstallPlan, artifacts: ExitStack,
-        execution: CommandExecution, download_proxy: str, source_build_arguments: dict[str, str] | None,
+        execution: CommandExecution, source_build_arguments: dict[str, str] | None,
     ) -> _PreparedInstallation:
-        """Join native dependency and source stages before their shared source artifacts can close."""
-        workers = ThreadPoolExecutor(max_workers=2)
-        source_future = None
+        """Overlap independent dependencies, joining every writer before platform installation or cleanup."""
+        # Create the shared namespace before independent Helm releases use it.
+        if not self._kubectl.exists("namespace", plan.platform.namespace):
+            self._kubectl.run(["create", "namespace", plan.platform.namespace])
+        workers = ThreadPoolExecutor(max_workers=4)
         dependencies: Future[None] = Future()
         source_artifacts = artifacts.enter_context(ExitStack())
+
+        def prepare_network() -> None:
+            """Prepare address allocation before the Gateway controller uses it."""
+            self._load_balancer.apply(plan.load_balancer, command.timeout)
+            self._gateway.apply_before_platform(plan.gateway, command.timeout)
+
+        def prepare_source() -> tuple[SourceImages | None, str]:
+            """Prepare downloads and source artifacts within the source worker's context stack."""
+            download_proxy = self._model_distribution.apply(
+                plan.model_distribution,
+                plan.runtime.selection.resource_name if plan.runtime.selection is not None else "",
+                command.timeout,
+            )
+            if command.editable is None:
+                return None, download_proxy
+            # Server-side chart rendering needs the Gateway and LWS APIs, while
+            # native compilation remains independent of monitoring readiness.
+            network.result()
+            leader_worker.result()
+            merged = (*((plan.stored_values,) if plan.stored_values is not None else ()), *plan.values)
+            rendered = self._helm.render_source_origin(
+                Path(command.editable).expanduser().resolve(), command.values, command.timeout,
+                stored_values=plan.stored_values, download_proxy_url=download_proxy,
+            )
+            origin = self._application_files.prepare(rendered, command.timeout)
+            assert origin is not None
+            context = prepare_source_images(
+                command, plan.platform.namespace, merged, plan.runtime.source_base_image,
+                origin=origin, build_metax_runtime=plan.runtime.build_metax,
+                runtime_backend=plan.runtime.selection.backend if plan.runtime.selection else "nvidia",
+                saved_arguments=source_build_arguments, before_delivery=dependencies.result, cancellation=execution,
+            )
+            return source_artifacts.enter_context(context), download_proxy
+
         try:
-            if command.editable is not None:
-                # Establish shared storage before Helm releases concurrently create
-                # objects in its namespace. Only the source worker enters its contexts.
-                merged = (*((plan.stored_values,) if plan.stored_values is not None else ()), *plan.values)
-                rendered = self._helm.render_source_origin(
-                    Path(command.editable).expanduser().resolve(), command.values, command.timeout,
-                    stored_values=plan.stored_values,
-                    download_proxy_url=download_proxy,
-                )
-                origin = self._application_files.prepare(rendered, command.timeout)
-                assert origin is not None
-                context = prepare_source_images(
-                    command, plan.platform.namespace, merged, plan.runtime.source_base_image,
-                    origin=origin, build_metax_runtime=plan.runtime.build_metax,
-                    runtime_backend=plan.runtime.selection.backend if plan.runtime.selection else "nvidia",
-                    saved_arguments=source_build_arguments, before_delivery=dependencies.result, cancellation=execution,
-                )
-                source_future = workers.submit(execution.run_stage, source_artifacts.enter_context, context)
-            elif not self._kubectl.exists("namespace", plan.platform.namespace):
-                self._kubectl.run(["create", "namespace", plan.platform.namespace])
-            # Fresh monitoring must establish CRDs before log charts restore their
-            # monitoring resources; existing monitoring permits parallel updates.
-            log_future = (
+            network = workers.submit(execution.run_stage, prepare_network)
+            leader_worker = workers.submit(execution.run_stage, self._leader_worker.apply, plan.leader_worker, command.timeout)
+            source = workers.submit(execution.run_stage, prepare_source)
+            # Existing monitoring APIs permit log upgrades immediately. Fresh
+            # installations wait only for Prometheus, not GPU exporter readiness.
+            logs = (
                 workers.submit(execution.run_stage, self._logs.install, plan.log_config, command.timeout)
                 if plan.monitoring.prometheus_exists or plan.monitoring.reused_prometheus is not None else None
             )
-            prometheus = self._monitoring.apply(plan.monitoring, command.timeout)
-            log_endpoint, log_statefulset = (
-                log_future.result() if log_future is not None else self._logs.install(plan.log_config, command.timeout)
-            )
+            prometheus = self._monitoring.prepare_prometheus(plan.monitoring, command.timeout)
+            if logs is None:
+                logs = workers.submit(execution.run_stage, self._logs.install, plan.log_config, command.timeout)
+            self._monitoring.apply_exporters(plan.monitoring, prometheus, command.timeout)
+            log_endpoint, log_statefulset = logs.result()
+            network.result()
+            leader_worker.result()
+            _report_plan("LeaderWorkerSet", "Ready", plan.leader_worker.detail)
             dependencies.set_result(None)
-            images = source_future.result() if source_future is not None else None
-            return _PreparedInstallation(images, prometheus, log_endpoint, log_statefulset)
+            images, download_proxy = source.result()
+            return _PreparedInstallation(images, prometheus, log_endpoint, log_statefulset, download_proxy)
         except BaseException as error:
             if not dependencies.done():
                 dependencies.set_exception(error)
-            if source_future is not None:
-                source_future.cancel()
             execution.cancel(error)
             if isinstance(error, (DeploymentError, OSError)):
                 execution.check()
             raise
         finally:
-            # The source worker may be waiting on dependencies before image delivery.
-            # Resolve that future first, join workers, then let the caller close artifacts.
+            # Resolve the source delivery dependency before joining workers; close
+            # source contexts only after no worker can still enter or write them.
             workers.shutdown(wait=True)
 
     def _finish_install(
         self, command: InstallCommand, plan: _InstallPlan,
-        prepared: _PreparedInstallation, download_proxy: str,
+        prepared: _PreparedInstallation,
     ) -> None:
         """Finalize native dependencies and commit source provenance only after platform installation."""
         _report_plan("Model file distribution", *self._model_distribution.finish_uninstall(
-            command.timeout, keep_release=plan.model_distribution.release if download_proxy else None,
-            keep_proxy_url=download_proxy,
+            command.timeout, keep_release=plan.model_distribution.release if prepared.download_proxy else None,
+            keep_proxy_url=prepared.download_proxy,
         ))
         if plan.rdma.managed:
             discovery = ExporterDiscovery(self._kubectl, command.timeout)

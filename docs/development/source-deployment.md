@@ -23,7 +23,7 @@ A frontend-only update keeps unchanged model instances serving. Repeating an unc
 
 Go controller executables, Rust serving executables, Python adapters and inference-engine files have separate build inputs. Rebuild affected outputs, replacing each updated group in full, including deletions. Reuse unchanged files only from a completed application matching the previous inputs and runtime environment. Publish the complete application before updating services; running services must not depend on writable compiler caches.
 
-BuildKit prepares reusable environment and compiler images. Independent compiler Pods share node-local dependency downloads, the Go build cache and ccache; each source directory keeps private Rust target and CMake trees. Compiler state survives Pod replacement. Completed artifacts can use a separate StorageClass, and application and model storage retain their own lifecycles.
+BuildKit prepares reusable environment and compiler images. Independent compiler Pods share node-local dependency downloads, the Go build cache and ccache; each source directory keeps private Rust target and CMake trees. Compiler state survives Pod replacement. A new native workspace uses the release's compiler cache when available, then runs Go or Cargo against the current inputs. Existing workspace state takes precedence. Completed artifacts can use a separate StorageClass, and application and model storage retain their own lifecycles.
 
 Registry-free builds exchange image content directly with containerd on each node. Only the CLI's image-management containers mount the node runtime socket; the packaged client's source, executable and compilation cache remain isolated from editable workload code.
 

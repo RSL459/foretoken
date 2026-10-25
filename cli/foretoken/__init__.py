@@ -43,3 +43,8 @@ def environment_image_reference(registry: str, version: str, component: str) -> 
 def build_cache_reference(registry: str, version: str, component: str, target: str) -> str:
     """Address a separate cache graph within the environment image's release repository."""
     return environment_image_reference(registry, version, component) + "-cache-" + target
+
+
+def compiler_cache_reference(registry: str, version: str, component: str) -> str:
+    """Address native compiler state published for a component's first source build."""
+    return environment_image_reference(registry, version, component) + "-compiler-cache"

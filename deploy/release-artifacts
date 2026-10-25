@@ -110,7 +110,7 @@ main() {
   }
 
   # Translate the package's PEP 440 release spelling to the OCI/Chart SemVer spelling.
-  read -r PYTHON_VERSION OCI_VERSION CONTROL_PLANE_IMAGE FRONTEND_IMAGE MODEL_SERVER_IMAGE MODEL_SERVER_METAX_IMAGE < <(
+  read -r PYTHON_VERSION OCI_VERSION CONTROL_PLANE_IMAGE FRONTEND_IMAGE MODEL_SERVER_IMAGE MODEL_SERVER_METAX_IMAGE CONTROL_PLANE_CACHE FRONTEND_CACHE MODEL_SERVER_CACHE < <(
     "$PYTHON" - "$ROOT" "$REGISTRY" <<'PY'
 from pathlib import Path
 import sys
@@ -120,7 +120,7 @@ import yaml
 
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "cli"))
-from foretoken import environment_image_reference, platform_version_for
+from foretoken import compiler_cache_reference, environment_image_reference, platform_version_for
 
 with (root / "pyproject.toml").open("rb") as source:
     python_version = tomllib.load(source)["project"]["version"]
@@ -140,7 +140,11 @@ images = [
     environment_image_reference(sys.argv[2], oci_version, component)
     for component in ("control-plane", "frontend", "model-server", "model-server-metax")
 ]
-print(python_version, oci_version, *images)
+caches = [
+    compiler_cache_reference(sys.argv[2], oci_version, component)
+    for component in ("control-plane", "frontend", "model-server")
+]
+print(python_version, oci_version, *images, *caches)
 PY
   )
 
@@ -244,6 +248,15 @@ print(*selected)
       "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/frontend"
     build_with_cache model-server source-export image-model-server "IMAGE_TARGET=source-export" \
       "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/model-server"
+    if [[ "$MODE" == build ]]; then
+      # Cache images reuse the completed native RUN; their files are consumed by compiler Pods, not serving workloads.
+      build_with_cache control-plane compiler-cache image-control-plane \
+        "CONTROL_PLANE_IMAGE=$CONTROL_PLANE_CACHE" "IMAGE_TARGET=compiler-cache" "IMAGE_OUTPUT=type=docker"
+      build_with_cache frontend compiler-cache image-frontend \
+        "FRONTEND_IMAGE=$FRONTEND_CACHE" "IMAGE_TARGET=compiler-cache" "IMAGE_OUTPUT=type=docker"
+      build_with_cache model-server compiler-cache image-model-server \
+        "MODEL_SERVER_IMAGE=$MODEL_SERVER_CACHE" "IMAGE_TARGET=compiler-cache" "IMAGE_OUTPUT=type=docker"
+    fi
     run "$PYTHON" - "$PAYLOAD_DIR" "$APPLICATION_PACKAGE" <<'PY'
 from pathlib import Path
 import sys
@@ -302,13 +315,17 @@ PY
 
 # push_release owns immutable remote-tag checks and OCI publication.
 push_release() {
-  images_selected && require_command docker
   selected chart && require_command helm
 
-  selected control-plane && push_image "$CONTROL_PLANE_IMAGE"
-  selected frontend && push_image "$FRONTEND_IMAGE"
-  selected model-server && push_image "$MODEL_SERVER_IMAGE"
-  selected model-server-metax && push_image "$MODEL_SERVER_METAX_IMAGE"
+  selected control-plane && push_image "$CONTROL_PLANE_IMAGE" control-plane
+  selected frontend && push_image "$FRONTEND_IMAGE" frontend
+  selected model-server && push_image "$MODEL_SERVER_IMAGE" model-server
+  selected model-server-metax && push_image "$MODEL_SERVER_METAX_IMAGE" model-server-metax
+  if selected control-plane && selected frontend && { selected model-server || selected model-server-metax; }; then
+    push_image "$CONTROL_PLANE_CACHE" control-plane compiler-cache
+    push_image "$FRONTEND_CACHE" frontend compiler-cache
+    push_image "$MODEL_SERVER_CACHE" model-server compiler-cache
+  fi
 
   for component in "${SELECTED_COMPONENTS[@]}"; do
     [[ "$component" == chart ]] || push_build_cache "$component" environment
@@ -357,12 +374,13 @@ Usage:
   deploy/release-artifacts push   --registry REGISTRY [options]
 
 Modes:
-  build   Build environments, export applications and build caches, and package the chart.
+  build   Build environments and compiler caches, export applications, and package the chart.
   export  Export applications and their build caches without building environment images.
-  push    Push environments, exported build caches and chart, preserving existing tags.
+  push    Push environments, compiler caches, build graphs and chart, preserving existing tags.
 
-Build and export keep their outputs local. Push requires Docker, Helm for charts,
-and ORAS for build caches. Upload the application tar.gz as a GitHub Release asset.
+Build and export keep their outputs local. Push uses ORAS for OCI layouts,
+Docker for images in its local store, and Helm for charts.
+Upload the application tar.gz as a GitHub Release asset.
 
 Options:
   --registry REGISTRY       Image prefix, for example ghcr.io/example/foretoken.
@@ -432,26 +450,40 @@ build_with_cache() {
   local component=$1 target=$2
   shift 2
   local layout="$OUTPUT_DIR/cache/$OCI_VERSION/$component/$target"
+  local image_layout="$OUTPUT_DIR/images/$OCI_VERSION/$component/$target"
   # Model-server callers pass the selected variant's Python explicitly to Make.
   local -a args=(env -u FORETOKEN_VLLM_PYTHON make -C "$ROOT" "$@")
   if [[ "$BUILD_DRIVER" == docker ]]; then
+    if [[ "$target" != source-export ]]; then
+      args+=("IMAGE_OUTPUT=")
+    fi
     if [[ "$target" == environment ]]; then
-      args+=("BUILDKIT_INLINE_CACHE=1" "IMAGE_OUTPUT=")
+      args+=("BUILDKIT_INLINE_CACHE=1")
     fi
     run "${args[@]}" "IMAGE_CACHE_TO="
-    if [[ "$DRY_RUN" != true ]]; then rm -rf -- "$layout"; fi
+    if [[ "$DRY_RUN" != true ]]; then rm -rf -- "$layout" "$image_layout"; fi
+    return
+  fi
+  if [[ "$target" != source-export ]]; then
+    run mkdir -p "$image_layout"
+    # Keep native OCI layers through publication; Docker's legacy image store rewrites compression.
+    args+=("IMAGE_OUTPUT=type=oci,tar=false,dest=$image_layout,compression=zstd,force-compression=true,oci-mediatypes=true")
+  fi
+  if [[ "$target" == compiler-cache ]]; then
+    # Use this release's completed native RUN instead of the initial external cache hint.
+    run "${args[@]}" "IMAGE_CACHE_FROM=type=local,src=$OUTPUT_DIR/cache/$OCI_VERSION/$component/source-export" "IMAGE_CACHE_TO="
     return
   fi
   if [[ -z "${IMAGE_CACHE_FROM:-}" && -f "$layout/index.json" ]]; then
     args+=("IMAGE_CACHE_FROM=type=local,src=$layout")
   fi
   if [[ "$DRY_RUN" == true ]]; then
-    run "${args[@]}" "IMAGE_CACHE_TO=type=local,dest=$layout,mode=max,image-manifest=true,oci-mediatypes=true"
+    run "${args[@]}" "IMAGE_CACHE_TO=type=local,dest=$layout,mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd,force-compression=true"
     return
   fi
   mkdir -p "${layout%/*}"
   CACHE_EXPORT=$(mktemp -d "${layout%/*}/.$target.XXXXXX")
-  run "${args[@]}" "IMAGE_CACHE_TO=type=local,dest=$CACHE_EXPORT,mode=max,image-manifest=true,oci-mediatypes=true"
+  run "${args[@]}" "IMAGE_CACHE_TO=type=local,dest=$CACHE_EXPORT,mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd,force-compression=true"
   # A successful metadata-only solve has no index; replace any older graph too.
   rm -rf -- "$layout"
   mv -- "$CACHE_EXPORT" "$layout"
@@ -460,7 +492,7 @@ build_with_cache() {
 
 # Publish the native cache layout without rebuilding or changing the build command's local-only behavior.
 push_build_cache() {
-  local component=$1 target=$2 reference digest output status
+  local component=$1 target=$2 reference
   local layout="$OUTPUT_DIR/cache/$OCI_VERSION/$component/$target"
   # Metadata-only targets have no BuildKit cache records to export.
   if [[ "$DRY_RUN" != true && ! -f "$layout/index.json" ]]; then
@@ -474,6 +506,12 @@ from foretoken import build_cache_reference
 print(build_cache_reference(*sys.argv[2:]))
 PY
   )
+  push_oci_layout "$reference" "$layout"
+}
+
+# Copy complete OCI descriptors and layers without unpacking or recompressing release artifacts.
+push_oci_layout() {
+  local reference=$1 layout=$2 digest output status
   require_command oras
   local connection=
   [[ "$PLAIN_HTTP" != true ]] || connection=--plain-http
@@ -484,7 +522,7 @@ PY
     else
       status=$?
       if [[ "$output" != *"not found"* && "$output" != *"MANIFEST_UNKNOWN"* && "$output" != *"manifest unknown"* ]]; then
-        printf 'cannot determine whether build cache exists: %s\n%s\n' "$reference" "$output" >&2
+        printf 'cannot determine whether OCI artifact exists: %s\n%s\n' "$reference" "$output" >&2
         return "$status"
       fi
     fi
@@ -532,7 +570,13 @@ push_chart() {
 
 # Preserve published version tags while allowing a partial release to resume.
 push_image() {
-  local image=$1 output status
+  local image=$1 component=$2 target=${3:-environment} output status
+  local layout="$OUTPUT_DIR/images/$OCI_VERSION/$component/$target"
+  if [[ -f "$layout/index.json" ]]; then
+    push_oci_layout "$image" "$layout"
+    return
+  fi
+  require_command docker
   if [[ "$DRY_RUN" == true ]]; then
     run docker push "$image"
     return

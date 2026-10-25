@@ -66,7 +66,7 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-命令构建运行环境镜像，将 `foretoken-applications-<version>-linux-amd64.tar.gz`、匹配的 Helm Chart 和导出的构建缓存保存到 `/tmp/foretoken-release`，发布前产物均留在本地。沐曦镜像 tag 使用 `-metax` 后缀。如需替换 NVIDIA 基础镜像，在构建前设置 `INFERENCE_ENGINE_IMAGE`。
+命令构建运行环境镜像和供新源码工作区使用的编译缓存镜像，并将 `foretoken-applications-<version>-linux-amd64.tar.gz`、匹配的 Helm Chart 和 BuildKit 构建缓存保存到 `/tmp/foretoken-release`。发布前产物均留在本地。沐曦镜像 tag 使用 `-metax` 后缀。如需替换 NVIDIA 基础镜像，在构建前设置 `INFERENCE_ENGINE_IMAGE`。
 
 只发布 NVIDIA 运行环境时，选择共用组件和 NVIDIA 模型服务：
 
@@ -83,9 +83,9 @@ deploy/release-artifacts build --registry "$REGISTRY" \
 deploy/release-artifacts export --output-dir /tmp/foretoken-release
 ```
 
-将验证后的压缩包上传为 GitHub Release 附件。下面的 `push` 命令发布运行环境镜像、导出的构建缓存和 Helm Chart，不上传压缩包。
+将验证后的压缩包上传为 GitHub Release 附件。下面的 `push` 命令发布运行环境镜像、编译缓存镜像、BuildKit 构建缓存和 Helm Chart，不上传压缩包。
 
-Docker driver 将缓存元数据随运行环境镜像一起发布。使用 Docker 27.0 或 27.1 时，升级到 27.2 或更高版本，以修复[上游 inline 缓存缺陷](https://github.com/moby/buildkit/issues/5242)。其他 Buildx driver 导出独立缓存，发布这些缓存时需要 [ORAS](https://oras.land/docs/installation/)，它沿用 Docker 的仓库登录凭据。
+Docker driver 将镜像保存在 Docker 本地存储中，构建元数据随运行环境镜像发布。使用 Docker 27.0 或 27.1 时，升级到 27.2 或更高版本，以修复[上游 inline 缓存缺陷](https://github.com/moby/buildkit/issues/5242)。其他 Buildx driver 在输出目录的 `images/` 下保存 zstd 压缩的 OCI 镜像，在 `cache/` 下保存构建缓存。发布这些产物需要 [ORAS](https://oras.land/docs/installation/)，它沿用 Docker 的仓库登录凭据，保持镜像层的压缩格式。
 
 完成产物验证后，登录仓库并推送。构建时若指定了 `--output-dir`，推送时传入相同选项：
 
