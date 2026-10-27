@@ -265,12 +265,26 @@ pub struct HistogramMoments {
     pub count: u64,
 }
 
+impl HistogramMoments {
+    /// Returns the cumulative mean of engine-owned observations, or zero before the first sample.
+    pub fn mean(self) -> f64 {
+        if self.count == 0 {
+            0.0
+        } else {
+            self.sum / self.count as f64
+        }
+    }
+}
+
 /// Engine-owned request distributions used by request-cost routing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RequestCostTelemetry {
     pub prompt_tokens: Option<HistogramMoments>,
     pub generation_tokens: Option<HistogramMoments>,
+    pub queue_seconds: Option<HistogramMoments>,
+    pub prefill_seconds: Option<HistogramMoments>,
+    pub decode_seconds: Option<HistogramMoments>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -41,9 +41,12 @@ Choose a scorer for the workload:
 | Spread cold requests toward less recently selected targets | `no_hit_lru` |
 | Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
 | Prefer the same model replica for requests with the same `session_id` in the request body | `session_affinity` |
+| Prefer lower request-length-normalized prefill and decode latency | `least_latency`; requires `picker.algorithm: max` |
 | Prefer lower weighted request lengths | `throughput` |
 | Prefer a configured endpoint observation | `endpoint_attribute` |
 | Give every target an equal score | `uniform` |
+
+`least_latency` chooses randomly among eligible targets when none has all required latency metrics.
 
 Scorer-specific options go under `scorer.parameters`. For example, give cache affinity more weight in the default strategy:
 
