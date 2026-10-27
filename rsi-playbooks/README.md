@@ -34,6 +34,8 @@ Confirm the following settings. Leave choices to the agents where you do not nee
 
 The commands below use the NVIDIA task. Replace the path to use your own task file.
 
+The checkout includes project hooks for [RSI continuation](../.agents/skills/rsi/continuation.md). They require Python 3.11+ and affect only RSI sessions activated by the lead.
+
 #### Claude Code
 
 ```bash
@@ -48,9 +50,10 @@ Enter in the session:
 
 #### Codex
 
-Open Codex in the repository and enter:
+Open Codex in the repository and enter these commands separately. In `/hooks`, review and trust the project hooks before starting the goal:
 
 ```text
+/hooks
 /goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md.
 ```
 

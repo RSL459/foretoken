@@ -34,6 +34,8 @@ cd foretoken
 
 下面以 NVIDIA 任务为例，使用自定义任务时替换路径。
 
+仓库包含用于[接续 RSI 工作](../.agents/skills/rsi/continuation_zh.md)的项目 hook，需要 Python 3.11+，只对主 Agent 明确启用的 RSI 会话生效。
+
 #### Claude Code
 
 ```bash
@@ -48,9 +50,10 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 
 #### Codex
 
-在仓库目录打开 Codex，输入：
+在仓库目录打开 Codex，逐条输入以下命令。先在 `/hooks` 中审阅并信任项目 hook，再启动目标：
 
 ```text
+/hooks
 /goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。
 ```
 

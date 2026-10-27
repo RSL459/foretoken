@@ -85,22 +85,38 @@ results/decode/parallelism/
 
 按[团队沟通约定](../.agents/skills/rsi/roles/common_zh.md#直接交流减少等待)，简短协调直接发消息，长说明或多人需要阅读的内容放进共享文件。消息给出摘要和准确路径，后续只补充变化，不必重述全部背景。尚未决定的问题直接与负责人讨论，决定记回笔记，等待答复时继续其他工作。每份文档由一名作者维护，较长的审查意见或替代方案由提出者另写文件。
 
+例如，说明吞吐提升时，给出参考方案和候选方案的 `metrics.json` 路径及对比字段；说明错误时，给出日志路径及相关行号或时间范围。代码结论注明版本、文件和函数，涉及 Agent 决策或工具调用的结论则指向会话记录及具体消息或时间范围。发送结论时附上这些原始证据位置，接收者先读取相关部分，需要更多上下文时再展开。
+
 研究资料、脚本、准备日志和清理记录也放在本轮 `notes/` 下，按需要组织；`plan.md`、`analysis.md` 只是文件名示例。评测命令会补建缺失的迭代笔记，保留已有内容，报告和其他文件由成员维护。原始运行产物仍保存在 `runs/`。删除被引用的工作区前，先保存所需代码并更新链接；清理时保留仍被引用的证据。
 
 ## 保存团队与会话记录
 
-Observer 从任务文件和实验目录找到调研笔记、结果和资源采样，再自行查找主 Agent 与成员的会话文件，无需主 Agent 整理索引或代找文件。
+主 Agent 在 `<output-dir>/team/README.md` 维护巡查安排，链接 `team/observations/` 下的每轮笔记。行动的负责人、决定和预期结果保存在已有任务记录中；未解决的问题持续链接首次记录，并在原处更新进展，报告引用这份当前状态。巡查笔记保留各次检查的依据和判断。
 
-直接使用运行环境保存的会话文件，常见位置如下：
+### 读取会话证据
 
-- Claude Code：`~/.claude/projects/` 下的 JSONL，包括会话目录中的 `subagents/` 文件，见[会话记录说明](https://code.claude.com/docs/en/sub-agents#resume-subagents)。
-- Codex：`$CODEX_HOME/sessions/` 下的 rollout JSONL；`CODEX_HOME` 默认是 `~/.codex`，见[状态目录说明](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations)。
+从任务文件和实验目录查找主 Agent 与成员会话，结合工作目录、时间、session ID 和父子关系确认记录范围。Observer 自行定位并只读检查，无需成员重新汇报进度。
 
-具体路径随配置和版本变化。Observer 根据工作目录、时间、session ID 和父子关系识别本任务的文件，将实际路径记入巡查笔记。
+有只读历史接口时，读取完整条目和工具输出，例如 [Codex 会话历史](https://learn.chatgpt.com/docs/app-server)或 [Claude 会话接口](https://code.claude.com/docs/en/agent-sdk/sessions)。原始文件通常位于：
 
-优先读原文件，也可使用运行环境的只读接口或导出，并注明来源。摘要或部分内容要标明，不能当作完整会话。只检查本任务的记录，保留原文件，远端访问沿用任务已有信息，不向成员询问或要求复述。
+- Claude Code：`~/.claude/projects/`，包括会话的 `subagents/` 目录。
+- Codex：`$CODEX_HOME/sessions/`，`CODEX_HOME` 默认是 `~/.codex`。
 
-主 Agent 在 `<output-dir>/team/README.md` 记录任务链接、巡查间隔、下次时间和提醒标识。Observer 在 `team/observations/` 下保存带日期的笔记，按[清单](../.agents/skills/rsi/roles/observer_zh.md#按清单逐项检查)逐项报告，保留通过、不适用和待核实的项目。主 Agent 链接笔记，记录行动、负责人或不采纳的原因，供下轮核查。直接链接已有任务记录，不另建队列；整体报告可单独链接团队笔记，不与性能测量混写。
+直接读取 JSONL 时，[会话读取工具](../.agents/skills/rsi/scripts/session_records.py)提供分页索引，并将关联证据一起返回。它需要 Python 3.11+，无需额外安装包。将 `RSI_SESSION` 设为文件路径，`RSI_SINCE` 设为带 UTC 偏移的 ISO 起始时间，在仓库根目录执行：
+
+```bash
+python -I .agents/skills/rsi/scripts/session_records.py index "$RSI_SESSION" --since "$RSI_SINCE"
+```
+
+索引包含 Codex 的开始、完成和中断事件，用于核对成员随时间变化的工作状态。默认省略已识别的继承记录并显示数量；需要这些背景时，加上 `--include-inherited`。后续页用 `--after-line` 传入返回的 `next_after_line`。选择源文件行号，设置 `RSI_LINE` 后读取证据：
+
+```bash
+python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RSI_LINE"
+```
+
+`show` 一起返回选中记录、配对的工具输入与结果，以及这段区间内的命令记录，每条都保留来源位置。同一区间内出现并不证明命令由该调用触发。输出较长时，将 `next_offset` 传给 `--offset`，并在各续页中通过 `--through-line` 保持首次返回的 `through_line`，避免会话追加内容导致分页错位。需要新记录时，不带这些选项开始一次新的读取。
+
+工具会标明可识别的继承历史、缺失回执、不可读内容和已有截断标记。会话缺少必要细节时，继续读取保存的输出或产物文件，否则将事实保留为待核实。索引预览用于定位，不能替代证据本身。
 
 ## 分析结果
 

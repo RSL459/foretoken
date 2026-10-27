@@ -19,7 +19,7 @@ Observer 巡查间隔：1h
 最大并行实验数：最多 3 个双卡服务候选；更小规模的局部实验共享六卡预算
 并行安排：先为平台服务、构建和评测客户端预留资源，再按各组实际资源请求安排实验，并记录并行度
 评测负载：每个服务分别测量并发 1 和 16，覆盖随机长度负载和 StudyChat 对话；具体命令见下方“评测命令”
-精度评测：针对可能影响精度的改动按需执行 foretoken eval，每完成 20 轮速度迭代最多执行一次
+精度评测：针对可能影响回答质量的改动按需执行 foretoken eval，优先评测准备保留的候选方案；已有结果的适用条件未变时复用结果，避免每次性能测量后都重复评分。
 可改动范围：在上述精度与资源约束内，可以修改各层的实现与配置
 每轮测量时间预算：perf／eval 测量默认 10 分钟，以加快迭代；Agent 根据实际负载调整测量预算和请求数，记录调整原因与实际耗时
 工作时间：从开始执行任务计时，总预算 24 小时
@@ -50,7 +50,9 @@ foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi -e . --timeou
 
 在仓库根目录执行，使用 W&B 前先运行 `wandb login`。结果保存到 `results/qwen3.5-35b-a3b-muxi/`，初始方案名为 `baseline`；新方案使用新名称，补测沿用原方案名。对照其他候选时，同时替换部署目录、`--name` 和 `--iteration`。
 
-两个性能评测循环依次测量并发 1 和 16，每组使用相同输入、80 条正式请求和 4 条预热请求。最终保留方案需完成 StudyChat，中间迭代按需执行。GSM8K 最多并发发送 64 个请求，引擎按自身序列数上限调度。其他负载见[评测示例](../../benchmarks/docs/recipes_zh.md)。
+两个性能评测循环依次测量并发 1 和 16，使用相同输入：随机负载每组 80 条正式请求，StudyChat 每组 200 条，每组另加 4 条预热请求。StudyChat 按对话中的各轮请求计数。最终保留方案需完成 StudyChat，中间迭代按需执行。其他负载见[评测示例](../../benchmarks/docs/recipes_zh.md)。
+
+GSM8K 最多并发 64 个请求。输出预算包含思考内容，由 Foretoken 限制为部署上下文上限减去套用聊天模板后的输入长度；起始部署下即 `36864 - input_tokens`。命令以 [Qwen3.5 的原生总上下文大小](https://huggingface.co/Qwen/Qwen3.5-35B-A3B#model-overview)为请求上界，设置 `max_gen_toks=262144`。
 
 ```bash
 # 每轮速度迭代：随机长度负载，分别测量并发 1 和 16
@@ -67,7 +69,7 @@ done
 for concurrency in 1 16; do
   foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi \
     --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
-    --max-concurrency "$concurrency" --num-prompts 80 --max-tokens 2048 \
+    --max-concurrency "$concurrency" --num-prompts 200 --max-tokens 2048 \
     --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
     --output-dir results/qwen3.5-35b-a3b-muxi --iteration baseline
 done
@@ -75,6 +77,6 @@ done
 # 按需精度评测，最多并发 64 个请求
 foretoken eval examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi \
   --evaluator lm-eval --tasks gsm8k --num_fewshot 0 --limit 20 \
-  --model_args num_concurrent=64 --output experiment,plot,wandb \
+  --model_args num_concurrent=64,max_gen_toks=262144 --output experiment,plot,wandb \
   --output-dir results/qwen3.5-35b-a3b-muxi --iteration baseline
 ```

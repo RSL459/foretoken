@@ -19,7 +19,7 @@ Observer check interval: 1h
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
 Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
 Evaluation workloads: measure concurrency 1 and 16 separately per service using random-length workloads and StudyChat conversations; see the full commands under "Evaluation commands" below
-Accuracy evaluation: run foretoken eval as needed for changes that may affect accuracy, at most once per 20 completed performance iterations
+Accuracy evaluation: run foretoken eval as needed for changes that may affect answer quality. Prioritize candidates being considered for retention, reuse results while their conditions still apply, and avoid repeating quality scoring after every performance measurement.
 Allowed changes: implementation and configuration at any layer, within the precision and resource constraints above
 Measurement budget per iteration: default to 10 minutes of perf/eval measurement to keep iterations fast; adjust the measurement budget and request count to the actual workload, recording the reason and time spent
 Work duration: a total budget of 24 hours from the start of task execution
@@ -50,7 +50,9 @@ The command returns when the model and frontend are ready. Together they request
 
 Run from the repository root and authenticate with `wandb login` before using W&B. Results go to `results/qwen3.5-35b-a3b-nvidia/`. Use `baseline` for the initial approach, a new name for each new approach, and the same name for repeat measurements. To compare another candidate, replace its deployment directory, `--name` and `--iteration` together.
 
-Each performance loop measures concurrency 1 and 16 in sequence, with the same inputs, 80 measured requests and four warmup requests per group. Run StudyChat for the final retained approach and as needed during intermediate iterations. GSM8K sends up to 64 concurrent requests, which the engine schedules within its sequence limit. See [benchmark examples](../../benchmarks/docs/recipes.md) for other workloads.
+Each performance loop measures concurrency 1 and 16 in sequence using the same inputs: 80 measured requests for random workloads and 200 for StudyChat, with four additional warmup requests per group. StudyChat's request count includes individual turns across conversations. Run it for the final retained approach and as needed during intermediate iterations. See [benchmark examples](../../benchmarks/docs/recipes.md) for other workloads.
+
+GSM8K uses up to 64 concurrent requests. Its output budget includes reasoning and is capped by Foretoken at the deployed context limit minus the rendered input length: `36864 - input_tokens` for the starting deployment. The command requests `max_gen_toks=262144`, using [Qwen3.5's native total context size](https://huggingface.co/Qwen/Qwen3.5-35B-A3B#model-overview) as the ceiling.
 
 ```bash
 # Every performance iteration: random lengths at concurrency 1 and 16.
@@ -67,7 +69,7 @@ done
 for concurrency in 1 16; do
   foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-nvidia \
     --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
-    --max-concurrency "$concurrency" --num-prompts 80 --max-tokens 2048 \
+    --max-concurrency "$concurrency" --num-prompts 200 --max-tokens 2048 \
     --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
     --output-dir results/qwen3.5-35b-a3b-nvidia --iteration baseline
 done
@@ -75,6 +77,6 @@ done
 # Accuracy evaluation as needed, with up to 64 concurrent requests.
 foretoken eval examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-nvidia \
   --evaluator lm-eval --tasks gsm8k --num_fewshot 0 --limit 20 \
-  --model_args num_concurrent=64 --output experiment,plot,wandb \
+  --model_args num_concurrent=64,max_gen_toks=262144 --output experiment,plot,wandb \
   --output-dir results/qwen3.5-35b-a3b-nvidia --iteration baseline
 ```

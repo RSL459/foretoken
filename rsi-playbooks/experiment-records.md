@@ -85,22 +85,38 @@ Code stays in its assigned checkout or worktree. The proposal names its owner, h
 
 Follow the [team's communication guidance](../.agents/skills/rsi/roles/common.md#share-findings-and-keep-working): brief coordination uses messages, while long explanations and material for several readers go in shared files. Send the summary and exact path, then describe later changes without repeating all the background. Discuss open choices directly with the person responsible, record decisions in the notes, and continue other work while waiting for replies. Each document has one writer; save substantial reviews or alternative proposals in the author's own files.
 
+For example, a throughput improvement points to the reference and candidate `metrics.json` files and the compared fields. An error points to the log file and relevant lines or time range; a code finding identifies the revision, file and function. Findings about agent decisions or tool calls point to the session record and message or time range. Send the finding with these source locations so recipients can read the relevant portions first, expanding the context when needed.
+
 Supporting research, scripts, preparation logs and cleanup records also belong under the iteration's `notes/`, organized as needed. Filenames such as `plan.md` and `analysis.md` are examples. Benchmark commands create missing iteration notes without replacing existing content; members maintain the report and additional files. Keep original run artifacts under `runs/`. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
 
 ## Keep team and session records
 
-The Observer finds research notes, results and resource observations from the task and experiment directory, then locates the lead's and members' session files. The lead need not prepare an index or find files for it.
+The lead keeps the check schedule in `<output-dir>/team/README.md` and links each Observer note under `team/observations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each observation preserves the evidence and judgment from that check.
 
-Use the runtime's saved session files. Common locations are:
+### Read session evidence
 
-- Claude Code: JSONL under `~/.claude/projects/`, including a session's `subagents/` files. See [session records](https://code.claude.com/docs/en/sub-agents#resume-subagents).
-- Codex: rollout JSONL under `$CODEX_HOME/sessions/`; `CODEX_HOME` defaults to `~/.codex`. See [state locations](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations).
+Start from the task and experiment directory to find the lead and member sessions. Use working directories, times, session IDs and parent/child relationships to identify the relevant records. The Observer finds these itself and reads them without asking members to report progress.
 
-Paths vary with configuration and version. The Observer identifies this task's files from working directories, timestamps, session IDs and parent/child metadata, then records the actual paths.
+Use a read-only history interface with full items and tool output when available: [Codex thread history](https://learn.chatgpt.com/docs/app-server) or [Claude session interfaces](https://code.claude.com/docs/en/agent-sdk/sessions). Original files are commonly stored in:
 
-Prefer original files, or use the runtime's read-only interface or export and identify the source. Label summaries and partial records rather than treating them as full transcripts. Inspect only this task's records, preserve the originals and use existing task access for remote hosts. Do not ask members for status or explanations of their work.
+- Claude Code: `~/.claude/projects/`, including session `subagents/` directories.
+- Codex: `$CODEX_HOME/sessions/`, with `CODEX_HOME` defaulting to `~/.codex`.
 
-The lead records the task link, check interval, next check time and reminder identity in `<output-dir>/team/README.md`. Observers save dated notes under `team/observations/`, reporting every [checklist item](../.agents/skills/rsi/roles/observer.md#work-through-the-checklist), including passed, not-applicable and unresolved items. The lead links each note and records actions, owners or reasons for declining suggestions for the next check. Link existing task records rather than creating another queue. The overall report can link team notes separately from performance measurements.
+For original JSONL files, the [session reader](../.agents/skills/rsi/scripts/session_records.py) provides a paged index and reads related evidence together. It requires Python 3.11+ with no additional packages. Set `RSI_SESSION` to the file and `RSI_SINCE` to an ISO start time with a UTC offset, then run from the checkout root:
+
+```bash
+python -I .agents/skills/rsi/scripts/session_records.py index "$RSI_SESSION" --since "$RSI_SINCE"
+```
+
+The index includes Codex start, completion and interruption events for checking member activity over time. It omits identifiable inherited records and reports their count; add `--include-inherited` when that background is needed. Continue with `--after-line` and its returned `next_after_line`. Choose a source line, set `RSI_LINE`, and read the evidence:
+
+```bash
+python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RSI_LINE"
+```
+
+`show` includes the selected record, its paired tool input and result, and command records within that interval. Each keeps its source location; interval membership alone does not establish which call caused a command. For long output, pass `next_offset` to `--offset` and keep the first response's `through_line` in `--through-line` on every subsequent page. This keeps the evidence range stable while the session grows. Start a new read without these options to include newer records.
+
+The reader marks identifiable inherited history, missing results, unavailable content and stored truncation markers. Read saved-output or artifact files when the session lacks the needed detail; otherwise leave the fact unresolved. Index previews locate evidence but do not replace it.
 
 ## Analyze results
 
