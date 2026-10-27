@@ -46,8 +46,6 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 | 按指定端点观测值排序 | `endpoint_attribute` |
 | 所有目标得分相同 | `uniform` |
 
-`least_latency` 在所有符合条件的目标都缺少完整延迟指标时随机选择。
-
 评分算法的选项放在 `scorer.parameters` 下。例如，让默认策略更偏向缓存复用：
 
 ```yaml

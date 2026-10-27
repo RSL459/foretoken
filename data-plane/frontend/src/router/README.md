@@ -46,8 +46,6 @@ Choose a scorer for the workload:
 | Prefer a configured endpoint observation | `endpoint_attribute` |
 | Give every target an equal score | `uniform` |
 
-`least_latency` chooses randomly among eligible targets when none has all required latency metrics.
-
 Scorer-specific options go under `scorer.parameters`. For example, give cache affinity more weight in the default strategy:
 
 ```yaml
