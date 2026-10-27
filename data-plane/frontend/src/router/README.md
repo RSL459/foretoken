@@ -46,8 +46,6 @@ Choose a scorer for the workload:
 | Prefer a configured endpoint observation | `endpoint_attribute` |
 | Give every target an equal score | `uniform` |
 
-`kv_cost` tracks prompt blocks locally. Set `scorer.parameters.router_track_output_blocks: true` to include blocks completed by streamed output tokens.
-
 Scorer-specific options go under `scorer.parameters`. For example, give cache affinity more weight in the default strategy:
 
 ```yaml

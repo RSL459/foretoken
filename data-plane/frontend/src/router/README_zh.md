@@ -46,8 +46,6 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 | 按指定端点观测值排序 | `endpoint_attribute` |
 | 所有目标得分相同 | `uniform` |
 
-`kv_cost` 在本地跟踪输入块。设置 `scorer.parameters.router_track_output_blocks: true` 后，也会计入流式输出 token 填满的块。
-
 评分算法的选项放在 `scorer.parameters` 下。例如，让默认策略更偏向缓存复用：
 
 ```yaml
