@@ -438,6 +438,12 @@ fn runtime_metadata(
         },
         model_dtype: client.reported_model_dtype(),
         effective_max_model_len: client.max_model_len(),
+        kv_block_size: client
+            .ready_responses()
+            .first()
+            .and_then(|ready| ready.block_size)
+            .and_then(|size| u32::try_from(size).ok())
+            .and_then(std::num::NonZeroU32::new),
         max_logprobs: client
             .ready_responses()
             .first()

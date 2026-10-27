@@ -474,6 +474,10 @@ impl RouteInventory for BackendRegistry {
         self.metadata.lock().ok()?.get(id)?.kv_transfer()
     }
 
+    fn kv_block_size(&self, id: &RouteTargetId) -> Option<std::num::NonZeroU32> {
+        self.metadata(id)?.kv_block_size
+    }
+
     fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {
         let Some(declared) = self
             .model_routes

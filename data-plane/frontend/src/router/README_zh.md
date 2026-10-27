@@ -42,8 +42,11 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 | 在负载均衡与缓存复用之间折中 | `two_tier`，必须搭配 `picker.algorithm: max` |
 | 按请求体中的 `session_id`，优先将同一会话的请求发往同一模型副本 | `session_affinity` |
 | 优先选择加权请求长度较小的目标 | `throughput` |
+| 平衡缓存抵扣后的预填充工作量与活跃输入块负载 | `kv_cost`，必须搭配 `picker.algorithm: max` |
 | 按指定端点观测值排序 | `endpoint_attribute` |
 | 所有目标得分相同 | `uniform` |
+
+`kv_cost` 在本地跟踪输入块。设置 `scorer.parameters.router_track_output_blocks: true` 后，也会计入流式输出 token 填满的块。
 
 评分算法的选项放在 `scorer.parameters` 下。例如，让默认策略更偏向缓存复用：
 
