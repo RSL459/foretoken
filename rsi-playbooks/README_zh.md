@@ -62,6 +62,15 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 /goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。
 ```
 
+如果 Codex 因 Agent 数量上限无法创建所需团队，在用户配置 `~/.codex/config.toml`（设置了 `CODEX_HOME` 时为 `$CODEX_HOME/config.toml`）中调整上限，例如：
+
+```toml
+[agents]
+max_concurrent_threads_per_session = 16
+```
+
+按同时工作的 Explorer、Worker、Experimenter 总数，加上一轮 Observer 所需人数预留名额。
+
 ## 查看进展
 
 实验报告 `report.md` 随进展更新，汇总方案对比、性能与质量结果、保留方案和待验证的问题。原始数据和详细分析可从报告中的链接查看，记录格式见[实验记录手册](experiment-records_zh.md)。

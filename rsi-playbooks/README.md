@@ -62,6 +62,15 @@ After trusting the project hooks, start the goal in the Codex session:
 /goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md.
 ```
 
+If Codex cannot create the requested team because of its agent limit, set a suitable cap in the user configuration, `~/.codex/config.toml` (or `$CODEX_HOME/config.toml` when `CODEX_HOME` is set):
+
+```toml
+[agents]
+max_concurrent_threads_per_session = 16
+```
+
+Choose enough slots for concurrent Explorers, Workers and Experimenters plus an Observer round.
+
 ## Follow progress
 
 The running `report.md` summarizes comparisons, performance and quality results, retained approaches and open validation questions. Follow its links for raw data and detailed analysis. See the [experiment records guide](experiment-records.md) for record formats.
