@@ -83,9 +83,7 @@ spec:
       algorithm: max
 ```
 
-成本统一以 token 为单位，因此不同引擎块大小的副本可以直接比较。活跃分配量按各序列的引擎块大小向上取整。原生前缀缓存启用时，可复用的完整输入前缀只计一次；私有尾块、跳过缓存读取的请求以及 Decode 阶段请求分别计数。首次响应后释放待预填充负载，请求完成或取消后移除其分配估计。
-
-默认只估计输入部分。在 `scorer.parameters` 中设置 `router_track_output_blocks: true`，可随流式输出把生成 token 计入分配量。每个前端只观察自己分发的请求；需要按引擎上报的缓存占用选择目标时，使用 `kv_cache_utilization`。
+成本统一以 token 为单位，支持不同引擎块大小，并抵扣可复用前缀。在 `scorer.parameters` 中设置以下选项；数值参数接受有限非负数。
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
@@ -98,8 +96,6 @@ spec:
 | `shared_cache_multiplier` | `0.0` | 共享缓存超出设备命中前缀部分的抵扣倍率。 |
 | `router_track_prefill_tokens` | `true` | 在 Aggregate 和 Prefill 目标上计入尚未完成的输入工作。 |
 | `router_track_output_blocks` | `false` | 随流式输出扩展各活跃序列的分配量估计。 |
-
-数值参数接受有限非负数。Decode 阶段只计算活跃分配量与请求成本，不重复计入预填充工作。
 
 ## 根据得分选择目标
 

@@ -83,9 +83,7 @@ spec:
       algorithm: max
 ```
 
-Costs use token units, so replicas with different engine block sizes remain comparable. The active allocation estimate rounds each sequence to its engine block size. Reusable full prompt prefixes count once when native prefix caching is enabled; private tails, requests that bypass cache reads, and Decode-stage requests count separately. Pending prefill load is released at the first response. Requests are removed from the estimate on completion or cancellation.
-
-The default estimate includes prompts. Set `router_track_output_blocks: true` under `scorer.parameters` to include generated tokens as they arrive. Each frontend observes its own routed requests; use `kv_cache_utilization` when selection should follow engine-reported cache occupancy.
+Costs use token units across engine block sizes and discount reusable prefixes. Set options under `scorer.parameters`; numeric values must be finite and non-negative.
 
 | Parameter | Default | Effect |
 | --- | --- | --- |
@@ -98,8 +96,6 @@ The default estimate includes prompts. Set `router_track_output_blocks: true` un
 | `shared_cache_multiplier` | `0.0` | Credit for a shared-cache prefix extension beyond device hits. |
 | `router_track_prefill_tokens` | `true` | Include pending prompt work on Aggregate and Prefill targets. |
 | `router_track_output_blocks` | `false` | Extend each active sequence's allocation estimate with streamed output tokens. |
-
-Numeric parameters accept finite, non-negative values. Decode selection uses active allocation and request costs; it does not charge prefill work again.
 
 ## Choose from the scores
 
