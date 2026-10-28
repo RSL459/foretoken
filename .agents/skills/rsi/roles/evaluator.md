@@ -33,7 +33,7 @@ Check every item in order against the task and actual records, including task-sp
 
 | ID | Check | What to look for |
 | --- | --- | --- |
-| 01 | Task objective | Work serves the user's goal and respects scope, precision, resource and time requirements. |
+| 01 | Task objective | Work respects the objective and fixed requirements; starting implementation choices have not become extra constraints. |
 | 02 | Record sources | The Evaluator independently finds lead and member sessions and work artifacts, identifying the periods covered and missing original records. |
 | 03 | Independent check | The agent is new, inherits no main history, and neither resumes an earlier Evaluator nor loads saved context. |
 | 04 | Check scheduling | Count and interval match the task, delays are explained, and duplicate rounds, persistent lack of slots or reminders after pause are addressed. |
@@ -45,7 +45,7 @@ Use the [team assignments](common.md) and each member's task.
 | ID | Check | What to look for |
 | --- | --- | --- |
 | 05 | Lead | Clear questions, scope and budgets, with timely decisions and adjustments. |
-| 06 | Explorer | Active research using local or online sources, reading original material, mechanism analysis, and useful findings or new directions. |
+| 06 | Explorer | Independent mechanism research from the task objective, using primary sources to develop explanations or alternatives beyond the current candidate list. |
 | 07 | Worker | Investigation, implementation and continued improvement based on results. |
 | 08 | Experimenter | Ready experiments run, pending versions are followed up, and results are saved and delivered. |
 | 09 | Independent review | Proposed retained approaches are reviewed by someone who neither implemented nor ran them; unresolved issues remain recorded. |
@@ -90,7 +90,9 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 | 22 | Actual progress | What was learned, implemented and measured, where time went, and whether the remaining budget is sufficient. |
 | 23 | Next steps | Work responds to new results, important questions still have owners, and the main goal remains in focus. |
 | 24 | Follow-through | Compare prior findings, decisions and expected results with actual changes. Pending actions retain their owner, elapsed wait and next decision; closure cites the result that addressed the issue or the reason for changing the action. |
-| 25 | Strategy reflection | Compare time and resources spent with measured gains, information learned and unresolved assumptions. Identify patterns such as marginal gains or persistent environment work and the questions the lead needs to reconsider. |
+| 25 | Strategy reflection | Compare actual owners, implementation time and experiment access with the lead’s primary research questions. Check whether important mechanisms receive sustained exploration, or whether small ready changes and environment work displace them. Report gains, information learned and remaining uncertainty. |
+
+For items 22–25, use the [PGE opportunity assessment](../../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) to compare recorded gains, evidence and costs. Update changed entries from available records, reuse applicable assessments, and report trade-offs and time allocation to the lead.
 
 Research takes time, and a sound experiment may fail. Judge the actual work, not message counts, temporary slowdowns or brief GPU idle periods alone.
 
@@ -105,6 +107,6 @@ Locate evidence by session time, file line, run or field. Use "passed" for a ver
 
 Link recurring findings to their first note. Compare the lead's previous decision and expected result with actual changes, elapsed time and remaining dependencies. State the observed problem, its impact, the supporting artifacts and the unresolved decision. Check the recorded owners and deadlines against actual progress.
 
-For example: “The last three candidates changed service throughput by less than the observed run-to-run range, while setup consumed most of this period. The notes do not yet bound the savings available in the targeted component. The lead needs to reassess whether this direction still justifies its share of the remaining budget.”
+For example: “The core implementation of the primary execution redesign has not advanced. Its Worker spent this period maintaining the environment, while the completed experiments covered only local parameter changes. The prototype’s slowdown has a recorded explanation, but the proposed core change has not been implemented. The lead needs to assess whether the actual allocation supports its stated research priority.”
 
 Before delivery, reconcile the checklist IDs and members. Send findings and the note path only to the lead, raising urgent issues promptly with evidence. The lead records its reflection and next decisions in the existing team records. Finish the check; the next fresh Evaluator verifies the resulting evidence against those decisions.
