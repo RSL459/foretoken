@@ -46,6 +46,8 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 | 按指定端点观测值排序 | `endpoint_attribute` |
 | 所有目标得分相同 | `uniform` |
 
+`least_latency` 会向尚无延迟观测的空闲 rank 分配探测请求，包括新扩容副本。
+
 评分算法的选项放在 `scorer.parameters` 下。例如，让默认策略更偏向缓存复用：
 
 ```yaml
@@ -69,8 +71,6 @@ spec:
 在编码和解码阶段，`kv_least_loaded` 只按负载评分。这些权重控制路由偏好；即使只按负载评分或设置 `cacheWeight: 0`，Mooncake 和 NIXL 仍可使用 [Decode 到 Prefill 的复用](../../../../docs/features/inference-parameters_zh.md#分离预填充与解码并复用-kv)。
 
 无法取得某个目标的前缀匹配结果时，该目标仍可参与路由，但不获得缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
-
-`least_latency` 按观测到的平均请求长度比较预填充与解码延迟。对于尚无延迟历史的空闲 rank，包括新扩容副本，它会先分配探测请求；当前前端已有的请求预留会将并发探测分散到不同 rank。
 
 ## 根据得分选择目标
 

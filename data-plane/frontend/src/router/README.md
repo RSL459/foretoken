@@ -46,6 +46,8 @@ Choose a scorer for the workload:
 | Prefer a configured endpoint observation | `endpoint_attribute` |
 | Give every target an equal score | `uniform` |
 
+`least_latency` sends exploratory requests to idle ranks without latency observations, including newly added replicas.
+
 Scorer-specific options go under `scorer.parameters`. For example, give cache affinity more weight in the default strategy:
 
 ```yaml
@@ -69,8 +71,6 @@ Both weights accept values from 0 to 1:
 For Encoder and Decode, `kv_least_loaded` uses load alone. These weights control routing preference. [Decode-to-Prefill reuse](../../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) remains available with load-only scorers or `cacheWeight: 0`, for both Mooncake and NIXL.
 
 A target with unavailable prefix observations remains eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
-
-`least_latency` compares prefill and decode latency at the average observed request length. It sends an exploratory request to each idle rank without latency history, including newly added replicas. Requests already reserved by this frontend keep concurrent exploration spread across ranks.
 
 ## Choose from the scores
 
