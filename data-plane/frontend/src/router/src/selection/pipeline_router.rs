@@ -407,6 +407,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
             })
             .flat_map(|route| {
                 let kv_block_size = self.inventory.kv_block_size(&route.route_target_id);
+                let prefix_cache_enabled =
+                    self.inventory.prefix_cache_enabled(&route.route_target_id);
                 // Read the group's aggregate and rank-local gauges once, then share the immutable
                 // observation across candidates; scorers select the candidate's exact DP rank.
                 let stats = self
@@ -423,6 +425,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     pipeline_scope_id: route.pipeline_scope_id.clone(),
                     data_parallel_rank,
                     kv_block_size,
+                    prefix_cache_enabled,
                     route_target_stats: stats.clone(),
                     local_load: reservations
                         .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),

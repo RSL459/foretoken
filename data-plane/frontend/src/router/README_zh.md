@@ -70,6 +70,37 @@ spec:
 
 无法取得某个目标的前缀匹配结果时，该目标仍可参与路由，但不获得缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
+## 平衡预填充与 KV 负载
+
+选择 `kv_cost` 并搭配 `max`，即可综合当前前端副本内尚未完成的预填充工作与活跃 KV 分配量：
+
+```yaml
+spec:
+  routerPipeline:
+    scorer:
+      algorithm: kv_cost
+    picker:
+      algorithm: max
+```
+
+成本统一以 token 为单位，因此不同引擎块大小的副本可以直接比较。活跃分配量按各序列的引擎块大小向上取整。原生前缀缓存启用时，可复用的完整输入前缀只计一次；私有尾块、跳过缓存读取的请求以及 Decode 阶段请求分别计数。首次响应后释放待预填充负载，请求完成或取消后移除其分配估计。
+
+默认只估计输入部分。在 `scorer.parameters` 中设置 `router_track_output_blocks: true`，可随流式输出把生成 token 计入分配量。每个前端只观察自己分发的请求；需要按引擎上报的缓存占用选择目标时，使用 `kv_cache_utilization`。
+
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `overlap_score_credit` | `1.0` | 设备本地前缀的抵扣倍率；设为 `0` 时只按负载评分，也不为本算法查询缓存。 |
+| `overlap_score_credit_decay` | `0.0` | 根据目标超出最低可选预填充负载的部分相对于当前输入长度的比例，衰减设备抵扣；`0` 表示不衰减。 |
+| `prefill_load_scale` | `1.0` | 缓存抵扣后，待处理和新输入预填充 token 的权重。 |
+| `decode_active_request_weight` | `0.0` | 每个活跃请求额外计入的 token 等效成本。 |
+| `host_cache_hit_weight` | `0.75` | 主机缓存超出设备命中前缀部分的抵扣权重。 |
+| `disk_cache_hit_weight` | `0.25` | 磁盘缓存超出更快本地缓存部分的抵扣权重。 |
+| `shared_cache_multiplier` | `0.0` | 共享缓存超出设备命中前缀部分的抵扣倍率。 |
+| `router_track_prefill_tokens` | `true` | 在 Aggregate 和 Prefill 目标上计入尚未完成的输入工作。 |
+| `router_track_output_blocks` | `false` | 随流式输出扩展各活跃序列的分配量估计。 |
+
+数值参数接受有限非负数。Decode 阶段只计算活跃分配量与请求成本，不重复计入预填充工作。
+
 ## 根据得分选择目标
 
 通过 `routerPipeline.picker.algorithm` 选择：

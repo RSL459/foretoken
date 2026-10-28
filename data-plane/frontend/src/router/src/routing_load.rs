@@ -27,8 +27,8 @@ pub(crate) type ReservationKey = (RouteTargetId, u32);
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ActiveSequence {
-    tokens: Arc<[u32]>,
-    identity: String,
+    request: Option<Arc<vllm_llm::GenerateRequest>>,
+    prefix_shareable: bool,
     prefill_tokens: usize,
     output_tokens: usize,
 }
@@ -74,8 +74,9 @@ impl RoutingReservations {
         self.requests.entry(key).or_default().insert(
             request.request_id().to_owned(),
             ActiveSequence {
-                tokens: Arc::from(request.prompt_token_ids()),
-                identity: cache_identity(request),
+                request: request.generate_request.clone(),
+                prefix_shareable: request.reads_prefix_cache()
+                    && candidate.prefix_cache_enabled == Some(true),
                 prefill_tokens,
                 output_tokens: 0,
             },
@@ -115,86 +116,87 @@ impl RoutingReservations {
     }
 }
 
-/// Projects complete prompt and optional output blocks, deduplicating reusable prompt prefixes.
-/// Ordinary disaggregated Decode accounts for each request's blocks independently.
-pub(crate) fn potential_decode_blocks(
+/// Projects active KV allocations in token units, sharing only reusable complete prefixes.
+/// Partial prompt tails and generated tokens remain private to each sequence.
+pub(crate) fn potential_decode_tokens(
     sequences: &[ActiveSequence],
     request: &RouterRequest,
     block_size: usize,
     assume_kv_reuse: bool,
     track_output_blocks: bool,
 ) -> usize {
-    if !assume_kv_reuse {
-        return sequences
-            .iter()
-            .map(|prompt| {
-                let output_tokens = if track_output_blocks {
-                    prompt.output_tokens
-                } else {
-                    0
-                };
-                prompt.tokens.len().saturating_add(output_tokens) / block_size
-            })
-            .sum::<usize>()
-            + request.token_count() / block_size;
+    let mut shared_blocks = BTreeSet::new();
+    let mut private_tokens = 0;
+    for sequence in sequences {
+        let Some(active) = &sequence.request else {
+            continue;
+        };
+        let output_tokens = if track_output_blocks {
+            sequence.output_tokens
+        } else {
+            0
+        };
+        private_tokens += allocated_tokens(
+            &mut shared_blocks,
+            active,
+            block_size,
+            assume_kv_reuse && sequence.prefix_shareable,
+            output_tokens,
+        );
     }
-    let mut blocks = BTreeSet::new();
-    let mut output_blocks = 0;
-    for prompt in sequences {
-        add_prompt_blocks(&mut blocks, &prompt.tokens, &prompt.identity, block_size);
-        if track_output_blocks {
-            output_blocks += prompt.tokens.len().saturating_add(prompt.output_tokens) / block_size
-                - prompt.tokens.len() / block_size;
-        }
+    if let Some(incoming) = &request.generate_request {
+        private_tokens += allocated_tokens(
+            &mut shared_blocks,
+            incoming,
+            block_size,
+            assume_kv_reuse && request.reads_prefix_cache(),
+            0,
+        );
     }
-    add_prompt_blocks(
-        &mut blocks,
-        request.prompt_token_ids(),
-        &cache_identity(request),
-        block_size,
-    );
-    blocks.len() + output_blocks
+    shared_blocks.len() * block_size + private_tokens
 }
 
-/// Adds complete prefix identities to the projection; partial tails consume prefill work only.
-fn add_prompt_blocks(
+/// Adds shareable prefix blocks and returns the sequence's private allocation in tokens.
+fn allocated_tokens(
     blocks: &mut BTreeSet<[u8; 32]>,
-    tokens: &[u32],
-    identity: &str,
+    request: &vllm_llm::GenerateRequest,
     block_size: usize,
-) {
+    share_prefix: bool,
+    output_tokens: usize,
+) -> usize {
+    let tokens = &request.prompt_token_ids;
+    let total = tokens
+        .len()
+        .saturating_add(output_tokens)
+        .div_ceil(block_size)
+        * block_size;
+    if !share_prefix {
+        return total;
+    }
+    let identity = serde_json::to_vec(&(
+        request
+            .cache_salt
+            .as_deref()
+            .filter(|salt| !salt.is_empty()),
+        request.lora_request.as_ref().map(|lora| lora.lora_int_id),
+        request
+            .mm_features
+            .as_ref()
+            .map(|_| request.request_id.as_str()),
+    ))
+    .expect("cache identity contains only strings and integers");
     let mut hash = blake3::Hasher::new();
     hash.update(&(identity.len() as u64).to_le_bytes());
-    hash.update(identity.as_bytes());
-    for block in tokens.chunks_exact(block_size) {
+    hash.update(&identity);
+    // The final prompt token must be recomputed even on a complete prefix hit.
+    let reusable_tokens = tokens.len().saturating_sub(1) / block_size * block_size;
+    for block in tokens[..reusable_tokens].chunks_exact(block_size) {
         for token in block {
             hash.update(&token.to_le_bytes());
         }
         blocks.insert(*hash.finalize().as_bytes());
     }
-}
-
-/// Separates active prefixes by model and cache identity, treating an empty salt as absent.
-fn cache_identity(request: &RouterRequest) -> String {
-    let Some(generate_request) = &request.generate_request else {
-        return request.request_id().to_owned();
-    };
-    serde_json::to_string(&(
-        &request.model,
-        generate_request
-            .cache_salt
-            .as_deref()
-            .filter(|salt| !salt.is_empty()),
-        generate_request
-            .lora_request
-            .as_ref()
-            .map(|lora| lora.lora_int_id),
-        generate_request
-            .mm_features
-            .as_ref()
-            .map(|_| generate_request.request_id.as_str()),
-    ))
-    .expect("cache identity contains only strings")
+    total - reusable_tokens
 }
 
 /// Estimates prompt-token computation from the observation owner's reusable token count.

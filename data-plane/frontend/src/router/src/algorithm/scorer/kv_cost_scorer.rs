@@ -1,48 +1,41 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Scoring prefill and decode load in KV blocks with cache-reuse credit.
+//! Scoring prefill and decode load in comparable token units with cache-reuse credit.
 
 use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, RoutingProgress};
 use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 use serde::Deserialize;
 
-/// Disjoint worker-local cache tiers and an independent shared-cache prefix, in engine blocks.
+/// Disjoint worker-local cache tiers and an independent shared-cache prefix, in tokens.
 #[derive(Default)]
 struct CacheCostInput {
-    device_blocks: f64,
-    host_blocks: f64,
-    disk_blocks: f64,
-    shared_blocks: f64,
+    device_tokens: f64,
+    host_tokens: f64,
+    disk_tokens: f64,
+    shared_tokens: f64,
 }
 
 impl CacheCostInput {
     /// Converts indexed prefix lengths into non-overlapping worker tiers for the cost model.
-    fn read(
-        request: &RouterRequest,
-        candidate: &RouteCandidate,
-        kv: &dyn KvPrefixIndexer,
-        block_size: usize,
-    ) -> Self {
+    fn read(request: &RouterRequest, candidate: &RouteCandidate, kv: &dyn KvPrefixIndexer) -> Self {
         let Some(cache) = crate::cache::cache_match(request, candidate, kv) else {
             return Self::default();
         };
-        // Native observations already account for cache layout and final-token recomputation.
-        // Keep their token precision when expressing reuse in engine-block cost units.
         let device = cache.device_tokens;
         let host = cache.host_tokens;
         let disk = cache.disk_tokens;
         Self {
-            device_blocks: device as f64 / block_size as f64,
-            host_blocks: host.saturating_sub(device) as f64 / block_size as f64,
-            disk_blocks: disk.saturating_sub(device.max(host)) as f64 / block_size as f64,
-            shared_blocks: cache.shared_tokens as f64 / block_size as f64,
+            device_tokens: device as f64,
+            host_tokens: host.saturating_sub(device) as f64,
+            disk_tokens: disk.saturating_sub(device.max(host)) as f64,
+            shared_tokens: cache.shared_tokens as f64,
         }
     }
 }
 
-/// Scores Dynamo's reference KV cost with frontend-local, prompt-only active-block tracking.
+/// Scores frontend-local prefill work and active KV tokens with configurable cache credit.
 #[derive(Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct KvCostScorer {
@@ -82,11 +75,11 @@ impl Default for KvCostScorer {
 
 impl KvCostScorer {
     /// Estimates avoided prefill work for reservation and scoring, excluding shared-cache credit.
-    fn cached_tokens(&self, cache: &CacheCostInput, block_size: usize) -> usize {
-        let effective_blocks = cache.device_blocks
-            + cache.host_blocks * self.host_cache_hit_weight
-            + cache.disk_blocks * self.disk_cache_hit_weight;
-        (effective_blocks * block_size as f64).round().max(0.0) as usize
+    fn cached_tokens(&self, cache: &CacheCostInput) -> usize {
+        let effective_tokens = cache.device_tokens
+            + cache.host_tokens * self.host_cache_hit_weight
+            + cache.disk_tokens * self.disk_cache_hit_weight;
+        effective_tokens.round().max(0.0) as usize
     }
 
     fn tracks_prefill(&self, candidate: &RouteCandidate) -> bool {
@@ -97,7 +90,7 @@ impl KvCostScorer {
             )
     }
 
-    /// Computes one native block cost from the current routing snapshot and prepared cache input.
+    /// Computes one token-equivalent cost from the current routing snapshot and prepared cache input.
     fn worker_cost(
         &self,
         request: &RouterRequest,
@@ -106,28 +99,25 @@ impl KvCostScorer {
         block_size: usize,
         min_active_prefill_tokens: usize,
     ) -> f64 {
-        let decode_cost = crate::routing_load::potential_decode_blocks(
+        let decode_cost = crate::routing_load::potential_decode_tokens(
             &candidate.active_sequences,
             request,
             block_size,
-            candidate.role != ModelServerRole::Decode,
+            candidate.role != ModelServerRole::Decode
+                && candidate.prefix_cache_enabled == Some(true),
             self.router_track_output_blocks,
         ) as f64;
         let active_request_cost =
             self.decode_active_request_weight * candidate.local_load.requests.max(0) as f64;
-        // Foretoken's disaggregated Decode always follows Prefill. Match Dynamo's ordinary
-        // disaggregated request override (zero overlap credit), not conditional disaggregation.
+        // Decode follows completed Prefill and has no remaining prompt computation.
         if candidate.role == ModelServerRole::Decode {
             return decode_cost + active_request_cost;
         }
         let track_prefill = self.tracks_prefill(candidate);
         let active_prefill_tokens = candidate.local_load.tokens.max(0) as usize;
         let overlap_credit_decay = if track_prefill && self.overlap_score_credit_decay > 0.0 {
-            let excess_blocks = active_prefill_tokens.saturating_sub(min_active_prefill_tokens)
-                as f64
-                / block_size as f64;
-            let request_blocks = request.token_count().div_ceil(block_size);
-            let normalized_load = excess_blocks / request_blocks.max(1) as f64;
+            let excess_tokens = active_prefill_tokens.saturating_sub(min_active_prefill_tokens);
+            let normalized_load = excess_tokens as f64 / request.token_count().max(1) as f64;
             1.0 / (1.0 + self.overlap_score_credit_decay * normalized_load)
         } else {
             1.0
@@ -136,18 +126,17 @@ impl KvCostScorer {
         // Shared hits cover a contiguous prefix and receive credit only beyond device hits.
         // Host and disk counts already exclude all faster worker-local tiers.
         let shared_overlap =
-            self.shared_cache_multiplier * (cache.shared_blocks - cache.device_blocks).max(0.0);
-        let overlap_credit = effective_credit * cache.device_blocks
-            + self.host_cache_hit_weight * cache.host_blocks
-            + self.disk_cache_hit_weight * cache.disk_blocks
+            self.shared_cache_multiplier * (cache.shared_tokens - cache.device_tokens).max(0.0);
+        let overlap_credit = effective_credit * cache.device_tokens
+            + self.host_cache_hit_weight * cache.host_tokens
+            + self.disk_cache_hit_weight * cache.disk_tokens
             + shared_overlap;
         let raw_prefill_tokens = if track_prefill {
             active_prefill_tokens.saturating_add(request.token_count())
         } else {
             0
         };
-        let raw_prefill_blocks = raw_prefill_tokens as f64 / block_size as f64;
-        self.prefill_load_scale * (raw_prefill_blocks - overlap_credit).max(0.0)
+        self.prefill_load_scale * (raw_prefill_tokens as f64 - overlap_credit).max(0.0)
             + decode_cost
             + active_request_cost
     }
@@ -180,14 +169,10 @@ impl RouteScorer for KvCostScorer {
         if !self.needs_kv_prefix() {
             return request.token_count();
         }
-        let Some(block_size) = candidate.kv_block_size else {
-            return request.token_count();
-        };
-        let size = block_size.get() as usize;
-        let cache = CacheCostInput::read(request, candidate, kv_prefix_indexer, size);
+        let cache = CacheCostInput::read(request, candidate, kv_prefix_indexer);
         request
             .token_count()
-            .saturating_sub(self.cached_tokens(&cache, size))
+            .saturating_sub(self.cached_tokens(&cache))
     }
 
     /// Applies cost weights once at pipeline construction, rejecting invalid numeric parameters.
@@ -216,7 +201,7 @@ impl RouteScorer for KvCostScorer {
         Ok(())
     }
 
-    /// Returns reference KV-block costs in candidate order, using only eligible load minima.
+    /// Returns comparable token costs in candidate order, using only eligible load minima.
     fn score(
         &self,
         request: &RouterRequest,
@@ -251,7 +236,7 @@ impl RouteScorer for KvCostScorer {
                 let size = block_size.get() as usize;
                 // Load-only policies neither credit cache tiers nor discount reservations.
                 let cache = if self.needs_kv_prefix() && candidate.role != ModelServerRole::Decode {
-                    CacheCostInput::read(request, candidate, kv_prefix_indexer, size)
+                    CacheCostInput::read(request, candidate, kv_prefix_indexer)
                 } else {
                     CacheCostInput::default()
                 };

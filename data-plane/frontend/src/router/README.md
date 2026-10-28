@@ -70,6 +70,37 @@ For Encoder and Decode, `kv_least_loaded` uses load alone. These weights control
 
 A target with unavailable prefix observations remains eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 
+## Balance prefill and KV load
+
+Select `kv_cost` with the `max` picker to balance pending prefill work and active KV allocations in this frontend replica:
+
+```yaml
+spec:
+  routerPipeline:
+    scorer:
+      algorithm: kv_cost
+    picker:
+      algorithm: max
+```
+
+Costs use token units, so replicas with different engine block sizes remain comparable. The active allocation estimate rounds each sequence to its engine block size. Reusable full prompt prefixes count once when native prefix caching is enabled; private tails, requests that bypass cache reads, and Decode-stage requests count separately. Pending prefill load is released at the first response. Requests are removed from the estimate on completion or cancellation.
+
+The default estimate includes prompts. Set `router_track_output_blocks: true` under `scorer.parameters` to include generated tokens as they arrive. Each frontend observes its own routed requests; use `kv_cache_utilization` when selection should follow engine-reported cache occupancy.
+
+| Parameter | Default | Effect |
+| --- | --- | --- |
+| `overlap_score_credit` | `1.0` | Multiplier for device-local prefix credit. Setting `0` selects load-only scoring and skips cache queries for this scorer. |
+| `overlap_score_credit_decay` | `0.0` | Reduces device credit as a target's pending prefill load exceeds the least-loaded eligible target, relative to the incoming prompt length; `0` disables decay. |
+| `prefill_load_scale` | `1.0` | Weight of pending and incoming prefill tokens after cache credits. |
+| `decode_active_request_weight` | `0.0` | Additional token-equivalent cost per active request. |
+| `host_cache_hit_weight` | `0.75` | Credit for the host-cached prefix extension beyond device hits. |
+| `disk_cache_hit_weight` | `0.25` | Credit for the disk-cached extension beyond faster local tiers. |
+| `shared_cache_multiplier` | `0.0` | Credit for a shared-cache prefix extension beyond device hits. |
+| `router_track_prefill_tokens` | `true` | Include pending prompt work on Aggregate and Prefill targets. |
+| `router_track_output_blocks` | `false` | Extend each active sequence's allocation estimate with streamed output tokens. |
+
+Numeric parameters accept finite, non-negative values. Decode selection uses active allocation and request costs; it does not charge prefill work again.
+
 ## Choose from the scores
 
 Set `routerPipeline.picker.algorithm` to control selection:

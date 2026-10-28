@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -20,7 +20,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use prometheus_client::encoding::text::{encode_eof, encode_registry};
 use prometheus_client::registry::Registry;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::execution::{
@@ -32,6 +32,11 @@ use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, RuntimeMetadataResponse, SchedulerLoadResponse,
     TelemetryResponse,
 };
+
+#[derive(Deserialize)]
+struct MetadataQuery {
+    version: Option<u8>,
+}
 
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
@@ -278,8 +283,19 @@ async fn metrics(State(state): State<AppState>) -> Response {
     }
 }
 
-async fn metadata(State(state): State<AppState>) -> Json<RuntimeMetadataResponse> {
-    Json(state.metadata)
+/// Exposes KV allocation facts only to frontends requesting the extended metadata revision.
+async fn metadata(
+    State(state): State<AppState>,
+    Query(query): Query<MetadataQuery>,
+) -> Json<RuntimeMetadataResponse> {
+    let mut metadata = state.metadata;
+    if query.version == Some(foretoken_model_protocol::KV_ROUTING_METADATA_VERSION) {
+        metadata.version = foretoken_model_protocol::KV_ROUTING_METADATA_VERSION;
+    } else {
+        metadata.kv_block_size = None;
+        metadata.prefix_cache_enabled = None;
+    }
+    Json(metadata)
 }
 
 async fn telemetry(State(state): State<AppState>) -> Json<TelemetryResponse> {

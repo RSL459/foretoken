@@ -37,6 +37,8 @@ pub struct RouteCandidate {
     pub data_parallel_rank: u32,
     /// Engine-reported allocation block size, independent of prefix observations.
     pub kv_block_size: Option<std::num::NonZeroU32>,
+    /// Observed native prefix caching; unknown engines cannot assume shared allocations.
+    pub prefix_cache_enabled: Option<bool>,
     /// Latest route-target gauges and available windowed statistics for this routing round.
     /// Group totals and rank-local gauges share one observation without duplicate polling.
     pub route_target_stats: Option<Arc<RouteTargetStats>>,
