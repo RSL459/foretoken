@@ -49,12 +49,23 @@ Reference values use the same metric and baseline; trajectory points share the c
 
 | `status` | Meaning |
 | --- | --- |
-| `valid` | A comparable measured value that passed the required checks. |
+| `valid` | A comparable measured value that meets the task's constraints. |
 | `incorrect` | Failed correctness or quality checks. |
 | `compile_failed` | Build failed. |
 | `runtime_failed` | Execution failed or produced no usable measurement. |
 
 Failures appear in a separate lower strip. Set their `value: null` and omit `checkpoint` or set it to false. To invalidate an earlier result, make those changes and update its status, then regenerate the charts and link the correction in the iteration notes.
+
+Follow the [validation guidance](../../.agents/skills/rsi/roles/common.md#review-claims-independently) to decide whether quality evaluation is needed. Comparable measurements can be `valid` when the change leaves output quality unaffected or existing evidence still applies. If an applicable quality question remains unresolved, retain the measured speed in the report and a named reference until it is resolved. References do not enter the best-so-far curve or milestones. For example:
+
+```yaml
+references:
+  - label: Candidate speed; output consistency unresolved
+    source: ../iterations/candidate/notes/analysis.md
+    points: [{x: 3, value: 119}]
+```
+
+Classify results against the task's correctness and quality requirements, and record the retention decision separately. When review confirms a failure, record an `incorrect` attempt and explain it in the report; a reference can retain the observed speed with an updated label. Use separate comparisons for different hardware, workloads or measurement conditions.
 
 ## Read and maintain the charts
 
@@ -64,4 +75,4 @@ Milestones connect the baseline with valid points marked `checkpoint: true`. Eac
 
 The search view plots all valid values and a best-so-far step curve starting at the baseline. The report identifies the currently retained version.
 
-On resumption, reuse the same data and baseline origin. Keep existing points when an update contains no new measurements.
+On resumption, reuse the same data and baseline origin, including earlier adopted versions and failed attempts. Keep later control measurements as named references and retain existing points when an update contains no new measurements.

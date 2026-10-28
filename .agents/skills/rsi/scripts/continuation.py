@@ -158,7 +158,7 @@ class Continuation:
             )
 
     def status(self, harness: str, session: str) -> dict[str, Any]:
-        """Return the last continuation decisions, not a mirror of native agent activity."""
+        """Return this task's recorded continuation decisions and queued steps."""
         task = dict(self.session(harness, session))
         task["members"] = [dict(row) for row in self.db.execute(
             "SELECT agent,role,state,next_step,reason FROM members WHERE harness=? AND session=? ORDER BY role,agent",
@@ -167,7 +167,7 @@ class Continuation:
         return task
 
     def review(self, task: sqlite3.Row, event_name: str) -> dict[str, Any]:
-        """Deliver pending completion decisions once to the lead without replacing tool results."""
+        """Deliver pending completion decisions once to the lead at the current hook boundary."""
         identity = (task["harness"], task["session"])
         self.db.execute(
             "UPDATE sessions SET review_pending=0 WHERE harness=? AND session=?", identity
@@ -184,7 +184,7 @@ class Continuation:
             "give the owner its next substantive question through the native follow-up tool, "
             "or record the actual missing result and resume condition. "
             "Keep exploration assigned when a member moves into implementation or review. "
-            "Record an Observer's actual completion, findings, action owners and next check time; "
+            "Record an Evaluator's actual completion, findings, action owners and next check time; "
             "update the existing report when results or decisions change. "
             "Use native activity for role counts; bindings describe previous decisions, not current activity."
         )
@@ -244,7 +244,7 @@ class Continuation:
                     (*identity, member["agent"]),
                 )
             # Native follow-up can resume a waiting member without changing its last binding decision.
-            # Unregistered Observers also deliver results, but never receive queued continuation.
+            # Unregistered Evaluators also deliver results, but never receive queued continuation.
             self.db.execute(
                 "UPDATE sessions SET review_pending=1 WHERE harness=? AND session=?", identity
             )
