@@ -70,6 +70,8 @@ For Encoder and Decode, `kv_least_loaded` uses load alone. These weights control
 
 A target with unavailable prefix observations remains eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 
+`least_latency` compares prefill and decode latency at the average observed request length. It sends an exploratory request to each idle rank without latency history, including newly added replicas. Requests already reserved by this frontend keep concurrent exploration spread across ranks.
+
 ## Choose from the scores
 
 Set `routerPipeline.picker.algorithm` to control selection:
@@ -77,7 +79,7 @@ Set `routerPipeline.picker.algorithm` to control selection:
 | Picker | Selection |
 | --- | --- |
 | `gamble_sampling` (default) | Higher ranks are more likely; ties have equal probability and lower-ranked targets remain eligible. |
-| `max` | Select the highest score. |
+| `max` | Select the highest score, then the smallest target ID. Within that target, prefer the least loaded rank and choose randomly on equal load. |
 | `power_of_two_choices` | Sample two distinct targets and select the higher score; choose randomly on ties. |
 
 ## Override a model or execution stage

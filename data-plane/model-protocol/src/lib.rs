@@ -276,14 +276,18 @@ impl HistogramMoments {
     }
 }
 
+/// Telemetry revision exposing engine-owned latency moments to requesting frontends.
+pub const REQUEST_COST_TELEMETRY_VERSION: u8 = 4;
+
 /// Engine-owned request distributions used by request-cost routing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RequestCostTelemetry {
     pub prompt_tokens: Option<HistogramMoments>,
     pub generation_tokens: Option<HistogramMoments>,
-    pub queue_seconds: Option<HistogramMoments>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefill_seconds: Option<HistogramMoments>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_seconds: Option<HistogramMoments>,
 }
 
