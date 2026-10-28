@@ -103,6 +103,7 @@ class ResultOutputs:
         self._context: dict[str, Any] = {}
         self._publication_lock = None
         self._records: RunRecords | None = None
+        self._request_writers: list[RequestRecordWriter] = []
         self._http_progress: tqdm | None = None
 
     def __enter__(self) -> Self:
@@ -325,6 +326,7 @@ class ResultOutputs:
                     self._execution_dir = None
                     self._replica_observer = None
                     self._prometheus_observer = None
+                    self._request_writers = []
                     self._exit_code = 0
         return False
 
@@ -350,6 +352,8 @@ class ResultOutputs:
 
     def save_measurement(self, run: BenchmarkRun) -> None:
         """Commit metrics, publication inputs and the measured outcome as one checkpoint."""
+        for writer in self._request_writers:
+            writer.flush()
         self._close_http_progress()
         self._exit_code = run.exit_code if run.exit_code is not None else int(run.metrics["success_num"] == 0)
         self._context.update(phase="finalization", measurement_exit_code=self._exit_code)
@@ -386,6 +390,7 @@ class ResultOutputs:
     def create_request_writer(self, name: str) -> RequestRecordWriter:
         """Open a completed-request journal and close it with this run's result resources."""
         writer = RequestRecordWriter(Path(self.execution_dir) / f"{name}.jsonl", self.records)
+        self._request_writers.append(writer)
         self._resources.callback(writer.close)
         return writer
 
@@ -405,7 +410,7 @@ class ResultOutputs:
         return None
 
     def http_request_completed(self) -> None:
-        """Advance the terminal only after the request recorder commits a measured completion."""
+        """Advance the terminal after the request recorder accepts a measured completion."""
         if self._http_progress is not None:
             self._http_progress.update(1)
 
@@ -428,7 +433,7 @@ class ResultOutputs:
         self._applications.save_archives(deadline=deadline)
 
     def start_observers(self, *, deadline: float | None = None) -> None:
-        """Prepare observations within one budget; deferred starts get a fresh budget after warmup."""
+        """Bound provenance preparation, then start each sampler with its own read budget."""
         outputs = self.benchmark.outputs
         if deadline is None:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
@@ -439,12 +444,14 @@ class ResultOutputs:
             )
             write_json(self.execution_dir, "environment.json", self._environment)
         if self.service is not None and self.service.model_service_refs and outputs.saves_local:
+            # Discovery budgets belong to each sampler, independently of provenance
+            # preparation and the other sampler's initial read.
             try:
                 observer = KubernetesReplicaObserver(
                     self.service.model_service_refs, self.service.model, self._applications,
                     kubectl=self.service.kubectl,
                 )
-                observer.start(deadline=deadline)
+                observer.start()
             except (DeploymentError, RuntimeError) as exc:
                 logger.warning("Replica observation unavailable; continuing with benchmark: {}", exc)
             else:
@@ -454,7 +461,7 @@ class ResultOutputs:
                 return
             try:
                 prometheus_observer = PrometheusObserver(self.service, self._replica_observer)
-                prometheus_observer.start(deadline=deadline)
+                prometheus_observer.start()
             except (DeploymentError, RuntimeError) as exc:
                 logger.warning("Prometheus observation unavailable; continuing with benchmark: {}", exc)
             else:
@@ -463,6 +470,8 @@ class ResultOutputs:
 
     def record_warmup(self, rows: list[dict[str, Any]], metrics: dict[str, Any]) -> None:
         """Persist the completed warmup before measurement or a warmup failure."""
+        for writer in self._request_writers:
+            writer.flush()
         self.records.publish({"warmup_metrics.json": metrics})
         write_json(self.execution_dir, "warmup_raw_output.json", rows, compact=True)
 

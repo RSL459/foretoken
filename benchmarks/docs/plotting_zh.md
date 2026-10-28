@@ -23,7 +23,7 @@ foretoken plot results/baseline
 foretoken plot results/baseline results/candidate
 ```
 
-性能对照包含每用户输出速度与每 GPU 输出吞吐量的权衡图。不同方案使用各自的标记，`c1`、`c16` 等标签表示配置的并发限额。虚线连接帕累托最优点：其中任一坐标继续改善时，另一个坐标就会变差。图中保留所有实测点。
+性能对照包含每用户输出速度与每 GPU 输出吞吐量的权衡图。不同方案使用各自的标记，`Concurrency 1`（并发 1）、`Concurrency 16`（并发 16）等标签表示配置的并发限额。虚线连接帕累托最优点：其中任一坐标继续改善时，另一个坐标就会变差。图中保留所有实测点。
 
 默认沿 `max_concurrency` 扫描，其余条件保持固定；输入长度、输出上限、数据集等条件不同的测量分别绘图。请求速率扫描可使用 `--sweep-axis request_rate --label-by request_rate`。`--label-by` 可选多个已保存的负载字段，`--label-values` 添加坐标，`--columns 2` 增加图宽。
 
@@ -53,14 +53,14 @@ foretoken plot results/baseline results/candidate \
 
 AgentX 结果用 `--x-metric agentx_interactivity --x-stat p95` 选择成功 profiling 请求的原生 token 间隔，优先采用完整响应 ITL。原生 ITL 与 Foretoken 基于 TPOT 的解码速度分别定义。计时和数据条件见 [AgentX 指标](metrics_zh.md#agentx-指标)。
 
-### 标出相对基准的变化
+### 标出相对参照的变化
 
 ```bash
 foretoken plot results/candidate --base results/baseline \
   --label-values --columns 2
 ```
 
-`--base` 读取一个参考结果或迭代目录，包含其中的重复测量。图上连接负载条件相同的点，默认标出横轴指标的变化百分比；用 `--compare-axis y` 改为纵轴。计算方式为 `(candidate / baseline - 1) × 100%`；延迟降低、吞吐量提高表示改善。
+`--base` 读取一个参考结果或迭代目录，包含其中的重复测量。图上连接负载条件相同的点，默认标出横轴指标的变化百分比；用 `--compare-axis y` 改为纵轴。计算方式为 `(candidate / reference - 1) × 100%`；延迟降低、吞吐量提高表示改善。
 
 ## 估算收入与利润
 
@@ -95,6 +95,16 @@ foretoken plot results/baseline results/candidate \
 AgentX 的速度下限使用 `--interactivity-metric agentx_interactivity --interactivity-stat p95`，与 AgentX 性能曲线采用同一原生统计量。
 
 收益估算需要所有成功请求的输入、输出和缓存输入用量，以及 GPU 数量。缺失的缓存用量保持不可用。柱状图表示算力成本、盈利或亏损，并标出总收入；CSV 保留每个点的条件满足情况和选择状态。
+
+## 绘制 RSI 进展
+
+一次导出报告中所有条件的绘图数据：
+
+```bash
+foretoken plot --progress results/my-experiment/figures/progress*.yaml
+```
+
+命令以 PNG、SVG 和 PDF 导出里程碑图与搜索图。YAML 文件都在同一目录时默认输出到该目录，否则输出到 `./plots`；用 `--output-dir` 指定位置。每次命令会替换该目录中上次导出的图表文件。数据准备与维护见 [RSI 图表模板指南](../../rsi-playbooks/templates/progress-charts_zh.md)。
 
 ## 阅读与导出结果
 

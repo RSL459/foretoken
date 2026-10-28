@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+# Synthetic layout example only. These are not Foretoken benchmark results.
+title: Synthetic model · Synthetic dataset · Throughput · Concurrency 1
+updated_at: '2026-01-01T00:00:00Z'
+x_label: Elapsed time (hours)
+metric:
+  name: Output throughput
+  unit: tokens/s
+  direction: higher
+baseline:
+  label: Initial baseline
+  value: 100
+  source: '#synthetic-baseline'
+points:
+  - {"x": 1, "value": null, "status": "compile_failed", "source": "#synthetic-01", "label": "Queue batching"}
+  - {"x": 2, "value": 121, "status": "valid", "source": "#synthetic-02", "label": "Async scheduling", "checkpoint": true}
+  - {"x": 3, "value": 112, "status": "valid", "source": "#synthetic-03", "label": "Scheduling variant"}
+  - {"x": 4, "value": 142, "status": "valid", "source": "#synthetic-04", "label": "Sort kernel", "checkpoint": true}
+  - {"x": 5, "value": null, "status": "incorrect", "source": "#synthetic-05", "label": "Cache block size"}
+  - {"x": 6, "value": 141, "status": "valid", "source": "#synthetic-06", "label": "Hierarchical cache", "checkpoint": true}
+  - {"x": 7, "value": 133, "status": "valid", "source": "#synthetic-07", "label": "Expert parallelism"}
+  - {"x": 8, "value": 197, "status": "valid", "source": "#synthetic-08", "label": "Layer split", "checkpoint": true}
+  - {"x": 9, "value": null, "status": "runtime_failed", "source": "#synthetic-09", "label": "Static drafting"}
+  - {"x": 10, "value": 249, "status": "valid", "source": "#synthetic-10", "label": "Context parallelism", "checkpoint": true}
+  - {"x": 11, "value": 230, "status": "valid", "source": "#synthetic-11", "label": "Transfer scheduling"}
+  - {"x": 12, "value": 267, "status": "valid", "source": "#synthetic-12", "label": "KV transfer overlap", "checkpoint": true}
+  - {"x": 13, "value": 255, "status": "valid", "source": "#synthetic-13", "label": "Prefill fusion"}
+  - {"x": 14, "value": null, "status": "compile_failed", "source": "#synthetic-14", "label": "Fused normalization"}
+  - {"x": 15, "value": 285, "status": "valid", "source": "#synthetic-15", "label": "Prefill dequantization", "checkpoint": true}
+  - {"x": 16, "value": 272, "status": "valid", "source": "#synthetic-16", "label": "Quantization variant"}
+  - {"x": 17, "value": 301, "status": "valid", "source": "#synthetic-17", "label": "Activation + quantization", "checkpoint": true}
+  - {"x": 18, "value": null, "status": "incorrect", "source": "#synthetic-18", "label": "Approximate attention"}
+  - {"x": 19, "value": 322, "status": "valid", "source": "#synthetic-19", "label": "Linear attention", "checkpoint": true}
+phases:
+  - {"label": "System bring-up & scheduling", "start": 0, "end": 7}
+  - {"label": "Parallelism & communication", "start": 7, "end": 14}
+  - {"label": "Kernel optimization", "start": 14, "end": 19}
+references:
+  - {"label": "Alternative A", "source": "#synthetic-a", "points": [{"x": 0, "value": 100}, {"x": 2, "value": 112}, {"x": 5, "value": 168}, {"x": 9, "value": 220}, {"x": 13, "value": 255}, {"x": 19, "value": 255}]}
+  - {"label": "Alternative B", "source": "#synthetic-b", "points": [{"x": 0, "value": 100}, {"x": 3, "value": 120}, {"x": 7, "value": 180}, {"x": 12, "value": 215}, {"x": 19, "value": 215}]}
+  - {"label": "Fixed reference", "value": 180, "source": "#synthetic-reference"}

@@ -28,11 +28,13 @@ Confirm the following settings. Leave choices to the agents where you do not nee
 | Final deployment budget | Resources allowed for the final service, separate from the total experiment resources. |
 | Evaluation and constraints | Workloads, concurrency, precision, quality requirements and the code or configuration that may change. |
 | Time and delivery | Duration or completion conditions, prior experiments, and where to save reports and results. |
-| Agent settings | Concurrent Explorer, Worker and Experimenter counts; Observers per check and the check interval. |
+| Agent settings | Concurrent Explorer, Worker and Experimenter counts; Evaluators per check and the check interval. |
 
 ### 3. Start the agents
 
 The commands below use the NVIDIA task. Replace the path to use your own task file.
+
+The checkout includes project hooks for [RSI continuation](../.agents/skills/rsi/continuation.md). They require Python 3.11+ and affect only RSI sessions activated by the lead.
 
 #### Claude Code
 
@@ -48,17 +50,32 @@ Enter in the session:
 
 #### Codex
 
-Open Codex in the repository and enter:
+In the Codex desktop app, open the repository and review the Foretoken project hooks under Settings → Hooks. If using the terminal CLI, run `codex` from the repository and review the hooks with:
+
+```text
+/hooks
+```
+
+After trusting the project hooks, start the goal in the Codex session:
 
 ```text
 /goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md.
 ```
 
+If Codex cannot create the requested team because of its agent limit, set a suitable cap in the user configuration, `~/.codex/config.toml` (or `$CODEX_HOME/config.toml` when `CODEX_HOME` is set):
+
+```toml
+[agents]
+max_concurrent_threads_per_session = 16
+```
+
+Choose enough slots for concurrent Explorers, Workers and Experimenters plus an Evaluator round.
+
 ## Follow progress
 
 The running `report.md` summarizes comparisons, performance and quality results, retained approaches and open validation questions. Follow its links for raw data and detailed analysis. See the [experiment records guide](experiment-records.md) for record formats.
 
-To adjust objectives, budgets or the allowed scope, state the change in the conversation and update the task file.
+To adjust objectives, budgets or the allowed scope, state the change in the conversation. The lead updates the task record and affected work arrangements.
 
 To pause, use `/goal clear` in Claude Code or `/goal pause` in Codex, and ask the team to stop experiments, collectors and check reminders. In Codex, use `/goal resume` to continue with the original task and existing results.
 
@@ -72,7 +89,7 @@ The task file expresses user requirements. The RSI skill and role instructions o
 | Explorer | Search local or online sources, study mechanisms, and propose methods and questions. |
 | Worker | Implement approaches, analyze results and improve the code or configuration. |
 | Experimenter | Prepare environments, deploy and run experiments, save results and release resources. |
-| Observer | Use a new agent each round to read records independently, check progress, research depth and resource use item by item, and suggest adjustments. |
+| Evaluator | Independently assess progress, research depth and resource use each round, and alert the lead to findings and decisions needing attention. |
 
 ## Execution rules and references
 

@@ -34,7 +34,7 @@ use foretoken_model_protocol::{
 };
 
 #[derive(Deserialize)]
-struct MetadataQuery {
+struct ObservationQuery {
     version: Option<u8>,
 }
 
@@ -286,7 +286,7 @@ async fn metrics(State(state): State<AppState>) -> Response {
 /// Exposes KV allocation facts only to frontends requesting the extended metadata revision.
 async fn metadata(
     State(state): State<AppState>,
-    Query(query): Query<MetadataQuery>,
+    Query(query): Query<ObservationQuery>,
 ) -> Json<RuntimeMetadataResponse> {
     let mut metadata = state.metadata;
     if query.version == Some(foretoken_model_protocol::KV_ROUTING_METADATA_VERSION) {
@@ -298,8 +298,15 @@ async fn metadata(
     Json(metadata)
 }
 
-async fn telemetry(State(state): State<AppState>) -> Json<TelemetryResponse> {
-    Json(telemetry_response(&state))
+/// Returns legacy observations unless the frontend requests latency-moment telemetry.
+async fn telemetry(
+    State(state): State<AppState>,
+    Query(query): Query<ObservationQuery>,
+) -> Json<TelemetryResponse> {
+    Json(telemetry_response(
+        &state,
+        query.version == Some(foretoken_model_protocol::REQUEST_COST_TELEMETRY_VERSION),
+    ))
 }
 
 /// Observes scheduler load on demand; stalled or unsupported utilities leave inference available.
@@ -330,15 +337,24 @@ async fn close_admission(State(state): State<AppState>) -> Json<TelemetryRespons
         profiling.close();
     }
     state.health.set_accepting(false);
-    Json(telemetry_response(&state))
+    Json(telemetry_response(&state, false))
 }
 
 /// Combines backend measurements and instance occupancy for telemetry and drain callers.
-fn telemetry_response(state: &AppState) -> TelemetryResponse {
+fn telemetry_response(state: &AppState, latency_moments: bool) -> TelemetryResponse {
     let telemetry = state.backend.telemetry();
+    let mut request_cost = telemetry.request_cost;
+    if !latency_moments {
+        request_cost.prefill_seconds = None;
+        request_cost.decode_seconds = None;
+    }
     TelemetryResponse {
-        version: 3,
-        request_cost: telemetry.request_cost,
+        version: if latency_moments {
+            foretoken_model_protocol::REQUEST_COST_TELEMETRY_VERSION
+        } else {
+            3
+        },
+        request_cost,
         collected_at_unix_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
