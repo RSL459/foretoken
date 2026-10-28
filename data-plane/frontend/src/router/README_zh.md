@@ -41,9 +41,12 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 | 将冷请求分散到较久未选中的目标 | `no_hit_lru` |
 | 在负载均衡与缓存复用之间折中 | `two_tier`，必须搭配 `picker.algorithm: max` |
 | 按请求体中的 `session_id`，优先将同一会话的请求发往同一模型副本 | `session_affinity` |
+| 优先选择按请求长度归一化后预填充与解码总延迟较低的目标 | `least_latency`，必须搭配 `picker.algorithm: max` |
 | 优先选择加权请求长度较小的目标 | `throughput` |
 | 按指定端点观测值排序 | `endpoint_attribute` |
 | 所有目标得分相同 | `uniform` |
+
+`least_latency` 会向尚无延迟观测的空闲 rank 分配探测请求，包括新扩容副本。
 
 评分算法的选项放在 `scorer.parameters` 下。例如，让默认策略更偏向缓存复用：
 
@@ -76,7 +79,7 @@ spec:
 | 选择算法 | 行为 |
 | --- | --- |
 | `gamble_sampling`（默认） | 排名越高，选中概率越大；同分概率相同，低排名目标仍有机会被选中。 |
-| `max` | 选择最高分目标。 |
+| `max` | 选择最高分目标，同分时选择 ID 最小的目标；在该目标内优先选择低负载 rank，负载相同时随机选择。 |
 | `power_of_two_choices` | 随机抽取两个不同目标，选择分数较高者，同分时随机选择。 |
 
 ## 按模型和执行阶段选择算法

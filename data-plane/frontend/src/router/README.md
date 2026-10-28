@@ -41,9 +41,12 @@ Choose a scorer for the workload:
 | Spread cold requests toward less recently selected targets | `no_hit_lru` |
 | Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
 | Prefer the same model replica for requests with the same `session_id` in the request body | `session_affinity` |
+| Prefer lower request-length-normalized prefill and decode latency | `least_latency`; requires `picker.algorithm: max` |
 | Prefer lower weighted request lengths | `throughput` |
 | Prefer a configured endpoint observation | `endpoint_attribute` |
 | Give every target an equal score | `uniform` |
+
+`least_latency` sends exploratory requests to idle ranks without latency observations, including newly added replicas.
 
 Scorer-specific options go under `scorer.parameters`. For example, give cache affinity more weight in the default strategy:
 
@@ -76,7 +79,7 @@ Set `routerPipeline.picker.algorithm` to control selection:
 | Picker | Selection |
 | --- | --- |
 | `gamble_sampling` (default) | Higher ranks are more likely; ties have equal probability and lower-ranked targets remain eligible. |
-| `max` | Select the highest score. |
+| `max` | Select the highest score, then the smallest target ID. Within that target, prefer the least loaded rank and choose randomly on equal load. |
 | `power_of_two_choices` | Sample two distinct targets and select the higher score; choose randomly on ties. |
 
 ## Override a model or execution stage

@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -20,7 +20,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use prometheus_client::encoding::text::{encode_eof, encode_registry};
 use prometheus_client::registry::Registry;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::execution::{
@@ -32,6 +32,11 @@ use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, RuntimeMetadataResponse, SchedulerLoadResponse,
     TelemetryResponse,
 };
+
+#[derive(Deserialize)]
+struct TelemetryQuery {
+    version: Option<u8>,
+}
 
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
@@ -282,8 +287,15 @@ async fn metadata(State(state): State<AppState>) -> Json<RuntimeMetadataResponse
     Json(state.metadata)
 }
 
-async fn telemetry(State(state): State<AppState>) -> Json<TelemetryResponse> {
-    Json(telemetry_response(&state))
+/// Returns legacy observations unless the frontend requests latency-moment telemetry.
+async fn telemetry(
+    State(state): State<AppState>,
+    Query(query): Query<TelemetryQuery>,
+) -> Json<TelemetryResponse> {
+    Json(telemetry_response(
+        &state,
+        query.version == Some(foretoken_model_protocol::REQUEST_COST_TELEMETRY_VERSION),
+    ))
 }
 
 /// Observes scheduler load on demand; stalled or unsupported utilities leave inference available.
@@ -314,15 +326,24 @@ async fn close_admission(State(state): State<AppState>) -> Json<TelemetryRespons
         profiling.close();
     }
     state.health.set_accepting(false);
-    Json(telemetry_response(&state))
+    Json(telemetry_response(&state, false))
 }
 
 /// Combines backend measurements and instance occupancy for telemetry and drain callers.
-fn telemetry_response(state: &AppState) -> TelemetryResponse {
+fn telemetry_response(state: &AppState, latency_moments: bool) -> TelemetryResponse {
     let telemetry = state.backend.telemetry();
+    let mut request_cost = telemetry.request_cost;
+    if !latency_moments {
+        request_cost.prefill_seconds = None;
+        request_cost.decode_seconds = None;
+    }
     TelemetryResponse {
-        version: 3,
-        request_cost: telemetry.request_cost,
+        version: if latency_moments {
+            foretoken_model_protocol::REQUEST_COST_TELEMETRY_VERSION
+        } else {
+            3
+        },
+        request_cost,
         collected_at_unix_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
